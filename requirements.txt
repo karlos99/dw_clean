@@ -1,0 +1,13 @@
+django>=6.0
+psycopg2-binary>=2.9.11
+psycopg>=3.3.2
+gunicorn==21.2.0
+python-dotenv>=1.0.0
+django-allauth>=65.3.0
+bokeh>=3.3.4
+httpx>=0.28.0
+requests>=2.32.0
+PyJWT>=2.10.0
+cryptography>=46.0.0
+pyecharts>=2.0.9
+django-redis>=5.4.0

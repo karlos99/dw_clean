@@ -1,0 +1,39 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+
+#database files
+*.sqlite3
+# Django stuff:
+*.log
+staticfiles/
+mediafiles/
+db.sqlite3
+
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+# macOS files
+.DS_Store
+# Node modules
+node_modules/
+# Env files
+.env
+.env.local
+.env.*.local
+# Logs
+logs/
+*.log
+
