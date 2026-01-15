@@ -1,0 +1,60 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DS Data{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="{% static 'js/tailwind_config.js' %}"></script>
+    {% block extra_head %}{% endblock %}
+</head>
+
+<body class="min-h-screen bg-slate-50 text-slate-900 antialiased font-sans flex flex-col">
+
+    <!-- Navigation -->
+    <nav class="bg-white border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex">
+                    <div class="flex-shrink-0 flex items-center">
+                        <a href="/" class="text-xl font-bold text-blue-600">Data System</a>
+                    </div>
+                </div>
+                <div class="flex items-center">
+                    {% if user.is_authenticated %}
+                    <span class="text-sm text-slate-600 mr-4">{{ user.email }}</span>
+                    {% if user.avatar %}
+                    <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full mr-4">
+                    {% endif %}
+                    <!-- We can create a logout form/link here later, but sticking to basic for now -->
+                    <form method="post" action="{% url 'account_logout' %}">
+                        {% csrf_token %}
+                        <button type="submit"
+                            class="text-sm font-medium text-slate-600 hover:text-slate-900">Logout</button>
+                    </form>
+                    {% else %}
+                    <a href="{% url 'account_login' %}"
+                        class="text-sm font-medium text-blue-600 hover:text-blue-500">Login</a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="flex-grow">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="bg-white border-t border-slate-200 mt-auto">
+        <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+            <p class="text-center text-sm text-slate-500">&copy; {% now "Y" %} DS Data. All rights reserved.</p>
+        </div>
+    </footer>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+
+</html>

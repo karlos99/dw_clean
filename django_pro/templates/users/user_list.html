@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}User Management - DS Data{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-6">
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-900 mb-4">User Management</h1>
+
+        <div class="flex flex-col sm:flex-row gap-3">
+            <div class="flex-1">
+                <label for="user-search" class="sr-only">Search users</label>
+                <div class="relative">
+                    <input type="text" name="q" id="user-search" value="{{ query }}"
+                        placeholder="Search by name, email, username, staff ID"
+                        class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border"
+                        autocomplete="off" hx-get="{% url 'users:manage_users' %}" hx-target="#user-content"
+                        hx-swap="innerHTML" hx-trigger="keyup changed delay:600ms"
+                        hx-include="[name='role'],[name='job_title'],[name='sort'],[name='order'],[name='page_size']">
+                    <div class="absolute inset-y-0 right-3 flex items-center text-slate-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1016.65 16.65z" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="w-full sm:w-48">
+                <label for="role-filter" class="sr-only">Filter by role</label>
+                <select name="role" id="role-filter"
+                    class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border"
+                    hx-get="{% url 'users:manage_users' %}" hx-target="#user-content" hx-swap="innerHTML"
+                    hx-trigger="change"
+                    hx-include="[name='q'],[name='job_title'],[name='sort'],[name='order'],[name='page_size']">
+                    <option value="">All Roles</option>
+                    <option value="none" {% if role_filter == 'none' %}selected{% endif %}>No Role</option>
+                    {% for role in all_roles %}<option value="{{ role.id }}" {% if role_filter == role.id|stringformat:"s" %}
+                     selected{% endif %}>{{ role.name }}</option>{% endfor %}
+                </select>
+            </div>
+
+            <div class="w-full sm:w-48">
+                <label for="job-title-filter" class="sr-only">Filter by job title</label>
+                <select name="job_title" id="job-title-filter"
+                    class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border"
+                    hx-get="{% url 'users:manage_users' %}" hx-target="#user-content" hx-swap="innerHTML"
+                    hx-trigger="change"
+                    hx-include="[name='q'],[name='role'],[name='sort'],[name='order'],[name='page_size']">
+                    <option value="">All Job Titles</option>
+                    <option value="none" {% if job_title_filter == 'none' %}selected{% endif %}>No Job Title</option>
+                    {% for job_title in all_job_titles %}<option value="{{ job_title }}" 
+                    {% if job_title_filter == job_title %}selected{% endif %}>{{ job_title }}</option>{% endfor %}
+                </select>
+            </div>
+
+            <div class="w-full sm:w-32">
+                <label for="page-size" class="sr-only">Results per page</label>
+                <select name="page_size" id="page-size"
+                    class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border"
+                    hx-get="{% url 'users:manage_users' %}" hx-target="#user-content" hx-swap="innerHTML"
+                    hx-trigger="change"
+                    hx-include="[name='q'],[name='role'],[name='job_title'],[name='sort'],[name='order']">
+                    <option value="10" {% if page_size == 10 %}selected{% endif %}>10/page</option>
+                    <option value="20" {% if page_size == 20 %}selected{% endif %}>20/page</option>
+                    <option value="30" {% if page_size == 30 %}selected{% endif %}>30/page</option>
+                    <option value="40" {% if page_size == 40 %}selected{% endif %}>40/page</option>
+                    <option value="50" {% if page_size == 50 %}selected{% endif %}>50/page</option>
+                </select>
+            </div>
+        </div>
+
+        <input type="hidden" name="sort" id="sort-field" value="{{ sort_by }}">
+        <input type="hidden" name="order" id="sort-order" value="{{ sort_order }}">
+    </div>
+
+    <div id="user-content">
+        {% include 'users/_user_table.html' %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+{% endblock %}
