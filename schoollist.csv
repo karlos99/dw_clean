@@ -1,0 +1,51 @@
+state_id,dw_schoolkey,sis_key,assessment_school_code,short_name,school_name,school_group
+0000001,1000,101,,NPS,NPS School,Special School
+0134353,1001,110,,Adams ECE,John Adams Early Childhood Center,Elementary School
+6031975,1002,164,33670586031975,Kennedy,John F. Kennedy ES,Elementary School
+6031983,1003,166,33670586031983,Van Buren,Martin Van Buren ES,Elementary School
+6031959,1004,168,33670586031959,Washington,George Washington Charter,Elementary School
+0136770,1005,170,33670580136770,Oliphant ES,Richard R. Oliphant ES,Elementary School
+6116636,1006,172,33670586116636,Johnson,Lyndon B. Johnson ES,Elementary School
+6106082,1007,174,33670586106082,Truman,Harry S. Truman ES,Elementary School
+6031942,1008,176,,Eisenhower,Dwight Eisenhower ES,Unknown
+6031934,1009,178,33670586031934,Jackson,Andrew Jackson ES,Elementary School
+6113898,1010,180,,Unknown,John Adams Elementary,Unknown
+6109045,1011,182,33670586109045,Monroe,James Monroe ES,Elementary School
+6108955,1012,184,33670586108955,Madison,James Madison ES,Elementary School
+6113880,1013,186,33670586113880,Carter,James Earl Carter ES,Elementary School
+6109789,1014,188,33670586109789,Ford,Gerald R. Ford ES,Elementary School
+0110791,1015,221,33670580110791,Reagan,Ronald Reagan ES,Elementary School
+6031967,1016,222,33670586031967,Hoover,Herbert Hoover ES,Elementary School
+0100164,1017,223,33670580100164,Dr. Carreon,Dr. Reynaldo J. Carreon Jr. Academy,Elementary School
+6031926,1018,224,33670586031926,Lincoln,Abraham Lincoln ES,Elementary School
+0107961,1019,225,33670580107961,Franklin,Benjamin Franklin ES,Elementary School
+6032007,1020,226,33670586032007,Roosevelt,Theodore Roosevelt ES,Elementary School
+0108464,1021,227,33670580108464,Carrillo Ranch,Carrillo Ranch ES,Elementary School
+6118863,1022,228,33670586118863,Earhart,Amelia Earhart School of Intl Studies ES,Elementary School
+0119305,1023,320,33670580119305,Desert Ridge,Desert Ridge Academy,Middle School
+6032015,1024,330,33670586032015,Jefferson,Thomas Jefferson MS,Middle School
+6107759,1025,332,33670586107759,La Quinta MS,La Quinta MS,Middle School
+6031991,1026,334,33670586031991,Palm Desert Charter,Palm Desert Charter MS,Middle School
+6109797,1027,335,33670586109797,Indio MS,Indio MS,Middle School
+6118855,1028,338,33670586118855,Glenn,John Glenn MS of Intl Studies,Middle School
+0111021,1029,340,33670580111021,Paige,Colonel Mitchell Paige MS,Middle School
+3333192,1030,360,33670583333192,Indio HS,Indio HS,High School
+3330669,1031,370,33670583330669,La Quinta HS,La Quinta HS,High School
+3330388,1032,380,33670583330388,Palm Desert HS,Palm Desert HS,High School
+0118885,1033,390,33670580118885,Shadow Hills HS,Shadow Hills HS,High School
+3331113,1034,440,33670583331113,Amistad HS,Amistad HS,Special School
+0114504,1035,448,33670580114504,Summit,Summit HS,Special School
+0114504,1036,748,33670580114504,Unknown,Summit SDC - 748,Unknown
+Unknown,1037,760,,IHS SS,Indio High Summer School,Unknown
+Unknown,1038,770,,LQHS SS,La Quinta High Summer School,Unknown
+3331113,1039,940,33670583331113,Amistad IS,Amistad Independent Study,Special School
+0114504,1040,948,33670580114504,Summit IS,Summit Independent Study,Special School
+3330909,1041,951,33670583330909,Horizon,Horizon,Special School
+6031959,1042,968,33670586031959,Unknown,George Washington Charter Independent Study - 968,Unknown
+3330909,1043,970,33670583330909,Unknown,Horizon Elementary - 970,Unknown
+Unknown,1044,DISTRICT,,Unknown,Desert Sands Unified School District,Unknown
+3330909,1045,451,33670583330909,Horizon Opp,Horizon Opportunity,Special School
+Unknown,1046,520,,Unknown,Unknown,Unknown
+3331113,1047,740,33670583331113,Amistad ATP,Amistad Adult Transitional Program,Special School
+Unknown,1048,OUT_OF_DISTRICT,,Unknown,Out Of District School,Unknown
+0141879,1049,750,,Desert Sands ATLAS,Desert Sands A.T.L.A.S.,Special School
