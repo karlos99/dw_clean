@@ -1,0 +1,40 @@
+{% load dataexploration_tags %}
+<!-- Assessments Tree Category -->
+<div class="border-b border-slate-100 pb-2">
+    <button data-toggle-category="assessments"
+        class="w-full flex items-center justify-between p-2 hover:bg-blue-50 rounded-md transition border-l-2 border-blue-500">
+        <span class="font-medium text-slate-900">Assessments</span>
+        <span data-caret="closed">▶</span>
+        <span data-caret="open" class="hidden">▼</span>
+    </button>
+
+    <div data-category="assessments" class="ml-4 mt-1 space-y-1 pl-3 border-l-2 border-blue-200 hidden">
+        {% for year, tests in test_structure.items %}
+        <div class="mt-2">
+            <button data-toggle-category="tests_{{ year|slugify }}"
+                class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left">
+                <span class="text-sm font-medium text-slate-700">{{ year }}</span>
+                <span class="text-xs" data-caret="closed">▶</span>
+                <span class="text-xs hidden" data-caret="open">▼</span>
+            </button>
+
+            <div data-category="tests_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                {% for test_name, cols in tests.items %}
+                <div class="pl-2 border-l border-slate-200">
+                    <div class="text-xs font-semibold text-slate-600 mb-1">{{ test_name }}</div>
+                    {% for col in cols %}
+                    <label class="flex items-center p-0.5 hover:bg-slate-50 rounded cursor-pointer gap-1">
+                        <input type="checkbox" data-column="{{ col }}"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600 w-3 h-3">
+                        <span class="text-xs text-slate-600 flex-1">{{ column_definitions|get_item:col }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% empty %}
+        <div class="text-xs text-slate-500 italic p-2">No assessment data available</div>
+        {% endfor %}
+    </div>
+</div>

@@ -1,0 +1,457 @@
+{% extends "base.html" %}
+
+{% block title %}Student Test Data - DS Data{% endblock %}
+
+{% block content %}
+<div x-data="{
+    showColumnSelector: false,
+    selectedColumns: ['full_name', 'ssid', 'grade', 'school_year', 'test_name', 'subject', 'pl', 'ss'],
+    columnFilters: {},
+    expandedCategories: {
+        student_info: true,
+        demographics: false,
+        programs: false,
+        test_info: true
+    },
+    toggleColumn(col) {
+        const index = this.selectedColumns.indexOf(col);
+        if (index > -1) {
+            if (this.selectedColumns.length > 1) {
+                this.selectedColumns.splice(index, 1);
+            }
+        } else {
+            this.selectedColumns.push(col);
+        }
+    },
+    removeColumn(col) {
+        const index = this.selectedColumns.indexOf(col);
+        if (index > -1 && this.selectedColumns.length > 1) {
+            this.selectedColumns.splice(index, 1);
+            delete this.columnFilters[col];
+        }
+    },
+    moveColumn(fromIndex, toIndex) {
+        if (fromIndex === toIndex) return;
+        const [col] = this.selectedColumns.splice(fromIndex, 1);
+        this.selectedColumns.splice(toIndex, 0, col);
+    },
+    toggleCategory(cat) {
+        this.expandedCategories[cat] = !this.expandedCategories[cat];
+    }
+}" class="flex gap-0" style="height: calc(100vh - 120px)">
+
+    <!-- Column Selector Sidebar -->
+    <div x-show="showColumnSelector" x-transition
+        class="w-80 bg-white border-r border-slate-200 overflow-y-auto flex-shrink-0" style="display: none">
+        <div class="p-4 border-b border-slate-200 flex items-center justify-between sticky top-0 bg-white z-10">
+            <h3 class="text-lg font-semibold text-slate-900">Columns</h3>
+            <button @click="showColumnSelector = false" class="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
+
+        <div class="p-4 space-y-2">
+            <!-- Student Info Category -->
+            <div class="border-b border-slate-100 pb-2">
+                <button @click="toggleCategory('student_info')"
+                    class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                    <span class="font-medium text-slate-700">Student Information</span>
+                    <span x-show="!expandedCategories['student_info']">▶</span>
+                    <span x-show="expandedCategories['student_info']">▼</span>
+                </button>
+                <div x-show="expandedCategories['student_info']" x-collapse class="ml-4 mt-1 space-y-1">
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('full_name')"
+                            @change="toggleColumn('full_name')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Full Name</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('ssid')"
+                            @change="toggleColumn('ssid')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">SSID</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('student_id')"
+                            @change="toggleColumn('student_id')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Student ID</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('grade')"
+                            @change="toggleColumn('grade')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Grade</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('school')"
+                            @change="toggleColumn('school')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">School</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('school_year')"
+                            @change="toggleColumn('school_year')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">School Year</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Demographics Category -->
+            <div class="border-b border-slate-100 pb-2">
+                <button @click="toggleCategory('demographics')"
+                    class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                    <span class="font-medium text-slate-700">Demographics</span>
+                    <span x-show="!expandedCategories['demographics']">▶</span>
+                    <span x-show="expandedCategories['demographics']">▼</span>
+                </button>
+                <div x-show="expandedCategories['demographics']" x-collapse class="ml-4 mt-1 space-y-1">
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('gender')"
+                            @change="toggleColumn('gender')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Gender</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('race')"
+                            @change="toggleColumn('race')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Race</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('ell_status')"
+                            @change="toggleColumn('ell_status')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">ELL Status</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('status')"
+                            @change="toggleColumn('status')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Status</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Programs Category -->
+            <div class="border-b border-slate-100 pb-2">
+                <button @click="toggleCategory('programs')"
+                    class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                    <span class="font-medium text-slate-700">Programs & Services</span>
+                    <span x-show="!expandedCategories['programs']">▶</span>
+                    <span x-show="expandedCategories['programs']">▼</span>
+                </button>
+                <div x-show="expandedCategories['programs']" x-collapse class="ml-4 mt-1 space-y-1">
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('sped')"
+                            @change="toggleColumn('sped')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">SPED</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('gate')"
+                            @change="toggleColumn('gate')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">GATE</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('in_504')"
+                            @change="toggleColumn('in_504')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">504 Plan</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('sed')" @change="toggleColumn('sed')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">SED</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('esl')" @change="toggleColumn('esl')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">ESL</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Test Info Category -->
+            <div class="border-b border-slate-100 pb-2">
+                <button @click="toggleCategory('test_info')"
+                    class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                    <span class="font-medium text-slate-700">Test Information</span>
+                    <span x-show="!expandedCategories['test_info']">▶</span>
+                    <span x-show="expandedCategories['test_info']">▼</span>
+                </button>
+                <div x-show="expandedCategories['test_info']" x-collapse class="ml-4 mt-1 space-y-1">
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('test_name')"
+                            @change="toggleColumn('test_name')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Test Name</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('subject')"
+                            @change="toggleColumn('subject')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Subject</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('test_window')"
+                            @change="toggleColumn('test_window')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Test Window</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('pl')" @change="toggleColumn('pl')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Performance Level</span>
+                    </label>
+                    <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                        <input type="checkbox" :checked="selectedColumns.includes('ss')" @change="toggleColumn('ss')"
+                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-600">Scale Score</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+        <!-- Toolbar -->
+        <div class="bg-white border-b px-4 py-3 flex items-center justify-between flex-shrink-0">
+            <div class="flex items-center gap-2">
+                <button @click="showColumnSelector = !showColumnSelector"
+                    class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+                    <span class="inline-flex items-center gap-2">
+                        <svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 6h16" />
+                            <path d="M4 12h16" />
+                            <path d="M4 18h16" />
+                        </svg>
+                        Columns
+                    </span>
+                </button>
+                <span class="text-sm text-slate-500" x-text="`${selectedColumns.length} selected`"></span>
+            </div>
+            <div class="text-sm text-slate-600">
+                <h1 class="text-xl font-bold text-slate-900">Student Test Data</h1>
+            </div>
+        </div>
+
+        <!-- Quick Filters Bar -->
+        <div class="bg-slate-50 border-b px-4 py-3 flex-shrink-0">
+            <form method="get" action="{% url 'dataexploration:student_tests_list' %}">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <!-- Search -->
+                    <div>
+                        <label for="search" class="block text-sm font-medium text-slate-700 mb-1">Search</label>
+                        <input type="text" id="search" name="search" value="{{ search_query }}"
+                            placeholder="Name, SSID, or Student ID"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+
+                    <!-- School Year Filter -->
+                    <div>
+                        <label for="school_year" class="block text-sm font-medium text-slate-700 mb-1">School
+                            Year</label>
+                        <select id="school_year" name="school_year"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">All Years</option>
+                            {% for year in school_years %}
+                            <option value="{{ year }}" {% if selected_school_year == year %}selected{% endif %}>{{ year }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Test Name Filter -->
+                    <div>
+                        <label for="test_name" class="block text-sm font-medium text-slate-700 mb-1">Test Name</label>
+                        <select id="test_name" name="test_name"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">All Tests</option>
+                            {% for test in test_names %}
+                            {% if test %}
+                            <option value="{{ test }}" {% if selected_test_name == test %}selected{% endif %}>{{ test }}
+                            </option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Subject Filter -->
+                    <div>
+                        <label for="subject" class="block text-sm font-medium text-slate-700 mb-1">Subject</label>
+                        <select id="subject" name="subject"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">All Subjects</option>
+                            {% for subj in subjects %}
+                            {% if subj %}
+                            <option value="{{ subj }}" {% if selected_subject == subj %}selected{% endif %}>{{ subj }}
+                            </option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Grade Filter -->
+                    <div>
+                        <label for="grade" class="block text-sm font-medium text-slate-700 mb-1">Grade</label>
+                        <select id="grade" name="grade"
+                            class="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600">
+                            <option value="">All Grades</option>
+                            {% for g in grades %}
+                            {% if g %}
+                            <option value="{{ g }}" {% if selected_grade == g %}selected{% endif %}>{{ g }}</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="flex items-end">
+                        <button type="submit"
+                            class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">Filter</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- Table Container -->
+        <div class="flex-1 overflow-auto">
+            {% if students %}
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50 sticky top-0 z-10">
+                    <!-- Column Headers -->
+                    <tr class="bg-slate-50">
+                        <template x-for="(col, index) in selectedColumns" :key="col">
+                            <th class="px-4 py-2 text-left text-xs font-semibold text-slate-700 uppercase bg-slate-50 relative group cursor-move"
+                                draggable="true"
+                                @dragstart="$event.dataTransfer.effectAllowed = 'move'; $event.dataTransfer.setData('text/plain', index); $event.currentTarget.style.opacity = '0.4'"
+                                @dragend="$event.currentTarget.style.opacity = '1'"
+                                @dragover.prevent="$event.dataTransfer.dropEffect = 'move'"
+                                @dragenter.prevent="$event.currentTarget.classList.add('bg-blue-100')"
+                                @dragleave="$event.currentTarget.classList.remove('bg-blue-100')"
+                                @drop.prevent="const fromIndex = parseInt($event.dataTransfer.getData('text/plain')); $event.currentTarget.classList.remove('bg-blue-100'); moveColumn(fromIndex, index)">
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="flex-1"
+                                        x-text="col === 'full_name' ? 'Student' : col === 'ssid' ? 'SSID' : col === 'student_id' ? 'Student ID' : col === 'grade' ? 'Grade' : col === 'school' ? 'School' : col === 'school_year' ? 'School Year' : col === 'test_name' ? 'Test Name' : col === 'subject' ? 'Subject' : col === 'test_window' ? 'Test Window' : col === 'pl' ? 'PL' : col === 'ss' ? 'Scale Score' : col === 'gender' ? 'Gender' : col === 'race' ? 'Race' : col === 'ell_status' ? 'ELL Status' : col === 'status' ? 'Status' : col === 'sped' ? 'SPED' : col === 'gate' ? 'GATE' : col === 'in_504' ? '504' : col === 'sed' ? 'SED' : col === 'esl' ? 'ESL' : col"></span>
+                                    <button @click.stop="removeColumn(col)"
+                                        class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-0.5"
+                                        title="Remove column">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </th>
+                        </template>
+                        <th
+                            class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
+                            Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for student in students %}
+                    <tr class="hover:bg-slate-50">
+                        <template x-for="col in selectedColumns" :key="col">
+                            <td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">
+                                <span x-show="col === 'full_name'">{{ student.full_name }}</span>
+                                <span x-show="col === 'ssid'">{{ student.ssid }}</span>
+                                <span x-show="col === 'student_id'">{{ student.student_id|default:"-" }}</span>
+                                <span x-show="col === 'grade'">{{ student.grade|default:"-" }}</span>
+                                <span x-show="col === 'school'">{{
+                                    student.school_short_name|default:student.school|truncatewords:3 }}</span>
+                                <span x-show="col === 'school_year'">{{ student.school_year }}</span>
+                                <span x-show="col === 'test_name'">{{ student.test_name|default:"-" }}</span>
+                                <span x-show="col === 'subject'">{{ student.subject|default:"-" }}</span>
+                                <span x-show="col === 'test_window'">{{ student.test_window|default:"-" }}</span>
+                                <span x-show="col === 'pl'"
+                                    class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full {% if student.pl == '4' or student.pl == 'Advanced' %}bg-green-100 text-green-800{% elif student.pl == '3' or student.pl == 'Proficient' %}bg-blue-100 text-blue-800{% elif student.pl == '2' or student.pl == 'Basic' %}bg-yellow-100 text-yellow-800{% elif student.pl == '1' or student.pl == 'Below Basic' %}bg-red-100 text-red-800{% else %}bg-slate-100 text-slate-800{% endif %}">{{
+                                    student.pl|default:"-" }}</span>
+                                <span x-show="col === 'ss'">{{ student.ss|default:"-" }}</span>
+                                <span x-show="col === 'gender'">{{ student.gender|default:"-" }}</span>
+                                <span x-show="col === 'race'">{{ student.race|default:"-" }}</span>
+                                <span x-show="col === 'ell_status'">{{ student.ell_status|default:"-" }}</span>
+                                <span x-show="col === 'status'">{{ student.status|default:"-" }}</span>
+                                <span x-show="col === 'sped'">{% if student.sped == 'Y' %}<span
+                                        class="text-green-600 font-bold">✓</span>{% else %}<span
+                                        class="text-slate-300">—</span>{% endif %}</span>
+                                <span x-show="col === 'gate'">{% if student.gate == 'Y' %}<span
+                                        class="text-green-600 font-bold">✓</span>{% else %}<span
+                                        class="text-slate-300">—</span>{% endif %}</span>
+                                <span x-show="col === 'in_504'">{% if student.in_504 == 'Y' %}<span
+                                        class="text-green-600 font-bold">✓</span>{% else %}<span
+                                        class="text-slate-300">—</span>{% endif %}</span>
+                                <span x-show="col === 'sed'">{% if student.sed == 'Y' %}<span
+                                        class="text-green-600 font-bold">✓</span>{% else %}<span
+                                        class="text-slate-300">—</span>{% endif %}</span>
+                                <span x-show="col === 'esl'">{% if student.esl == 'Y' %}<span
+                                        class="text-green-600 font-bold">✓</span>{% else %}<span
+                                        class="text-slate-300">—</span>{% endif %}</span>
+                            </td>
+                        </template>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <a href="{% url 'dataexploration:student_test_detail' student.id %}"
+                                class="text-blue-600 hover:text-blue-900 mr-3">View</a>
+                            <a href="{% url 'dataexploration:student_test_summary' student.ssid %}"
+                                class="text-green-600 hover:text-green-900">All Tests</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="flex items-center justify-center h-64">
+                <p class="text-slate-500">No student test records found. Try adjusting your filters.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Pagination -->
+        {% if is_paginated %}
+        <div class="bg-white px-4 py-3 border-t border-slate-200 flex items-center justify-between flex-shrink-0">
+            <div class="flex-1 flex justify-between sm:hidden">
+                {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}"
+                    class="relative inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50">Previous</a>
+                {% endif %}
+                {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}"
+                    class="ml-3 relative inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50">Next</a>
+                {% endif %}
+            </div>
+            <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                <div>
+                    <p class="text-sm text-slate-700">Showing <span class="font-medium">{{ page_obj.start_index
+                            }}</span> to <span class="font-medium">{{ page_obj.end_index }}</span> of <span
+                            class="font-medium">{{ page_obj.paginator.count }}</span> results</p>
+                </div>
+                <div>
+                    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                        {% if page_obj.has_previous %}
+                        <a href="?page=1"
+                            class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-slate-300 bg-white text-sm font-medium text-slate-500 hover:bg-slate-50">First</a>
+                        <a href="?page={{ page_obj.previous_page_number }}"
+                            class="relative inline-flex items-center px-2 py-2 border border-slate-300 bg-white text-sm font-medium text-slate-500 hover:bg-slate-50">Previous</a>
+                        {% endif %}
+                        <span
+                            class="relative inline-flex items-center px-4 py-2 border border-slate-300 bg-white text-sm font-medium text-slate-700">Page
+                            {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+                        {% if page_obj.has_next %}
+                        <a href="?page={{ page_obj.next_page_number }}"
+                            class="relative inline-flex items-center px-2 py-2 border border-slate-300 bg-white text-sm font-medium text-slate-500 hover:bg-slate-50">Next</a>
+                        <a href="?page={{ page_obj.paginator.num_pages }}"
+                            class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-slate-300 bg-white text-sm font-medium text-slate-500 hover:bg-slate-50">Last</a>
+                        {% endif %}
+                    </nav>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script src="//unpkg.com/alpinejs" defer></script>
+{% endblock %}

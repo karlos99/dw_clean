@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% load static %}
+{% load dataexploration_tags %}
+
+{% block title %}Student Test Data - Data Exploration{% endblock %}
+
+{% block extra_head %}
+<script>
+    {% include 'static/js/student_tests_app.js' %}
+</script>
+{% endblock %}
+
+{% block content %}
+<div id="app-data" data-load-students-url="{% url 'dataexploration:load_students' %}"
+    data-default-columns="{{ default_columns_json|escapejs }}"
+    data-column-definitions="{{ column_definitions_json|escapejs }}" style="display:none;"></div>
+<div class="h-screen flex flex-col bg-slate-50" id="student-tests-app">
+
+    <!-- Layout: Sidebar + Main Content -->
+    <div class="flex-1 flex overflow-hidden">
+
+        <!-- Column Selector Sidebar -->
+        <div id="column-selector" class="w-64 bg-white border-r overflow-y-auto flex-shrink-0">
+            <div class="p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-semibold text-slate-900">Select Columns</h3>
+                    <button data-action="close-column-selector" class="text-slate-400 hover:text-slate-600">✕</button>
+                </div>
+
+                <!-- Selected Columns -->
+                <div class="mb-4">
+                    <h4 class="text-xs font-medium text-slate-700 uppercase mb-2">Selected (<span
+                            id="selected-count">0</span>)</h4>
+                    <div id="selected-columns-list" class="space-y-1"></div>
+                </div>
+
+                <!-- Student Info Category -->
+                <div class="border-b border-slate-100 pb-2">
+                    <button data-toggle-category="student_info"
+                        class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                        <span class="font-medium text-slate-700">Student Information</span>
+                        <span data-caret="closed" class="hidden">▶</span>
+                        <span data-caret="open">▼</span>
+                    </button>
+                    <div data-category="student_info" class="ml-4 mt-1 space-y-1">
+                        {% for col in column_categories.student_info.columns %}
+                        <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                            <input type="checkbox" data-column="{{ col }}"
+                                class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Demographics Category -->
+                <div class="border-b border-slate-100 pb-2">
+                    <button data-toggle-category="demographics"
+                        class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                        <span class="font-medium text-slate-700">Demographics</span>
+                        <span data-caret="closed">▶</span>
+                        <span data-caret="open" class="hidden">▼</span>
+                    </button>
+                    <div data-category="demographics" class="ml-4 mt-1 space-y-1 hidden">
+                        {% for col in column_categories.demographics.columns %}
+                        <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                            <input type="checkbox" data-column="{{ col }}"
+                                class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Programs Category -->
+                <div class="border-b border-slate-100 pb-2">
+                    <button data-toggle-category="programs"
+                        class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                        <span class="font-medium text-slate-700">Programs & Services</span>
+                        <span data-caret="closed">▶</span>
+                        <span data-caret="open" class="hidden">▼</span>
+                    </button>
+                    <div data-category="programs" class="ml-4 mt-1 space-y-1 hidden">
+                        {% for col in column_categories.programs.columns %}
+                        <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                            <input type="checkbox" data-column="{{ col }}"
+                                class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Performance Category -->
+                <div class="border-b border-slate-100 pb-2">
+                    <button data-toggle-category="performance"
+                        class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                        <span class="font-medium text-slate-700">Performance & Behavior</span>
+                        <span data-caret="closed">▶</span>
+                        <span data-caret="open" class="hidden">▼</span>
+                    </button>
+                    <div data-category="performance" class="ml-4 mt-1 space-y-1 hidden">
+                        {% for col in column_categories.performance.columns %}
+                        <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                            <input type="checkbox" data-column="{{ col }}"
+                                class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Dynamic Test Structures (loaded via HTMX) -->
+                <div id="dynamic-column-structures">
+                    {% include 'dataexploration/partials/column_structures.html' %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+
+            <!-- Toolbar -->
+            <div class="bg-white border-b px-4 py-3 flex items-center justify-between flex-shrink-0">
+                <div class="flex items-center gap-2">
+                    <button data-action="toggle-column-selector"
+                        class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+                        <span class="inline-flex items-center gap-2">
+                            <svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M4 6h16" />
+                                <path d="M4 12h16" />
+                                <path d="M4 18h16" />
+                            </svg>
+                            Columns
+                        </span>
+                    </button>
+                    <span class="text-sm text-slate-500" id="selected-count-toolbar">0 selected</span>
+                </div>
+                <div class="text-sm text-slate-600">
+                    <h1 class="text-xl font-bold text-slate-900">Student Test Data</h1>
+                </div>
+            </div>
+
+            <!-- Quick Filters Bar -->
+            <div class="bg-slate-50 border-b px-4 py-3 flex-shrink-0">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <!-- Search -->
+                    <div>
+                        <label for="search" class="block text-sm font-medium text-slate-700 mb-1">Search</label>
+                        <input type="text" id="search" name="search" value="{{ search_query }}"
+                            placeholder="Name, SSID, or ID" @change="loadData()"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+
+                    <!-- School Year -->
+                    <div>
+                        <label for="school_year" class="block text-sm font-medium text-slate-700 mb-1">School
+                            Year</label>
+                        <select id="school_year" name="school_year" @change="loadData()"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">All Years</option>
+                            {% for year in school_years %}
+                            <option value="{{ year }}" {% if selected_school_year == year %}selected{% endif %}>{{ year }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Grade -->
+                    <div>
+                        <label for="grade" class="block text-sm font-medium text-slate-700 mb-1">Grade</label>
+                        <select id="grade" name="grade" @change="loadData()"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">All Grades</option>
+                            {% for grade in grades %}
+                            <option value="{{ grade }}" {% if selected_grade == grade %}selected{% endif %}>{{ grade }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Student Table (loaded via HTMX) -->
+            <div class="flex-1 overflow-auto p-4">
+                <div id="student-table">
+                    <div id="loading" class="text-center py-8 text-slate-500">
+                        <svg class="animate-spin h-8 w-8 mx-auto text-blue-600" xmlns="http://www.w3.org/2000/svg"
+                            fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4">
+                            </circle>
+                            <path class="opacity-75" fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                            </path>
+                        </svg>
+                        <p class="mt-2">Loading student data...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

@@ -29,6 +29,8 @@ INSTALLED_APPS = [
     'landing',
     'users',
     'studata',
+    'dataexploration',
+    'assesments',
     # Allauth
     'allauth',
     'allauth.account',

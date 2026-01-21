@@ -8,7 +8,25 @@
     <title>{% block title %}DS Data{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script src="{% static 'js/tailwind_config.js' %}"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ["Inter", "sans-serif"],
+                    },
+                },
+            },
+        };
+    </script>
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+
+    <!-- Alpine.js with Collapse plugin -->
+    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
     {% block extra_head %}{% endblock %}
 </head>
 
@@ -22,6 +40,28 @@
                     <div class="flex-shrink-0 flex items-center">
                         <a href="/" class="text-xl font-bold text-blue-600">Data System</a>
                     </div>
+                    {% if user.is_authenticated %}
+                    <div class="hidden sm:ml-8 sm:flex sm:space-x-6">
+                        <a href="/"
+                            class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-600 hover:text-slate-900 hover:border-blue-500 border-b-2 border-transparent transition">
+                            Home
+                        </a>
+                        <a href="{% url 'dataexploration:student_tests_list' %}"
+                            class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-600 hover:text-slate-900 hover:border-blue-500 border-b-2 border-transparent transition">
+                            Student Tests
+                        </a>
+                        {% if user.is_staff %}
+                        <a href="{% url 'users:user_list' %}"
+                            class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-600 hover:text-slate-900 hover:border-blue-500 border-b-2 border-transparent transition">
+                            Users
+                        </a>
+                        <a href="/admin/"
+                            class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-600 hover:text-slate-900 hover:border-blue-500 border-b-2 border-transparent transition">
+                            Admin
+                        </a>
+                        {% endif %}
+                    </div>
+                    {% endif %}
                 </div>
                 <div class="flex items-center">
                     {% if user.is_authenticated %}
@@ -29,7 +69,6 @@
                     {% if user.avatar %}
                     <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full mr-4">
                     {% endif %}
-                    <!-- We can create a logout form/link here later, but sticking to basic for now -->
                     <form method="post" action="{% url 'account_logout' %}">
                         {% csrf_token %}
                         <button type="submit"

@@ -1,0 +1,120 @@
+from django.shortcuts import render, get_object_or_404
+from django.views.generic import ListView, DetailView
+from django.db.models import Q, Count
+from django.contrib.auth.mixins import LoginRequiredMixin
+from .models import StudentWithTests
+
+
+class StudentWithTestsListView(LoginRequiredMixin, ListView):
+    """
+    List view for StudentWithTests with filtering and search capabilities.
+    """
+    model = StudentWithTests
+    template_name = 'dataexploration/student_with_tests_list.html'
+    context_object_name = 'students'
+    paginate_by = 50
+
+    def get_queryset(self):
+        queryset = StudentWithTests.objects.all()
+        
+        # Search functionality
+        search_query = self.request.GET.get('search', '')
+        if search_query:
+            queryset = queryset.filter(
+                Q(ssid__icontains=search_query) |
+                Q(student_id__icontains=search_query) |
+                Q(first_name__icontains=search_query) |
+                Q(last_name__icontains=search_query)
+            )
+        
+        # Filter by school year
+        school_year = self.request.GET.get('school_year', '')
+        if school_year:
+            queryset = queryset.filter(school_year=school_year)
+        
+        # Filter by school
+        school = self.request.GET.get('school', '')
+        if school:
+            queryset = queryset.filter(school__icontains=school)
+        
+        # Filter by test name
+        test_name = self.request.GET.get('test_name', '')
+        if test_name:
+            queryset = queryset.filter(test_name__icontains=test_name)
+        
+        # Filter by subject
+        subject = self.request.GET.get('subject', '')
+        if subject:
+            queryset = queryset.filter(subject__icontains=subject)
+        
+        # Filter by grade
+        grade = self.request.GET.get('grade', '')
+        if grade:
+            queryset = queryset.filter(grade=grade)
+        
+        # Filter by performance level
+        pl = self.request.GET.get('pl', '')
+        if pl:
+            queryset = queryset.filter(pl=pl)
+        
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        
+        # Get unique values for filter dropdowns
+        context['school_years'] = StudentWithTests.objects.values_list(
+            'school_year', flat=True).distinct().order_by('-school_year')
+        context['test_names'] = StudentWithTests.objects.values_list(
+            'test_name', flat=True).distinct().order_by('test_name')
+        context['subjects'] = StudentWithTests.objects.values_list(
+            'subject', flat=True).distinct().order_by('subject')
+        context['grades'] = StudentWithTests.objects.values_list(
+            'grade', flat=True).distinct().order_by('grade')
+        context['performance_levels'] = StudentWithTests.objects.values_list(
+            'pl', flat=True).distinct().order_by('pl')
+        
+        # Preserve filter values
+        context['search_query'] = self.request.GET.get('search', '')
+        context['selected_school_year'] = self.request.GET.get('school_year', '')
+        context['selected_school'] = self.request.GET.get('school', '')
+        context['selected_test_name'] = self.request.GET.get('test_name', '')
+        context['selected_subject'] = self.request.GET.get('subject', '')
+        context['selected_grade'] = self.request.GET.get('grade', '')
+        context['selected_pl'] = self.request.GET.get('pl', '')
+        
+        return context
+
+
+class StudentWithTestsDetailView(LoginRequiredMixin, DetailView):
+    """
+    Detail view for an individual student's test record.
+    """
+    model = StudentWithTests
+    template_name = 'dataexploration/student_with_tests_detail.html'
+    context_object_name = 'student_test'
+
+
+class StudentTestSummaryView(LoginRequiredMixin, ListView):
+    """
+    Summary view showing all tests for a specific student (by SSID).
+    """
+    model = StudentWithTests
+    template_name = 'dataexploration/student_test_summary.html'
+    context_object_name = 'test_records'
+    
+    def get_queryset(self):
+        ssid = self.kwargs.get('ssid')
+        return StudentWithTests.objects.filter(ssid=ssid).order_by('-school_year', 'test_name')
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        ssid = self.kwargs.get('ssid')
+        
+        # Get the first record to get student info
+        first_record = self.get_queryset().first()
+        if first_record:
+            context['student_info'] = first_record
+            context['ssid'] = ssid
+        
+        return context
