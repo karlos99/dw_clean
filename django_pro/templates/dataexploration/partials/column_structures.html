@@ -19,7 +19,7 @@
             </button>
 
             <div data-category="tests_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
-                {% for assessment_name, windows in assessments.items %}
+                {% for assessment_name, assessment_data in assessments.items %}
                 <div class="pl-2 border-l border-slate-200">
                     <button data-toggle-category="assess_{{ year|slugify }}_{{ assessment_name|slugify }}"
                         class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left">
@@ -30,7 +30,7 @@
 
                     <div data-category="assess_{{ year|slugify }}_{{ assessment_name|slugify }}"
                         class="ml-3 mt-1 space-y-2 hidden">
-                        {% for window_name, testings in windows.items %}
+                        {% for window_name, testings in assessment_data.windows.items %}
                         <div class="pl-2 border-l border-slate-100">
                             {% if window_name %}
                             <div class="text-[11px] font-semibold text-slate-600 mb-1">Test Window: {{ window_name }}
@@ -56,6 +56,39 @@
                                             class="rounded border-slate-300 text-blue-600 focus:ring-blue-600 w-3 h-3">
                                         <span class="text-xs text-slate-600">PL</span>
                                     </label>
+                                    {% endif %}
+
+                                    {% if assessment_data.additional_info %}
+                                    {% for add_window_name, add_testings in assessment_data.additional_info.items %}
+                                    {% if add_window_name == window_name %}
+                                    {% with items=add_testings|get_item:testing_name %}
+                                    {% if items != testing_name %}
+                                    <div class="mt-1 pt-1 border-t border-slate-100">
+                                        <button type="button"
+                                            data-toggle-category="addinfo_{{ year|slugify }}_{{ assessment_name|slugify }}_{{ window_name|slugify|default:'no_window' }}_{{ testing_name|slugify }}"
+                                            class="w-full flex items-center justify-between p-0.5 hover:bg-slate-50 rounded text-left">
+                                            <span class="text-[11px] font-semibold text-slate-600">Additional Info
+                                                ({{items|length}})</span>
+                                            <span class="text-xs" data-caret="closed">▶</span>
+                                            <span class="text-xs hidden" data-caret="open">▼</span>
+                                        </button>
+
+                                        <div data-category="addinfo_{{ year|slugify }}_{{ assessment_name|slugify }}_{{ window_name|slugify|default:'no_window' }}_{{ testing_name|slugify }}"
+                                            class="ml-3 mt-1 space-y-1 hidden">
+                                            {% for item in items %}
+                                            <label
+                                                class="flex items-center p-0.5 hover:bg-slate-50 rounded cursor-pointer gap-2">
+                                                <input type="checkbox" data-column="{{ item.key }}"
+                                                    class="rounded border-slate-300 text-blue-600 focus:ring-blue-600 w-3 h-3">
+                                                <span class="text-xs text-slate-600">{{ item.label }}</span>
+                                            </label>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                    {% endwith %}
+                                    {% endif %}
+                                    {% endfor %}
                                     {% endif %}
                                 </div>
                             </div>

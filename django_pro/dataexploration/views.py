@@ -11,6 +11,7 @@ from django.core.cache import cache
 import json
 from decimal import Decimal
 from datetime import date, datetime
+import hashlib
 
 from .models import StudentWithTests, DefaultColumnSelection
 from studata.models import CurrentStudent
@@ -188,23 +189,28 @@ def load_students(request):
                 if test_info.get('test_window'):
                     window_clause = "AND t.test_window ILIKE %s "
                     window_params = [test_info['test_window']]
-                where_clauses.append(
-                    f"EXISTS ("
-                    f"SELECT 1 FROM results r "
-                    f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    f"WHERE r.local_student_id = cs.student_id "
-                    f"AND r.school_year = %s "
-                    f"AND t.test_name ILIKE %s "
-                    f"AND t.subject ILIKE %s "
+                clause = (
+                    "EXISTS ("
+                    "SELECT 1 FROM results r "
+                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    "WHERE r.local_student_id = cs.student_id "
+                    "AND r.school_year = %s "
+                    "AND t.test_name ILIKE %s "
+                    "AND t.subject ILIKE %s "
                     f"{window_clause}"
-                    f"AND r.{metric_col} = ANY(%s)"
-                    f")"
                 )
+                if metric_col in {'ss', 'pl'}:
+                    clause += f"AND r.{metric_col} = ANY(%s)"
+                else:
+                    clause += "AND (r.other_info ->> %s) = ANY(%s)"
+                clause += ")"
+                where_clauses.append(clause)
                 params.extend([
                     test_info['year'],
                     f"%{test_info['test_name']}%",
                     f"%{test_info['subject']}%",
                     *window_params,
+                    *( [test_info['other_info_key']] if metric_col == 'oi' else [] ),
                     values,
                 ])
                 continue
@@ -311,6 +317,74 @@ def load_students(request):
                     }
                     infos.append(info)
                     # Map both exact and normalized keys for lookups
+                    col_map[original_key] = info
+                    col_map[original_key.replace('-', '_')] = info
+
+            # Add mapping for other_info-backed columns (test_*_OI_*)
+            want_other = any('_OI_' in k for k in normalized_to_original.keys())
+            if want_other:
+                if has_test_window:
+                    cursor.execute(
+                        """
+                        SELECT DISTINCT r.school_year, t.test_name, t.subject, COALESCE(t.test_window, ''), k.key
+                        FROM results r
+                        INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                        CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)
+                        WHERE r.school_year = ANY(%s)
+                          AND r.school_year IS NOT NULL
+                          AND t.test_name IS NOT NULL
+                          AND r.other_info IS NOT NULL
+                        """,
+                        [years],
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT DISTINCT r.school_year, t.test_name, t.subject, '', k.key
+                        FROM results r
+                        INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                        CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)
+                        WHERE r.school_year = ANY(%s)
+                          AND r.school_year IS NOT NULL
+                          AND t.test_name IS NOT NULL
+                          AND r.other_info IS NOT NULL
+                        """,
+                        [years],
+                    )
+
+                for (yr, test_name, subject, test_window, raw_key) in cursor.fetchall():
+                    if not raw_key:
+                        continue
+                    yr_norm = _norm_part(yr)
+                    tn_norm = _norm_part(test_name)
+                    sub_norm = _norm_part(subject)
+                    win_norm = _norm_part(test_window).strip('_')
+
+                    if win_norm:
+                        key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}"
+                        win_value = (test_window or '').strip() or None
+                    else:
+                        key_base = f"{yr_norm}_{tn_norm}_{sub_norm}"
+                        win_value = None
+
+                    raw_key_str = str(raw_key)
+                    oi_norm = _norm_part(raw_key_str)
+                    oi_hash = hashlib.md5(raw_key_str.encode('utf-8')).hexdigest()[:6]
+                    other_norm = f"test_{key_base}_OI_{oi_norm}_{oi_hash}"
+
+                    original_key = normalized_to_original.get(other_norm)
+                    if not original_key:
+                        continue
+                    info = {
+                        'col_name': original_key,
+                        'year': yr,
+                        'test_name': (test_name or ''),
+                        'subject': (subject or ''),
+                        'test_window': win_value,
+                        'metric': 'oi',
+                        'other_info_key': raw_key_str,
+                    }
+                    infos.append(info)
                     col_map[original_key] = info
                     col_map[original_key.replace('-', '_')] = info
 
@@ -439,8 +513,15 @@ def load_students(request):
                     window_clause = "AND t.test_window ILIKE %s"
                     window_params = [test_info['test_window']]
                 
+                if metric_col in {'ss', 'pl'}:
+                    select_expr = f"r.{metric_col}"
+                    extra_params = []
+                else:
+                    select_expr = "(r.other_info ->> %s)"
+                    extra_params = [test_info.get('other_info_key', '')]
+
                 query = f"""
-                    SELECT r.local_student_id, r.{metric_col}
+                    SELECT r.local_student_id, {select_expr}
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
                     WHERE r.local_student_id = ANY(%s)
@@ -450,6 +531,7 @@ def load_students(request):
                       {window_clause}
                 """
                 cursor.execute(query, [
+                    *extra_params,
                     student_ids,
                     test_info['year'],
                     f"%{test_info['test_name']}%",
@@ -512,9 +594,9 @@ def load_students(request):
                 if values:
                     filter_options[col] = values
 
-            # Add filter options for test PL columns
+            # Add filter options for test PL columns and other_info columns
             for test_info in test_cols_info:
-                if test_info['metric'] != 'pl':
+                if test_info['metric'] not in {'pl', 'oi'}:
                     continue
                 col_key = test_info['col_name']
                 option_where = list(base_where_clauses)
@@ -530,8 +612,10 @@ def load_students(request):
                 if test_info.get('test_window'):
                     window_clause = "AND t.test_window ILIKE %s"
                     window_params = [test_info['test_window']]
-                options_query = f"""
-                    SELECT r.pl
+
+                if test_info['metric'] == 'pl':
+                    options_query = f"""
+                    SELECT r.pl AS v
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
                     INNER JOIN current_student cs ON r.local_student_id = cs.student_id
@@ -540,18 +624,45 @@ def load_students(request):
                       AND r.school_year = %s
                       AND t.test_name ILIKE %s
                       AND t.subject ILIKE %s
-                                            {window_clause}
+                      {window_clause}
                       AND r.pl IS NOT NULL
-                    GROUP BY r.pl
-                                        ORDER BY r.pl ASC
+                    GROUP BY v
+                    ORDER BY v ASC
                     LIMIT 30
                 """
-                cursor.execute(options_query, option_params + [
-                    test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
-                                        *window_params,
-                ])
+                    cursor.execute(options_query, option_params + [
+                        test_info['year'],
+                        f"%{test_info['test_name']}%",
+                        f"%{test_info['subject']}%",
+                        *window_params,
+                    ])
+                else:
+                    options_query = f"""
+                    SELECT (r.other_info ->> %s) AS v
+                    FROM results r
+                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                    INNER JOIN current_student cs ON r.local_student_id = cs.student_id
+                    {join_sql}
+                    WHERE {option_where_sql}
+                      AND r.school_year = %s
+                      AND t.test_name ILIKE %s
+                      AND t.subject ILIKE %s
+                      {window_clause}
+                      AND (r.other_info ->> %s) IS NOT NULL
+                    GROUP BY v
+                    ORDER BY v ASC
+                    LIMIT 30
+                    """
+                    other_key = test_info.get('other_info_key', '')
+                    cursor.execute(options_query, [
+                        other_key,
+                        *option_params,
+                        test_info['year'],
+                        f"%{test_info['test_name']}%",
+                        f"%{test_info['subject']}%",
+                        *window_params,
+                        other_key,
+                    ])
                 values = [row[0] for row in cursor.fetchall()]
                 if values:
                     filter_options[col_key] = values
