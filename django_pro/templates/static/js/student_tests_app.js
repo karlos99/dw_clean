@@ -39,7 +39,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const selectedCountEl = document.getElementById('selected-count');
     const selectedCountToolbarEl = document.getElementById('selected-count-toolbar');
-    const selectedListEl = document.getElementById('selected-columns-list');
     const sidebarEl = document.getElementById('column-selector');
 
     const syncCheckboxes = () => {
@@ -51,29 +50,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderSelectedColumns = () => {
         if (selectedCountEl) selectedCountEl.textContent = selectedColumns.length;
         if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = `${selectedColumns.length} selected`;
-
-        if (!selectedListEl) return;
-        selectedListEl.innerHTML = '';
-
-        selectedColumns.forEach((col) => {
-            const row = document.createElement('div');
-            row.className = 'flex items-center justify-between p-2 bg-blue-50 rounded text-sm';
-
-            const label = document.createElement('span');
-            label.className = 'text-slate-700 text-xs';
-            label.textContent = columnDefinitions[col] || col;
-
-            const removeBtn = document.createElement('button');
-            removeBtn.className = 'text-slate-400 hover:text-red-600 text-xs';
-            removeBtn.setAttribute('data-action', 'remove-column');
-            removeBtn.setAttribute('data-column', col);
-            removeBtn.textContent = '✕';
-
-            row.appendChild(label);
-            row.appendChild(removeBtn);
-            selectedListEl.appendChild(row);
-        });
-
         syncCheckboxes();
     };
 
@@ -213,6 +189,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 html += `</div>`;
                 html += `</div>`;
             }
+
+            // Remove column action (X)
+            html += `<button draggable="false" type="button" data-action="remove-column" data-column="${escapeHtml(col)}" class="ml-auto text-slate-400 hover:text-red-600" title="Remove column">✕</button>`;
             html += `</div>`;
 
             // Resize handle
@@ -293,6 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const updateColumnSelection = (col) => {
         if (selectedColumns.includes(col)) {
+            if (selectedColumns.length <= 1) return;
             selectedColumns = selectedColumns.filter((c) => c !== col);
             if (filters[col]) {
                 delete filters[col];
