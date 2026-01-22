@@ -16,6 +16,8 @@ COLUMN_DEFINITIONS = {
     "race": "Race/Ethnicity",
     "ell": "ELL Status",
     "status": "Status",
+    "birth_date": "Birth Date",
+    "us_enter_date": "US Enter Date",
     
     # Programs & Services
     "sped": "Special Education",
@@ -26,6 +28,8 @@ COLUMN_DEFINITIONS = {
     "homeless": "Homeless",
     "dli": "DLI",
     "ltel": "LTEL",
+    "fep_date": "FEP Date",
+    "migrant": "Migrant",
     "atendace_rate": "Attendance Rate",
     "suspension_indicator": "Suspension",
 }
@@ -40,9 +44,13 @@ COLUMN_CATEGORIES = {
         "title": "Demographics",
         "columns": ["gender", "race", "ell", "status"]
     },
+    "dates": {
+        "title": "Dates",
+        "columns": ["birth_date", "us_enter_date", "fep_date"]
+    },
     "programs": {
         "title": "Programs & Services",
-        "columns": ["sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel"]
+        "columns": ["sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant"]
     },
     "performance": {
         "title": "Performance & Behavior",

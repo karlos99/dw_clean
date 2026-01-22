@@ -111,6 +111,31 @@ document.addEventListener('DOMContentLoaded', () => {
         return String(value).replace(/[^a-zA-Z0-9_\-]/g, '_');
     };
 
+    const DATE_COLUMNS = new Set(['birth_date', 'us_enter_date', 'fep_date']);
+    const isDateLikeString = (value) => {
+        if (typeof value !== 'string') return false;
+        return /^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(value);
+    };
+    const formatDateForDisplay = (value) => {
+        if (!isDateLikeString(value)) return value;
+        const datePart = value.slice(0, 10);
+        const d = new Date(`${datePart}T00:00:00`);
+        if (Number.isNaN(d.getTime())) return datePart;
+        try {
+            return new Intl.DateTimeFormat('en-US').format(d);
+        } catch (e) {
+            return datePart;
+        }
+    };
+    const formatValueForColumn = (col, value) => {
+        if (value === null || value === undefined) return '—';
+        if (DATE_COLUMNS.has(col)) {
+            const s = String(value);
+            return formatDateForDisplay(s);
+        }
+        return value;
+    };
+
     const renderTable = (payload) => {
         const targetEl = document.querySelector('#student-table');
         if (!targetEl) return;
@@ -173,9 +198,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     optionsForCol.forEach((value) => {
                         const checked = filters[col]?.includes(value) ? 'checked' : '';
+                        const labelValue = DATE_COLUMNS.has(col) ? formatDateForDisplay(String(value)) : String(value);
                         html += `<label class="flex items-center gap-2 text-xs text-slate-700">`;
                         html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
-                        html += `<span>${escapeHtml(value)}</span>`;
+                        html += `<span>${escapeHtml(labelValue)}</span>`;
                         html += `</label>`;
                     });
                 }
@@ -201,7 +227,7 @@ document.addEventListener('DOMContentLoaded', () => {
             students.forEach((student) => {
                 html += '<tr class="hover:bg-slate-50">';
                 columns.forEach((col) => {
-                    const value = student[col] ?? '—';
+                    const value = formatValueForColumn(col, student[col]);
                     html += `<td class="px-4 py-2 text-sm text-slate-900 border-r whitespace-nowrap">${escapeHtml(value)}</td>`;
                 });
                 html += '</tr>';

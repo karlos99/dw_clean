@@ -72,6 +72,25 @@
                     </div>
                 </div>
 
+                <!-- Dates Category -->
+                <div class="border-b border-slate-100 pb-2">
+                    <button data-toggle-category="dates"
+                        class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
+                        <span class="font-medium text-slate-700">Dates</span>
+                        <span data-caret="closed">▶</span>
+                        <span data-caret="open" class="hidden">▼</span>
+                    </button>
+                    <div data-category="dates" class="ml-4 mt-1 space-y-1 hidden">
+                        {% for col in column_categories.dates.columns %}
+                        <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                            <input type="checkbox" data-column="{{ col }}"
+                                class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
                 <!-- Programs Category -->
                 <div class="border-b border-slate-100 pb-2">
                     <button data-toggle-category="programs"
@@ -141,6 +160,7 @@
                     <h1 class="text-xl font-bold text-slate-900">Student Test Data</h1>
                     {% if user.is_staff or user.role and user.role.name == 'Project Admin' or user.role and user.role.name == 'District Admin' %}
                     
+
 
 
 

@@ -10,6 +10,7 @@ from django.db import connections
 from django.core.cache import cache
 import json
 from decimal import Decimal
+from datetime import date, datetime
 
 from .models import StudentWithTests, DefaultColumnSelection
 from studata.models import CurrentStudent
@@ -65,6 +66,16 @@ def _get_column_expression(col, db_columns, enroll_columns=None, use_enroll=Fals
         return None, None
     if col == 'atendace_rate' and 'attendance_rate' in db_columns:
         return "cs.attendance_rate", 'atendace_rate'
+    if col in {'birth_date', 'us_enter_date', 'fep_date'}:
+        if col in db_columns:
+            return f"CAST(cs.{col} AS date)", col
+        if use_enroll and enroll_columns and col in enroll_columns:
+            return f"CAST(se.{col} AS date)", col
+    if col == 'migrant':
+        if col in db_columns:
+            return f"cs.{col}", col
+        if use_enroll and enroll_columns and col in enroll_columns:
+            return f"se.{col}", col
     if col in db_columns:
         return f"cs.{col}", col
     return None, None
@@ -159,7 +170,7 @@ def load_students(request):
         except:
             filters = {}
     
-    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_ell):
+    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll):
         """Append SQL filter clauses + params for the provided filters dict."""
         if not isinstance(filters_to_apply, dict):
             return
@@ -168,10 +179,15 @@ def load_students(request):
             if not values:
                 continue
             if col.startswith('test_'):
-                test_info = test_col_map.get(col)
+                test_info = test_col_map.get(col) or test_col_map.get(col.replace('-', '_'))
                 if not test_info:
                     continue
                 metric_col = test_info['metric']
+                window_clause = ""
+                window_params = []
+                if test_info.get('test_window'):
+                    window_clause = "AND t.test_window ILIKE %s "
+                    window_params = [test_info['test_window']]
                 where_clauses.append(
                     f"EXISTS ("
                     f"SELECT 1 FROM results r "
@@ -180,6 +196,7 @@ def load_students(request):
                     f"AND r.school_year = %s "
                     f"AND t.test_name ILIKE %s "
                     f"AND t.subject ILIKE %s "
+                    f"{window_clause}"
                     f"AND r.{metric_col} = ANY(%s)"
                     f")"
                 )
@@ -187,11 +204,12 @@ def load_students(request):
                     test_info['year'],
                     f"%{test_info['test_name']}%",
                     f"%{test_info['subject']}%",
+                    *window_params,
                     values,
                 ])
                 continue
 
-            expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_ell)
+            expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
             if expr:
                 where_clauses.append(f"{expr} = ANY(%s)")
                 params.append(values)
@@ -201,6 +219,102 @@ def load_students(request):
         enroll_columns = _get_student_enroll_columns()
         base_where_clauses = ["1=1"]
         base_params = []
+
+        def _parse_year_from_test_col(col_key):
+            """Extract school_year from a test_* column key (robust for YYYY_YYYY)."""
+            s = (col_key or '').replace('-', '_')
+            if not s.startswith('test_'):
+                return None
+            tail = s[len('test_'):]
+            # Expect YYYY_YYYY_... at the start
+            if len(tail) >= 10 and tail[4] == '_' and tail[9] == '_':
+                return tail[:9].replace('_', '-')
+            # Fallback: first token
+            parts = tail.split('_', 1)
+            if parts:
+                return parts[0].replace('_', '-')
+            return None
+
+        def _build_test_columns_from_db(selected_test_cols):
+            """Map selected test_* columns to DB metadata using the tests/results tables.
+
+            This avoids brittle parsing when test_name/subject/test_window contain underscores.
+            """
+            if not selected_test_cols:
+                return [], {}
+
+            normalized_to_original = {c.replace('-', '_'): c for c in selected_test_cols}
+            years = sorted({y for y in (_parse_year_from_test_col(c) for c in selected_test_cols) if y})
+            if not years:
+                return [], {}
+
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = 'tests' AND column_name = 'test_window'"
+            )
+            has_test_window = cursor.fetchone() is not None
+
+            if has_test_window:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT r.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
+                    FROM results r
+                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                    WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+                    """,
+                    [years],
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT r.school_year, t.test_name, t.subject, ''
+                    FROM results r
+                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                    WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+                    """,
+                    [years],
+                )
+
+            infos = []
+            col_map = {}
+
+            def _norm_part(v):
+                return (v or '').replace(' ', '_').replace('-', '_')
+
+            for (yr, test_name, subject, test_window) in cursor.fetchall():
+                yr_norm = _norm_part(yr)
+                tn_norm = _norm_part(test_name)
+                sub_norm = _norm_part(subject)
+                win_norm = _norm_part(test_window).strip('_')
+
+                if win_norm:
+                    key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}"
+                    win_value = (test_window or '').strip() or None
+                else:
+                    key_base = f"{yr_norm}_{tn_norm}_{sub_norm}"
+                    win_value = None
+
+                ss_norm = f"test_{key_base}_SS"
+                pl_norm = f"test_{key_base}_PL"
+
+                for norm_key, metric in ((ss_norm, 'ss'), (pl_norm, 'pl')):
+                    original_key = normalized_to_original.get(norm_key)
+                    if not original_key:
+                        continue
+                    info = {
+                        'col_name': original_key,
+                        'year': yr,
+                        # Keep raw DB values so ILIKE matches tests like "Initial_ELPAC".
+                        'test_name': (test_name or ''),
+                        'subject': (subject or ''),
+                        'test_window': win_value,
+                        'metric': metric,
+                    }
+                    infos.append(info)
+                    # Map both exact and normalized keys for lookups
+                    col_map[original_key] = info
+                    col_map[original_key.replace('-', '_')] = info
+
+            return infos, col_map
         
         # Apply filters
         if search:
@@ -220,65 +334,29 @@ def load_students(request):
             base_where_clauses.append("cs.status = %s")
             base_params.append(status)
 
-        # Parse column requests - separate base columns from test columns
-        base_cols = []
-        test_cols_info = []
-        test_col_map = {}
+        # Separate base columns from test columns
+        selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
+        base_cols = [c for c in selected_columns if isinstance(c, str) and (not c.startswith('test_')) and c in COLUMN_DEFINITIONS]
 
-        for col in selected_columns:
-            if col.startswith('test_'):
-                # Parse test column: test_YEAR_TESTNAME_SUBJECT_METRIC
-                col_normalized = col.replace('-', '_')
-                parts = col_normalized.replace('test_', '').rsplit('_', 1)
-                if len(parts) == 2:
-                    test_part, metric = parts
-                    # Split year from test name and subject
-                    year_normalized = None
-                    remainder_str = None
-                    if len(test_part) >= 10 and test_part[4] == '_' and test_part[9] == '_':
-                        # YYYY_YYYY_...
-                        year_normalized = test_part[:9]
-                        remainder_str = test_part[10:]
-                    else:
-                        test_parts = test_part.split('_', 1)
-                        if len(test_parts) >= 2:
-                            year_normalized = test_parts[0]
-                            remainder_str = test_parts[1]
-
-                    if year_normalized and remainder_str:
-                        year = year_normalized.replace('_', '-')
-                        remainder = remainder_str.rsplit('_', 1)
-                        if len(remainder) == 2:
-                            test_name = remainder[0].replace('_', ' ')
-                            subject = remainder[1].replace('_', ' ')
-                            metric_col = 'ss' if metric == 'SS' else 'pl'
-                            info = {
-                                'col_name': col_normalized,
-                                'year': year,
-                                'test_name': test_name,
-                                'subject': subject,
-                                'metric': metric_col
-                            }
-                            test_cols_info.append(info)
-                            test_col_map[col_normalized] = info
-            elif col in COLUMN_DEFINITIONS:
-                base_cols.append(col)
+        # Build test column metadata from DB to avoid parsing issues (e.g. multi-word subjects)
+        test_cols_info, test_col_map = _build_test_columns_from_db(selected_test_cols)
 
         # Determine if we need student_enroll join
-        needs_ell = (
-            'ell' in selected_columns or
-            (isinstance(filters, dict) and 'ell' in filters) or
-            sort_by == 'ell'
+        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+        needs_enroll = (
+            any(c in enroll_fields for c in selected_columns)
+            or (isinstance(filters, dict) and any(k in enroll_fields for k in filters.keys()))
+            or sort_by in enroll_fields
         )
 
         join_sql = ""
-        if needs_ell and 'ell_status' in enroll_columns:
+        if needs_enroll:
             join_sql = "LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
 
         # Column filters (applied to the main query)
         where_clauses = list(base_where_clauses)
         params = list(base_params)
-        _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_ell)
+        _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_enroll)
 
         where_sql = " AND ".join(where_clauses)
         
@@ -309,7 +387,7 @@ def load_students(request):
         base_col_selects = []
         base_col_expressions = {}
         for col in base_cols:
-            expr, alias = _get_column_expression(col, db_columns, enroll_columns, needs_ell)
+            expr, alias = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
             if expr and alias:
                 base_col_expressions[col] = expr
                 if expr != f"cs.{alias}":
@@ -354,6 +432,12 @@ def load_students(request):
                 metric_col = test_info['metric']
                 test_name_db = test_info['test_name'].replace(' ', '_')
                 subject_db = test_info['subject'].replace(' ', '_')
+
+                window_clause = ""
+                window_params = []
+                if test_info.get('test_window'):
+                    window_clause = "AND t.test_window ILIKE %s"
+                    window_params = [test_info['test_window']]
                 
                 query = f"""
                     SELECT r.local_student_id, r.{metric_col}
@@ -363,10 +447,15 @@ def load_students(request):
                       AND r.school_year = %s
                       AND t.test_name ILIKE %s
                       AND t.subject ILIKE %s
+                      {window_clause}
                 """
-                cursor.execute(query, [student_ids, test_info['year'], 
-                                     f"%{test_info['test_name']}%", 
-                                     f"%{test_info['subject']}%"])
+                cursor.execute(query, [
+                    student_ids,
+                    test_info['year'],
+                    f"%{test_info['test_name']}%",
+                    f"%{test_info['subject']}%",
+                    *window_params,
+                ])
                 
                 test_data = {row[0]: row[1] for row in cursor.fetchall()}
                 
@@ -380,6 +469,8 @@ def load_students(request):
             for key, value in list(student.items()):
                 if isinstance(value, Decimal):
                     student[key] = float(value)
+                elif isinstance(value, (datetime, date)):
+                    student[key] = value.isoformat()
 
         # Build filter options for repeatable columns
         filter_options = {}
@@ -399,7 +490,7 @@ def load_students(request):
                     other_filters = {k: v for k, v in filters.items() if k != col}
                 else:
                     other_filters = filters
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_ell)
+                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll)
                 option_where_sql = " AND ".join(option_where)
 
                 distinct_query = f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {join_sql} WHERE {option_where_sql}"
@@ -432,8 +523,13 @@ def load_students(request):
                     other_filters = {k: v for k, v in filters.items() if k != col_key}
                 else:
                     other_filters = filters
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_ell)
+                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll)
                 option_where_sql = " AND ".join(option_where)
+                window_clause = ""
+                window_params = []
+                if test_info.get('test_window'):
+                    window_clause = "AND t.test_window ILIKE %s"
+                    window_params = [test_info['test_window']]
                 options_query = f"""
                     SELECT r.pl
                     FROM results r
@@ -444,6 +540,7 @@ def load_students(request):
                       AND r.school_year = %s
                       AND t.test_name ILIKE %s
                       AND t.subject ILIKE %s
+                                            {window_clause}
                       AND r.pl IS NOT NULL
                     GROUP BY r.pl
                                         ORDER BY r.pl ASC
@@ -453,6 +550,7 @@ def load_students(request):
                     test_info['year'],
                     f"%{test_info['test_name']}%",
                     f"%{test_info['subject']}%",
+                                        *window_params,
                 ])
                 values = [row[0] for row in cursor.fetchall()]
                 if values:
@@ -463,7 +561,15 @@ def load_students(request):
     # Ensure JSON serialization safety for filter options (e.g. Decimal values)
     for col, opts in list(filter_options.items()):
         if isinstance(opts, list):
-            filter_options[col] = [float(v) if isinstance(v, Decimal) else v for v in opts]
+            normalized = []
+            for v in opts:
+                if isinstance(v, Decimal):
+                    normalized.append(float(v))
+                elif isinstance(v, (datetime, date)):
+                    normalized.append(v.isoformat())
+                else:
+                    normalized.append(v)
+            filter_options[col] = normalized
 
     # filter_options is built inside the DB cursor context
 
