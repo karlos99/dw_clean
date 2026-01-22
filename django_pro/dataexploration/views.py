@@ -1,15 +1,16 @@
 """Views for data exploration app."""
 
-from django.shortcuts import render
-from django.http import JsonResponse
+from django.shortcuts import render, redirect
+from django.http import JsonResponse, HttpResponseForbidden
 from django.views.generic import ListView, DetailView
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.decorators import login_required
 from django.db.models import Q
 from django.db import connections
 from django.core.cache import cache
 import json
 
-from .models import StudentWithTests
+from .models import StudentWithTests, DefaultColumnSelection
 from studata.models import CurrentStudent
 from .column_utils import get_test_columns
 from .constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
@@ -27,6 +28,54 @@ def _get_current_student_columns():
             columns = [row[0] for row in cursor.fetchall()]
             cache.set(columns_key, columns, 3600)
     return set(columns)
+
+
+def _get_student_enroll_columns():
+    """Fetch student_enroll columns from the DB (cached)."""
+    columns_key = "dataexp:student_enroll_columns"
+    columns = cache.get(columns_key)
+    if not columns:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'student_enroll'"
+            )
+            columns = [row[0] for row in cursor.fetchall()]
+            cache.set(columns_key, columns, 3600)
+    return set(columns)
+
+
+def _get_saved_default_columns():
+    selection = DefaultColumnSelection.objects.order_by('-updated_at', '-id').first()
+    if selection and selection.columns:
+        return selection.columns
+    return DEFAULT_COLUMNS
+
+
+def _get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False):
+    if col == 'ell':
+        ell_candidates = []
+        if 'ell' in db_columns:
+            ell_candidates.append('cs.ell')
+        if use_enroll and enroll_columns:
+            if 'ell_status' in enroll_columns:
+                ell_candidates.append('se.ell_status')
+        if ell_candidates:
+            return f"COALESCE({', '.join(ell_candidates)})", 'ell'
+        return None, None
+    if col == 'atendace_rate' and 'attendance_rate' in db_columns:
+        return "cs.attendance_rate", 'atendace_rate'
+    if col in db_columns:
+        return f"cs.{col}", col
+    return None, None
+
+
+def _user_can_manage_defaults(user):
+    if not user.is_authenticated:
+        return False
+    if user.is_staff:
+        return True
+    role_name = getattr(getattr(user, 'role', None), 'name', None)
+    return role_name in {'Project Admin', 'District Admin'}
 
 
 class StudentWithTestsListView(LoginRequiredMixin, ListView):
@@ -65,14 +114,16 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['test_structure'] = test_structure
         context['column_categories'] = COLUMN_CATEGORIES
         context['column_definitions'] = COLUMN_DEFINITIONS
-        context['default_columns'] = DEFAULT_COLUMNS
-        context['default_columns_json'] = json.dumps(DEFAULT_COLUMNS)
+        default_columns = _get_saved_default_columns()
+        context['default_columns'] = default_columns
+        context['default_columns_json'] = json.dumps(default_columns)
         context['column_definitions_json'] = json.dumps(COLUMN_DEFINITIONS)
         
         # Current filter values
         context['search_query'] = self.request.GET.get('search', '')
         context['selected_school_year'] = self.request.GET.get('school_year', '')
         context['selected_grade'] = self.request.GET.get('grade', '')
+        context['selected_status'] = self.request.GET.get('status', 'Active')
         
         return context
 
@@ -88,17 +139,28 @@ def load_students(request):
         try:
             selected_columns = json.loads(selected_columns_json)
         except:
-            selected_columns = DEFAULT_COLUMNS
+            selected_columns = _get_saved_default_columns()
     else:
-        selected_columns = DEFAULT_COLUMNS
+        selected_columns = _get_saved_default_columns()
     
     # Get filters
     search = request.GET.get('search', '')
     school_year = request.GET.get('school_year', '')
     grade = request.GET.get('grade', '')
+    status = request.GET.get('status', 'Active')
+    sort_by = request.GET.get('sort_by', '')
+    sort_dir = request.GET.get('sort_dir', 'asc').lower()
+    filters_json = request.GET.get('filters', '')
+    filters = {}
+    if filters_json:
+        try:
+            filters = json.loads(filters_json)
+        except:
+            filters = {}
     
     with connections['default'].cursor() as cursor:
         db_columns = _get_current_student_columns()
+        enroll_columns = _get_student_enroll_columns()
         where_clauses = ["1=1"]
         params = []
         
@@ -115,25 +177,16 @@ def load_students(request):
         if grade:
             where_clauses.append("cs.grade = %s")
             params.append(grade)
-        
-        where_sql = " AND ".join(where_clauses)
-        
-        # Count total
-        count_query = f"""
-            SELECT COUNT(DISTINCT cs.ssid)
-            FROM current_student cs
-            WHERE {where_sql}
-        """
-        cursor.execute(count_query, params)
-        total = cursor.fetchone()[0]
-        
-        # Get paginated results
-        offset = (page - 1) * limit
-        
+
+        if status:
+            where_clauses.append("cs.status = %s")
+            params.append(status)
+
         # Parse column requests - separate base columns from test columns
         base_cols = []
         test_cols_info = []
-        
+        test_col_map = {}
+
         for col in selected_columns:
             if col.startswith('test_'):
                 # Parse test column: test_YEAR_TESTNAME_SUBJECT_METRIC
@@ -142,48 +195,138 @@ def load_students(request):
                 if len(parts) == 2:
                     test_part, metric = parts
                     # Split year from test name and subject
-                    test_parts = test_part.split('_', 1)
-                    if len(test_parts) >= 2:
-                        year_normalized = test_parts[0]
+                    year_normalized = None
+                    remainder_str = None
+                    if len(test_part) >= 10 and test_part[4] == '_' and test_part[9] == '_':
+                        # YYYY_YYYY_...
+                        year_normalized = test_part[:9]
+                        remainder_str = test_part[10:]
+                    else:
+                        test_parts = test_part.split('_', 1)
+                        if len(test_parts) >= 2:
+                            year_normalized = test_parts[0]
+                            remainder_str = test_parts[1]
+
+                    if year_normalized and remainder_str:
                         year = year_normalized.replace('_', '-')
-                        remainder = test_parts[1].rsplit('_', 1)
+                        remainder = remainder_str.rsplit('_', 1)
                         if len(remainder) == 2:
                             test_name = remainder[0].replace('_', ' ')
                             subject = remainder[1].replace('_', ' ')
                             metric_col = 'ss' if metric == 'SS' else 'pl'
-                            test_cols_info.append({
+                            info = {
                                 'col_name': col_normalized,
                                 'year': year,
                                 'test_name': test_name,
                                 'subject': subject,
                                 'metric': metric_col
-                            })
+                            }
+                            test_cols_info.append(info)
+                            test_col_map[col_normalized] = info
             elif col in COLUMN_DEFINITIONS:
                 base_cols.append(col)
+
+        # Determine if we need student_enroll join
+        needs_ell = (
+            'ell' in selected_columns or
+            (isinstance(filters, dict) and 'ell' in filters) or
+            sort_by == 'ell'
+        )
+
+        join_sql = ""
+        if needs_ell and 'ell_status' in enroll_columns:
+            join_sql = "LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+
+        # Column filters
+        if isinstance(filters, dict):
+            for col, values in filters.items():
+                if not values:
+                    continue
+                if col.startswith('test_'):
+                    test_info = test_col_map.get(col)
+                    if not test_info:
+                        continue
+                    metric_col = test_info['metric']
+                    where_clauses.append(
+                        f"EXISTS ("
+                        f"SELECT 1 FROM results r "
+                        f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                        f"WHERE r.local_student_id = cs.student_id "
+                        f"AND r.school_year = %s "
+                        f"AND t.test_name ILIKE %s "
+                        f"AND t.subject ILIKE %s "
+                        f"AND r.{metric_col} = ANY(%s)"
+                        f")"
+                    )
+                    params.extend([
+                        test_info['year'],
+                        f"%{test_info['test_name']}%",
+                        f"%{test_info['subject']}%",
+                        values,
+                    ])
+                    continue
+
+                expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_ell)
+                if expr:
+                    where_clauses.append(f"{expr} = ANY(%s)")
+                    params.append(values)
+        
+        where_sql = " AND ".join(where_clauses)
+        
+        # Count total
+        count_query = f"""
+            SELECT COUNT(DISTINCT cs.ssid)
+            FROM current_student cs
+            {join_sql}
+            WHERE {where_sql}
+        """
+        cursor.execute(count_query, params)
+        total = cursor.fetchone()[0]
+
+        filter_params = list(params)
+        
+        # Get paginated results
+        offset = (page - 1) * limit
         
         # Always include ssid for joining
         if 'ssid' not in base_cols:
             base_cols.insert(0, 'ssid')
 
+        if test_cols_info and 'student_id' not in base_cols:
+            base_cols.insert(0, 'student_id')
+
         # Build base column SELECT with safe mapping
         base_col_selects = []
+        base_col_expressions = {}
         for col in base_cols:
-            if col in db_columns:
-                base_col_selects.append(f"cs.{col}")
-            elif col == 'atendace_rate' and 'attendance_rate' in db_columns:
-                base_col_selects.append("cs.attendance_rate AS atendace_rate")
+            expr, alias = _get_column_expression(col, db_columns, enroll_columns, needs_ell)
+            if expr and alias:
+                base_col_expressions[col] = expr
+                if expr != f"cs.{alias}":
+                    base_col_selects.append(f"{expr} AS {alias}")
+                else:
+                    base_col_selects.append(expr)
 
         if not base_col_selects:
             base_col_selects.append("cs.ssid") if 'ssid' in db_columns else base_col_selects.append("NULL AS ssid")
 
         base_col_sql = ", ".join(base_col_selects)
+
+        # Sorting
+        order_by_expr = "cs.student_name"
+        if sort_by:
+            expr = base_col_expressions.get(sort_by)
+            if expr:
+                order_by_expr = expr
+        sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
         
         # Build query with base columns
         query = f"""
         SELECT {base_col_sql}
         FROM current_student cs
+        {join_sql}
         WHERE {where_sql}
-        ORDER BY cs.student_name
+        ORDER BY {order_by_expr} {sort_dir}
         LIMIT %s OFFSET %s
         """
         
@@ -193,7 +336,7 @@ def load_students(request):
         columns = [desc[0] for desc in cursor.description]
         students = [dict(zip(columns, row)) for row in cursor.fetchall()]
         
-        student_ids = [s['ssid'] for s in students]
+        student_ids = [s.get('student_id') for s in students if s.get('student_id')]
         
         # Fetch test data in bulk for selected test columns
         if test_cols_info and student_ids:
@@ -219,12 +362,74 @@ def load_students(request):
                 
                 # Add test data to each student
                 for student in students:
-                    student[test_info['col_name']] = test_data.get(student['ssid'], '—')
+                    student_id = student.get('student_id')
+                    student[test_info['col_name']] = test_data.get(student_id, '—')
+
+        # Build filter options for repeatable columns
+        filter_options = {}
+        if total > 0:
+            excluded_filters = {'ssid', 'student_id', 'student_name'}
+            always_include = {'school'}
+            for col in base_cols:
+                if col in excluded_filters:
+                    continue
+                expr = base_col_expressions.get(col)
+                if not expr:
+                    continue
+                distinct_query = f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {join_sql} WHERE {where_sql}"
+                cursor.execute(distinct_query, filter_params)
+                distinct_count = cursor.fetchone()[0] or 0
+                if distinct_count <= 1 or (distinct_count > 30 and col not in always_include):
+                    continue
+                options_query = f"""
+                    SELECT {expr}
+                    FROM current_student cs
+                    {join_sql}
+                    WHERE {where_sql} AND {expr} IS NOT NULL
+                    GROUP BY {expr}
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 30
+                """
+                cursor.execute(options_query, filter_params)
+                values = [row[0] for row in cursor.fetchall()]
+                if values:
+                    filter_options[col] = values
+
+            # Add filter options for test PL columns
+            for test_info in test_cols_info:
+                if test_info['metric'] != 'pl':
+                    continue
+                col_key = test_info['col_name']
+                options_query = f"""
+                    SELECT r.pl
+                    FROM results r
+                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                    INNER JOIN current_student cs ON r.local_student_id = cs.student_id
+                    {join_sql}
+                    WHERE {where_sql}
+                      AND r.school_year = %s
+                      AND t.test_name ILIKE %s
+                      AND t.subject ILIKE %s
+                      AND r.pl IS NOT NULL
+                    GROUP BY r.pl
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 30
+                """
+                cursor.execute(options_query, filter_params + [
+                    test_info['year'],
+                    f"%{test_info['test_name']}%",
+                    f"%{test_info['subject']}%",
+                ])
+                values = [row[0] for row in cursor.fetchall()]
+                if values:
+                    filter_options[col_key] = values
     
     # Convert students list to JSON for Alpine.js
     students_json = [json.dumps(student) for student in students]
     
     total_pages = (total + limit - 1) // limit
+
+    # filter_options is built inside the DB cursor context
 
     if request.GET.get('format') == 'json':
         return JsonResponse({
@@ -234,6 +439,9 @@ def load_students(request):
             'page': page,
             'total_pages': total_pages,
             'column_definitions': COLUMN_DEFINITIONS,
+            'filter_options': filter_options,
+            'sort_by': sort_by,
+            'sort_dir': sort_dir,
         })
 
     context = {
@@ -247,6 +455,39 @@ def load_students(request):
     }
 
     return render(request, 'dataexploration/partials/student_table.html', context)
+
+
+@login_required
+def manage_default_columns(request):
+    """Admin interface for setting default columns shown to users."""
+    if not _user_can_manage_defaults(request.user):
+        return HttpResponseForbidden("You do not have permission to manage default columns.")
+
+    test_structure = get_test_columns()
+    default_columns = _get_saved_default_columns()
+
+    if request.method == 'POST':
+        selected = request.POST.getlist('columns')
+        selection = DefaultColumnSelection.objects.order_by('-updated_at', '-id').first()
+        if selection is None:
+            selection = DefaultColumnSelection.objects.create(
+                columns=selected,
+                updated_by=request.user,
+            )
+        else:
+            selection.columns = selected
+            selection.updated_by = request.user
+            selection.save()
+        return redirect('dataexploration:manage_default_columns')
+
+    context = {
+        'column_categories': COLUMN_CATEGORIES,
+        'column_definitions': COLUMN_DEFINITIONS,
+        'test_structure': test_structure,
+        'selected_columns': default_columns,
+    }
+
+    return render(request, 'dataexploration/manage_default_columns.html', context)
 
 
 def load_column_structures(request):

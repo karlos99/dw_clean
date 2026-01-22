@@ -1,4 +1,5 @@
 from django.db import models
+from django.conf import settings
 from studata.models import CurrentStudent, StudentEnroll, School
 
 
@@ -169,3 +170,23 @@ class StudentWithTests(models.Model):
             return school.short_name if school else None
         except:
             return None
+
+
+class DefaultColumnSelection(models.Model):
+    """Stores the default columns shown for the student tests list."""
+    columns = models.JSONField(default=list)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='default_column_selections',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Default Column Selection"
+        verbose_name_plural = "Default Column Selections"
+
+    def __str__(self):
+        return f"Default columns ({len(self.columns)} selected)"

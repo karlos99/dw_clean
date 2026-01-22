@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import StudentCombined, StudentWithTests
+from .models import StudentCombined, StudentWithTests, DefaultColumnSelection
 
 
 @admin.register(StudentCombined)
@@ -39,3 +39,9 @@ class StudentWithTestsAdmin(admin.ModelAdmin):
             'fields': ('pl', 'ss', 'other_info')
         }),
     )
+
+
+@admin.register(DefaultColumnSelection)
+class DefaultColumnSelectionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'updated_by', 'updated_at')
+    readonly_fields = ('updated_at',)

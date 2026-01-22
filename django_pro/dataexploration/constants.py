@@ -51,4 +51,4 @@ COLUMN_CATEGORIES = {
 }
 
 # Default visible columns
-DEFAULT_COLUMNS = ["student_name", "ssid", "grade", "school_year"]
+DEFAULT_COLUMNS = ["student_name", "ssid", "grade", "school_year", "status"]

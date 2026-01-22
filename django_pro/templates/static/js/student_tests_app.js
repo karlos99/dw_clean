@@ -17,6 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let selectedColumns = [];
     let columnDefinitions = {};
     let page = 1;
+    let sortBy = '';
+    let sortDir = 'asc';
+    let filters = {};
 
     try {
         selectedColumns = JSON.parse(appDataEl.dataset.defaultColumns || '[]');
@@ -107,18 +110,58 @@ document.addEventListener('DOMContentLoaded', () => {
             columnDefinitions = payload.column_definitions;
         }
 
-        const columns = payload.selected_columns || [];
+        if (Array.isArray(payload.selected_columns)) {
+            selectedColumns = payload.selected_columns;
+        }
+
+        if (payload.sort_by) {
+            sortBy = payload.sort_by;
+        }
+        if (payload.sort_dir) {
+            sortDir = payload.sort_dir;
+        }
+
+        const columns = selectedColumns || [];
         const students = payload.students || [];
         const total = payload.total || 0;
         const pageCount = payload.total_pages || 1;
         const currentPage = payload.page || 1;
+        const filterOptions = payload.filter_options || {};
 
         let html = '<div class="overflow-x-auto">';
         html += '<table class="min-w-full divide-y divide-slate-200 border">';
         html += '<thead class="bg-slate-50"><tr>';
         columns.forEach((col) => {
             const label = columnDefinitions[col] || col;
-            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider cursor-move hover:bg-slate-100 border-r">${escapeHtml(label)}</th>`;
+            const hasFilter = Array.isArray(filterOptions[col]) && filterOptions[col].length > 0;
+            const isSorted = sortBy === col;
+            const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
+            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider border-r">`;
+            html += `<div class="flex items-center gap-2">`;
+            html += `<button type="button" data-action="sort" data-column="${escapeHtml(col)}" class="hover:text-slate-900">${escapeHtml(label)}</button>`;
+            html += `<button type="button" data-action="sort" data-column="${escapeHtml(col)}" class="text-xs text-slate-500">${sortIcon}</button>`;
+            if (hasFilter) {
+                html += `<div class="relative">`;
+                html += `<button type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="text-xs text-slate-500">▾</button>`;
+                html += `<div class="hidden absolute z-10 mt-2 w-48 bg-white border border-slate-200 rounded shadow" data-filter-panel="${escapeHtml(col)}">`;
+                html += `<div class="max-h-56 overflow-auto p-2 space-y-1">`;
+                filterOptions[col].forEach((value) => {
+                    const checked = filters[col]?.includes(value) ? 'checked' : '';
+                    html += `<label class="flex items-center gap-2 text-xs text-slate-700">`;
+                    html += `<input type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
+                    html += `<span>${escapeHtml(value)}</span>`;
+                    html += `</label>`;
+                });
+                html += `</div>`;
+                html += `<div class="flex justify-between border-t px-2 py-1 text-xs">`;
+                html += `<button type="button" data-action="clear-filter" data-column="${escapeHtml(col)}" class="text-slate-500">Clear</button>`;
+                html += `<button type="button" data-action="apply-filter" data-column="${escapeHtml(col)}" class="text-blue-600">Apply</button>`;
+                html += `</div>`;
+                html += `</div>`;
+                html += `</div>`;
+            }
+            html += `</div>`;
+            html += `</th>`;
         });
         html += '</tr></thead><tbody class="bg-white divide-y divide-slate-100">';
 
@@ -152,21 +195,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         targetEl.innerHTML = html;
+        renderSelectedColumns();
     };
 
     const loadData = () => {
         const url = new URL(loadStudentsUrl, window.location.origin);
         url.searchParams.set('page', page);
-        url.searchParams.set('columns', JSON.stringify(selectedColumns));
+        if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+            url.searchParams.set('columns', JSON.stringify(selectedColumns));
+        }
+        if (sortBy) {
+            url.searchParams.set('sort_by', sortBy);
+            url.searchParams.set('sort_dir', sortDir);
+        }
+        if (filters && Object.keys(filters).length > 0) {
+            url.searchParams.set('filters', JSON.stringify(filters));
+        }
         url.searchParams.set('format', 'json');
 
         const searchInput = document.getElementById('search');
         const schoolYearSelect = document.getElementById('school_year');
-        const gradeSelect = document.getElementById('grade');
+        const statusInput = document.getElementById('status');
 
         if (searchInput && searchInput.value) url.searchParams.set('search', searchInput.value);
         if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
-        if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
+        if (statusInput && statusInput.value) url.searchParams.set('status', statusInput.value);
 
         fetch(url.toString(), { credentials: 'same-origin' })
             .then((response) => response.json())
@@ -185,6 +238,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const updateColumnSelection = (col) => {
         if (selectedColumns.includes(col)) {
             selectedColumns = selectedColumns.filter((c) => c !== col);
+            if (filters[col]) {
+                delete filters[col];
+            }
         } else {
             selectedColumns.push(col);
         }
@@ -204,6 +260,51 @@ document.addEventListener('DOMContentLoaded', () => {
         const removeBtn = event.target.closest('[data-action="remove-column"]');
         if (removeBtn) {
             updateColumnSelection(removeBtn.dataset.column);
+            return;
+        }
+
+        const sortBtn = event.target.closest('[data-action="sort"]');
+        if (sortBtn) {
+            const col = sortBtn.dataset.column;
+            if (sortBy === col) {
+                sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortBy = col;
+                sortDir = 'asc';
+            }
+            loadData();
+            return;
+        }
+
+        const toggleFilterBtn = event.target.closest('[data-action="toggle-filter"]');
+        if (toggleFilterBtn) {
+            const col = toggleFilterBtn.dataset.column;
+            const panel = document.querySelector(`[data-filter-panel="${col}"]`);
+            if (panel) panel.classList.toggle('hidden');
+            return;
+        }
+
+        const clearFilterBtn = event.target.closest('[data-action="clear-filter"]');
+        if (clearFilterBtn) {
+            const col = clearFilterBtn.dataset.column;
+            delete filters[col];
+            loadData();
+            return;
+        }
+
+        const applyFilterBtn = event.target.closest('[data-action="apply-filter"]');
+        if (applyFilterBtn) {
+            const col = applyFilterBtn.dataset.column;
+            const values = Array.from(document.querySelectorAll(`[data-filter-column="${col}"]:checked`))
+                .map((input) => input.dataset.filterValue);
+            if (values.length) {
+                filters[col] = values;
+            } else {
+                delete filters[col];
+            }
+            const panel = document.querySelector(`[data-filter-panel="${col}"]`);
+            if (panel) panel.classList.add('hidden');
+            loadData();
             return;
         }
 
