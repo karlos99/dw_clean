@@ -140,8 +140,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentPage = payload.page || 1;
         const filterOptions = payload.filter_options || {};
 
-        let html = '<div class="overflow-x-auto">';
-        html += '<table class="min-w-full divide-y divide-slate-200 border table-fixed">';
+        let html = '<div class="table-container">';
+        html += '<table class="min-w-full divide-y divide-slate-200">';
 
         // Column widths (persisted client-side)
         html += '<colgroup>';
@@ -152,7 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         html += '</colgroup>';
 
-        html += '<thead class="bg-slate-50"><tr>';
+        html += '<thead class="bg-slate-50 sticky top-0 z-10"><tr class="bg-slate-50">';
         columns.forEach((col) => {
             const label = columnDefinitions[col] || col;
             const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
@@ -160,14 +160,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const hasFilter = optionsForCol.length > 0 || hasActiveFilter;
             const isSorted = sortBy === col;
             const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
-            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="relative px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider border-r">`;
-            html += `<div class="flex items-center gap-2 pr-2">`;
-            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="hover:text-slate-900">${escapeHtml(label)}</button>`;
-            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="text-xs text-slate-500">${sortIcon}</button>`;
+            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="relative group px-4 py-2 text-left text-xs font-semibold text-slate-700 uppercase bg-slate-50">`;
+            html += `<div class="flex items-center justify-between gap-2">`;
+            html += `<div class="flex items-center gap-2 min-w-0">`;
+            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="flex-1 text-left truncate hover:text-slate-900">${escapeHtml(label)}</button>`;
+            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="text-xs text-slate-500 hover:text-slate-700">${sortIcon}</button>`;
+            html += `</div>`;
             if (hasFilter) {
                 html += `<div class="relative">`;
-                html += `<button draggable="false" type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="text-xs text-slate-500">▾</button>`;
-                html += `<div class="hidden absolute z-10 mt-2 w-48 bg-white border border-slate-200 rounded shadow" data-filter-panel="${escapeHtml(col)}">`;
+                html += `<button draggable="false" type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="text-xs text-slate-500 hover:text-slate-700">▾</button>`;
+                html += `<div class="hidden absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg border border-slate-200 py-1 z-20" data-filter-panel="${escapeHtml(col)}">`;
                 html += `<div class="max-h-56 overflow-auto p-2 space-y-1">`;
                 if (optionsForCol.length === 0) {
                     html += `<div class="text-xs text-slate-500">No options available.</div>`;
@@ -175,30 +177,30 @@ document.addEventListener('DOMContentLoaded', () => {
                     optionsForCol.forEach((value) => {
                         const checked = filters[col]?.includes(value) ? 'checked' : '';
                         const labelValue = DATE_COLUMNS.has(col) ? formatDateForDisplay(String(value)) : String(value);
-                        html += `<label class="flex items-center gap-2 text-xs text-slate-700">`;
+                        html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
                         html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
                         html += `<span>${escapeHtml(labelValue)}</span>`;
                         html += `</label>`;
                     });
                 }
                 html += `</div>`;
-                html += `<div class="flex justify-between border-t px-2 py-1 text-xs">`;
-                html += `<button draggable="false" type="button" data-action="clear-filter" data-column="${escapeHtml(col)}" class="text-slate-500">Reset</button>`;
-                html += `<button draggable="false" type="button" data-action="apply-filter" data-column="${escapeHtml(col)}" class="text-blue-600">Apply</button>`;
+                html += `<div class="flex items-center justify-between border-t border-slate-200 px-2 py-1 text-xs">`;
+                html += `<button draggable="false" type="button" data-action="clear-filter" data-column="${escapeHtml(col)}" class="text-slate-500 hover:text-slate-700">Reset</button>`;
+                html += `<button draggable="false" type="button" data-action="apply-filter" data-column="${escapeHtml(col)}" class="text-blue-600 hover:text-blue-700 font-medium">Apply</button>`;
                 html += `</div>`;
                 html += `</div>`;
                 html += `</div>`;
             }
 
             // Remove column action (X)
-            html += `<button draggable="false" type="button" data-action="remove-column" data-column="${escapeHtml(col)}" class="ml-auto text-slate-400 hover:text-red-600" title="Remove column">✕</button>`;
+            html += `<button draggable="false" type="button" data-action="remove-column" data-column="${escapeHtml(col)}" class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-0.5" title="Remove column">✕</button>`;
             html += `</div>`;
 
             // Resize handle
             html += `<span draggable="false" data-action="resize-handle" data-column="${escapeHtml(col)}" class="absolute top-0 right-0 h-full w-1 cursor-col-resize"></span>`;
             html += `</th>`;
         });
-        html += '</tr></thead><tbody class="bg-white divide-y divide-slate-100">';
+        html += '</tr></thead><tbody class="bg-white divide-y divide-slate-200">';
 
         if (students.length === 0) {
             html += `<tr><td colspan="${columns.length}" class="px-6 py-8 text-center text-slate-500">No students found</td></tr>`;
@@ -207,7 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 html += '<tr class="hover:bg-slate-50">';
                 columns.forEach((col) => {
                     const value = formatValueForColumn(col, student[col]);
-                    html += `<td class="px-4 py-2 text-sm text-slate-900 border-r whitespace-nowrap">${escapeHtml(value)}</td>`;
+                    html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${escapeHtml(value)}</td>`;
                 });
                 html += '</tr>';
             });
@@ -216,15 +218,15 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '</tbody></table></div>';
 
         if (pageCount > 1) {
-            html += '<div class="px-4 py-3 border-t flex items-center justify-between">';
+            html += '<div class="bg-slate-50 px-4 py-3 border-t border-slate-200 flex items-center justify-between">';
             html += `<div class="text-sm text-slate-700">Showing ${students.length} of ${total} students</div>`;
             html += '<div class="flex gap-2">';
             if (currentPage > 1) {
-                html += `<button data-action="prev-page" data-page="${currentPage - 1}" class="px-3 py-1 text-sm border rounded hover:bg-slate-50">Previous</button>`;
+                html += `<button data-action="prev-page" data-page="${currentPage - 1}" class="px-4 py-2 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50">Previous</button>`;
             }
-            html += `<span class="px-3 py-1 text-sm">Page ${currentPage} of ${pageCount}</span>`;
+            html += `<span class="px-3 py-2 text-sm text-slate-700">Page ${currentPage} of ${pageCount}</span>`;
             if (currentPage < pageCount) {
-                html += `<button data-action="next-page" data-page="${currentPage + 1}" class="px-3 py-1 text-sm border rounded hover:bg-slate-50">Next</button>`;
+                html += `<button data-action="next-page" data-page="${currentPage + 1}" class="px-4 py-2 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50">Next</button>`;
             }
             html += '</div></div>';
         }

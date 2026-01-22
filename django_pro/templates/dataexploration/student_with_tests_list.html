@@ -20,10 +20,10 @@
     <div class="flex-1 flex overflow-hidden">
 
         <!-- Column Selector Sidebar -->
-        <div id="column-selector" class="w-64 bg-white border-r overflow-y-auto flex-shrink-0">
+        <div id="column-selector" class="w-80 bg-white border-r border-slate-200 overflow-y-auto flex-shrink-0">
             <div class="p-4">
                 <div class="flex items-center justify-between mb-4">
-                    <h3 class="font-semibold text-slate-900">Select Columns</h3>
+                    <h3 class="text-lg font-semibold text-slate-900">Columns</h3>
                     <button data-action="close-column-selector" class="text-slate-400 hover:text-slate-600">✕</button>
                 </div>
 
@@ -35,7 +35,7 @@
                 <div class="border-b border-slate-100 pb-2">
                     <button data-toggle-category="student_info"
                         class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
-                        <span class="font-medium text-slate-700">Student Information</span>
+                        <span class="font-medium text-slate-900">Student Information</span>
                         <span data-caret="closed" class="hidden">▶</span>
                         <span data-caret="open">▼</span>
                     </button>
@@ -44,7 +44,7 @@
                         <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
                             <input type="checkbox" data-column="{{ col }}"
                                 class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
-                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                            <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
                         </label>
                         {% endfor %}
                     </div>
@@ -54,7 +54,7 @@
                 <div class="border-b border-slate-100 pb-2">
                     <button data-toggle-category="demographics"
                         class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
-                        <span class="font-medium text-slate-700">Demographics</span>
+                        <span class="font-medium text-slate-900">Demographics</span>
                         <span data-caret="closed">▶</span>
                         <span data-caret="open" class="hidden">▼</span>
                     </button>
@@ -63,7 +63,7 @@
                         <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
                             <input type="checkbox" data-column="{{ col }}"
                                 class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
-                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                            <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
                         </label>
                         {% endfor %}
                     </div>
@@ -73,7 +73,7 @@
                 <div class="border-b border-slate-100 pb-2">
                     <button data-toggle-category="dates"
                         class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
-                        <span class="font-medium text-slate-700">Dates</span>
+                        <span class="font-medium text-slate-900">Dates</span>
                         <span data-caret="closed">▶</span>
                         <span data-caret="open" class="hidden">▼</span>
                     </button>
@@ -82,7 +82,7 @@
                         <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
                             <input type="checkbox" data-column="{{ col }}"
                                 class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
-                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                            <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
                         </label>
                         {% endfor %}
                     </div>
@@ -92,7 +92,7 @@
                 <div class="border-b border-slate-100 pb-2">
                     <button data-toggle-category="programs"
                         class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
-                        <span class="font-medium text-slate-700">Programs & Services</span>
+                        <span class="font-medium text-slate-900">Programs & Services</span>
                         <span data-caret="closed">▶</span>
                         <span data-caret="open" class="hidden">▼</span>
                     </button>
@@ -101,7 +101,7 @@
                         <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
                             <input type="checkbox" data-column="{{ col }}"
                                 class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
-                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                            <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
                         </label>
                         {% endfor %}
                     </div>
@@ -111,7 +111,7 @@
                 <div class="border-b border-slate-100 pb-2">
                     <button data-toggle-category="performance"
                         class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded-md transition">
-                        <span class="font-medium text-slate-700">Performance & Behavior</span>
+                        <span class="font-medium text-slate-900">Performance & Behavior</span>
                         <span data-caret="closed">▶</span>
                         <span data-caret="open" class="hidden">▼</span>
                     </button>
@@ -120,7 +120,7 @@
                         <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
                             <input type="checkbox" data-column="{{ col }}"
                                 class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
-                            <span class="text-sm text-slate-600">{{ column_definitions|get_item:col }}</span>
+                            <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
                         </label>
                         {% endfor %}
                     </div>
@@ -137,10 +137,10 @@
         <div class="flex-1 flex flex-col overflow-hidden">
 
             <!-- Toolbar -->
-            <div class="bg-white border-b px-4 py-3 flex items-center justify-between flex-shrink-0">
+            <div class="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between flex-shrink-0">
                 <div class="flex items-center gap-2">
                     <button data-action="toggle-column-selector"
-                        class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">
+                        class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm transition-colors">
                         <span class="inline-flex items-center gap-2">
                             <svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -154,30 +154,31 @@
                     <span class="text-sm text-slate-500" id="selected-count-toolbar">0 selected</span>
                 </div>
                 <div class="flex items-center gap-3">
-                    <h1 class="text-xl font-bold text-slate-900">Student Test Data</h1>
+                    <h1 class="text-xl font-semibold tracking-tight text-slate-900">Data Exploration</h1>
                     {% if user.is_staff or user.role and user.role.name == 'Project Admin' or user.role and user.role.name == 'District Admin' %}
                     
 
 
 
 
+
                     <a href="{% url 'dataexploration:manage_default_columns' %}"
-                        class="px-3 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-md hover:bg-blue-50">
-                        Manage default columns
+                        class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm transition-colors">
+                        Manage columns
                     </a>
                     {% endif %}
                 </div>
             </div>
 
             <!-- Quick Filters Bar -->
-            <div class="bg-slate-50 border-b px-4 py-3 flex-shrink-0">
+            <div class="bg-white border-b border-slate-200 px-4 py-3 flex-shrink-0">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <!-- Search -->
                     <div>
                         <label for="search" class="block text-sm font-medium text-slate-700 mb-1">Search</label>
                         <input type="text" id="search" name="search" value="{{ search_query }}"
                             placeholder="Name, SSID, or ID" @change="loadData()"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600">
                     </div>
 
                     <!-- School Year -->
@@ -185,7 +186,7 @@
                         <label for="school_year" class="block text-sm font-medium text-slate-700 mb-1">School
                             Year</label>
                         <select id="school_year" name="school_year" @change="loadData()"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white">
                             <option value="">All Years</option>
                             {% for year in school_years %}
                             <option value="{{ year }}" {% if selected_school_year == year %}selected{% endif %}>{{ year }}
@@ -198,7 +199,7 @@
                     <div>
                         <label for="status" class="block text-sm font-medium text-slate-700 mb-1">Status</label>
                         <select id="status" name="status" @change="loadData()"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white">
                             <option value="Active" {% if selected_status == 'Active' %}selected{% endif %}>Active</option>
                             <option value="Inactive" {% if selected_status == 'Inactive' %}selected{% endif %}>Inactive
                             </option>

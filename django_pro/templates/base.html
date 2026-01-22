@@ -8,12 +8,25 @@
     <title>{% block title %}DS Data{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/base.css' %}">
     <script>
         tailwind.config = {
             theme: {
                 extend: {
                     fontFamily: {
-                        sans: ["Inter", "sans-serif"],
+                        sans: [
+                            "Inter",
+                            "ui-sans-serif",
+                            "system-ui",
+                            "-apple-system",
+                            "Segoe UI",
+                            "Roboto",
+                            "Helvetica Neue",
+                            "Arial",
+                            "Noto Sans",
+                            "Liberation Sans",
+                            "sans-serif",
+                        ],
                     },
                 },
             },
@@ -33,30 +46,30 @@
 <body class="min-h-screen bg-slate-50 text-slate-900 antialiased font-sans flex flex-col">
 
     <!-- Navigation -->
-    <nav class="bg-white border-b border-slate-200">
+    <nav class="bg-slate-900 text-slate-100 border-b border-slate-800">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
                 <div class="flex">
                     <div class="flex-shrink-0 flex items-center">
-                        <a href="/" class="text-xl font-bold text-blue-600">Data System</a>
+                        <a href="/" class="text-xl font-bold tracking-tight text-white">Data System</a>
                     </div>
                     {% if user.is_authenticated %}
                     <div class="hidden sm:ml-8 sm:flex sm:space-x-6">
                         <a href="/"
-                            class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-600 hover:text-slate-900 hover:border-blue-500 border-b-2 border-transparent transition">
+                            class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">
                             Home
                         </a>
                         <a href="{% url 'dataexploration:student_tests_list' %}"
-                            class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-600 hover:text-slate-900 hover:border-blue-500 border-b-2 border-transparent transition">
-                            Student Tests
+                            class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">
+                            Data Exploration
                         </a>
                         {% if user.is_staff %}
                         <a href="{% url 'users:user_list' %}"
-                            class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-600 hover:text-slate-900 hover:border-blue-500 border-b-2 border-transparent transition">
+                            class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">
                             Users
                         </a>
                         <a href="/admin/"
-                            class="inline-flex items-center px-1 pt-1 text-sm font-medium text-slate-600 hover:text-slate-900 hover:border-blue-500 border-b-2 border-transparent transition">
+                            class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">
                             Admin
                         </a>
                         {% endif %}
@@ -65,18 +78,18 @@
                 </div>
                 <div class="flex items-center">
                     {% if user.is_authenticated %}
-                    <span class="text-sm text-slate-600 mr-4">{{ user.email }}</span>
+                    <span class="text-sm text-slate-200 mr-4 hidden sm:inline">{{ user.email }}</span>
                     {% if user.avatar %}
                     <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full mr-4">
                     {% endif %}
                     <form method="post" action="{% url 'account_logout' %}">
                         {% csrf_token %}
                         <button type="submit"
-                            class="text-sm font-medium text-slate-600 hover:text-slate-900">Logout</button>
+                            class="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">Logout</button>
                     </form>
                     {% else %}
                     <a href="{% url 'account_login' %}"
-                        class="text-sm font-medium text-blue-600 hover:text-blue-500">Login</a>
+                        class="px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">Login</a>
                     {% endif %}
                 </div>
             </div>
