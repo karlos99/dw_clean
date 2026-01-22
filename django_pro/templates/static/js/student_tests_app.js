@@ -20,6 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let sortBy = '';
     let sortDir = 'asc';
     let filters = {};
+    let lastPayload = null;
+    let columnWidths = {};
+    let draggedColumn = null;
+    let resizeState = null;
 
     try {
         selectedColumns = JSON.parse(appDataEl.dataset.defaultColumns || '[]');
@@ -102,9 +106,16 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/'/g, '&#39;');
     };
 
+    const cssEscape = (value) => {
+        if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(String(value));
+        return String(value).replace(/[^a-zA-Z0-9_\-]/g, '_');
+    };
+
     const renderTable = (payload) => {
         const targetEl = document.querySelector('#student-table');
         if (!targetEl) return;
+
+        lastPayload = payload;
 
         if (payload.column_definitions && Object.keys(columnDefinitions).length === 0) {
             columnDefinitions = payload.column_definitions;
@@ -129,38 +140,57 @@ document.addEventListener('DOMContentLoaded', () => {
         const filterOptions = payload.filter_options || {};
 
         let html = '<div class="overflow-x-auto">';
-        html += '<table class="min-w-full divide-y divide-slate-200 border">';
+        html += '<table class="min-w-full divide-y divide-slate-200 border table-fixed">';
+
+        // Column widths (persisted client-side)
+        html += '<colgroup>';
+        columns.forEach((col) => {
+            const width = columnWidths[col];
+            const widthStyle = Number.isFinite(width) ? ` style="width:${Math.max(60, width)}px"` : '';
+            html += `<col data-col="${escapeHtml(col)}"${widthStyle}>`;
+        });
+        html += '</colgroup>';
+
         html += '<thead class="bg-slate-50"><tr>';
         columns.forEach((col) => {
             const label = columnDefinitions[col] || col;
-            const hasFilter = Array.isArray(filterOptions[col]) && filterOptions[col].length > 0;
+            const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
+            const hasActiveFilter = Array.isArray(filters[col]) && filters[col].length > 0;
+            const hasFilter = optionsForCol.length > 0 || hasActiveFilter;
             const isSorted = sortBy === col;
             const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
-            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider border-r">`;
-            html += `<div class="flex items-center gap-2">`;
-            html += `<button type="button" data-action="sort" data-column="${escapeHtml(col)}" class="hover:text-slate-900">${escapeHtml(label)}</button>`;
-            html += `<button type="button" data-action="sort" data-column="${escapeHtml(col)}" class="text-xs text-slate-500">${sortIcon}</button>`;
+            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="relative px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider border-r">`;
+            html += `<div class="flex items-center gap-2 pr-2">`;
+            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="hover:text-slate-900">${escapeHtml(label)}</button>`;
+            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="text-xs text-slate-500">${sortIcon}</button>`;
             if (hasFilter) {
                 html += `<div class="relative">`;
-                html += `<button type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="text-xs text-slate-500">▾</button>`;
+                html += `<button draggable="false" type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="text-xs text-slate-500">▾</button>`;
                 html += `<div class="hidden absolute z-10 mt-2 w-48 bg-white border border-slate-200 rounded shadow" data-filter-panel="${escapeHtml(col)}">`;
                 html += `<div class="max-h-56 overflow-auto p-2 space-y-1">`;
-                filterOptions[col].forEach((value) => {
-                    const checked = filters[col]?.includes(value) ? 'checked' : '';
-                    html += `<label class="flex items-center gap-2 text-xs text-slate-700">`;
-                    html += `<input type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
-                    html += `<span>${escapeHtml(value)}</span>`;
-                    html += `</label>`;
-                });
+                if (optionsForCol.length === 0) {
+                    html += `<div class="text-xs text-slate-500">No options available.</div>`;
+                } else {
+                    optionsForCol.forEach((value) => {
+                        const checked = filters[col]?.includes(value) ? 'checked' : '';
+                        html += `<label class="flex items-center gap-2 text-xs text-slate-700">`;
+                        html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
+                        html += `<span>${escapeHtml(value)}</span>`;
+                        html += `</label>`;
+                    });
+                }
                 html += `</div>`;
                 html += `<div class="flex justify-between border-t px-2 py-1 text-xs">`;
-                html += `<button type="button" data-action="clear-filter" data-column="${escapeHtml(col)}" class="text-slate-500">Clear</button>`;
-                html += `<button type="button" data-action="apply-filter" data-column="${escapeHtml(col)}" class="text-blue-600">Apply</button>`;
+                html += `<button draggable="false" type="button" data-action="clear-filter" data-column="${escapeHtml(col)}" class="text-slate-500">Reset</button>`;
+                html += `<button draggable="false" type="button" data-action="apply-filter" data-column="${escapeHtml(col)}" class="text-blue-600">Apply</button>`;
                 html += `</div>`;
                 html += `</div>`;
                 html += `</div>`;
             }
             html += `</div>`;
+
+            // Resize handle
+            html += `<span draggable="false" data-action="resize-handle" data-column="${escapeHtml(col)}" class="absolute top-0 right-0 h-full w-1 cursor-col-resize"></span>`;
             html += `</th>`;
         });
         html += '</tr></thead><tbody class="bg-white divide-y divide-slate-100">';
@@ -256,7 +286,139 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Drag & drop column reordering
+    document.addEventListener('dragstart', (event) => {
+        const th = event.target.closest('th[data-column]');
+        if (!th) return;
+        if (event.target.closest('[data-action="resize-handle"]')) {
+            event.preventDefault();
+            return;
+        }
+        draggedColumn = th.dataset.column;
+        if (event.dataTransfer) {
+            event.dataTransfer.setData('text/plain', draggedColumn);
+            event.dataTransfer.effectAllowed = 'move';
+        }
+    });
+
+    document.addEventListener('dragover', (event) => {
+        const th = event.target.closest('th[data-column]');
+        if (!th || !draggedColumn) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    });
+
+    document.addEventListener('drop', (event) => {
+        const th = event.target.closest('th[data-column]');
+        if (!th || !draggedColumn) return;
+        event.preventDefault();
+
+        const targetCol = th.dataset.column;
+        const fromIndex = selectedColumns.indexOf(draggedColumn);
+        const toIndex = selectedColumns.indexOf(targetCol);
+        if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
+            draggedColumn = null;
+            return;
+        }
+
+        const next = selectedColumns.slice();
+        next.splice(fromIndex, 1);
+        next.splice(toIndex, 0, draggedColumn);
+        selectedColumns = next;
+        draggedColumn = null;
+
+        // Re-render immediately without refetching
+        renderSelectedColumns();
+        if (lastPayload) {
+            lastPayload.selected_columns = selectedColumns;
+            renderTable(lastPayload);
+        } else {
+            loadData();
+        }
+    });
+
+    // Column resizing
+    const beginResize = (col, startX) => {
+        const th = document.querySelector(`th[data-column="${cssEscape(col)}"]`);
+        const currentWidth = th?.getBoundingClientRect().width;
+        resizeState = {
+            col,
+            startX,
+            startWidth: Number.isFinite(currentWidth) ? currentWidth : (columnWidths[col] || 120),
+        };
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    };
+
+    const applyResize = (clientX) => {
+        if (!resizeState) return;
+        const delta = clientX - resizeState.startX;
+        const newWidth = Math.max(60, Math.round(resizeState.startWidth + delta));
+        columnWidths[resizeState.col] = newWidth;
+
+        const colEl = document.querySelector(`col[data-col="${cssEscape(resizeState.col)}"]`);
+        if (colEl) colEl.style.width = `${newWidth}px`;
+    };
+
+    const endResize = () => {
+        if (!resizeState) return;
+        resizeState = null;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousedown', (event) => {
+        const handle = event.target.closest('[data-action="resize-handle"]');
+        if (!handle) return;
+        event.preventDefault();
+        beginResize(handle.dataset.column, event.clientX);
+    });
+
+    window.addEventListener('mousemove', (event) => {
+        if (!resizeState) return;
+        applyResize(event.clientX);
+    });
+
+    window.addEventListener('mouseup', () => {
+        endResize();
+    });
+
+    const debounce = (fn, wait) => {
+        let timeout;
+        return (...args) => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => fn(...args), wait);
+        };
+    };
+
+    const searchInput = document.getElementById('search');
+    if (searchInput) {
+        searchInput.addEventListener('input', debounce(() => {
+            page = 1;
+            loadData();
+        }, 400));
+    }
+
+    const schoolYearSelect = document.getElementById('school_year');
+    if (schoolYearSelect) {
+        schoolYearSelect.addEventListener('change', () => {
+            page = 1;
+            loadData();
+        });
+    }
+
+    const statusSelect = document.getElementById('status');
+    if (statusSelect) {
+        statusSelect.addEventListener('change', () => {
+            page = 1;
+            loadData();
+        });
+    }
+
     document.addEventListener('click', (event) => {
+        // If resizing, ignore clicks
+        if (resizeState) return;
+
         const removeBtn = event.target.closest('[data-action="remove-column"]');
         if (removeBtn) {
             updateColumnSelection(removeBtn.dataset.column);
@@ -302,11 +464,10 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 delete filters[col];
             }
-            const panel = document.querySelector(`[data-filter-panel="${col}"]`);
-            if (panel) panel.classList.add('hidden');
             loadData();
             return;
         }
+
 
         const toggleBtn = event.target.closest('[data-toggle-category]');
         if (toggleBtn) {

@@ -9,6 +9,7 @@ from django.db.models import Q
 from django.db import connections
 from django.core.cache import cache
 import json
+from decimal import Decimal
 
 from .models import StudentWithTests, DefaultColumnSelection
 from studata.models import CurrentStudent
@@ -158,29 +159,66 @@ def load_students(request):
         except:
             filters = {}
     
+    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_ell):
+        """Append SQL filter clauses + params for the provided filters dict."""
+        if not isinstance(filters_to_apply, dict):
+            return
+
+        for col, values in filters_to_apply.items():
+            if not values:
+                continue
+            if col.startswith('test_'):
+                test_info = test_col_map.get(col)
+                if not test_info:
+                    continue
+                metric_col = test_info['metric']
+                where_clauses.append(
+                    f"EXISTS ("
+                    f"SELECT 1 FROM results r "
+                    f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    f"WHERE r.local_student_id = cs.student_id "
+                    f"AND r.school_year = %s "
+                    f"AND t.test_name ILIKE %s "
+                    f"AND t.subject ILIKE %s "
+                    f"AND r.{metric_col} = ANY(%s)"
+                    f")"
+                )
+                params.extend([
+                    test_info['year'],
+                    f"%{test_info['test_name']}%",
+                    f"%{test_info['subject']}%",
+                    values,
+                ])
+                continue
+
+            expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_ell)
+            if expr:
+                where_clauses.append(f"{expr} = ANY(%s)")
+                params.append(values)
+
     with connections['default'].cursor() as cursor:
         db_columns = _get_current_student_columns()
         enroll_columns = _get_student_enroll_columns()
-        where_clauses = ["1=1"]
-        params = []
+        base_where_clauses = ["1=1"]
+        base_params = []
         
         # Apply filters
         if search:
-            where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
+            base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
             search_param = f'%{search}%'
-            params.extend([search_param, search_param, search_param])
+            base_params.extend([search_param, search_param, search_param])
         
         if school_year:
-            where_clauses.append("cs.school_year = %s")
-            params.append(school_year)
+            base_where_clauses.append("cs.school_year = %s")
+            base_params.append(school_year)
         
         if grade:
-            where_clauses.append("cs.grade = %s")
-            params.append(grade)
+            base_where_clauses.append("cs.grade = %s")
+            base_params.append(grade)
 
         if status:
-            where_clauses.append("cs.status = %s")
-            params.append(status)
+            base_where_clauses.append("cs.status = %s")
+            base_params.append(status)
 
         # Parse column requests - separate base columns from test columns
         base_cols = []
@@ -237,40 +275,11 @@ def load_students(request):
         if needs_ell and 'ell_status' in enroll_columns:
             join_sql = "LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
 
-        # Column filters
-        if isinstance(filters, dict):
-            for col, values in filters.items():
-                if not values:
-                    continue
-                if col.startswith('test_'):
-                    test_info = test_col_map.get(col)
-                    if not test_info:
-                        continue
-                    metric_col = test_info['metric']
-                    where_clauses.append(
-                        f"EXISTS ("
-                        f"SELECT 1 FROM results r "
-                        f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                        f"WHERE r.local_student_id = cs.student_id "
-                        f"AND r.school_year = %s "
-                        f"AND t.test_name ILIKE %s "
-                        f"AND t.subject ILIKE %s "
-                        f"AND r.{metric_col} = ANY(%s)"
-                        f")"
-                    )
-                    params.extend([
-                        test_info['year'],
-                        f"%{test_info['test_name']}%",
-                        f"%{test_info['subject']}%",
-                        values,
-                    ])
-                    continue
+        # Column filters (applied to the main query)
+        where_clauses = list(base_where_clauses)
+        params = list(base_params)
+        _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_ell)
 
-                expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_ell)
-                if expr:
-                    where_clauses.append(f"{expr} = ANY(%s)")
-                    params.append(values)
-        
         where_sql = " AND ".join(where_clauses)
         
         # Count total
@@ -283,6 +292,7 @@ def load_students(request):
         cursor.execute(count_query, params)
         total = cursor.fetchone()[0]
 
+        # Copy params for later reuse
         filter_params = list(params)
         
         # Get paginated results
@@ -365,6 +375,12 @@ def load_students(request):
                     student_id = student.get('student_id')
                     student[test_info['col_name']] = test_data.get(student_id, '—')
 
+        # Ensure JSON serialization safety (e.g. Decimal fields like atendace_rate)
+        for student in students:
+            for key, value in list(student.items()):
+                if isinstance(value, Decimal):
+                    student[key] = float(value)
+
         # Build filter options for repeatable columns
         filter_options = {}
         if total > 0:
@@ -376,8 +392,18 @@ def load_students(request):
                 expr = base_col_expressions.get(col)
                 if not expr:
                     continue
-                distinct_query = f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {join_sql} WHERE {where_sql}"
-                cursor.execute(distinct_query, filter_params)
+                # Faceted filtering: compute this column's options without its own filter applied.
+                option_where = list(base_where_clauses)
+                option_params = list(base_params)
+                if isinstance(filters, dict) and col in filters:
+                    other_filters = {k: v for k, v in filters.items() if k != col}
+                else:
+                    other_filters = filters
+                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_ell)
+                option_where_sql = " AND ".join(option_where)
+
+                distinct_query = f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {join_sql} WHERE {option_where_sql}"
+                cursor.execute(distinct_query, option_params)
                 distinct_count = cursor.fetchone()[0] or 0
                 if distinct_count <= 1 or (distinct_count > 30 and col not in always_include):
                     continue
@@ -385,12 +411,12 @@ def load_students(request):
                     SELECT {expr}
                     FROM current_student cs
                     {join_sql}
-                    WHERE {where_sql} AND {expr} IS NOT NULL
+                    WHERE {option_where_sql} AND {expr} IS NOT NULL
                     GROUP BY {expr}
-                    ORDER BY COUNT(*) DESC
+                    ORDER BY {expr} ASC
                     LIMIT 30
                 """
-                cursor.execute(options_query, filter_params)
+                cursor.execute(options_query, option_params)
                 values = [row[0] for row in cursor.fetchall()]
                 if values:
                     filter_options[col] = values
@@ -400,22 +426,30 @@ def load_students(request):
                 if test_info['metric'] != 'pl':
                     continue
                 col_key = test_info['col_name']
+                option_where = list(base_where_clauses)
+                option_params = list(base_params)
+                if isinstance(filters, dict) and col_key in filters:
+                    other_filters = {k: v for k, v in filters.items() if k != col_key}
+                else:
+                    other_filters = filters
+                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_ell)
+                option_where_sql = " AND ".join(option_where)
                 options_query = f"""
                     SELECT r.pl
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
                     INNER JOIN current_student cs ON r.local_student_id = cs.student_id
                     {join_sql}
-                    WHERE {where_sql}
+                    WHERE {option_where_sql}
                       AND r.school_year = %s
                       AND t.test_name ILIKE %s
                       AND t.subject ILIKE %s
                       AND r.pl IS NOT NULL
                     GROUP BY r.pl
-                    ORDER BY COUNT(*) DESC
+                                        ORDER BY r.pl ASC
                     LIMIT 30
                 """
-                cursor.execute(options_query, filter_params + [
+                cursor.execute(options_query, option_params + [
                     test_info['year'],
                     f"%{test_info['test_name']}%",
                     f"%{test_info['subject']}%",
@@ -424,10 +458,12 @@ def load_students(request):
                 if values:
                     filter_options[col_key] = values
     
-    # Convert students list to JSON for Alpine.js
-    students_json = [json.dumps(student) for student in students]
-    
     total_pages = (total + limit - 1) // limit
+
+    # Ensure JSON serialization safety for filter options (e.g. Decimal values)
+    for col, opts in list(filter_options.items()):
+        if isinstance(opts, list):
+            filter_options[col] = [float(v) if isinstance(v, Decimal) else v for v in opts]
 
     # filter_options is built inside the DB cursor context
 
@@ -443,6 +479,10 @@ def load_students(request):
             'sort_by': sort_by,
             'sort_dir': sort_dir,
         })
+
+    # Convert students list to JSON for legacy/template rendering (non-API path)
+    # Use Django's JSON encoder indirectly via JsonResponse in the API path.
+    students_json = [json.dumps(student, default=str) for student in students]
 
     context = {
         'students': students,
