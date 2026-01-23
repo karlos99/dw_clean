@@ -10,8 +10,8 @@
                         hx-target="#user-content" hx-swap="innerHTML"
                         class="flex items-center gap-1 hover:text-slate-700">
                         User
-                        <span>{% if sort_by == 'name' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}⇅{%
-                            endif %}
+                        <span>{% if sort_by == 'name' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}⇅
+                            {% endif %}
 
                         </span>
                     </button>
@@ -22,8 +22,8 @@
                         hx-target="#user-content" hx-swap="innerHTML"
                         class="flex items-center gap-1 hover:text-slate-700">
                         Role
-                        <span>{% if sort_by == 'role__name' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else
-                            %}⇅{% endif %}</span>
+                        <span>{% if sort_by == 'role__name' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}
+                            {% else %}⇅{% endif %}</span>
                     </button>
                 </th>
                 <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
@@ -32,8 +32,8 @@
                         hx-target="#user-content" hx-swap="innerHTML"
                         class="flex items-center gap-1 hover:text-slate-700">
                         Job Title
-                        <span>{% if sort_by == 'job_title' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else
-                            %}⇅{% endif %}</span>
+                        <span>{% if sort_by == 'job_title' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}
+                            ⇅{% endif %}</span>
                     </button>
                 </th>
                 <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">

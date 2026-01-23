@@ -5,18 +5,170 @@ from django.http import JsonResponse, HttpResponseForbidden
 from django.views.generic import ListView, DetailView
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_GET
 from django.db.models import Q
 from django.db import connections
 from django.core.cache import cache
+from django.template.loader import render_to_string
+from django.conf import settings
 import json
 from decimal import Decimal
 from datetime import date, datetime
 import hashlib
+import os
 
 from .models import StudentWithTests, DefaultColumnSelection
-from studata.models import CurrentStudent
+from studata.models import CurrentStudent, StudentEnroll, School
 from .column_utils import get_test_columns
 from .constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
+
+
+def _student_summary_cache_version():
+    # Include template mtime so edits don't keep serving stale cached HTML.
+    # This is especially important in dev where templates are frequently edited.
+    try:
+        template_path = settings.BASE_DIR / 'templates' / 'dataexploration' / 'partials' / 'student_test_summary_content.html'
+        mtime = int(os.path.getmtime(template_path))
+    except Exception:
+        mtime = 0
+    return f"v2:{mtime}"
+
+
+def _student_summary_cache_keys(ssid: str, user_id=None):
+    v = _student_summary_cache_version()
+    user_part = f"u{user_id}:" if user_id else ""
+    return {
+        'student_info': f"dataexp:student_summary:{v}:{user_part}student_info:{ssid}",
+        'test_records': f"dataexp:student_summary:{v}:{user_part}test_records:{ssid}",
+        'partial_html': f"dataexp:student_summary:{v}:{user_part}partial_html:{ssid}",
+    }
+
+
+def _build_student_info_for_ssid(ssid: str):
+    cs_latest = (
+        CurrentStudent.objects.filter(ssid=ssid)
+        .order_by('-school_year')
+        .first()
+    )
+    se_latest = (
+        StudentEnroll.objects.filter(ssid=ssid)
+        .order_by('-school_year', '-enter_date')
+        .first()
+    )
+
+    school_short_name = None
+    school_state_id = getattr(cs_latest, 'school_state_id', None) if cs_latest else None
+    if school_state_id:
+        school_obj = School.objects.filter(state_id=school_state_id).first()
+        school_short_name = getattr(school_obj, 'short_name', None) if school_obj else None
+
+    full_name = None
+    if se_latest and (se_latest.first_name or se_latest.last_name or se_latest.middle_name):
+        full_name = se_latest.full_name
+    elif cs_latest and getattr(cs_latest, 'student_name', None):
+        full_name = cs_latest.student_name
+
+    return {
+        'full_name': full_name,
+        'student_id': getattr(cs_latest, 'student_id', None) if cs_latest else None,
+        'ssid': getattr(cs_latest, 'ssid', None) if cs_latest else ssid,
+        'grade': getattr(cs_latest, 'grade', None) if cs_latest else None,
+        'gender': getattr(cs_latest, 'gender', None) if cs_latest else None,
+        'race': getattr(cs_latest, 'race', None) if cs_latest else None,
+        'birth_date': getattr(se_latest, 'birth_date', None) if se_latest else None,
+        'school': getattr(cs_latest, 'school', None) if cs_latest else None,
+        'school_state_id': school_state_id,
+        'school_short_name': school_short_name,
+        'school_year': getattr(cs_latest, 'school_year', None) if cs_latest else None,
+        'status': getattr(cs_latest, 'status', None) if cs_latest else None,
+        'atendace_rate': getattr(cs_latest, 'atendace_rate', None) if cs_latest else None,
+        'instructional_setting': getattr(se_latest, 'instructional_setting', None) if se_latest else None,
+        'ell_status': getattr(se_latest, 'ell_status', None) if se_latest else None,
+        'ltel': getattr(cs_latest, 'ltel', None) if cs_latest else None,
+        'fep_date': getattr(se_latest, 'fep_date', None) if se_latest else None,
+        'us_enter_date': getattr(se_latest, 'us_enter_date', None) if se_latest else None,
+        'state_enter_date': getattr(se_latest, 'state_enter_date', None) if se_latest else None,
+        'special_program_code': getattr(se_latest, 'special_program_code', None) if se_latest else None,
+        'sped': getattr(cs_latest, 'sped', None) if cs_latest else None,
+        'in_504': getattr(cs_latest, 'in_504', None) if cs_latest else None,
+        'gate': getattr(cs_latest, 'gate', None) if cs_latest else None,
+        'sed': getattr(cs_latest, 'sed', None) if cs_latest else None,
+        'foster': getattr(cs_latest, 'foster', None) if cs_latest else None,
+        'homeless': getattr(cs_latest, 'homeless', None) if cs_latest else None,
+        'migrant': getattr(se_latest, 'migrant', None) if se_latest else None,
+        'dli': getattr(cs_latest, 'dli', None) if cs_latest else None,
+        'suspension_indicator': getattr(cs_latest, 'suspension_indicator', None) if cs_latest else None,
+    }
+
+
+def _fetch_test_records_for_ssid(ssid: str):
+    with connections['default'].cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                r.school_year AS school_year,
+                t.test_name AS test_name,
+                t.subject AS subject,
+                t.test_window AS test_window,
+                cs.grade AS grade,
+                cs.school AS school,
+                cs.school_state_id AS school_state_id,
+                sch.short_name AS school_short_name,
+                r.pl AS pl,
+                r.ss AS ss,
+                r.school_code AS school_code,
+                r.other_info AS other_info
+            FROM results r
+            INNER JOIN tests t ON r.test_group_key = t.test_group_key
+            LEFT JOIN current_student cs
+                ON cs.ssid = r.ssid AND cs.school_year = r.school_year
+            LEFT JOIN school sch
+                ON sch.assessment_school_code = r.school_code
+            WHERE r.ssid = %s
+            ORDER BY r.school_year, t.test_name, t.subject
+            """,
+            [ssid],
+        )
+        cols = [c[0] for c in cursor.description]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+def _get_student_info_cached(ssid: str, timeout: int = 300, user_id=None):
+    keys = _student_summary_cache_keys(ssid, user_id=user_id)
+    cached = cache.get(keys['student_info'])
+    if cached is not None:
+        return cached
+    student_info = _build_student_info_for_ssid(ssid)
+    cache.set(keys['student_info'], student_info, timeout=timeout)
+    return student_info
+
+
+def _get_test_records_cached(ssid: str, timeout: int = 300, user_id=None):
+    keys = _student_summary_cache_keys(ssid, user_id=user_id)
+    cached = cache.get(keys['test_records'])
+    if cached is not None:
+        return cached
+    test_records = _fetch_test_records_for_ssid(ssid)
+    cache.set(keys['test_records'], test_records, timeout=timeout)
+    return test_records
+
+
+def _get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 300):
+    user_id = getattr(getattr(request, 'user', None), 'pk', None)
+    keys = _student_summary_cache_keys(ssid, user_id=user_id)
+    cached = cache.get(keys['partial_html'])
+    if cached is not None:
+        return cached
+
+    context = {
+        'ssid': ssid,
+        'student_info': _get_student_info_cached(ssid, timeout=timeout, user_id=user_id),
+        'student_name': _get_student_info_cached(ssid, timeout=timeout, user_id=user_id).get('full_name'),
+        'test_records': _get_test_records_cached(ssid, timeout=timeout, user_id=user_id),
+    }
+    html = render_to_string('dataexploration/partials/student_test_summary_content.html', context, request=request)
+    cache.set(keys['partial_html'], html, timeout=timeout)
+    return html
 
 
 def _get_current_student_columns():
@@ -769,28 +921,68 @@ def load_column_structures(request):
     return render(request, 'dataexploration/partials/column_structures.html', context)
 
 
-class StudentWithTestsDetailView(LoginRequiredMixin, DetailView):
-    """Detail view for an individual student's test record."""
-    model = StudentWithTests
-    template_name = 'dataexploration/student_with_tests_detail.html'
-    context_object_name = 'student_test'
-
-
 class StudentTestSummaryView(LoginRequiredMixin, ListView):
     """Summary view showing all tests for a specific student (by SSID)."""
     model = StudentWithTests
     template_name = 'dataexploration/student_test_summary.html'
     context_object_name = 'tests'
-    paginate_by = 100
+    paginate_by = None  # Show all test records without pagination
 
     def get_queryset(self):
         ssid = self.kwargs.get('ssid')
-        return StudentWithTests.objects.filter(ssid=ssid).order_by('school_year', 'test_name', 'subject')
+        # Keep the ListView contract, but test records are loaded via SQL in get_context_data
+        # so we can include results across all years (not limited by the student_with_tests view).
+        return StudentWithTests.objects.filter(ssid=ssid).none()
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         ssid = self.kwargs.get('ssid')
         context['ssid'] = ssid
-        if self.object_list.exists():
-            context['student_name'] = self.object_list.first().full_name
+
+        user_id = getattr(getattr(self.request, 'user', None), 'pk', None)
+        context['student_info'] = _get_student_info_cached(ssid, user_id=user_id)
+        context['student_name'] = context['student_info'].get('full_name')
+        context['test_records'] = _get_test_records_cached(ssid, user_id=user_id)
         return context
+
+
+class StudentTestSummaryPartialView(StudentTestSummaryView):
+    template_name = 'dataexploration/partials/student_test_summary_content.html'
+
+    def get(self, request, *args, **kwargs):
+        ssid = kwargs.get('ssid')
+        html = _get_student_summary_partial_html_cached(request, ssid)
+        return self._html_response(html)
+
+    @staticmethod
+    def _html_response(html):
+        from django.http import HttpResponse
+        return HttpResponse(html, content_type='text/html; charset=utf-8')
+
+
+@login_required
+@require_GET
+def warm_student_test_summary_cache(request):
+    """Warm Redis cache for the student summary overlay.
+
+    Called from the list page in the background to make the first summary open instant.
+    """
+    ssids_raw = (request.GET.get('ssids') or '').strip()
+    try:
+        limit = int(request.GET.get('limit') or 10)
+    except Exception:
+        limit = 10
+    limit = max(0, min(limit, 25))
+
+    if not ssids_raw:
+        return JsonResponse({'warmed': 0, 'limit': limit})
+
+    ssids = [s.strip() for s in ssids_raw.split(',') if s.strip()]
+    ssids = ssids[:limit]
+
+    warmed = 0
+    for ssid in ssids:
+        _get_student_summary_partial_html_cached(request, ssid)
+        warmed += 1
+
+    return JsonResponse({'warmed': warmed, 'limit': limit})

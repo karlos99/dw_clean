@@ -25,6 +25,84 @@ document.addEventListener('DOMContentLoaded', () => {
     let draggedColumn = null;
     let resizeState = null;
 
+    const studentSummaryUrlTemplate = appDataEl.dataset.studentSummaryUrlTemplate || '';
+    const studentSummaryPartialUrlTemplate = appDataEl.dataset.studentSummaryPartialUrlTemplate || '';
+    const studentSummaryWarmUrl = appDataEl.dataset.studentSummaryWarmUrl || '';
+    const buildStudentSummaryUrl = (ssid) => {
+        if (!studentSummaryUrlTemplate) return '';
+        if (!ssid) return '';
+        return studentSummaryUrlTemplate.replace('SSID_PLACEHOLDER', encodeURIComponent(String(ssid)));
+    };
+    const buildStudentSummaryPartialUrl = (ssid) => {
+        if (!studentSummaryPartialUrlTemplate) return '';
+        if (!ssid) return '';
+        return studentSummaryPartialUrlTemplate.replace('SSID_PLACEHOLDER', encodeURIComponent(String(ssid)));
+    };
+
+    const summaryOverlayEl = document.getElementById('student-summary-overlay');
+    const summaryOverlayBodyEl = document.getElementById('student-summary-overlay-body');
+
+    const warmedSsids = new Set();
+
+    const warmStudentSummaryCache = async (ssids) => {
+        if (!studentSummaryWarmUrl) return;
+        if (!Array.isArray(ssids) || ssids.length === 0) return;
+        const url = new URL(studentSummaryWarmUrl, window.location.origin);
+        url.searchParams.set('ssids', ssids.join(','));
+        url.searchParams.set('limit', String(ssids.length));
+        try {
+            await fetch(url.toString(), { credentials: 'same-origin' });
+        } catch (e) {
+            // best-effort warm; ignore failures
+        }
+    };
+
+    const scheduleWarmStudentSummaries = () => {
+        if (!studentSummaryWarmUrl) return;
+        const ssids = Array.from(document.querySelectorAll('#student-table [data-action="open-student-summary"][data-ssid]'))
+            .map((el) => el.getAttribute('data-ssid'))
+            .filter((v) => v && String(v).trim());
+
+        const toWarm = [];
+        for (const ssid of ssids) {
+            if (warmedSsids.has(ssid)) continue;
+            warmedSsids.add(ssid);
+            toWarm.push(ssid);
+            if (toWarm.length >= 8) break;
+        }
+        if (toWarm.length === 0) return;
+
+        const run = () => warmStudentSummaryCache(toWarm);
+        if (typeof window.requestIdleCallback === 'function') {
+            window.requestIdleCallback(run, { timeout: 1200 });
+        } else {
+            window.setTimeout(run, 50);
+        }
+    };
+
+    const showOverlay = (el) => {
+        if (!el) return;
+        el.classList.remove('hidden');
+        el.setAttribute('aria-hidden', 'false');
+    };
+    const hideOverlay = (el) => {
+        if (!el) return;
+        el.classList.add('hidden');
+        el.setAttribute('aria-hidden', 'true');
+    };
+
+    const loadOverlayHtml = async (url, targetEl) => {
+        if (!url || !targetEl) return;
+        targetEl.innerHTML = '<div class="p-6 text-slate-500">Loading…</div>';
+        const res = await fetch(url, { credentials: 'same-origin' });
+        if (!res.ok) {
+            targetEl.innerHTML = `<div class="p-6 text-red-700">Failed to load (${res.status}).</div>`;
+            return;
+        }
+        const html = await res.text();
+        targetEl.innerHTML = html;
+    };
+
     try {
         selectedColumns = JSON.parse(appDataEl.dataset.defaultColumns || '[]');
     } catch (e) {
@@ -209,7 +287,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 html += '<tr class="hover:bg-slate-50">';
                 columns.forEach((col) => {
                     const value = formatValueForColumn(col, student[col]);
-                    html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${escapeHtml(value)}</td>`;
+                    if ((col === 'ssid' || col === 'student_id') && student?.ssid) {
+                        const href = buildStudentSummaryUrl(student.ssid);
+                        const ssidAttr = escapeHtml(student.ssid);
+                        if (href) {
+                            html += `<td class="px-4 py-3 text-sm whitespace-nowrap"><a class="text-blue-600 hover:text-blue-800 hover:underline" href="${escapeHtml(href)}" data-action="open-student-summary" data-ssid="${ssidAttr}">${escapeHtml(value)}</a></td>`;
+                        } else {
+                            html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${escapeHtml(value)}</td>`;
+                        }
+                    } else {
+                        html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${escapeHtml(value)}</td>`;
+                    }
                 });
                 html += '</tr>';
             });
@@ -233,7 +321,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
         targetEl.innerHTML = html;
         renderSelectedColumns();
+        scheduleWarmStudentSummaries();
     };
+
+    document.addEventListener('click', async (event) => {
+        const openSummaryEl = event.target.closest('[data-action="open-student-summary"]');
+        if (openSummaryEl) {
+            const isPlainLeftClick = event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+            if (isPlainLeftClick) {
+                event.preventDefault();
+                const ssid = openSummaryEl.getAttribute('data-ssid') || '';
+                const url = buildStudentSummaryPartialUrl(ssid);
+                showOverlay(summaryOverlayEl);
+                await loadOverlayHtml(url, summaryOverlayBodyEl);
+            }
+            return;
+        }
+
+        const closeSummaryEl = event.target.closest('[data-action="close-student-summary"]');
+        if (closeSummaryEl) {
+            event.preventDefault();
+            hideOverlay(summaryOverlayEl);
+            if (summaryOverlayBodyEl) summaryOverlayBodyEl.innerHTML = '';
+            return;
+        }
+
+
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        if (summaryOverlayEl && !summaryOverlayEl.classList.contains('hidden')) {
+            hideOverlay(summaryOverlayEl);
+            if (summaryOverlayBodyEl) summaryOverlayBodyEl.innerHTML = '';
+        }
+    });
 
     const loadData = () => {
         const url = new URL(loadStudentsUrl, window.location.origin);
