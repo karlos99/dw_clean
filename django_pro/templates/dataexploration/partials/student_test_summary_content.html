@@ -40,8 +40,7 @@
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">Birth Date</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.birth_date|date:"m/d/Y"|default:"-" }}
-                    </p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.birth_date|date:"m/d/Y"|default:"-" }}</p>
                 </div>
             </div>
         </div>
@@ -52,8 +51,7 @@
             <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 <div>
                     <p class="text-xs text-slate-600">School</p>
-                    <p class="text-sm font-medium text-slate-900">{{
-                        student_info.school_short_name|default:student_info.school|truncatewords:3 }}</p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.school_short_name|default:student_info.school|truncatewords:3 }}</p>
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">School State ID</p>
@@ -69,13 +67,11 @@
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">Attendance Rate</p>
-                    <p class="text-sm font-medium text-slate-900">{% if student_info.atendace_rate %}{{
-                        student_info.atendace_rate }}%{% else %}-{% endif %}</p>
+                    <p class="text-sm font-medium text-slate-900">{% if student_info.atendace_rate %}{{ student_info.atendace_rate }}%{% else %}-{% endif %}</p>
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">Instructional Setting</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.instructional_setting|default:"-" }}
-                    </p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.instructional_setting|default:"-" }}</p>
                 </div>
             </div>
         </div>
@@ -94,23 +90,19 @@
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">FEP Date</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.fep_date|date:"m/d/Y"|default:"-" }}
-                    </p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.fep_date|date:"m/d/Y"|default:"-" }}</p>
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">US Enter Date</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.us_enter_date|date:"m/d/Y"|default:"-"
-                        }}</p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.us_enter_date|date:"m/d/Y"|default:"-" }}</p>
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">State Enter Date</p>
-                    <p class="text-sm font-medium text-slate-900">{{
-                        student_info.state_enter_date|date:"m/d/Y"|default:"-" }}</p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.state_enter_date|date:"m/d/Y"|default:"-" }}</p>
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">Special Program</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.special_program_code|default:"-" }}
-                    </p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.special_program_code|default:"-" }}</p>
                 </div>
             </div>
         </div>
@@ -153,8 +145,7 @@
                 </div>
                 <div>
                     <p class="text-xs text-slate-600">Suspension</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.suspension_indicator|default:"-" }}
-                    </p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.suspension_indicator|default:"-" }}</p>
                 </div>
             </div>
         </div>
@@ -193,23 +184,15 @@
                 <tbody class="bg-white divide-y divide-slate-200">
                     {% for record in test_records %}
                     <tr class="hover:bg-slate-50">
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">{{ record.school_year
-                            }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.test_name|default:"-"
-                            }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.subject|default:"-" }}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.test_window|default:"-"
-                            }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.grade|default:"-" }}
-                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">{{ record.school_year }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.test_name|default:"-" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.subject|default:"-" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.test_window|default:"-" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.grade|default:"-" }}</td>
                         <td class="px-6 py-4 whitespace-nowrap"><span
-                                class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full {% if record.pl == '4' or record.pl == 'Advanced' %}bg-green-100 text-green-800{% elif record.pl == '3' or record.pl == 'Proficient' %}bg-blue-100 text-blue-800{% elif record.pl == '2' or record.pl == 'Basic' %}bg-yellow-100 text-yellow-800{% elif record.pl == '1' or record.pl == 'Below Basic' %}bg-red-100 text-red-800{% else %}bg-slate-100 text-slate-800{% endif %}">{{
-                                record.pl|default:"-" }}</span></td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">{{
-                            record.ss|default:"-" }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{
-                            record.school_short_name|default:record.school|truncatewords:2 }}</td>
+                                class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full {% if record.pl == '4' or record.pl == 'Advanced' %}bg-green-100 text-green-800{% elif record.pl == '3' or record.pl == 'Proficient' %}bg-blue-100 text-blue-800{% elif record.pl == '2' or record.pl == 'Basic' %}bg-yellow-100 text-yellow-800{% elif record.pl == '1' or record.pl == 'Below Basic' %}bg-red-100 text-red-800{% else %}bg-slate-100 text-slate-800{% endif %}">{{ record.pl|default:"-" }}</span></td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">{{ record.ss|default:"-" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ record.school_short_name|default:record.school|truncatewords:2 }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
