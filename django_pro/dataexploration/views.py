@@ -20,7 +20,7 @@ import hashlib
 import os
 import csv
 
-from .models import StudentWithTests, DefaultColumnSelection, ReportFolder, SavedQuery, StudentList, StudentListItem, FolderShare
+from .models import StudentWithTests, DefaultColumnSelection, ReportFolder, SavedQuery, StudentList, StudentListItem, FolderShare, QueryShare
 from studata.models import CurrentStudent, StudentEnroll, School
 from .column_utils import get_test_columns
 from .constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
@@ -506,6 +506,12 @@ def load_students(request):
             if not selected_test_cols:
                 return [], {}
 
+            # Try cache first
+            test_cols_cache_key = f"test_cols:{hashlib.md5(json.dumps(sorted(selected_test_cols)).encode()).hexdigest()}"
+            cached_result = cache.get(test_cols_cache_key)
+            if cached_result is not None:
+                return cached_result
+
             normalized_to_original = {c.replace('-', '_'): c for c in selected_test_cols}
             years = sorted({y for y in (_parse_year_from_test_col(c) for c in selected_test_cols) if y})
             if not years:
@@ -645,7 +651,10 @@ def load_students(request):
                     col_map[original_key] = info
                     col_map[original_key.replace('-', '_')] = info
 
-            return infos, col_map
+            # Cache the result for 10 minutes
+            result = (infos, col_map)
+            cache.set(test_cols_cache_key, result, 600)
+            return result
         
         # Apply student list filter
         student_list_id = request.GET.get('student_list')
@@ -824,24 +833,41 @@ def load_students(request):
                 elif isinstance(value, (datetime, date)):
                     student[key] = value.isoformat()
 
-        # Build filter options for repeatable columns
+        # Build filter options for repeatable columns (with Redis caching)
         filter_options = {}
         if total > 0:
             excluded_filters = {'ssid', 'student_id', 'student_name'}
             always_include = {'school'}
+            
+            # Create cache key based on active filters (excluding current column)
+            def _get_filter_cache_key(column, active_filters):
+                filter_str = json.dumps(sorted(active_filters.items()), sort_keys=True) if active_filters else "no_filters"
+                return f"filter_opts:{column}:{hashlib.md5(filter_str.encode()).hexdigest()}"
+            
             for col in base_cols:
                 if col in excluded_filters:
                     continue
                 expr = base_col_expressions.get(col)
                 if not expr:
                     continue
+                
                 # Faceted filtering: compute this column's options without its own filter applied.
-                option_where = list(base_where_clauses)
-                option_params = list(base_params)
                 if isinstance(filters, dict) and col in filters:
                     other_filters = {k: v for k, v in filters.items() if k != col}
                 else:
                     other_filters = filters
+                
+                # Try cache first
+                cache_key = _get_filter_cache_key(col, other_filters)
+                cached_values = cache.get(cache_key)
+                
+                if cached_values is not None:
+                    filter_options[col] = cached_values
+                    continue
+                
+                # Cache miss - query database
+                option_where = list(base_where_clauses)
+                option_params = list(base_params)
                 _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
@@ -874,18 +900,31 @@ def load_students(request):
 
                 if values:
                     filter_options[col] = values
+                    # Cache for 5 minutes
+                    cache.set(cache_key, values, 300)
 
-            # Add filter options for test PL columns and other_info columns
+            # Add filter options for test PL columns and other_info columns (with caching)
             for test_info in test_cols_info:
                 if test_info['metric'] not in {'pl', 'oi'}:
                     continue
                 col_key = test_info['col_name']
-                option_where = list(base_where_clauses)
-                option_params = list(base_params)
+                
                 if isinstance(filters, dict) and col_key in filters:
                     other_filters = {k: v for k, v in filters.items() if k != col_key}
                 else:
                     other_filters = filters
+                
+                # Try cache first
+                cache_key = _get_filter_cache_key(col_key, other_filters)
+                cached_values = cache.get(cache_key)
+                
+                if cached_values is not None:
+                    filter_options[col_key] = cached_values
+                    continue
+                
+                # Cache miss - query database
+                option_where = list(base_where_clauses)
+                option_params = list(base_params)
                 _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
                 window_clause = ""
@@ -951,7 +990,6 @@ def load_students(request):
                         values.append(val)
 
                 # Check if there are any students with NO result record (Blank)
-                # This is distinct from having a result with NULL value (which is handled above)
                 check_blank_query = f"""
                     SELECT 1
                     FROM current_student cs
@@ -981,6 +1019,8 @@ def load_students(request):
 
                 if values:
                     filter_options[col_key] = values
+                    # Cache for 5 minutes
+                    cache.set(cache_key, values, 300)
     
     total_pages = (total + limit - 1) // limit
 
@@ -1585,8 +1625,10 @@ def warm_student_test_summary_cache(request):
 @login_required
 def folder_browser(request):
     """Return the folder browser HTML partial."""
-    # folders = get_user_folders(request.user).prefetch_related('queries', 'student_lists')
-    folders = get_user_folders(request.user)
+    # Get only top-level folders (no parent) that user has access to
+    folders = get_user_folders(request.user).filter(parent__isnull=True).prefetch_related(
+        'queries', 'student_lists', 'subfolders', 'shares'
+    ).order_by('folder_type', 'name')
     
     context = {
         'folders': folders
@@ -1624,70 +1666,115 @@ def save_student_list_modal(request):
 @require_POST
 @login_required
 def save_query(request):
-    """Save the current query configuration."""
+    """Save or update a query/student list configuration."""
+    from django.contrib.auth import get_user_model
+    
     name = request.POST.get('name')
     description = request.POST.get('description', '')
     folder_id = request.POST.get('folder_id')
-    config_json = request.POST.get('query_config') # Expecting JSON string
+    config_json = request.POST.get('query_config')  # Expecting JSON string
+    query_type = request.POST.get('query_type', 'filter')  # 'filter' or 'student_list'
+    privacy = request.POST.get('privacy', 'private')  # 'private', 'shared', or 'public'
+    query_id = request.POST.get('query_id')  # If provided, update existing query
+    share_with_emails = request.POST.get('share_with_emails', '')  # Comma-separated emails
     
-    if not name or not folder_id:
-        return JsonResponse({'status': 'error', 'message': 'Missing required fields'}, status=400)
+    if not name:
+        return JsonResponse({'status': 'error', 'message': 'Name is required'}, status=400)
         
     try:
-        folder = ReportFolder.objects.get(pk=folder_id)
-        if not can_user_edit_folder(request.user, folder):
-             return HttpResponseForbidden("You do not have permission to save to this folder")
-             
-        SavedQuery.objects.create(
-            name=name,
-            description=description,
-            folder=folder,
-            owner=request.user,
-            config=json.loads(config_json) if config_json else {}
-        )
-        response = render(request, 'dataexploration/partials/save_success.html', {'message': 'Query saved successfully!'})
+        User = get_user_model()
+        
+        # Get or create query
+        if query_id:
+            query = SavedQuery.objects.get(pk=query_id, owner=request.user)
+            query.name = name
+            query.description = description
+            query.config = json.loads(config_json) if config_json else {}
+            query.privacy = privacy
+            message = f'{query.get_query_type_display()} updated successfully!'
+        else:
+            # Validate folder if provided
+            folder = None
+            if folder_id:
+                folder = ReportFolder.objects.get(pk=folder_id)
+                if not can_create_in_folder(request.user, folder):
+                    return HttpResponseForbidden("You do not have permission to save to this folder")
+            
+            query = SavedQuery.objects.create(
+                name=name,
+                description=description,
+                query_type=query_type,
+                folder=folder,
+                owner=request.user,
+                config=json.loads(config_json) if config_json else {},
+                privacy=privacy
+            )
+            message = f'{query.get_query_type_display()} saved successfully!'
+        
+        # Handle sharing
+        pending_emails = []
+        if privacy == 'shared' and share_with_emails:
+            emails = [e.strip() for e in share_with_emails.split(',') if e.strip()]
+            
+            for email in emails:
+                user = User.objects.filter(email=email).first()
+                if user:
+                    # Create or update share record
+                    QueryShare.objects.get_or_create(
+                        query=query,
+                        shared_with=user,
+                        defaults={
+                            'shared_by': request.user,
+                            'can_edit': False,
+                            'can_reshare': False
+                        }
+                    )
+                else:
+                    # Store email for pending share
+                    pending_emails.append(email)
+        
+        # Store pending shares
+        if pending_emails:
+            query.pending_shares = pending_emails
+        else:
+            query.pending_shares = None
+        
+        query.save()
+        
+        response = render(request, 'dataexploration/partials/save_success.html', {
+            'message': message,
+            'query_id': query.id
+        })
         response['HX-Trigger'] = 'refresh-folders'
         return response
+        
+    except SavedQuery.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'Query not found or access denied'}, status=404)
     except ReportFolder.DoesNotExist:
         return JsonResponse({'status': 'error', 'message': 'Folder not found'}, status=404)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
 @require_POST
 @login_required
 def save_student_list(request):
-    """Save the current list of students."""
-    name = request.POST.get('name')
-    folder_id = request.POST.get('folder_id')
-    ssids_json = request.POST.get('ssids') # Expecting JSON list of SSIDs
+    """Save student list - wrapper for save_query with query_type='student_list'."""
+    # Convert student list format to unified query format
+    ssids_json = request.POST.get('ssids')
     
-    if not name or not folder_id or not ssids_json:
-        return JsonResponse({'status': 'error', 'message': 'Missing required fields'}, status=400)
-
-    try:
-        folder = ReportFolder.objects.get(pk=folder_id)
-        if not can_user_edit_folder(request.user, folder):
-             return HttpResponseForbidden("You do not have permission to save to this folder")
-
+    if ssids_json:
         ssids = json.loads(ssids_json)
+        config = {'student_ids': ssids}
         
-        with transaction.atomic():
-            slist = StudentList.objects.create(
-                name=name,
-                folder=folder,
-                owner=request.user,
-            )
-            
-            items = [StudentListItem(student_list=slist, ssid=ssid) for ssid in ssids]
-            StudentListItem.objects.bulk_create(items)
-            
-        response = render(request, 'dataexploration/partials/save_success.html', {'message': 'List saved successfully!'})
-        response['HX-Trigger'] = 'refresh-folders'
-        return response
-    except ReportFolder.DoesNotExist:
-        return JsonResponse({'status': 'error', 'message': 'Folder not found'}, status=404)
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+        # Create a mutable copy of POST data
+        post_data = request.POST.copy()
+        post_data['query_config'] = json.dumps(config)
+        post_data['query_type'] = 'student_list'
+        request.POST = post_data
+    
+    return save_query(request)
 
 @require_POST
 @login_required
@@ -1722,10 +1809,104 @@ def rename_query(request, query_id):
 @require_POST
 @login_required
 def share_query(request, query_id):
+    """Share a query with other users."""
+    from django.contrib.auth import get_user_model
+    
     query = get_object_or_404(SavedQuery, pk=query_id)
-    folder = query.folder
+    
+    # Only owner can share (or users with can_reshare permission)
+    user_share = QueryShare.objects.filter(query=query, shared_with=request.user, can_reshare=True).first()
+    if query.owner != request.user and not user_share:
+        return JsonResponse({'status': 'error', 'message': 'You do not have permission to share this query.'}, status=403)
+         
+    user_email = request.POST.get('user_email')
+    can_edit = request.POST.get('can_edit') == 'true'
+    can_reshare = request.POST.get('can_reshare') == 'true'
+    
+    if not user_email:
+        return JsonResponse({'status': 'error', 'message': 'User email required'}, status=400)
+    
+    User = get_user_model()
+    try:
+        user_to_share_with = User.objects.get(email=user_email)
+    except User.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'User not found'}, status=404)
+        
+    if user_to_share_with == request.user:
+        return JsonResponse({'status': 'error', 'message': 'Cannot share with yourself'}, status=400)
+        
+    QueryShare.objects.update_or_create(
+        query=query,
+        shared_with=user_to_share_with,
+        defaults={
+            'can_edit': can_edit,
+            'can_reshare': can_reshare,
+            'shared_by': request.user
+        }
+    )
+    
+    response = render(request, 'dataexploration/partials/save_success.html', {
+        'message': f'Query shared with {user_email}'
+    })
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+
+@require_POST
+@login_required
+def unshare_query(request, query_id, share_id):
+    """Remove a user's access to a query."""
+    query = get_object_or_404(SavedQuery, pk=query_id)
+    share = get_object_or_404(QueryShare, pk=share_id, query=query)
+    
+    # Only query owner or the person who created the share can unshare
+    if query.owner != request.user and share.shared_by != request.user:
+        return HttpResponseForbidden("Only the query owner or share creator can remove shares")
+    
+    share.delete()
+    
+    response = HttpResponse("")
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+
+@require_POST
+@login_required  
+def get_query_shares(request, query_id):
+    """Get list of users a query is shared with."""
+    query = get_object_or_404(SavedQuery, pk=query_id)
+    
+    # Only owner or users with access can see shares
+    user_share = QueryShare.objects.filter(query=query, shared_with=request.user).first()
+    if query.owner != request.user and not user_share:
+        return HttpResponseForbidden("Access denied")
+    
+    shares = QueryShare.objects.filter(query=query).select_related('shared_with', 'shared_by')
+    
+    return JsonResponse({
+        'shares': [{
+            'id': share.id,
+            'email': share.shared_with.email,
+            'name': share.shared_with.get_full_name() or share.shared_with.email,
+            'can_edit': share.can_edit,
+            'can_reshare': share.can_reshare,
+            'shared_at': share.shared_at.isoformat(),
+            'shared_by': share.shared_by.email
+        } for share in shares],
+        'pending_shares': query.pending_shares or []
+    })
+
+
+# Legacy folder sharing (keep for backward compatibility)
+@require_POST
+@login_required
+def share_folder(request, folder_id):
+    """Share a folder with other users (legacy)."""
+    from django.contrib.auth import get_user_model
+    
+    folder = get_object_or_404(ReportFolder, pk=folder_id)
     if folder.owner != request.user:
-         return JsonResponse({'status': 'error', 'message': 'You can only share queries in folders you own.'}, status=403)
+         return JsonResponse({'status': 'error', 'message': 'You can only share folders you own.'}, status=403)
          
     user_email = request.POST.get('user_email')
     can_edit = request.POST.get('can_edit') == 'true'
@@ -1749,6 +1930,23 @@ def share_query(request, query_id):
     )
     
     response = render(request, 'dataexploration/partials/save_success.html', {'message': f'Folder shared with {user_email}'})
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@require_POST
+@login_required
+def unshare_folder(request, folder_id, share_id):
+    """Remove a user's access to a folder."""
+    folder = get_object_or_404(ReportFolder, pk=folder_id)
+    
+    # Only folder owner can unshare
+    if folder.owner != request.user:
+        return HttpResponseForbidden("Only the folder owner can remove shares")
+    
+    share = get_object_or_404(FolderShare, pk=share_id, folder=folder)
+    share.delete()
+    
+    response = HttpResponse("")
     response['HX-Trigger'] = 'refresh-folders'
     return response
 
@@ -1820,13 +2018,30 @@ def share_modal(request):
     item_name = request.GET.get('name')
     
     submit_url = ""
+    folder = None
+    current_shares = []
+    
     if item_type == 'query':
+        query = get_object_or_404(SavedQuery, pk=item_id)
+        folder = query.folder
         submit_url = reverse('dataexploration:share_query', args=[item_id])
+    elif item_type == 'list':
+        slist = get_object_or_404(StudentList, pk=item_id)
+        folder = slist.folder
+        # For lists, we share the folder too (same logic)
+        submit_url = reverse('dataexploration:share_query', args=[item_id])  # We'll need to add share_list endpoint
+    
+    # Get current shares for the folder
+    if folder and folder.owner == request.user:
+        current_shares = folder.shares.select_related('shared_with').all()
 
     return render(request, 'dataexploration/partials/share_modal.html', {
         'item_name': item_name,
         'submit_url': submit_url,
-        'item_type': item_type
+        'item_type': item_type,
+        'folder': folder,
+        'current_shares': current_shares,
+        'is_owner': folder and folder.owner == request.user
     })
 
 @login_required

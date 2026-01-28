@@ -9,21 +9,21 @@
     <!-- Folder Breadcrumbs or Title -->
     <div class="flex items-center justify-between mb-2">
         <div class="text-sm text-gray-500">Folders</div>
-        {% if user.is_superuser or user.role.name == 'Project Admin' or user.role.name == 'District Admin' %}
-        <button type="button" onclick="showCreateFolderModal(null)"
-            class="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1" title="Create New Folder">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-            </svg>
-            New Folder
-        </button>
-        {% endif %}
+                    {% if user.is_superuser or user.role.name == 'Project Admin' or user.role.name == 'District Admin' or folder.folder_type == 'USER' and folder.owner == user %}
+                    <button type="button" onclick="showCreateFolderModal({{ folder.id }})"
+                        class="p-1 text-gray-400 hover:text-blue-600" title="Create Subfolder">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4">
+                            </path>
+                        </svg>
+                    </button>
+                    {% endif %}
     </div>
 
     {% for folder in folders %}
     <div class="folder-group mb-4">
         <!-- Root Folder -->
-        <details class="group" {% if folder.folder_type=='USER' %}open{% endif %}>
+        <details class="group" {% if folder.folder_type == 'USER' %}open{% endif %}>
             <summary
                 class="list-none flex items-center justify-between p-2 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
                 <span class="font-medium text-gray-700 flex items-center gap-2">
@@ -39,8 +39,7 @@
                     {{ folder.name }}
                 </span>
                 <div class="flex items-center gap-2">
-                    {% if user.is_superuser or user.role.name == 'Project Admin' or user.role.name == 'District Admin'
-                    and folder.folder_type == 'DISTRICT' or folder.folder_type == 'USER' and folder.owner == user %}
+                    {% if user.is_superuser or user.role.name == "Project Admin" or user.role.name == "District Admin" or folder.folder_type == "USER" and folder.owner == user %}
                     <button type="button" onclick="showCreateFolderModal({{ folder.id }})"
                         class="p-1 text-gray-400 hover:text-blue-600" title="Create Subfolder">
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -49,7 +48,6 @@
                         </svg>
                     </button>
                     {% endif %}
-                    <span class="text-xs text-gray-400 transform group-open:rotate-90 transition-transform">▶</span>
                 </div>
             </summary>
             <div class="ml-4 mt-2 space-y-1">

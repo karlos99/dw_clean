@@ -219,8 +219,90 @@ class ReportFolder(models.Model):
         return f"{self.get_folder_type_display()}: {self.name}"
 
 
+class SavedQuery(models.Model):
+    """Stores saved data exploration queries and student lists."""
+    
+    QUERY_TYPE_CHOICES = [
+        ('filter', 'Filter Query'),
+        ('student_list', 'Student List'),
+    ]
+    
+    PRIVACY_CHOICES = [
+        ('private', 'Private'),
+        ('shared', 'Shared with Specific Users'),
+        ('public', 'Public to All Users'),
+    ]
+    
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    query_type = models.CharField(max_length=20, choices=QUERY_TYPE_CHOICES, default='filter')
+    
+    # Query/List data
+    config = models.JSONField(default=dict)
+    # For filter: { "columns": [...], "filters": {...}, "sort_by": "...", "sort_dir": "..." }
+    # For student_list: { "student_ids": [...] }
+    
+    # Ownership and sharing
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='created_queries')
+    privacy = models.CharField(max_length=20, choices=PRIVACY_CHOICES, default='private')
+    
+    # Pending shares - emails of users who don't have accounts yet
+    pending_shares = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="List of email addresses for users without accounts yet"
+    )
+    
+    # Folder context (optional - for organization)
+    folder = models.ForeignKey(ReportFolder, on_delete=models.SET_NULL, null=True, blank=True, related_name='queries')
+    
+    # Metadata
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_executed = models.DateTimeField(null=True, blank=True)
+    execution_count = models.IntegerField(default=0)
+    
+    def __str__(self):
+        return f"{self.name} ({self.get_query_type_display()})"
+    
+    def execute(self):
+        """Update execution metadata."""
+        from django.utils import timezone
+        self.last_executed = timezone.now()
+        self.execution_count += 1
+        self.save(update_fields=['last_executed', 'execution_count'])
+    
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name = 'Saved Query'
+        verbose_name_plural = 'Saved Queries'
+
+
+class QueryShare(models.Model):
+    """Manages sharing of queries between users."""
+    query = models.ForeignKey(SavedQuery, on_delete=models.CASCADE, related_name='shares')
+    shared_with = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='shared_queries')
+    
+    # Permissions
+    can_edit = models.BooleanField(default=False)
+    can_reshare = models.BooleanField(default=False)
+    
+    # Metadata  
+    shared_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='queries_shared_by_me')
+    shared_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"{self.query.name} shared with {self.shared_with.email}"
+    
+    class Meta:
+        unique_together = ('query', 'shared_with')
+        verbose_name = 'Query Share'
+        verbose_name_plural = 'Query Shares'
+
+
 class FolderShare(models.Model):
-    """Manages sharing of folders with specific users."""
+    """Manages sharing of folders with specific users (legacy - for backward compatibility)."""
     folder = models.ForeignKey(ReportFolder, on_delete=models.CASCADE, related_name='shares')
     shared_with = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='shared_folders')
     can_edit = models.BooleanField(default=False)
@@ -229,23 +311,12 @@ class FolderShare(models.Model):
         unique_together = ('folder', 'shared_with')
 
 
-class SavedQuery(models.Model):
-    name = models.CharField(max_length=255)
-    description = models.TextField(blank=True)
-    folder = models.ForeignKey(ReportFolder, on_delete=models.CASCADE, related_name='queries')
-    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    
-    # Logic Configuration
-    config = models.JSONField(default=dict) 
-    # Example: { "columns": ["ssid", "test_math_23"], "filters": {"grade": "10"}, "sort": "last_name" }
-
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    def __str__(self):
-        return self.name
-
+# Student lists are now stored as SavedQuery with query_type='student_list'
+# The student IDs are stored in config['student_ids']
+# Legacy models kept for data migration compatibility:
 
 class StudentList(models.Model):
+    """Legacy model - migrate to SavedQuery with query_type='student_list'."""
     name = models.CharField(max_length=255)
     folder = models.ForeignKey(ReportFolder, on_delete=models.CASCADE, related_name='student_lists')
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -255,9 +326,14 @@ class StudentList(models.Model):
 
     def __str__(self):
         return self.name
+    
+    class Meta:
+        verbose_name = 'Student List (Legacy)'
+        verbose_name_plural = 'Student Lists (Legacy)'
 
 
 class StudentListItem(models.Model):
+    """Legacy model - student list items."""
     student_list = models.ForeignKey(StudentList, on_delete=models.CASCADE, related_name='items')
     ssid = models.CharField(max_length=20, db_index=True)
     

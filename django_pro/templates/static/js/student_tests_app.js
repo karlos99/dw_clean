@@ -712,6 +712,48 @@ document.addEventListener('DOMContentLoaded', () => {
                             };
                             configInput.value = JSON.stringify(config);
                         }
+
+                        // Add custom submit handler for overwrite confirmation
+                        form.addEventListener('submit', async (e) => {
+                            e.preventDefault();
+                            const formData = new FormData(form);
+
+                            try {
+                                const response = await fetch(form.action, {
+                                    method: 'POST',
+                                    body: formData,
+                                    headers: {
+                                        'X-Requested-With': 'XMLHttpRequest'
+                                    }
+                                });
+
+                                if (response.status === 409) {
+                                    const data = await response.json();
+                                    if (data.status === 'confirm' && confirm(data.message)) {
+                                        formData.append('overwrite', 'true');
+                                        const retryResponse = await fetch(form.action, {
+                                            method: 'POST',
+                                            body: formData,
+                                            headers: {
+                                                'X-Requested-With': 'XMLHttpRequest'
+                                            }
+                                        });
+                                        const html = await retryResponse.text();
+                                        container.innerHTML = html;
+                                        htmx.process(container);
+                                        if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                                    }
+                                } else {
+                                    const html = await response.text();
+                                    container.innerHTML = html;
+                                    htmx.process(container);
+                                    if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                                }
+                            } catch (error) {
+                                console.error('Error saving query:', error);
+                                alert('Error saving query. Please try again.');
+                            }
+                        });
                     }
                 });
             }
@@ -736,6 +778,48 @@ document.addEventListener('DOMContentLoaded', () => {
                             const countSpan = modal.querySelector('.student-count-badge');
                             if (countSpan) countSpan.textContent = ssids.length;
                         }
+
+                        // Add custom submit handler for overwrite confirmation
+                        form.addEventListener('submit', async (e) => {
+                            e.preventDefault();
+                            const formData = new FormData(form);
+
+                            try {
+                                const response = await fetch(form.action, {
+                                    method: 'POST',
+                                    body: formData,
+                                    headers: {
+                                        'X-Requested-With': 'XMLHttpRequest'
+                                    }
+                                });
+
+                                if (response.status === 409) {
+                                    const data = await response.json();
+                                    if (data.status === 'confirm' && confirm(data.message)) {
+                                        formData.append('overwrite', 'true');
+                                        const retryResponse = await fetch(form.action, {
+                                            method: 'POST',
+                                            body: formData,
+                                            headers: {
+                                                'X-Requested-With': 'XMLHttpRequest'
+                                            }
+                                        });
+                                        const html = await retryResponse.text();
+                                        container.innerHTML = html;
+                                        htmx.process(container);
+                                        if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                                    }
+                                } else {
+                                    const html = await response.text();
+                                    container.innerHTML = html;
+                                    htmx.process(container);
+                                    if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                                }
+                            } catch (error) {
+                                console.error('Error saving list:', error);
+                                alert('Error saving list. Please try again.');
+                            }
+                        });
                     }
                 });
             }

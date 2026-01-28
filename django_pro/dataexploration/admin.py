@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import StudentCombined, StudentWithTests, DefaultColumnSelection, ReportFolder, FolderShare, SavedQuery, StudentList, StudentListItem
+from .models import StudentCombined, StudentWithTests, DefaultColumnSelection, ReportFolder, FolderShare, SavedQuery, StudentList, StudentListItem, QueryShare
 
 
 @admin.register(ReportFolder)
@@ -18,10 +18,26 @@ class ReportFolderAdmin(admin.ModelAdmin):
 
 @admin.register(SavedQuery)
 class SavedQueryAdmin(admin.ModelAdmin):
-    list_display = ('name', 'folder', 'owner', 'updated_at')
-    list_filter = ('updated_at', 'folder__folder_type')
+    list_display = ('name', 'query_type', 'privacy', 'folder', 'owner', 'execution_count', 'updated_at')
+    list_filter = ('query_type', 'privacy', 'updated_at', 'is_active')
     search_fields = ('name', 'description')
     raw_id_fields = ('folder', 'owner')
+
+    class QueryShareInline(admin.TabularInline):
+        model = QueryShare
+        fk_name = 'query'
+        extra = 1
+        autocomplete_fields = ['shared_with', 'shared_by']
+
+    inlines = [QueryShareInline]
+
+
+@admin.register(QueryShare)
+class QueryShareAdmin(admin.ModelAdmin):
+    list_display = ('query', 'shared_with', 'can_edit', 'can_reshare', 'shared_by', 'shared_at')
+    list_filter = ('can_edit', 'can_reshare', 'shared_at')
+    search_fields = ('query__name', 'shared_with__email', 'shared_by__email')
+    raw_id_fields = ('query', 'shared_with', 'shared_by')
 
 
 @admin.register(StudentList)
