@@ -1,7 +1,7 @@
 """Views for data exploration app."""
 
-from django.shortcuts import render, redirect
-from django.http import JsonResponse, HttpResponseForbidden
+from django.shortcuts import render, redirect, get_object_or_404
+from django.http import JsonResponse, HttpResponseForbidden, HttpResponse, StreamingHttpResponse
 from django.views.generic import ListView, DetailView
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.decorators import login_required
@@ -11,16 +11,22 @@ from django.db import connections
 from django.core.cache import cache
 from django.template.loader import render_to_string
 from django.conf import settings
+from django.urls import reverse
+from django.contrib.auth import get_user_model
 import json
 from decimal import Decimal
 from datetime import date, datetime
 import hashlib
 import os
+import csv
 
-from .models import StudentWithTests, DefaultColumnSelection
+from .models import StudentWithTests, DefaultColumnSelection, ReportFolder, SavedQuery, StudentList, StudentListItem, FolderShare
 from studata.models import CurrentStudent, StudentEnroll, School
 from .column_utils import get_test_columns
 from .constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
+from .utils import get_user_folders, can_user_edit_folder, can_user_manage_query, can_user_manage_list, can_create_in_folder
+from django.views.decorators.http import require_POST
+from django.db import transaction
 
 
 def _student_summary_cache_version():
@@ -284,11 +290,31 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['default_columns_json'] = json.dumps(default_columns)
         context['column_definitions_json'] = json.dumps(COLUMN_DEFINITIONS)
         
+        # Handle Saved Query
+        saved_query_id = self.request.GET.get('saved_query')
+        query_config = {}
+        if saved_query_id:
+            try:
+                sq = SavedQuery.objects.get(pk=saved_query_id)
+                query_config = sq.config or {}
+                # If query has column selection, override default
+                if 'columns' in query_config:
+                    context['default_columns'] = query_config['columns']
+                    context['default_columns_json'] = json.dumps(query_config['columns'])
+            except SavedQuery.DoesNotExist:
+                pass
+
+        filters = query_config.get('filters', {})
+
+        def get_param(name, default=''):
+            # URL param takes precedence over saved query, which takes precedence over default
+            return self.request.GET.get(name) or filters.get(name, default)
+
         # Current filter values
-        context['search_query'] = self.request.GET.get('search', '')
-        context['selected_school_year'] = self.request.GET.get('school_year', '')
-        context['selected_grade'] = self.request.GET.get('grade', '')
-        context['selected_status'] = self.request.GET.get('status', 'Active')
+        context['search_query'] = get_param('search')
+        context['selected_school_year'] = get_param('school_year')
+        context['selected_grade'] = get_param('grade')
+        context['selected_status'] = get_param('status', 'Active')
         
         return context
 
@@ -298,30 +324,56 @@ def load_students(request):
     page = int(request.GET.get('page', 1))
     limit = int(request.GET.get('limit', 50))
     
+    # Load saved query config
+    saved_query_id = request.GET.get('saved_query')
+    saved_config = {}
+    if saved_query_id:
+        try:
+            from .models import SavedQuery
+            from .utils import get_user_folders
+            query_obj = SavedQuery.objects.get(pk=saved_query_id)
+            if query_obj.folder in get_user_folders(request.user):
+                saved_config = query_obj.config
+        except Exception:
+            pass
+    
     # Get selected columns
     selected_columns_json = request.GET.get('columns', '')
     if selected_columns_json:
         try:
             selected_columns = json.loads(selected_columns_json)
         except:
-            selected_columns = _get_saved_default_columns()
+            selected_columns = saved_config.get('columns') or _get_saved_default_columns()
+    elif saved_config.get('columns'):
+        selected_columns = saved_config.get('columns')
     else:
         selected_columns = _get_saved_default_columns()
     
     # Get filters
-    search = request.GET.get('search', '')
-    school_year = request.GET.get('school_year', '')
-    grade = request.GET.get('grade', '')
-    status = request.GET.get('status', 'Active')
-    sort_by = request.GET.get('sort_by', '')
+    search = request.GET.get('search', '') or saved_config.get('search', '')
+    school_year = request.GET.get('school_year', '') or saved_config.get('school_year', '')
+    grade = request.GET.get('grade', '') or saved_config.get('grade', '')
+    
+    status_param = request.GET.get('status')
+    if status_param is not None:
+        status = status_param
+    elif 'status' in saved_config:
+        status = saved_config['status']
+    else:
+        status = 'Active'
+
+    sort_by = request.GET.get('sort_by', '') or saved_config.get('sort_by', '')
     sort_dir = request.GET.get('sort_dir', 'asc').lower()
+
     filters_json = request.GET.get('filters', '')
     filters = {}
     if filters_json:
         try:
             filters = json.loads(filters_json)
         except:
-            filters = {}
+            filters = saved_config.get('filters', {})
+    elif saved_config.get('filters'):
+        filters = saved_config.get('filters', {})
     
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll):
         """Append SQL filter clauses + params for the provided filters dict."""
@@ -542,6 +594,19 @@ def load_students(request):
 
             return infos, col_map
         
+        # Apply student list filter
+        student_list_id = request.GET.get('student_list')
+        if student_list_id:
+            try:
+                from .models import StudentList
+                from .utils import get_user_folders
+                slist = StudentList.objects.get(pk=student_list_id)
+                if slist.folder in get_user_folders(request.user):
+                     base_where_clauses.append("cs.ssid IN (SELECT ssid FROM dataexploration_studentlistitem WHERE student_list_id = %s)")
+                     base_params.append(student_list_id)
+            except:
+                pass
+
         # Apply filters
         if search:
             base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
@@ -867,6 +932,377 @@ def load_students(request):
 
 
 @login_required
+def export_students_csv(request):
+    """Export filtered student data as CSV."""
+    
+    # 1. Parse parameters (Shared logic with load_students)
+    saved_query_id = request.GET.get('saved_query')
+    saved_config = {}
+    if saved_query_id:
+        try:
+            from .models import SavedQuery
+            from .utils import get_user_folders
+            query_obj = SavedQuery.objects.get(pk=saved_query_id)
+            if query_obj.folder in get_user_folders(request.user):
+                saved_config = query_obj.config
+        except Exception:
+            pass
+    
+    selected_columns_json = request.GET.get('columns', '')
+    if selected_columns_json:
+        try:
+            selected_columns = json.loads(selected_columns_json)
+        except:
+            selected_columns = saved_config.get('columns') or _get_saved_default_columns()
+    elif saved_config.get('columns'):
+        selected_columns = saved_config.get('columns')
+    else:
+        selected_columns = _get_saved_default_columns()
+    
+    search = request.GET.get('search', '') or saved_config.get('search', '')
+    school_year = request.GET.get('school_year', '') or saved_config.get('school_year', '')
+    grade = request.GET.get('grade', '') or saved_config.get('grade', '')
+    
+    status_param = request.GET.get('status')
+    if status_param is not None:
+        status = status_param
+    elif 'status' in saved_config:
+        status = saved_config['status']
+    else:
+        status = 'Active'
+
+    sort_by = request.GET.get('sort_by', '') or saved_config.get('sort_by', '')
+    sort_dir = request.GET.get('sort_dir', 'asc').lower()
+
+    filters_json = request.GET.get('filters', '')
+    filters = {}
+    if filters_json:
+        try:
+            filters = json.loads(filters_json)
+        except:
+            filters = saved_config.get('filters', {})
+    elif saved_config.get('filters'):
+        filters = saved_config.get('filters', {})
+
+    # Helper for column filters (Duplicated from load_students to avoid refactoring risk)
+    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll):
+        if not isinstance(filters_to_apply, dict): return
+        for col, values in filters_to_apply.items():
+            if not values: continue
+            if col.startswith('test_'):
+                test_info = test_col_map.get(col) or test_col_map.get(col.replace('-', '_'))
+                if not test_info: continue
+                metric_col = test_info['metric']
+                window_clause = ""
+                window_params = []
+                if test_info.get('test_window'):
+                    window_clause = "AND t.test_window ILIKE %s "
+                    window_params = [test_info['test_window']]
+                clause = (
+                    "EXISTS ("
+                    "SELECT 1 FROM results r "
+                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    "WHERE r.local_student_id = cs.student_id "
+                    "AND r.school_year = %s "
+                    "AND t.test_name ILIKE %s "
+                    "AND t.subject ILIKE %s "
+                    f"{window_clause}"
+                )
+                if metric_col in {'ss', 'pl'}:
+                    clause += f"AND r.{metric_col} = ANY(%s)"
+                else:
+                    clause += "AND (r.other_info ->> %s) = ANY(%s)"
+                clause += ")"
+                where_clauses.append(clause)
+                params.extend([
+                    test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%",
+                    *window_params,
+                    *( [test_info['other_info_key']] if metric_col == 'oi' else [] ),
+                    values,
+                ])
+                continue
+            expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
+            if expr:
+                where_clauses.append(f"{expr} = ANY(%s)")
+                params.append(values)
+
+    # 2. Preparation for Query
+    db_columns = _get_current_student_columns()
+    enroll_columns = _get_student_enroll_columns()
+    
+    # Pre-calculate test column metadata
+    selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
+    base_cols = [c for c in selected_columns if isinstance(c, str) and (not c.startswith('test_')) and c in COLUMN_DEFINITIONS]
+
+    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+    needs_enroll = (
+        any(c in enroll_fields for c in selected_columns)
+        or (isinstance(filters, dict) and any(k in enroll_fields for k in filters.keys()))
+        or sort_by in enroll_fields
+    )
+    join_sql = ""
+    if needs_enroll:
+        join_sql = "LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+
+    # Streaming Response setup
+    class Echo:
+        def write(self, value): return value
+    
+    pseudo_buffer = Echo()
+    writer = csv.writer(pseudo_buffer)
+    
+    def stream_csv():
+        # Yield Header
+        header_labels = [COLUMN_DEFINITIONS.get(col, col) for col in selected_columns]
+        yield writer.writerow(header_labels)
+
+        with connections['default'].cursor() as cursor:
+            # Re-implement helper logic inline or simplified
+            def _parse_year_from_test_col(col_key):
+                s = (col_key or '').replace('-', '_')
+                if not s.startswith('test_'): return None
+                tail = s[len('test_'):]
+                if len(tail) >= 10 and tail[4] == '_' and tail[9] == '_':
+                    return tail[:9].replace('_', '-')
+                parts = tail.split('_', 1)
+                return parts[0].replace('_', '-') if parts else None
+
+            # Build test info
+            test_cols_info = []
+            test_col_map = {}
+            if selected_test_cols:
+                normalized_to_original = {c.replace('-', '_'): c for c in selected_test_cols}
+                years = sorted({y for y in (_parse_year_from_test_col(c) for c in selected_test_cols) if y})
+                if years:
+                    cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'tests' AND column_name = 'test_window'")
+                    has_test_window = cursor.fetchone() is not None
+                    
+                    sql = """
+                        SELECT DISTINCT r.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
+                        FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                        WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+                    """ if has_test_window else """
+                        SELECT DISTINCT r.school_year, t.test_name, t.subject, ''
+                        FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                        WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+                    """
+                    cursor.execute(sql, [years])
+                    
+                    def _norm_part(v): return (v or '').replace(' ', '_').replace('-', '_')
+                    
+                    rows = cursor.fetchall()
+                    for (yr, test_name, subject, test_window) in rows:
+                        yr_norm = _norm_part(yr)
+                        tn_norm = _norm_part(test_name)
+                        sub_norm = _norm_part(subject)
+                        win_norm = _norm_part(test_window).strip('_')
+                        key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
+                        
+                        for metric in ('ss', 'pl'):
+                            norm_key = f"test_{key_base}_{metric.upper()}"
+                            original_key = normalized_to_original.get(norm_key)
+                            if original_key:
+                                info = {
+                                    'col_name': original_key, 'year': yr, 'test_name': (test_name or ''), 
+                                    'subject': (subject or ''), 'test_window': (test_window or '').strip() or None, 'metric': metric
+                                }
+                                test_cols_info.append(info)
+                                test_col_map[original_key] = info
+                                test_col_map[original_key.replace('-', '_')] = info
+
+                    # Other Info logic implementation from load_students
+                    want_other = any('_OI_' in k for k in normalized_to_original.keys())
+                    if want_other:
+                        if has_test_window:
+                            cursor.execute(
+                                """
+                                SELECT DISTINCT r.school_year, t.test_name, t.subject, COALESCE(t.test_window, ''), k.key
+                                FROM results r
+                                INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                                CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)
+                                WHERE r.school_year = ANY(%s)
+                                  AND r.school_year IS NOT NULL
+                                  AND t.test_name IS NOT NULL
+                                  AND r.other_info IS NOT NULL
+                                """,
+                                [years],
+                            )
+                        else:
+                            cursor.execute(
+                                """
+                                SELECT DISTINCT r.school_year, t.test_name, t.subject, '', k.key
+                                FROM results r
+                                INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                                CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)
+                                WHERE r.school_year = ANY(%s)
+                                  AND r.school_year IS NOT NULL
+                                  AND t.test_name IS NOT NULL
+                                  AND r.other_info IS NOT NULL
+                                """,
+                                [years],
+                            )
+
+                        for (yr, test_name, subject, test_window, raw_key) in cursor.fetchall():
+                            if not raw_key: continue
+                            yr_norm = _norm_part(yr)
+                            tn_norm = _norm_part(test_name)
+                            sub_norm = _norm_part(subject)
+                            win_norm = _norm_part(test_window).strip('_')
+
+                            if win_norm:
+                                key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}"
+                                win_value = (test_window or '').strip() or None
+                            else:
+                                key_base = f"{yr_norm}_{tn_norm}_{sub_norm}"
+                                win_value = None
+
+                            raw_key_str = str(raw_key)
+                            oi_norm = _norm_part(raw_key_str)
+                            oi_hash = hashlib.md5(raw_key_str.encode('utf-8')).hexdigest()[:6]
+                            other_norm = f"test_{key_base}_OI_{oi_norm}_{oi_hash}"
+
+                            original_key = normalized_to_original.get(other_norm)
+                            if not original_key: continue
+                            
+                            info = {
+                                'col_name': original_key,
+                                'year': yr,
+                                'test_name': (test_name or ''),
+                                'subject': (subject or ''),
+                                'test_window': win_value,
+                                'metric': 'oi',
+                                'other_info_key': raw_key_str,
+                            }
+                            test_cols_info.append(info)
+                            test_col_map[original_key] = info
+                            test_col_map[original_key.replace('-', '_')] = info
+
+            # Build Where Clauses
+            base_where_clauses = ["1=1"]
+            base_params = []
+            
+            student_list_id = request.GET.get('student_list')
+            if student_list_id:
+                try:
+                    from .models import StudentList
+                    from .utils import get_user_folders
+                    slist = StudentList.objects.get(pk=student_list_id)
+                    if slist.folder in get_user_folders(request.user):
+                         base_where_clauses.append("cs.ssid IN (SELECT ssid FROM dataexploration_studentlistitem WHERE student_list_id = %s)")
+                         base_params.append(student_list_id)
+                except: pass
+
+            if search:
+                base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
+                base_params.extend([f'%{search}%']*3)
+            if school_year:
+                base_where_clauses.append("cs.school_year = %s")
+                base_params.append(school_year)
+            if grade:
+                base_where_clauses.append("cs.grade = %s")
+                base_params.append(grade)
+            if status:
+                base_where_clauses.append("cs.status = %s")
+                base_params.append(status)
+
+            where_clauses = list(base_where_clauses)
+            params = list(base_params)
+            _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_enroll)
+            where_sql = " AND ".join(where_clauses)
+            
+            # Fetch Loop
+            chunk_size = 500
+            offset = 0
+            
+            # Ensure we fetch minimal required columns plus sorting
+            query_base_cols = list(base_cols)
+            if 'ssid' not in query_base_cols: query_base_cols.insert(0, 'ssid')
+            if test_cols_info and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
+            
+            base_col_selects = []
+            base_col_expressions = {}
+            for col in query_base_cols:
+                expr, alias = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
+                if expr and alias:
+                    base_col_expressions[col] = expr
+                    base_col_selects.append(f"{expr} AS {alias}" if expr != f"cs.{alias}" else expr)
+            
+            if not base_col_selects:
+                base_col_selects.append("cs.ssid")
+
+            base_col_sql = ", ".join(base_col_selects)
+            
+            order_by_expr = "cs.student_name"
+            if sort_by:
+                expr = base_col_expressions.get(sort_by)
+                if expr: order_by_expr = expr
+            
+            dir_sql = 'DESC' if sort_dir == 'desc' else 'ASC'
+
+            while True:
+                query = f"""
+                    SELECT {base_col_sql}
+                    FROM current_student cs
+                    {join_sql}
+                    WHERE {where_sql}
+                    ORDER BY {order_by_expr} {dir_sql}
+                    LIMIT %s OFFSET %s
+                """
+                cursor.execute(query, params + [chunk_size, offset])
+                
+                cols = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
+                if not rows:
+                    break
+                    
+                chunk_students = [dict(zip(cols, row)) for row in rows]
+                student_ids = [s.get('student_id') for s in chunk_students if s.get('student_id')]
+                
+                # Fetch Test Data
+                if test_cols_info and student_ids:
+                    for test_info in test_cols_info:
+                        metric_col = test_info['metric']
+                        window_clause = "AND t.test_window ILIKE %s" if test_info.get('test_window') else ""
+                        window_params = [test_info['test_window']] if test_info.get('test_window') else []
+                        
+                        select_expr = f"r.{metric_col}" if metric_col in {'ss', 'pl'} else "(r.other_info ->> %s)"
+                        extra_params = [] if metric_col in {'ss', 'pl'} else [test_info.get('other_info_key', '')]
+                        
+                        tquery = f"""
+                            SELECT r.local_student_id, {select_expr}
+                            FROM results r
+                            INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                            WHERE r.local_student_id = ANY(%s)
+                              AND r.school_year = %s
+                              AND t.test_name ILIKE %s
+                              AND t.subject ILIKE %s
+                              {window_clause}
+                        """
+                        cursor.execute(tquery, [
+                            *extra_params, student_ids, test_info['year'], 
+                            f"%{test_info['test_name']}%", f"%{test_info['subject']}%", *window_params
+                        ])
+                        tdata = {row[0]: row[1] for row in cursor.fetchall()}
+                        for student in chunk_students:
+                            student[test_info['col_name']] = tdata.get(student.get('student_id'), '')
+
+                # Yield Rows
+                for student in chunk_students:
+                    row = []
+                    for col in selected_columns:
+                        val = student.get(col)
+                        if val is None: val = ""
+                        row.append(str(val))
+                    yield writer.writerow(row)
+                
+                offset += chunk_size
+
+    response = StreamingHttpResponse(stream_csv(), content_type="text/csv")
+    response['Content-Disposition'] = 'attachment; filename="students_export.csv"'
+    return response
+
+
+@login_required
 def manage_default_columns(request):
     """Admin interface for setting default columns shown to users."""
     if not _user_can_manage_defaults(request.user):
@@ -986,3 +1422,305 @@ def warm_student_test_summary_cache(request):
         warmed += 1
 
     return JsonResponse({'warmed': warmed, 'limit': limit})
+
+@login_required
+def folder_browser(request):
+    """Return the folder browser HTML partial."""
+    # folders = get_user_folders(request.user).prefetch_related('queries', 'student_lists')
+    folders = get_user_folders(request.user)
+    
+    context = {
+        'folders': folders
+    }
+    return render(request, 'dataexploration/partials/folder_browser.html', context)
+
+@login_required
+def save_query_modal(request):
+    """Return the save query modal partial."""
+    # Ensure default user folders exist
+    ReportFolder.objects.get_or_create(
+        owner=request.user,
+        name="My Queries",
+        folder_type='USER',
+        defaults={'description': 'My personal saved queries'}
+    )
+    folders = get_user_folders(request.user)
+    context = {'folders': folders}
+    return render(request, 'dataexploration/partials/save_query_modal.html', context)
+
+@login_required
+def save_student_list_modal(request):
+    """Return the save student list modal partial."""
+    # Ensure default user folders exist
+    ReportFolder.objects.get_or_create(
+        owner=request.user,
+        name="My Student Lists",
+        folder_type='USER',
+        defaults={'description': 'My personal student lists'}
+    )
+    folders = get_user_folders(request.user)
+    context = {'folders': folders}
+    return render(request, 'dataexploration/partials/save_list_modal.html', context)
+
+@require_POST
+@login_required
+def save_query(request):
+    """Save the current query configuration."""
+    name = request.POST.get('name')
+    description = request.POST.get('description', '')
+    folder_id = request.POST.get('folder_id')
+    config_json = request.POST.get('query_config') # Expecting JSON string
+    
+    if not name or not folder_id:
+        return JsonResponse({'status': 'error', 'message': 'Missing required fields'}, status=400)
+        
+    try:
+        folder = ReportFolder.objects.get(pk=folder_id)
+        if not can_user_edit_folder(request.user, folder):
+             return HttpResponseForbidden("You do not have permission to save to this folder")
+             
+        SavedQuery.objects.create(
+            name=name,
+            description=description,
+            folder=folder,
+            owner=request.user,
+            config=json.loads(config_json) if config_json else {}
+        )
+        response = render(request, 'dataexploration/partials/save_success.html', {'message': 'Query saved successfully!'})
+        response['HX-Trigger'] = 'refresh-folders'
+        return response
+    except ReportFolder.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'Folder not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+@require_POST
+@login_required
+def save_student_list(request):
+    """Save the current list of students."""
+    name = request.POST.get('name')
+    folder_id = request.POST.get('folder_id')
+    ssids_json = request.POST.get('ssids') # Expecting JSON list of SSIDs
+    
+    if not name or not folder_id or not ssids_json:
+        return JsonResponse({'status': 'error', 'message': 'Missing required fields'}, status=400)
+
+    try:
+        folder = ReportFolder.objects.get(pk=folder_id)
+        if not can_user_edit_folder(request.user, folder):
+             return HttpResponseForbidden("You do not have permission to save to this folder")
+
+        ssids = json.loads(ssids_json)
+        
+        with transaction.atomic():
+            slist = StudentList.objects.create(
+                name=name,
+                folder=folder,
+                owner=request.user,
+            )
+            
+            items = [StudentListItem(student_list=slist, ssid=ssid) for ssid in ssids]
+            StudentListItem.objects.bulk_create(items)
+            
+        response = render(request, 'dataexploration/partials/save_success.html', {'message': 'List saved successfully!'})
+        response['HX-Trigger'] = 'refresh-folders'
+        return response
+    except ReportFolder.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'Folder not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
+
+@require_POST
+@login_required
+def delete_query(request, query_id):
+    query = get_object_or_404(SavedQuery, pk=query_id)
+    if not can_user_manage_query(request.user, query):
+         return HttpResponseForbidden("You do not have permission to delete this query")
+    
+    query.delete()
+    response = HttpResponse("")
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@require_POST
+@login_required
+def rename_query(request, query_id):
+    query = get_object_or_404(SavedQuery, pk=query_id)
+    if not can_user_manage_query(request.user, query):
+         return HttpResponseForbidden("You do not have permission to rename this query")
+    
+    name = request.POST.get('name')
+    description = request.POST.get('description', '')
+    if name:
+        query.name = name
+        query.description = description
+        query.save()
+        
+    response = HttpResponse("")
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@require_POST
+@login_required
+def share_query(request, query_id):
+    query = get_object_or_404(SavedQuery, pk=query_id)
+    folder = query.folder
+    if folder.owner != request.user:
+         return JsonResponse({'status': 'error', 'message': 'You can only share queries in folders you own.'}, status=403)
+         
+    user_email = request.POST.get('user_email')
+    can_edit = request.POST.get('can_edit') == 'true'
+    
+    if not user_email:
+        return JsonResponse({'status': 'error', 'message': 'User email required'}, status=400)
+    
+    User = get_user_model()
+    try:
+        user_to_share_with = User.objects.get(email=user_email)
+    except User.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'User not found'}, status=404)
+        
+    if user_to_share_with == request.user:
+        return JsonResponse({'status': 'error', 'message': 'Cannot share with yourself'}, status=400)
+        
+    FolderShare.objects.update_or_create(
+        folder=folder,
+        shared_with=user_to_share_with,
+        defaults={'can_edit': can_edit}
+    )
+    
+    response = render(request, 'dataexploration/partials/save_success.html', {'message': f'Folder shared with {user_email}'})
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@require_POST
+@login_required
+def delete_student_list(request, list_id):
+    slist = get_object_or_404(StudentList, pk=list_id)
+    if not can_user_manage_list(request.user, slist):
+         return HttpResponseForbidden("You do not have permission to delete this list")
+    
+    slist.delete()
+    response = HttpResponse("")
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@require_POST
+@login_required
+def rename_student_list(request, list_id):
+    slist = get_object_or_404(StudentList, pk=list_id)
+    if not can_user_manage_list(request.user, slist):
+         return HttpResponseForbidden("You do not have permission to rename this list")
+    
+    name = request.POST.get('name')
+    description = request.POST.get('description', '')
+    if name:
+        slist.name = name
+        slist.description = description
+        slist.save()
+
+    response = HttpResponse("")
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@login_required
+def rename_modal(request):
+    item_type = request.GET.get('type')
+    item_id = request.GET.get('id')
+    
+    initial_name = ""
+    initial_desc = ""
+    submit_url = ""
+    
+    if item_type == 'query':
+        query = get_object_or_404(SavedQuery, pk=item_id)
+        if not can_user_manage_query(request.user, query):
+             return HttpResponseForbidden()
+        initial_name = query.name
+        initial_desc = query.description
+        submit_url = reverse('dataexploration:rename_query', args=[query.id])
+    elif item_type == 'list':
+        slist = get_object_or_404(StudentList, pk=item_id)
+        if not can_user_manage_list(request.user, slist):
+             return HttpResponseForbidden()
+        initial_name = slist.name
+        initial_desc = slist.description
+        submit_url = reverse('dataexploration:rename_student_list', args=[slist.id])
+    
+    return render(request, 'dataexploration/partials/rename_modal.html', {
+        'initial_name': initial_name,
+        'initial_description': initial_desc,
+        'submit_url': submit_url,
+        'item_type': item_type
+    })
+
+@login_required
+def share_modal(request):
+    item_type = request.GET.get('type')
+    item_id = request.GET.get('id')
+    item_name = request.GET.get('name')
+    
+    submit_url = ""
+    if item_type == 'query':
+        submit_url = reverse('dataexploration:share_query', args=[item_id])
+
+    return render(request, 'dataexploration/partials/share_modal.html', {
+        'item_name': item_name,
+        'submit_url': submit_url,
+        'item_type': item_type
+    })
+
+@login_required
+def create_folder_modal(request):
+    parent_id = request.GET.get('parent_id')
+    return render(request, 'dataexploration/partials/create_folder_modal.html', {
+        'parent_id': parent_id
+    })
+
+@require_POST
+@login_required
+def create_folder(request):
+    parent_id = request.POST.get('parent_id')
+    name = request.POST.get('name')
+    folder_type = request.POST.get('folder_type', 'USER')
+    
+    if not name:
+         return JsonResponse({'status': 'error', 'message': 'Name is required'}, status=400)
+    
+    parent = None
+    if parent_id:
+        try:
+            parent = ReportFolder.objects.get(pk=parent_id)
+            if not can_create_in_folder(request.user, parent):
+                 return HttpResponseForbidden("You cannot create a folder here.")
+            folder_type = parent.folder_type
+        except ReportFolder.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'Parent folder not found'}, status=404)
+    else:
+        # Creating root folder check
+         if folder_type in ['SCHOOL', 'DISTRICT']:
+             role_name = getattr(request.user.role, 'name', '') if request.user.role else ''
+             if not (request.user.is_superuser or role_name in ['Project Admin', 'District Admin']):
+                  return HttpResponseForbidden()
+
+    # Determine school context if SCHOOL folder
+    school_context = None
+    if folder_type == 'SCHOOL':
+        if parent:
+            school_context = parent.school
+        else:
+            # If root school folder, try to infer or require selection?
+            # For simplicity, use user's first school
+            school_context = request.user.schools.first()
+
+    ReportFolder.objects.create(
+        name=name,
+        folder_type=folder_type,
+        parent=parent,
+        owner=request.user if folder_type == 'USER' else None,
+        school=school_context
+    )
+    
+    response = render(request, 'dataexploration/partials/save_success.html', {'message': 'Folder created successfully!'})
+    response['HX-Trigger'] = 'refresh-folders'
+    return response

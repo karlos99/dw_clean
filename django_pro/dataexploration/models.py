@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from studata.models import CurrentStudent, StudentEnroll, School
+from users.models import School as UserSchool
 
 
 class StudentCombined(models.Model):
@@ -190,3 +191,78 @@ class DefaultColumnSelection(models.Model):
 
     def __str__(self):
         return f"Default columns ({len(self.columns)} selected)"
+
+
+class ReportFolder(models.Model):
+    TYPE_CHOICES = (
+        ('USER', 'My Folder'),
+        ('SCHOOL', 'School Folder'),
+        ('DISTRICT', 'District Folder'),
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    folder_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    
+    # Hierarchy
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='subfolders')
+    
+    # Ownership / Access Scope
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE)
+    school = models.ForeignKey(UserSchool, null=True, blank=True, on_delete=models.CASCADE, help_text="If set, accessible by users of this school")
+    
+    # Permissions
+    is_public_to_scope = models.BooleanField(default=False, help_text="Visible to everyone in this scope (e.g. all School staff)")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.get_folder_type_display()}: {self.name}"
+
+
+class FolderShare(models.Model):
+    """Manages sharing of folders with specific users."""
+    folder = models.ForeignKey(ReportFolder, on_delete=models.CASCADE, related_name='shares')
+    shared_with = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='shared_folders')
+    can_edit = models.BooleanField(default=False)
+    
+    class Meta:
+        unique_together = ('folder', 'shared_with')
+
+
+class SavedQuery(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    folder = models.ForeignKey(ReportFolder, on_delete=models.CASCADE, related_name='queries')
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    
+    # Logic Configuration
+    config = models.JSONField(default=dict) 
+    # Example: { "columns": ["ssid", "test_math_23"], "filters": {"grade": "10"}, "sort": "last_name" }
+
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return self.name
+
+
+class StudentList(models.Model):
+    name = models.CharField(max_length=255)
+    folder = models.ForeignKey(ReportFolder, on_delete=models.CASCADE, related_name='student_lists')
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    description = models.TextField(blank=True)
+    
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class StudentListItem(models.Model):
+    student_list = models.ForeignKey(StudentList, on_delete=models.CASCADE, related_name='items')
+    ssid = models.CharField(max_length=20, db_index=True)
+    
+    class Meta:
+        unique_together = ('student_list', 'ssid')
+
+    def __str__(self):
+        return f"{self.ssid} in {self.student_list.name}"

@@ -101,6 +101,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const html = await res.text();
         targetEl.innerHTML = html;
+        if (window.htmx) {
+            htmx.process(targetEl);
+        }
     };
 
     try {
@@ -626,7 +629,137 @@ document.addEventListener('DOMContentLoaded', () => {
         if (closeSidebarBtn) {
             toggleSidebar(false);
         }
+
+        // New Actions
+        const openFolderBrowserBtn = event.target.closest('[data-action="open-folder-browser"]');
+        if (openFolderBrowserBtn) {
+            const fbSidebar = document.getElementById('folder-browser-sidebar');
+            if (fbSidebar) {
+                fbSidebar.classList.remove('translate-x-full');
+                const content = document.getElementById('folder-browser-content');
+                if (content && window.htmx) {
+                    htmx.trigger(content, 'load-folders');
+                }
+            }
+            return;
+        }
+
+        const saveQueryBtn = event.target.closest('[data-action="save-current-view"]');
+        if (saveQueryBtn) {
+            const url = appDataEl.dataset.saveQueryModalUrl;
+            const container = document.getElementById('modals-container');
+            if (url && container) {
+                loadOverlayHtml(url, container).then(() => {
+                    const form = document.getElementById('save-query-form');
+                    const modal = document.getElementById('save-query-modal');
+                    if (form && modal) {
+                        modal.classList.remove('hidden');
+                        const configInput = form.querySelector('input[name="query_config"]');
+                        if (configInput) {
+                            const currentFilters = {
+                                school_year: document.getElementById('school_year')?.value,
+                                status: document.getElementById('status')?.value,
+                                search: document.getElementById('search')?.value,
+                                ...filters
+                            };
+                            const config = {
+                                columns: selectedColumns,
+                                filters: currentFilters
+                            };
+                            configInput.value = JSON.stringify(config);
+                        }
+                    }
+                });
+            }
+            return;
+        }
+
+        const saveListBtn = event.target.closest('[data-action="save-student-list"]');
+        if (saveListBtn) {
+            const url = appDataEl.dataset.saveListModalUrl;
+            const container = document.getElementById('modals-container');
+            if (url && container) {
+                loadOverlayHtml(url, container).then(() => {
+                    const form = document.getElementById('save-list-form');
+                    const modal = document.getElementById('save-list-modal');
+                    if (form && modal) {
+                        modal.classList.remove('hidden');
+                        const ssidsInput = form.querySelector('input[name="ssids"]');
+                        if (ssidsInput && lastPayload && lastPayload.students) {
+                            const ssids = lastPayload.students.map(s => s.ssid).filter(Boolean);
+                            ssidsInput.value = JSON.stringify(ssids);
+                            // Also update badge count
+                            const countSpan = modal.querySelector('.student-count-badge');
+                            if (countSpan) countSpan.textContent = ssids.length;
+                        }
+                    }
+                });
+            }
+            return;
+        }
+
+        const exportBtn = event.target.closest('[data-action="export-csv"]');
+        if (exportBtn) {
+            const baseUrl = appDataEl.dataset.exportCsvUrl;
+            if (!baseUrl) return;
+
+            const url = new URL(baseUrl, window.location.origin);
+            const params = new URLSearchParams(window.location.search);
+            const savedQueryId = params.get('saved_query');
+            const studentListId = params.get('student_list');
+
+            if (savedQueryId) url.searchParams.set('saved_query', savedQueryId);
+            if (studentListId) url.searchParams.set('student_list', studentListId);
+
+            if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+                url.searchParams.set('columns', JSON.stringify(selectedColumns));
+            }
+            if (sortBy) {
+                url.searchParams.set('sort_by', sortBy);
+                url.searchParams.set('sort_dir', sortDir);
+            }
+            if (filters && Object.keys(filters).length > 0) {
+                url.searchParams.set('filters', JSON.stringify(filters));
+            }
+
+            const searchInput = document.getElementById('search');
+            const schoolYearSelect = document.getElementById('school_year');
+            const statusInput = document.getElementById('status');
+
+            if (searchInput && searchInput.value) url.searchParams.set('search', searchInput.value);
+            if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
+            if (statusInput && statusInput.value) url.searchParams.set('status', statusInput.value);
+
+            window.location.href = url.toString();
+            return;
+        }
     });
+
+    // Global functions for Folder Browser Actions
+    window.showRenameModal = (id, type, name, description) => {
+        const urlBase = appDataEl.dataset.renameModalUrl;
+        if (!urlBase) return;
+        const url = `${urlBase}?id=${id}&type=${type}`;
+        const container = document.getElementById('modals-container');
+        if (container) loadOverlayHtml(url, container);
+    };
+
+    window.showShareModal = (id, type, name) => {
+        const urlBase = appDataEl.dataset.shareModalUrl;
+        if (!urlBase) return;
+        const url = `${urlBase}?id=${id}&type=${type}&name=${encodeURIComponent(name)}`;
+        const container = document.getElementById('modals-container');
+        if (container) loadOverlayHtml(url, container);
+    };
+
+    window.showCreateFolderModal = (parentId) => {
+        const urlBase = appDataEl.dataset.createFolderModalUrl;
+        if (!urlBase) return;
+        let url = urlBase;
+        if (parentId) url += `?parent_id=${parentId}`;
+        const container = document.getElementById('modals-container');
+        if (container) loadOverlayHtml(url, container);
+    };
 
     renderSelectedColumns();
     loadData();

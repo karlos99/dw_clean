@@ -1,5 +1,41 @@
 from django.contrib import admin
-from .models import StudentCombined, StudentWithTests, DefaultColumnSelection
+from .models import StudentCombined, StudentWithTests, DefaultColumnSelection, ReportFolder, FolderShare, SavedQuery, StudentList, StudentListItem
+
+
+@admin.register(ReportFolder)
+class ReportFolderAdmin(admin.ModelAdmin):
+    list_display = ('name', 'folder_type', 'owner', 'school', 'parent', 'created_at')
+    list_filter = ('folder_type', 'created_at')
+    search_fields = ('name', 'description')
+
+    class FolderShareInline(admin.TabularInline):
+        model = FolderShare
+        extra = 1
+        autocomplete_fields = ['shared_with']
+
+    inlines = [FolderShareInline]
+
+
+@admin.register(SavedQuery)
+class SavedQueryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'folder', 'owner', 'updated_at')
+    list_filter = ('updated_at', 'folder__folder_type')
+    search_fields = ('name', 'description')
+    raw_id_fields = ('folder', 'owner')
+
+
+@admin.register(StudentList)
+class StudentListAdmin(admin.ModelAdmin):
+    list_display = ('name', 'folder', 'owner', 'updated_at')
+    list_filter = ('updated_at', 'folder__folder_type')
+    search_fields = ('name', 'description')
+    raw_id_fields = ('folder', 'owner')
+
+    class StudentListItemInline(admin.TabularInline):
+        model = StudentListItem
+        extra = 1
+
+    inlines = [StudentListItemInline]
 
 
 @admin.register(StudentCombined)
