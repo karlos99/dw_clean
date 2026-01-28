@@ -42,7 +42,7 @@ COLUMN_CATEGORIES = {
     },
     "demographics": {
         "title": "Demographics",
-        "columns": ["gender", "race", "ell", "status"]
+        "columns": ["gender", "race", "status"]
     },
     "dates": {
         "title": "Dates",
@@ -50,7 +50,7 @@ COLUMN_CATEGORIES = {
     },
     "programs": {
         "title": "Programs & Services",
-        "columns": ["sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant"]
+        "columns": ["ell", "sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant"]
     },
     "performance": {
         "title": "Performance & Behavior",

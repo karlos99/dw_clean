@@ -383,6 +383,11 @@ def load_students(request):
         for col, values in filters_to_apply.items():
             if not values:
                 continue
+
+            # Handle blank values (represented by empty string)
+            has_blank = "" in values
+            real_values = [v for v in values if v != ""]
+
             if col.startswith('test_'):
                 test_info = test_col_map.get(col) or test_col_map.get(col.replace('-', '_'))
                 if not test_info:
@@ -393,8 +398,8 @@ def load_students(request):
                 if test_info.get('test_window'):
                     window_clause = "AND t.test_window ILIKE %s "
                     window_params = [test_info['test_window']]
-                clause = (
-                    "EXISTS ("
+
+                exist_query_base = (
                     "SELECT 1 FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.local_student_id = cs.student_id "
@@ -403,26 +408,74 @@ def load_students(request):
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
-                if metric_col in {'ss', 'pl'}:
-                    clause += f"AND r.{metric_col} = ANY(%s)"
-                else:
-                    clause += "AND (r.other_info ->> %s) = ANY(%s)"
-                clause += ")"
-                where_clauses.append(clause)
-                params.extend([
+                exist_params_base = [
                     test_info['year'],
                     f"%{test_info['test_name']}%",
                     f"%{test_info['subject']}%",
                     *window_params,
-                    *( [test_info['other_info_key']] if metric_col == 'oi' else [] ),
-                    values,
-                ])
+                ]
+
+                conditions = []
+
+                if real_values:
+                    # Exists and matches value
+                    val_clause = exist_query_base
+                    if metric_col in {'ss', 'pl'}:
+                        val_clause += f"AND r.{metric_col} = ANY(%s)"
+                    else:
+                        val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
+                    
+                    val_params = list(exist_params_base)
+                    if metric_col == 'oi':
+                         val_params.append(test_info['other_info_key'])
+                    val_params.append(real_values)
+                    
+                    conditions.append(f"EXISTS ({val_clause})")
+                    params.extend(val_params)
+
+                if has_blank:
+                    # Does not exist (Blank) OR Exists but value is null
+                    blank_subconditions = []
+                    
+                    # 1. No record exists
+                    blank_subconditions.append(f"NOT EXISTS ({exist_query_base})")
+                    params.extend(exist_params_base)
+
+                    # 2. Record exists but value is NULL
+                    null_clause = exist_query_base
+                    null_params = list(exist_params_base)
+                    
+                    if metric_col in {'ss', 'pl'}:
+                        null_clause += f"AND r.{metric_col} IS NULL"
+                    else:
+                        null_clause += "AND (r.other_info ->> %s) IS NULL"
+                        null_params.append(test_info['other_info_key'])
+                    
+                    blank_subconditions.append(f"EXISTS ({null_clause})")
+                    params.extend(null_params)
+                    
+                    conditions.append(f"({' OR '.join(blank_subconditions)})")
+                
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
 
+            # Standard columns
             expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
             if expr:
-                where_clauses.append(f"{expr} = ANY(%s)")
-                params.append(values)
+                 conditions = []
+                 if real_values:
+                      conditions.append(f"{expr} = ANY(%s)")
+                      params.append(real_values)
+                 if has_blank:
+                      # Check if date (only IS NULL) or string (IS NULL or Empty)
+                      if col in {'birth_date', 'us_enter_date', 'fep_date'}:
+                           conditions.append(f"{expr} IS NULL")
+                      else:
+                           conditions.append(f"({expr} IS NULL OR {expr} = '')")
+                 
+                 if conditions:
+                      where_clauses.append(f"({' OR '.join(conditions)})")
 
     with connections['default'].cursor() as cursor:
         db_columns = _get_current_student_columns()
@@ -790,24 +843,35 @@ def load_students(request):
                 else:
                     other_filters = filters
                 _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll)
-                option_where_sql = " AND ".join(option_where)
+                option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 distinct_query = f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {join_sql} WHERE {option_where_sql}"
                 cursor.execute(distinct_query, option_params)
                 distinct_count = cursor.fetchone()[0] or 0
                 if distinct_count <= 1 or (distinct_count > 30 and col not in always_include):
                     continue
+                
+                limit_clause = "LIMIT 30"
+                if col in always_include:
+                    limit_clause = ""
+
                 options_query = f"""
                     SELECT {expr}
                     FROM current_student cs
                     {join_sql}
-                    WHERE {option_where_sql} AND {expr} IS NOT NULL
+                    WHERE {option_where_sql}
                     GROUP BY {expr}
-                    ORDER BY {expr} ASC
-                    LIMIT 30
+                    ORDER BY {expr} ASC NULLS FIRST
+                    {limit_clause}
                 """
                 cursor.execute(options_query, option_params)
-                values = [row[0] for row in cursor.fetchall()]
+                values = []
+                for row in cursor.fetchall():
+                    val = row[0]
+                    if val is None:
+                        val = ""
+                    values.append(val)
+
                 if values:
                     filter_options[col] = values
 
@@ -823,7 +887,7 @@ def load_students(request):
                 else:
                     other_filters = filters
                 _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll)
-                option_where_sql = " AND ".join(option_where)
+                option_where_sql = " AND ".join(option_where) if option_where else "1=1"
                 window_clause = ""
                 window_params = []
                 if test_info.get('test_window'):
@@ -842,9 +906,8 @@ def load_students(request):
                       AND t.test_name ILIKE %s
                       AND t.subject ILIKE %s
                       {window_clause}
-                      AND r.pl IS NOT NULL
                     GROUP BY v
-                    ORDER BY v ASC
+                    ORDER BY v ASC NULLS FIRST
                     LIMIT 30
                 """
                     cursor.execute(options_query, option_params + [
@@ -865,9 +928,8 @@ def load_students(request):
                       AND t.test_name ILIKE %s
                       AND t.subject ILIKE %s
                       {window_clause}
-                      AND (r.other_info ->> %s) IS NOT NULL
                     GROUP BY v
-                    ORDER BY v ASC
+                    ORDER BY v ASC NULLS FIRST
                     LIMIT 30
                     """
                     other_key = test_info.get('other_info_key', '')
@@ -878,9 +940,45 @@ def load_students(request):
                         f"%{test_info['test_name']}%",
                         f"%{test_info['subject']}%",
                         *window_params,
-                        other_key,
                     ])
-                values = [row[0] for row in cursor.fetchall()]
+                
+                values = []
+                for row in cursor.fetchall():
+                    val = row[0]
+                    if val is None:
+                        val = ""
+                    if val not in values:
+                        values.append(val)
+
+                # Check if there are any students with NO result record (Blank)
+                # This is distinct from having a result with NULL value (which is handled above)
+                check_blank_query = f"""
+                    SELECT 1
+                    FROM current_student cs
+                    {join_sql}
+                    WHERE {option_where_sql}
+                    AND NOT EXISTS (
+                        SELECT 1 FROM results r
+                        INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                        WHERE r.local_student_id = cs.student_id
+                        AND r.school_year = %s
+                        AND t.test_name ILIKE %s
+                        AND t.subject ILIKE %s
+                        {window_clause}
+                    )
+                    LIMIT 1
+                """
+                check_params = option_params + [
+                    test_info['year'],
+                    f"%{test_info['test_name']}%",
+                    f"%{test_info['subject']}%",
+                    *window_params,
+                ]
+                cursor.execute(check_blank_query, check_params)
+                if cursor.fetchone():
+                    if "" not in values:
+                        values.insert(0, "")
+
                 if values:
                     filter_options[col_key] = values
     
@@ -901,6 +999,17 @@ def load_students(request):
 
     # filter_options is built inside the DB cursor context
 
+    # Build dynamic definitions including test windows
+    dynamic_definitions = COLUMN_DEFINITIONS.copy()
+    if test_cols_info:
+        for info in test_cols_info:
+            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
+            metric_label = metric_map.get(info['metric'], info['metric'])
+            label = f"{info['test_name']} {info['subject']} {metric_label}"
+            if info.get('test_window'):
+                label += f"\n{info['test_window']}"
+            dynamic_definitions[info['col_name']] = label
+
     if request.GET.get('format') == 'json':
         return JsonResponse({
             'students': students,
@@ -908,7 +1017,7 @@ def load_students(request):
             'total': total,
             'page': page,
             'total_pages': total_pages,
-            'column_definitions': COLUMN_DEFINITIONS,
+            'column_definitions': dynamic_definitions,
             'filter_options': filter_options,
             'sort_by': sort_by,
             'sort_dir': sort_dir,
@@ -989,6 +1098,11 @@ def export_students_csv(request):
         if not isinstance(filters_to_apply, dict): return
         for col, values in filters_to_apply.items():
             if not values: continue
+
+            # Handle blank values (represented by empty string)
+            has_blank = "" in values
+            real_values = [v for v in values if v != ""]
+
             if col.startswith('test_'):
                 test_info = test_col_map.get(col) or test_col_map.get(col.replace('-', '_'))
                 if not test_info: continue
@@ -998,8 +1112,8 @@ def export_students_csv(request):
                 if test_info.get('test_window'):
                     window_clause = "AND t.test_window ILIKE %s "
                     window_params = [test_info['test_window']]
-                clause = (
-                    "EXISTS ("
+
+                exist_query_base = (
                     "SELECT 1 FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.local_student_id = cs.student_id "
@@ -1008,23 +1122,68 @@ def export_students_csv(request):
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
-                if metric_col in {'ss', 'pl'}:
-                    clause += f"AND r.{metric_col} = ANY(%s)"
-                else:
-                    clause += "AND (r.other_info ->> %s) = ANY(%s)"
-                clause += ")"
-                where_clauses.append(clause)
-                params.extend([
+                exist_params_base = [
                     test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%",
                     *window_params,
-                    *( [test_info['other_info_key']] if metric_col == 'oi' else [] ),
-                    values,
-                ])
+                ]
+
+                conditions = []
+
+                if real_values:
+                    val_clause = exist_query_base
+                    if metric_col in {'ss', 'pl'}:
+                        val_clause += f"AND r.{metric_col} = ANY(%s)"
+                    else:
+                        val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
+                    
+                    val_params = list(exist_params_base)
+                    if metric_col == 'oi':
+                         val_params.append(test_info['other_info_key'])
+                    val_params.append(real_values)
+                    
+                    conditions.append(f"EXISTS ({val_clause})")
+                    params.extend(val_params)
+
+                if has_blank:
+                    blank_subconditions = []
+                    
+                    # 1. No record exists
+                    blank_subconditions.append(f"NOT EXISTS ({exist_query_base})")
+                    params.extend(exist_params_base)
+
+                    # 2. Record exists but value is NULL
+                    null_clause = exist_query_base
+                    null_params = list(exist_params_base)
+                    
+                    if metric_col in {'ss', 'pl'}:
+                        null_clause += f"AND r.{metric_col} IS NULL"
+                    else:
+                        null_clause += "AND (r.other_info ->> %s) IS NULL"
+                        null_params.append(test_info['other_info_key'])
+                    
+                    blank_subconditions.append(f"EXISTS ({null_clause})")
+                    params.extend(null_params)
+                    
+                    conditions.append(f"({' OR '.join(blank_subconditions)})")
+                
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
+
             expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
             if expr:
-                where_clauses.append(f"{expr} = ANY(%s)")
-                params.append(values)
+                 conditions = []
+                 if real_values:
+                      conditions.append(f"{expr} = ANY(%s)")
+                      params.append(real_values)
+                 if has_blank:
+                      if col in {'birth_date', 'us_enter_date', 'fep_date'}:
+                           conditions.append(f"{expr} IS NULL")
+                      else:
+                           conditions.append(f"({expr} IS NULL OR {expr} = '')")
+                 
+                 if conditions:
+                      where_clauses.append(f"({' OR '.join(conditions)})")
 
     # 2. Preparation for Query
     db_columns = _get_current_student_columns()

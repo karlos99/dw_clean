@@ -199,7 +199,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         lastPayload = payload;
 
-        if (payload.column_definitions && Object.keys(columnDefinitions).length === 0) {
+        if (payload.column_definitions) {
+            // Merge definitions to capture dynamic test attributes
+            Object.assign(columnDefinitions, payload.column_definitions);
+        } else if (Object.keys(columnDefinitions).length === 0 && payload.column_definitions) {
             columnDefinitions = payload.column_definitions;
         }
 
@@ -220,6 +223,42 @@ document.addEventListener('DOMContentLoaded', () => {
         const pageCount = payload.total_pages || 1;
         const currentPage = payload.page || 1;
         const filterOptions = payload.filter_options || {};
+
+        // Update Total Count
+        const totalCountEl = document.getElementById('total-student-count');
+        if (totalCountEl) totalCountEl.textContent = total.toLocaleString();
+
+        // Update Active Filters Display
+        const activeFiltersListEl = document.getElementById('active-filters-list');
+        const filterSeparatorEl = document.getElementById('filter-separator');
+
+        if (activeFiltersListEl) {
+            activeFiltersListEl.innerHTML = '';
+            let hasActiveFilters = false;
+
+            Object.keys(filters).forEach(col => {
+                const vals = filters[col];
+                if (Array.isArray(vals) && vals.length > 0) {
+                    hasActiveFilters = true;
+                    // Get first line of label for brevity
+                    let colLabel = columnDefinitions[col] || col;
+                    if (colLabel.includes('\n')) colLabel = colLabel.split('\n')[0];
+
+                    const chip = document.createElement('span');
+                    chip.className = 'inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200';
+
+                    let valText = vals.map(v => (v === '' || v === null) ? '(Blank)' : String(v)).join(', ');
+                    if (valText.length > 20) valText = `${vals.length} selected`;
+
+                    chip.innerHTML = `<span class="font-semibold">${escapeHtml(colLabel)}:</span> ${escapeHtml(valText)} <button type="button" data-action="clear-filter" data-column="${escapeHtml(col)}" class="ml-1 text-blue-500 hover:text-blue-900 font-bold focus:outline-none">×</button>`;
+                    activeFiltersListEl.appendChild(chip);
+                }
+            });
+
+            if (filterSeparatorEl) {
+                filterSeparatorEl.classList.toggle('hidden', !hasActiveFilters);
+            }
+        }
 
         let html = '<div class="table-container">';
         html += '<table class="min-w-full divide-y divide-slate-200">';
@@ -244,8 +283,8 @@ document.addEventListener('DOMContentLoaded', () => {
             html += `<th draggable="true" data-column="${escapeHtml(col)}" class="relative group px-4 py-2 text-left text-xs font-semibold text-slate-700 uppercase bg-slate-50">`;
             html += `<div class="flex items-center justify-between gap-2">`;
             html += `<div class="flex items-center gap-2 min-w-0">`;
-            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="flex-1 text-left truncate hover:text-slate-900">${escapeHtml(label)}</button>`;
-            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="text-xs text-slate-500 hover:text-slate-700">${sortIcon}</button>`;
+            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="flex-1 text-left hover:text-slate-900 whitespace-pre-wrap break-words">${escapeHtml(label)}</button>`;
+            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="text-xs text-slate-500 hover:text-slate-700 flex-shrink-0">${sortIcon}</button>`;
             html += `</div>`;
             if (hasFilter) {
                 html += `<div class="relative">`;
@@ -257,7 +296,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     optionsForCol.forEach((value) => {
                         const checked = filters[col]?.includes(value) ? 'checked' : '';
-                        const labelValue = DATE_COLUMNS.has(col) ? formatDateForDisplay(String(value)) : String(value);
+                        let labelValue = String(value);
+                        if (value === '' || value === null) {
+                            labelValue = '(Blank)';
+                        } else if (DATE_COLUMNS.has(col)) {
+                            labelValue = formatDateForDisplay(labelValue);
+                        }
                         html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
                         html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
                         html += `<span>${escapeHtml(labelValue)}</span>`;
