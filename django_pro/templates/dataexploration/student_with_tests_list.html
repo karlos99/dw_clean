@@ -163,44 +163,211 @@
                     </button>
                     <span class="text-sm text-slate-500" id="selected-count-toolbar">0 selected</span>
                 </div>
-                <div class="flex items-center gap-3">
+                <div class="flex items-center gap-3 flex-1">
                     <h1 class="text-xl font-semibold tracking-tight text-slate-900">Data Exploration</h1>
 
-                    <!-- Saved Items Buttons -->
-                    <button type="button" data-action="open-folder-browser"
-                        class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm transition-colors">
-                        Browse Saved Report
+                    <div class="flex-1"></div>
+
+                    <!-- Toggle Save/Load Panel Button -->
+                    <button type="button" onclick="toggleSaveLoadPanel()"
+                        title="Save your current filters as a Query or save specific students as a List. Load previously saved Queries and Lists."
+                        class="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:scale-105"
+                        id="toggle-save-panel-btn">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4">
+                            </path>
+                        </svg>
+                        <span class="font-semibold">Save / Load Reports</span>
+                        <svg class="w-4 h-4 transition-transform" id="panel-chevron" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7">
+                            </path>
+                        </svg>
                     </button>
-                    <button type="button" data-action="save-current-view"
-                        class="px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 shadow-sm transition-colors">
-                        Save Query
-                    </button>
-                    <button type="button" data-action="save-student-list"
-                        class="px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 shadow-sm transition-colors">
-                        Save List
-                    </button>
+
+                    <!-- Export CSV Button (Always visible) -->
                     <button type="button" data-action="export-csv"
-                        class="px-3 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-md hover:bg-green-100 shadow-sm transition-colors">
+                        class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 shadow-sm transition-all hover:shadow-md">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
+                            </path>
+                        </svg>
                         Export CSV
                     </button>
 
                     {% if user.is_staff or user.role and user.role.name == 'Project Admin' or user.role and user.role.name == 'District Admin' %}
                     
 
-
-
-
-
-
-
-
-
-
                     <a href="{% url 'dataexploration:manage_default_columns' %}"
-                        class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm transition-colors">
-                        Manage columns
+                        class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 shadow-sm transition-all hover:shadow-md">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z">
+                            </path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                        </svg>
+                        Manage Columns
                     </a>
                     {% endif %}
+                </div>
+
+                <!-- Collapsible Save/Load Panel -->
+                <div id="save-load-panel"
+                    class="hidden bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 border-t-2 border-blue-200 px-6 py-4 shadow-inner">
+                    <div class="max-w-7xl mx-auto">
+                        <!-- Header with Help Text -->
+                        <div class="flex items-start justify-between mb-4 pb-3 border-b border-blue-200">
+                            <div class="flex items-start gap-3">
+                                <div class="p-2 bg-blue-100 rounded-lg">
+                                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor"
+                                        viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4">
+                                        </path>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 class="text-base font-bold text-slate-800 mb-1">Save & Load Reports</h3>
+                                    <p class="text-xs text-slate-600 leading-relaxed max-w-2xl">
+                                        Save your work to access it later. <strong
+                                            class="text-blue-700">Queries</strong> save your filter settings so you can
+                                        reapply them.
+                                        <strong class="text-indigo-700">Lists</strong> save specific students by name.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Actions Grid -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <!-- Load Section -->
+                            <div
+                                class="bg-white rounded-xl p-4 shadow-sm border-2 border-slate-200 hover:border-blue-300 transition-all">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <div class="p-1.5 bg-slate-100 rounded-lg">
+                                        <svg class="w-5 h-5 text-slate-700" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z">
+                                            </path>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h4 class="text-sm font-bold text-slate-800">Load Saved Reports</h4>
+                                        <p class="text-xs text-slate-500">Open previously saved work</p>
+                                    </div>
+                                </div>
+                                <button type="button" data-action="open-folder-browser"
+                                    class="w-full inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-semibold text-slate-700 bg-slate-50 border-2 border-slate-300 rounded-lg hover:bg-slate-100 hover:border-slate-400 shadow-sm transition-all hover:shadow-md">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z">
+                                        </path>
+                                    </svg>
+                                    Browse All Saved Items
+                                </button>
+                                <div class="mt-2 text-xs text-slate-500 italic text-center">
+                                    View your Queries and Lists organized in folders
+                                </div>
+                            </div>
+
+                            <!-- Save Section -->
+                            <div class="bg-white rounded-xl p-4 shadow-sm border-2 border-slate-200">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <div class="p-1.5 bg-blue-100 rounded-lg">
+                                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4">
+                                            </path>
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h4 class="text-sm font-bold text-slate-800">Save Current Work</h4>
+                                        <p class="text-xs text-slate-500">Save for later use</p>
+                                    </div>
+                                </div>
+                                <div class="space-y-2">
+                                    <!-- Save Query Button with Info -->
+                                    <div class="relative group">
+                                        <button type="button" data-action="save-current-view"
+                                            title="Save your current filter settings (grade, school year, status, etc.) so you can quickly reapply them later"
+                                            class="w-full inline-flex items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-blue-700 bg-blue-50 border-2 border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 shadow-sm transition-all hover:shadow-md">
+                                            <div class="flex items-center gap-2">
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2"
+                                                        d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
+                                                    </path>
+                                                </svg>
+                                                <span>Save as Query</span>
+                                            </div>
+                                            <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+                                                </path>
+                                            </svg>
+                                        </button>
+                                        <div
+                                            class="absolute left-0 right-0 top-full mt-1 p-2 bg-blue-900 text-white text-xs rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                                            <strong>Query:</strong> Saves your filter criteria (columns, filters,
+                                            sorting). Use this to recreate the same search later with updated data.
+                                        </div>
+                                    </div>
+
+                                    <!-- Save List Button with Info -->
+                                    <div class="relative group">
+                                        <button type="button" data-action="save-student-list"
+                                            title="Save the specific students currently displayed as a named list you can reload anytime"
+                                            class="w-full inline-flex items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-indigo-700 bg-indigo-50 border-2 border-indigo-300 rounded-lg hover:bg-indigo-100 hover:border-indigo-400 shadow-sm transition-all hover:shadow-md">
+                                            <div class="flex items-center gap-2">
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                        stroke-width="2"
+                                                        d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+                                                    </path>
+                                                </svg>
+                                                <span>Save as List</span>
+                                            </div>
+                                            <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+                                                </path>
+                                            </svg>
+                                        </button>
+                                        <div
+                                            class="absolute left-0 right-0 top-full mt-1 p-2 bg-indigo-900 text-white text-xs rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                                            <strong>List:</strong> Saves the exact students currently shown by name/ID.
+                                            Use this to track specific groups of students over time.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Help Section -->
+                        <div class="mt-4 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                            <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z">
+                                </path>
+                            </svg>
+                            <div class="text-xs text-amber-900">
+                                <strong>Tip:</strong> Use <strong class="text-blue-700">Queries</strong> when you want
+                                to reuse the same search criteria.
+                                Use <strong class="text-indigo-700">Lists</strong> when you need to track specific
+                                students (like intervention groups or test cohorts).
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -223,7 +390,7 @@
                             class="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600 bg-white">
                             <option value="">All Years</option>
                             {% for year in school_years %}
-                            <option value="{{ year }}" {% if selected_school_year  == year %}selected{% endif %}>{{ year }}
+                            <option value="{{ year }}" {% if selected_school_year == year %}selected{% endif %}>{{ year }}
                             </option>
                             {% endfor %}
                         </select>
@@ -286,16 +453,91 @@
 
 <!-- Folder Browser Sidebar (Hidden by default) -->
 <div id="folder-browser-sidebar"
-    class="fixed inset-y-0 right-0 w-96 bg-white shadow-xl transform translate-x-full transition-transform duration-300 z-40 border-l border-gray-200 flex flex-col">
-    <div class="p-4 border-b flex justify-between items-center bg-gray-50">
-        <h3 class="font-semibold text-gray-800">Saved Reports & Lists</h3>
-        <button onclick="document.getElementById('folder-browser-sidebar').classList.add('translate-x-full')"
-            class="text-gray-500 hover:text-gray-700">✕</button>
+    class="fixed inset-y-0 right-0 w-[460px] bg-white shadow-2xl transform translate-x-full transition-transform duration-300 z-40 border-l-2 border-slate-300 flex flex-col">
+    <!-- Header -->
+    <div class="p-5 border-b-2 border-slate-200 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div class="flex justify-between items-start mb-3">
+            <div class="flex items-center gap-3">
+                <div class="p-2 bg-blue-600 rounded-lg shadow-md">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z">
+                        </path>
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="font-bold text-slate-900 text-lg">My Saved Reports</h3>
+                    <p class="text-xs text-slate-600">Load or manage your saved work</p>
+                </div>
+            </div>
+            <button onclick="document.getElementById('folder-browser-sidebar').classList.add('translate-x-full')"
+                class="text-slate-400 hover:text-slate-700 transition-colors p-2 hover:bg-white/80 rounded-lg">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12">
+                    </path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Legend -->
+        <div class="flex items-center gap-4 text-xs bg-white/60 rounded-lg p-2 backdrop-blur-sm">
+            <div class="flex items-center gap-1.5">
+                <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
+                    </path>
+                </svg>
+                <span class="font-semibold text-blue-700">Query</span>
+                <span class="text-slate-500">= Filters</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+                <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+                    </path>
+                </svg>
+                <span class="font-semibold text-indigo-700">List</span>
+                <span class="text-slate-500">= Students</span>
+            </div>
+        </div>
     </div>
-    <div id="folder-browser-content" class="flex-1 overflow-y-auto p-4"
+
+    <!-- Content -->
+    <div id="folder-browser-content" class="flex-1 overflow-y-auto p-4 bg-gradient-to-b from-slate-50 to-white"
         hx-get="{% url 'dataexploration:folder_browser' %}" hx-trigger="load-folders, refresh-folders from:body">
         <!-- Content loaded via HTMX -->
-        <div class="text-center text-gray-500 mt-10">Loading folders...</div>
+        <div class="text-center text-slate-500 mt-10">
+            <svg class="animate-spin h-8 w-8 mx-auto text-blue-600 mb-3" xmlns="http://www.w3.org/2000/svg" fill="none"
+                viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                </path>
+            </svg>
+            <p class="text-sm font-medium">Loading your saved items...</p>
+        </div>
+    </div>
+
+    <!-- Footer with Instructions -->
+    <div class="border-t-2 border-slate-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-4">
+        <div class="space-y-2">
+            <div class="flex items-start gap-2 text-xs text-slate-700">
+                <svg class="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z">
+                    </path>
+                </svg>
+                <div>
+                    <p class="font-semibold mb-1">How to use:</p>
+                    <ul class="space-y-0.5 text-xs">
+                        <li>• <strong>Click</strong> any item to load it</li>
+                        <li>• <strong>Drag</strong> shared items to your folders to copy</li>
+                        <li>• <strong>Hover</strong> items to see action buttons</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 

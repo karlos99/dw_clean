@@ -407,6 +407,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadData = () => {
         const url = new URL(loadStudentsUrl, window.location.origin);
         url.searchParams.set('page', page);
+
+        // Include saved_query or student_list from URL if present
+        const urlParams = new URLSearchParams(window.location.search);
+        const savedQueryId = urlParams.get('saved_query');
+        const studentListId = urlParams.get('student_list');
+        if (savedQueryId) url.searchParams.set('saved_query', savedQueryId);
+        if (studentListId) url.searchParams.set('student_list', studentListId);
+
         if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
             url.searchParams.set('columns', JSON.stringify(selectedColumns));
         }
@@ -891,4 +899,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
     renderSelectedColumns();
     loadData();
+});
+
+/**
+ * Toggle Save/Load Panel
+ */
+function toggleSaveLoadPanel() {
+    const panel = document.getElementById('save-load-panel');
+    const chevron = document.getElementById('panel-chevron');
+
+    if (panel.classList.contains('hidden')) {
+        panel.classList.remove('hidden');
+        panel.classList.add('animate-slideDown');
+        chevron.style.transform = 'rotate(180deg)';
+        // Store preference
+        localStorage.setItem('saveLoadPanelOpen', 'true');
+    } else {
+        panel.classList.add('hidden');
+        panel.classList.remove('animate-slideDown');
+        chevron.style.transform = 'rotate(0deg)';
+        // Store preference
+        localStorage.setItem('saveLoadPanelOpen', 'false');
+    }
+}
+
+// Restore panel state on load
+document.addEventListener('DOMContentLoaded', () => {
+    const panelOpen = localStorage.getItem('saveLoadPanelOpen');
+    if (panelOpen === 'true') {
+        const panel = document.getElementById('save-load-panel');
+        const chevron = document.getElementById('panel-chevron');
+        if (panel && chevron) {
+            panel.classList.remove('hidden');
+            chevron.style.transform = 'rotate(180deg)';
+        }
+    }
 });

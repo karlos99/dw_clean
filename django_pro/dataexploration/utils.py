@@ -115,6 +115,39 @@ def can_create_in_folder(user, folder):
     return False
 
 
+def can_user_view_query(user, query):
+    """
+    Check if user can view/access a saved query.
+    Considers ownership, privacy settings, and direct shares.
+    """
+    if not user.is_authenticated:
+        return False
+        
+    if user.is_superuser:
+        return True
+        
+    # Owner can always view
+    if query.owner == user:
+        return True
+        
+    # Public queries are visible to all authenticated users
+    if query.privacy == 'public':
+        return True
+        
+    # Check if directly shared with user
+    if query.shares.filter(shared_with=user).exists():
+        return True
+        
+    # If query has a folder, check folder access
+    if query.folder:
+        # User can view if they have folder access
+        user_folders = get_user_folders(user)
+        if query.folder in user_folders:
+            return True
+    
+    return False
+
+
 def can_user_manage_query(user, query):
     """
     Check if user can edit/delete a saved query.
@@ -129,8 +162,15 @@ def can_user_manage_query(user, query):
     if query.owner == user:
         return True
         
-    # Check if user has edit permission on the folder
-    return can_user_edit_folder(user, query.folder)
+    # Check if user has edit permission via QueryShare
+    if query.shares.filter(shared_with=user, can_edit=True).exists():
+        return True
+        
+    # Check if user has edit permission on the folder (if folder exists)
+    if query.folder:
+        return can_user_edit_folder(user, query.folder)
+    
+    return False
 
 
 def can_user_manage_list(user, student_list):

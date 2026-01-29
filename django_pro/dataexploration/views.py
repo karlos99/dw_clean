@@ -330,10 +330,14 @@ def load_students(request):
     if saved_query_id:
         try:
             from .models import SavedQuery
-            from .utils import get_user_folders
+            from .utils import can_user_view_query
             query_obj = SavedQuery.objects.get(pk=saved_query_id)
-            if query_obj.folder in get_user_folders(request.user):
+            if can_user_view_query(request.user, query_obj):
                 saved_config = query_obj.config
+                # Track query execution
+                query_obj.execute()
+        except SavedQuery.DoesNotExist:
+            pass
         except Exception:
             pass
     
@@ -349,14 +353,19 @@ def load_students(request):
     else:
         selected_columns = _get_saved_default_columns()
     
-    # Get filters
-    search = request.GET.get('search', '') or saved_config.get('search', '')
-    school_year = request.GET.get('school_year', '') or saved_config.get('school_year', '')
-    grade = request.GET.get('grade', '') or saved_config.get('grade', '')
+    # Extract saved filters (they may be nested under 'filters' key or at top level)
+    saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
+    
+    # Get filters - URL params take precedence over saved config
+    search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
+    school_year = request.GET.get('school_year', '') or saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+    grade = request.GET.get('grade', '') or saved_filters.get('grade', '') or saved_config.get('grade', '')
     
     status_param = request.GET.get('status')
     if status_param is not None:
         status = status_param
+    elif 'status' in saved_filters:
+        status = saved_filters['status']
     elif 'status' in saved_config:
         status = saved_config['status']
     else:
@@ -371,9 +380,10 @@ def load_students(request):
         try:
             filters = json.loads(filters_json)
         except:
-            filters = saved_config.get('filters', {})
-    elif saved_config.get('filters'):
-        filters = saved_config.get('filters', {})
+            filters = saved_filters.copy()
+    else:
+        # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
+        filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
     
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll):
         """Append SQL filter clauses + params for the provided filters dict."""
@@ -1090,10 +1100,12 @@ def export_students_csv(request):
     if saved_query_id:
         try:
             from .models import SavedQuery
-            from .utils import get_user_folders
+            from .utils import can_user_view_query
             query_obj = SavedQuery.objects.get(pk=saved_query_id)
-            if query_obj.folder in get_user_folders(request.user):
+            if can_user_view_query(request.user, query_obj):
                 saved_config = query_obj.config
+        except SavedQuery.DoesNotExist:
+            pass
         except Exception:
             pass
     
@@ -1108,13 +1120,19 @@ def export_students_csv(request):
     else:
         selected_columns = _get_saved_default_columns()
     
-    search = request.GET.get('search', '') or saved_config.get('search', '')
-    school_year = request.GET.get('school_year', '') or saved_config.get('school_year', '')
-    grade = request.GET.get('grade', '') or saved_config.get('grade', '')
+    # Extract saved filters (they may be nested under 'filters' key or at top level)
+    saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
+    
+    # Get filters - URL params take precedence over saved config
+    search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
+    school_year = request.GET.get('school_year', '') or saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+    grade = request.GET.get('grade', '') or saved_filters.get('grade', '') or saved_config.get('grade', '')
     
     status_param = request.GET.get('status')
     if status_param is not None:
         status = status_param
+    elif 'status' in saved_filters:
+        status = saved_filters['status']
     elif 'status' in saved_config:
         status = saved_config['status']
     else:
@@ -1129,9 +1147,10 @@ def export_students_csv(request):
         try:
             filters = json.loads(filters_json)
         except:
-            filters = saved_config.get('filters', {})
-    elif saved_config.get('filters'):
-        filters = saved_config.get('filters', {})
+            filters = saved_filters.copy()
+    else:
+        # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
+        filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
 
     # Helper for column filters (Duplicated from load_students to avoid refactoring risk)
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll):
@@ -1630,8 +1649,25 @@ def folder_browser(request):
         'queries', 'student_lists', 'subfolders', 'shares'
     ).order_by('folder_type', 'name')
     
+    # Get queries shared with this user (via QueryShare)
+    # Annotate with permission flags for template
+    shared_queries = SavedQuery.objects.filter(
+        shares__shared_with=request.user
+    ).select_related('owner').prefetch_related('shares').order_by('-updated_at')
+    
+    # Add permission info to each query
+    shared_queries_with_perms = []
+    for query in shared_queries:
+        share = query.shares.filter(shared_with=request.user).first()
+        shared_queries_with_perms.append({
+            'query': query,
+            'can_edit': share.can_edit if share else False,
+            'can_reshare': share.can_reshare if share else False
+        })
+    
     context = {
-        'folders': folders
+        'folders': folders,
+        'shared_queries': shared_queries_with_perms
     }
     return render(request, 'dataexploration/partials/folder_browser.html', context)
 
@@ -2098,3 +2134,124 @@ def create_folder(request):
     response = render(request, 'dataexploration/partials/save_success.html', {'message': 'Folder created successfully!'})
     response['HX-Trigger'] = 'refresh-folders'
     return response
+
+@require_POST
+@login_required
+def rename_folder(request, folder_id):
+    """Rename a folder."""
+    folder = get_object_or_404(ReportFolder, pk=folder_id)
+    
+    if not can_user_edit_folder(request.user, folder):
+        return HttpResponseForbidden("You do not have permission to rename this folder")
+    
+    name = request.POST.get('name')
+    description = request.POST.get('description', '')
+    
+    if name:
+        folder.name = name
+        folder.description = description
+        folder.save()
+    
+    response = HttpResponse("")
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@require_POST
+@login_required
+def delete_folder(request, folder_id):
+    """Delete a folder."""
+    folder = get_object_or_404(ReportFolder, pk=folder_id)
+    
+    if not can_user_edit_folder(request.user, folder):
+        return HttpResponseForbidden("You do not have permission to delete this folder")
+    
+    # Check if folder has content
+    if folder.queries.exists() or folder.student_lists.exists() or folder.subfolders.exists():
+        return JsonResponse({
+            'status': 'error',
+            'message': 'Cannot delete folder with content. Please move or delete items first.'
+        }, status=400)
+    
+    folder.delete()
+    
+    response = HttpResponse("")
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@require_POST
+@login_required
+def copy_query_to_folder(request, query_id):
+    """Copy a shared query to user's folder."""
+    from django.contrib.auth import get_user_model
+    
+    query = get_object_or_404(SavedQuery, pk=query_id)
+    
+    # Check if user can view this query
+    if not can_user_view_query(request.user, query):
+        return HttpResponseForbidden("You do not have access to this query")
+    
+    folder_id = request.POST.get('folder_id')
+    folder = None
+    
+    if folder_id:
+        folder = get_object_or_404(ReportFolder, pk=folder_id)
+        if not can_create_in_folder(request.user, folder):
+            return HttpResponseForbidden("You cannot add queries to this folder")
+    
+    # Create a copy of the query
+    new_query = SavedQuery.objects.create(
+        name=f"{query.name} (Copy)",
+        description=query.description,
+        query_type=query.query_type,
+        folder=folder,
+        owner=request.user,
+        config=query.config.copy() if query.config else {},
+        privacy='private'
+    )
+    
+    response = render(request, 'dataexploration/partials/save_success.html', {
+        'message': f'Query copied to your folder!'
+    })
+    response['HX-Trigger'] = 'refresh-folders'
+    return response
+
+@login_required
+def get_query_details(request, query_id):
+    """Get query details including applied filters for display."""
+    query = get_object_or_404(SavedQuery, pk=query_id)
+    
+    if not can_user_view_query(request.user, query):
+        return HttpResponseForbidden("You do not have access to this query")
+    
+    config = query.config or {}
+    filters = config.get('filters', {})
+    
+    # Format filters for display
+    filter_display = []
+    
+    # Basic filters
+    if filters.get('search'):
+        filter_display.append(f"Search: {filters['search']}")
+    if filters.get('school_year'):
+        filter_display.append(f"School Year: {filters['school_year']}")
+    if filters.get('grade'):
+        filter_display.append(f"Grade: {filters['grade']}")
+    if filters.get('status'):
+        filter_display.append(f"Status: {filters['status']}")
+    
+    # Column filters
+    for key, value in filters.items():
+        if key not in ['search', 'school_year', 'grade', 'status'] and value:
+            if isinstance(value, list):
+                filter_display.append(f"{key}: {', '.join(map(str, value))}")
+            else:
+                filter_display.append(f"{key}: {value}")
+    
+    context = {
+        'query': query,
+        'filters': filter_display,
+        'column_count': len(config.get('columns', [])),
+        'can_edit': can_user_manage_query(request.user, query)
+    }
+    
+    return render(request, 'dataexploration/partials/query_details.html', context)
