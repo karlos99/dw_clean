@@ -1,7 +1,7 @@
 <div id="save-list-modal" class="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog"
     aria-modal="true">
     <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true"
+        <div class="fixed inset-0 bg-slate-900 bg-opacity-75 transition-opacity" aria-hidden="true"
             onclick="document.getElementById('modals-container').innerHTML=''"></div>
 
         <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
@@ -15,6 +15,22 @@
                     <div class="mt-4 space-y-4">
                         <!-- Hidden inputs for ssids -->
                         <input type="hidden" name="ssids" id="ssids_input">
+                        <input type="hidden" name="query_id" id="list_query_id">
+
+                        <div>
+                            <label for="overwrite_list_id" class="block text-sm font-medium text-gray-700">Overwrite
+                                Existing List (Optional)</label>
+                            <select id="overwrite_list_id"
+                                class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                                <option value="">Create a new saved list</option>
+                                {% for q in existing_lists %}
+                                <option value="{{ q.id }}" data-name="{{ q.name|escapejs }}"
+                                    data-description="{{ q.description|default:''|escapejs }}">{{ q.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <p class="text-xs text-gray-500 mt-1">Selecting a list here will overwrite it with the
+                                currently selected students when you click Save List.</p>
+                        </div>
 
                         <div>
                             <label for="list_name" class="block text-sm font-medium text-gray-700">List Name</label>
@@ -42,8 +58,10 @@
 
                         <div class="bg-yellow-50 p-3 rounded">
                             <p class="text-sm text-yellow-700">
-                                This will save the <strong><span class="student-count-badge">current</span>
-                                    students</strong> visible on this page to a static list.
+                                This will save <strong><span class="student-count-badge">0</span>
+                                    selected students</strong> to a static list.
+                                <span class="text-xs block mt-1">If none are selected, it saves the students visible on
+                                    the current page.</span>
                                 Columns are not saved.
                             </p>
                         </div>

@@ -25,6 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let draggedColumn = null;
     let resizeState = null;
 
+    // Row selection for saving student lists
+    const selectedStudentSsids = new Set();
+
     const studentSummaryUrlTemplate = appDataEl.dataset.studentSummaryUrlTemplate || '';
     const studentSummaryPartialUrlTemplate = appDataEl.dataset.studentSummaryPartialUrlTemplate || '';
     const studentSummaryWarmUrl = appDataEl.dataset.studentSummaryWarmUrl || '';
@@ -122,6 +125,68 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectedCountToolbarEl = document.getElementById('selected-count-toolbar');
     const sidebarEl = document.getElementById('column-selector');
 
+    const selectedStudentCountEls = Array.from(
+        document.querySelectorAll('#selected-student-count, #selected-student-count-toolbar')
+    );
+    const renderSelectedStudentCount = () => {
+        selectedStudentCountEls.forEach((el) => {
+            el.textContent = String(selectedStudentSsids.size);
+        });
+    };
+
+    const getCsrfToken = () => {
+        const direct = (appDataEl?.dataset?.csrfToken || '').trim();
+        if (direct && direct !== 'NOTPROVIDED') return direct;
+
+        const cookie = (typeof window.dwGetCookie === 'function')
+            ? window.dwGetCookie('csrftoken')
+            : (document.cookie.match(/(?:^|; )csrftoken=([^;]*)/) || [])[1];
+        if (cookie) return decodeURIComponent(cookie);
+
+        const input = document.querySelector('input[name="csrfmiddlewaretoken"]');
+        return (input?.value || '').trim();
+    };
+
+    const getCurrentFiltersForSave = () => {
+        return {
+            school_year: document.getElementById('school_year')?.value,
+            status: document.getElementById('status')?.value,
+            search: document.getElementById('search')?.value,
+            ...filters,
+        };
+    };
+
+    const getCurrentQueryConfigForSave = () => {
+        return {
+            columns: selectedColumns,
+            filters: getCurrentFiltersForSave(),
+            sort_by: sortBy,
+            sort_dir: sortDir,
+        };
+    };
+
+    const getCurrentPageSsids = () => {
+        if (!lastPayload || !Array.isArray(lastPayload.students)) return [];
+        return lastPayload.students.map((s) => s?.ssid).filter((v) => v && String(v).trim());
+    };
+
+    const syncSelectAllCheckboxState = () => {
+        const selectAllEl = document.querySelector('#student-table input[data-action="select-all-visible"]');
+        if (!selectAllEl) return;
+        const pageSsids = getCurrentPageSsids();
+        if (pageSsids.length === 0) {
+            selectAllEl.checked = false;
+            selectAllEl.indeterminate = false;
+            return;
+        }
+        let selectedOnPage = 0;
+        for (const ssid of pageSsids) {
+            if (selectedStudentSsids.has(String(ssid))) selectedOnPage += 1;
+        }
+        selectAllEl.checked = selectedOnPage === pageSsids.length;
+        selectAllEl.indeterminate = selectedOnPage > 0 && selectedOnPage < pageSsids.length;
+    };
+
     const syncCheckboxes = () => {
         document.querySelectorAll('input[data-column]').forEach((checkbox) => {
             checkbox.checked = selectedColumns.includes(checkbox.dataset.column);
@@ -210,6 +275,10 @@ document.addEventListener('DOMContentLoaded', () => {
             selectedColumns = payload.selected_columns;
         }
 
+        if (payload.filters) {
+            filters = payload.filters;
+        }
+
         if (payload.sort_by) {
             sortBy = payload.sort_by;
         }
@@ -265,6 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Column widths (persisted client-side)
         html += '<colgroup>';
+        html += '<col style="width:44px">';
         columns.forEach((col) => {
             const width = columnWidths[col];
             const widthStyle = Number.isFinite(width) ? ` style="width:${Math.max(60, width)}px"` : '';
@@ -273,6 +343,12 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '</colgroup>';
 
         html += '<thead class="bg-slate-50 sticky top-0 z-10"><tr class="bg-slate-50">';
+
+        // Selection column header
+        html += '<th class="px-4 py-2 text-left text-xs font-semibold text-slate-700 uppercase bg-slate-50">';
+        html += '<input type="checkbox" data-action="select-all-visible" class="rounded border-slate-300 text-blue-600 focus:ring-blue-600" aria-label="Select all visible students">';
+        html += '</th>';
+
         columns.forEach((col) => {
             const label = columnDefinitions[col] || col;
             const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
@@ -328,10 +404,22 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '</tr></thead><tbody class="bg-white divide-y divide-slate-200">';
 
         if (students.length === 0) {
-            html += `<tr><td colspan="${columns.length}" class="px-6 py-8 text-center text-slate-500">No students found</td></tr>`;
+            html += `<tr><td colspan="${columns.length + 1}" class="px-6 py-8 text-center text-slate-500">No students found</td></tr>`;
         } else {
             students.forEach((student) => {
+                const ssid = student?.ssid ? String(student.ssid) : '';
+                const checked = ssid && selectedStudentSsids.has(ssid) ? 'checked' : '';
                 html += '<tr class="hover:bg-slate-50">';
+
+                // Selection cell
+                if (ssid) {
+                    html += `<td class="px-4 py-3 text-sm whitespace-nowrap">`;
+                    html += `<input type="checkbox" data-action="select-student" data-ssid="${escapeHtml(ssid)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600" aria-label="Select student">`;
+                    html += `</td>`;
+                } else {
+                    html += `<td class="px-4 py-3 text-sm whitespace-nowrap">—</td>`;
+                }
+
                 columns.forEach((col) => {
                     const value = formatValueForColumn(col, student[col]);
                     if ((col === 'ssid' || col === 'student_id') && student?.ssid) {
@@ -368,6 +456,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         targetEl.innerHTML = html;
         renderSelectedColumns();
+        renderSelectedStudentCount();
+        syncSelectAllCheckboxState();
         scheduleWarmStudentSummaries();
     };
 
@@ -424,6 +514,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (filters && Object.keys(filters).length > 0) {
             url.searchParams.set('filters', JSON.stringify(filters));
+        } else if (lastPayload !== null) {
+            url.searchParams.set('filters', '{}');
         }
         url.searchParams.set('format', 'json');
 
@@ -468,6 +560,40 @@ document.addEventListener('DOMContentLoaded', () => {
         const checkbox = event.target.closest('input[data-column]');
         if (checkbox) {
             updateColumnSelection(checkbox.dataset.column);
+            return;
+        }
+
+        const studentCheckbox = event.target.closest('input[data-action="select-student"][data-ssid]');
+        if (studentCheckbox) {
+            const ssid = String(studentCheckbox.dataset.ssid || '').trim();
+            if (!ssid) return;
+            if (studentCheckbox.checked) {
+                selectedStudentSsids.add(ssid);
+            } else {
+                selectedStudentSsids.delete(ssid);
+            }
+            renderSelectedStudentCount();
+            syncSelectAllCheckboxState();
+            return;
+        }
+
+        const selectAll = event.target.closest('input[data-action="select-all-visible"]');
+        if (selectAll) {
+            const pageSsids = getCurrentPageSsids();
+            if (selectAll.checked) {
+                pageSsids.forEach((ssid) => selectedStudentSsids.add(String(ssid)));
+            } else {
+                pageSsids.forEach((ssid) => selectedStudentSsids.delete(String(ssid)));
+            }
+
+            // Update row checkboxes to match
+            document.querySelectorAll('#student-table input[data-action="select-student"][data-ssid]').forEach((el) => {
+                const s = String(el.dataset.ssid || '').trim();
+                el.checked = s ? selectedStudentSsids.has(s) : false;
+            });
+            renderSelectedStudentCount();
+            syncSelectAllCheckboxState();
+            return;
         }
     });
 
@@ -604,6 +730,15 @@ document.addEventListener('DOMContentLoaded', () => {
         // If resizing, ignore clicks
         if (resizeState) return;
 
+        const clearSelectedBtn = event.target.closest('[data-action="clear-selected-students"]');
+        if (clearSelectedBtn) {
+            selectedStudentSsids.clear();
+            renderSelectedStudentCount();
+            syncSelectAllCheckboxState();
+            if (lastPayload) renderTable(lastPayload);
+            return;
+        }
+
         const removeBtn = event.target.closest('[data-action="remove-column"]');
         if (removeBtn) {
             updateColumnSelection(removeBtn.dataset.column);
@@ -685,9 +820,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // New Actions
         const openFolderBrowserBtn = event.target.closest('[data-action="open-folder-browser"]');
         if (openFolderBrowserBtn) {
-            const fbSidebar = document.getElementById('folder-browser-sidebar');
-            if (fbSidebar) {
-                fbSidebar.classList.remove('translate-x-full');
+            const fbModal = document.getElementById('folder-browser-modal');
+            if (fbModal) {
+                fbModal.classList.remove('hidden');
                 const content = document.getElementById('folder-browser-content');
                 if (content && window.htmx) {
                     htmx.trigger(content, 'load-folders');
@@ -698,138 +833,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const saveQueryBtn = event.target.closest('[data-action="save-current-view"]');
         if (saveQueryBtn) {
-            const url = appDataEl.dataset.saveQueryModalUrl;
-            const container = document.getElementById('modals-container');
-            if (url && container) {
-                loadOverlayHtml(url, container).then(() => {
-                    const form = document.getElementById('save-query-form');
-                    const modal = document.getElementById('save-query-modal');
-                    if (form && modal) {
-                        modal.classList.remove('hidden');
-                        const configInput = form.querySelector('input[name="query_config"]');
-                        if (configInput) {
-                            const currentFilters = {
-                                school_year: document.getElementById('school_year')?.value,
-                                status: document.getElementById('status')?.value,
-                                search: document.getElementById('search')?.value,
-                                ...filters
-                            };
-                            const config = {
-                                columns: selectedColumns,
-                                filters: currentFilters
-                            };
-                            configInput.value = JSON.stringify(config);
-                        }
-
-                        // Add custom submit handler for overwrite confirmation
-                        form.addEventListener('submit', async (e) => {
-                            e.preventDefault();
-                            const formData = new FormData(form);
-
-                            try {
-                                const response = await fetch(form.action, {
-                                    method: 'POST',
-                                    body: formData,
-                                    headers: {
-                                        'X-Requested-With': 'XMLHttpRequest'
-                                    }
-                                });
-
-                                if (response.status === 409) {
-                                    const data = await response.json();
-                                    if (data.status === 'confirm' && confirm(data.message)) {
-                                        formData.append('overwrite', 'true');
-                                        const retryResponse = await fetch(form.action, {
-                                            method: 'POST',
-                                            body: formData,
-                                            headers: {
-                                                'X-Requested-With': 'XMLHttpRequest'
-                                            }
-                                        });
-                                        const html = await retryResponse.text();
-                                        container.innerHTML = html;
-                                        htmx.process(container);
-                                        if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
-                                    }
-                                } else {
-                                    const html = await response.text();
-                                    container.innerHTML = html;
-                                    htmx.process(container);
-                                    if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
-                                }
-                            } catch (error) {
-                                console.error('Error saving query:', error);
-                                alert('Error saving query. Please try again.');
-                            }
-                        });
-                    }
-                });
+            if (typeof window.openSaveQueryModal === 'function') {
+                window.openSaveQueryModal();
             }
             return;
         }
 
         const saveListBtn = event.target.closest('[data-action="save-student-list"]');
         if (saveListBtn) {
-            const url = appDataEl.dataset.saveListModalUrl;
-            const container = document.getElementById('modals-container');
-            if (url && container) {
-                loadOverlayHtml(url, container).then(() => {
-                    const form = document.getElementById('save-list-form');
-                    const modal = document.getElementById('save-list-modal');
-                    if (form && modal) {
-                        modal.classList.remove('hidden');
-                        const ssidsInput = form.querySelector('input[name="ssids"]');
-                        if (ssidsInput && lastPayload && lastPayload.students) {
-                            const ssids = lastPayload.students.map(s => s.ssid).filter(Boolean);
-                            ssidsInput.value = JSON.stringify(ssids);
-                            // Also update badge count
-                            const countSpan = modal.querySelector('.student-count-badge');
-                            if (countSpan) countSpan.textContent = ssids.length;
-                        }
-
-                        // Add custom submit handler for overwrite confirmation
-                        form.addEventListener('submit', async (e) => {
-                            e.preventDefault();
-                            const formData = new FormData(form);
-
-                            try {
-                                const response = await fetch(form.action, {
-                                    method: 'POST',
-                                    body: formData,
-                                    headers: {
-                                        'X-Requested-With': 'XMLHttpRequest'
-                                    }
-                                });
-
-                                if (response.status === 409) {
-                                    const data = await response.json();
-                                    if (data.status === 'confirm' && confirm(data.message)) {
-                                        formData.append('overwrite', 'true');
-                                        const retryResponse = await fetch(form.action, {
-                                            method: 'POST',
-                                            body: formData,
-                                            headers: {
-                                                'X-Requested-With': 'XMLHttpRequest'
-                                            }
-                                        });
-                                        const html = await retryResponse.text();
-                                        container.innerHTML = html;
-                                        htmx.process(container);
-                                        if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
-                                    }
-                                } else {
-                                    const html = await response.text();
-                                    container.innerHTML = html;
-                                    htmx.process(container);
-                                    if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
-                                }
-                            } catch (error) {
-                                console.error('Error saving list:', error);
-                                alert('Error saving list. Please try again.');
-                            }
-                        });
-                    }
-                });
+            if (typeof window.openSaveListModal === 'function') {
+                window.openSaveListModal();
             }
             return;
         }
@@ -869,6 +882,42 @@ document.addEventListener('DOMContentLoaded', () => {
             window.location.href = url.toString();
             return;
         }
+
+        const applyStudentListBtn = event.target.closest('[data-action="apply-student-list"][data-student-list-id]');
+        if (applyStudentListBtn) {
+            event.preventDefault();
+
+            const listId = String(applyStudentListBtn.dataset.studentListId || '').trim();
+            if (!listId) return;
+
+            // Lists define membership only; preserve current columns/filters UI state.
+            // Clear saved_query since the list is being applied.
+            const nextUrl = new URL(window.location.href);
+            nextUrl.searchParams.set('student_list', listId);
+            nextUrl.searchParams.delete('saved_query');
+            nextUrl.searchParams.delete('page');
+            window.history.replaceState({}, '', nextUrl.toString());
+
+            const fbModal = document.getElementById('folder-browser-modal');
+            if (fbModal) fbModal.classList.add('hidden');
+
+            page = 1;
+            loadData();
+            return;
+        }
+
+        const clearLoadedBtn = event.target.closest('[data-action="clear-loaded"]');
+        if (clearLoadedBtn) {
+            event.preventDefault();
+            const nextUrl = new URL(window.location.href);
+            nextUrl.searchParams.delete('saved_query');
+            nextUrl.searchParams.delete('student_list');
+            nextUrl.searchParams.delete('page');
+            window.history.replaceState({}, '', nextUrl.toString());
+            page = 1;
+            loadData();
+            return;
+        }
     });
 
     // Global functions for Folder Browser Actions
@@ -897,8 +946,425 @@ document.addEventListener('DOMContentLoaded', () => {
         if (container) loadOverlayHtml(url, container);
     };
 
+    // Expose modal openers so the folder browser can trigger overwrites.
+    window.openSaveQueryModal = async ({ queryId = null, name = '', description = '' } = {}) => {
+        const url = appDataEl.dataset.saveQueryModalUrl;
+        const container = document.getElementById('modals-container');
+        if (!url || !container) return;
+
+        await loadOverlayHtml(url, container);
+
+        const form = document.getElementById('save-query-form');
+        const modal = document.getElementById('save-query-modal');
+        if (!form || !modal) return;
+        modal.classList.remove('hidden');
+
+        // Ensure query_id exists
+        let queryIdInput = form.querySelector('input[name="query_id"]');
+        if (!queryIdInput) {
+            queryIdInput = document.createElement('input');
+            queryIdInput.type = 'hidden';
+            queryIdInput.name = 'query_id';
+            form.appendChild(queryIdInput);
+        }
+        queryIdInput.value = queryId ? String(queryId) : '';
+
+        // Prefill fields (useful for overwrite/update)
+        const nameInput = form.querySelector('input[name="name"]');
+        const descInput = form.querySelector('textarea[name="description"]');
+        if (nameInput && name) nameInput.value = name;
+        if (descInput && typeof description === 'string') descInput.value = description;
+
+        // Overwrite-by-selection dropdown (optional)
+        const overwriteSelect = document.getElementById('overwrite_query_id');
+        if (overwriteSelect && overwriteSelect.dataset.boundChange !== 'true') {
+            overwriteSelect.dataset.boundChange = 'true';
+            overwriteSelect.addEventListener('change', () => {
+                const selectedId = String(overwriteSelect.value || '').trim();
+                queryIdInput.value = selectedId;
+                const opt = overwriteSelect.options[overwriteSelect.selectedIndex];
+                if (!opt) return;
+                const optName = opt.getAttribute('data-name') || '';
+                const optDesc = opt.getAttribute('data-description') || '';
+                if (selectedId) {
+                    if (nameInput) nameInput.value = optName;
+                    if (descInput) descInput.value = optDesc;
+                }
+            });
+        }
+
+        const configInput = form.querySelector('input[name="query_config"]');
+        if (configInput) {
+            configInput.value = JSON.stringify(getCurrentQueryConfigForSave());
+        }
+
+        // Bind submit handler once
+        if (form.dataset.boundSubmit !== 'true') {
+            form.dataset.boundSubmit = 'true';
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(form);
+
+                // Always ensure we're saving current config
+                formData.set('query_config', JSON.stringify(getCurrentQueryConfigForSave()));
+
+                try {
+                    const response = await fetch(form.action, {
+                        method: 'POST',
+                        body: formData,
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        credentials: 'same-origin'
+                    });
+
+                    if (response.status === 409) {
+                        const data = await response.json();
+                        if (data.status === 'confirm' && confirm(data.message)) {
+                            formData.set('overwrite', 'true');
+                            const retryResponse = await fetch(form.action, {
+                                method: 'POST',
+                                body: formData,
+                                headers: {
+                                    'X-Requested-With': 'XMLHttpRequest'
+                                },
+                                credentials: 'same-origin'
+                            });
+                            const html = await retryResponse.text();
+                            container.innerHTML = html;
+                            if (window.htmx) htmx.process(container);
+                            if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                        }
+                        return;
+                    }
+
+                    const html = await response.text();
+                    container.innerHTML = html;
+                    if (window.htmx) htmx.process(container);
+                    if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                } catch (error) {
+                    console.error('Error saving query:', error);
+                    alert('Error saving query. Please try again.');
+                }
+            });
+        }
+    };
+
+    window.openSaveListModal = async () => {
+        if (selectedStudentSsids.size === 0) {
+            if (typeof window.showMessage === 'function') {
+                window.showMessage('Select one or more students first, then save the list.', 'info');
+            } else {
+                alert('Select one or more students first, then save the list.');
+            }
+            return;
+        }
+
+        const url = appDataEl.dataset.saveListModalUrl;
+        const container = document.getElementById('modals-container');
+        if (!url || !container) return;
+
+        await loadOverlayHtml(url, container);
+        const form = document.getElementById('save-list-form');
+        const modal = document.getElementById('save-list-modal');
+        if (!form || !modal) return;
+        modal.classList.remove('hidden');
+
+        const ssidsInput = form.querySelector('input[name="ssids"]');
+        const countSpan = modal.querySelector('.student-count-badge');
+
+        // Ensure query_id exists (lists are saved via the unified SavedQuery model)
+        let queryIdInput = form.querySelector('input[name="query_id"]');
+        if (!queryIdInput) {
+            queryIdInput = document.createElement('input');
+            queryIdInput.type = 'hidden';
+            queryIdInput.name = 'query_id';
+            form.appendChild(queryIdInput);
+        }
+
+        // Overwrite-by-selection dropdown (optional)
+        const overwriteSelect = document.getElementById('overwrite_list_id');
+        const listNameInput = form.querySelector('input[name="name"]');
+        const listDescInput = form.querySelector('textarea[name="description"]');
+        if (overwriteSelect && overwriteSelect.dataset.boundChange !== 'true') {
+            overwriteSelect.dataset.boundChange = 'true';
+            overwriteSelect.addEventListener('change', () => {
+                const selectedId = String(overwriteSelect.value || '').trim();
+                queryIdInput.value = selectedId;
+                const opt = overwriteSelect.options[overwriteSelect.selectedIndex];
+                if (!opt) return;
+                const optName = opt.getAttribute('data-name') || '';
+                const optDesc = opt.getAttribute('data-description') || '';
+                if (selectedId) {
+                    if (listNameInput) listNameInput.value = optName;
+                    if (listDescInput) listDescInput.value = optDesc;
+                }
+            });
+        }
+
+        const ssids = Array.from(selectedStudentSsids);
+
+        if (ssidsInput) ssidsInput.value = JSON.stringify(ssids);
+        if (countSpan) countSpan.textContent = String(ssids.length);
+
+        if (form.dataset.boundSubmit !== 'true') {
+            form.dataset.boundSubmit = 'true';
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(form);
+
+                // Ensure we submit the latest selection
+                const currentSsids = Array.from(selectedStudentSsids);
+                formData.set('ssids', JSON.stringify(currentSsids));
+
+                try {
+                    const response = await fetch(form.action, {
+                        method: 'POST',
+                        body: formData,
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest'
+                        },
+                        credentials: 'same-origin'
+                    });
+
+                    if (response.status === 409) {
+                        const data = await response.json();
+                        if (data.status === 'confirm' && confirm(data.message)) {
+                            formData.set('overwrite', 'true');
+                            const retryResponse = await fetch(form.action, {
+                                method: 'POST',
+                                body: formData,
+                                headers: {
+                                    'X-Requested-With': 'XMLHttpRequest'
+                                },
+                                credentials: 'same-origin'
+                            });
+                            const html = await retryResponse.text();
+                            container.innerHTML = html;
+                            if (window.htmx) htmx.process(container);
+                            if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                        }
+                        return;
+                    }
+
+                    const html = await response.text();
+                    container.innerHTML = html;
+                    if (window.htmx) htmx.process(container);
+                    if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                } catch (error) {
+                    console.error('Error saving list:', error);
+                    alert('Error saving list. Please try again.');
+                }
+            });
+        }
+    };
+
     renderSelectedColumns();
+    renderSelectedStudentCount();
     loadData();
+
+    // --- Folder browser helpers (the folder browser HTML is loaded via HTMX;
+    // scripts inside the partial may not execute, so keep these globally available.)
+
+    window.dwGetCookie = window.dwGetCookie || function (name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    };
+
+    window.showMessage = window.showMessage || function (message, type = 'info') {
+        const colors = {
+            success: 'bg-green-100 text-green-700 border-green-300',
+            error: 'bg-red-100 text-red-700 border-red-300',
+            info: 'bg-blue-100 text-blue-700 border-blue-300'
+        };
+
+        const html = `
+        <div class="fixed top-4 right-4 ${colors[type] || colors.info} border px-4 py-3 rounded-lg shadow-lg z-50 max-w-md" role="alert">
+            <div class="flex items-center justify-between">
+                <span>${String(message ?? '')}</span>
+                <button type="button" onclick="this.parentElement.parentElement.remove()" class="ml-4">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        `;
+
+        document.body.insertAdjacentHTML('beforeend', html);
+        window.setTimeout(() => {
+            const alert = document.querySelector('.fixed.top-4.right-4');
+            if (alert) alert.remove();
+        }, 5000);
+    };
+
+    window.updateQuery = window.updateQuery || function (queryId, queryName, queryDescription) {
+        if (!confirm('Overwrite this saved query with your current view (columns + filters)?')) return;
+        if (typeof window.openSaveQueryModal === 'function') {
+            window.openSaveQueryModal({
+                queryId,
+                name: queryName,
+                description: queryDescription
+            });
+            return;
+        }
+        window.showMessage('Save modal is not available on this page.', 'error');
+    };
+
+    window.showFiltersModal = window.showFiltersModal || async function (queryId) {
+        try {
+            const res = await fetch(`/dataexploration/api/query/${queryId}/details/`, { credentials: 'same-origin' });
+            if (!res.ok) throw new Error(`Failed to load filters (${res.status})`);
+            const data = await res.json();
+            if (data && data.filters) {
+                window.displayFilters?.(data.filters, data.query_name || 'Saved Query');
+            } else {
+                window.showMessage(data?.error || 'Failed to load filters', 'error');
+            }
+        } catch (e) {
+            console.error('Error loading filters:', e);
+            window.showMessage(e?.message || 'Error loading filters', 'error');
+        }
+    };
+
+    window.displayFilters = window.displayFilters || function (filters, queryName) {
+        let html = `
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="this.remove()">
+            <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto m-4" onclick="event.stopPropagation()">
+                <div class="p-4 border-b border-gray-200 flex justify-between items-center">
+                    <h3 class="text-lg font-semibold">Filters: ${String(queryName ?? '')}</h3>
+                    <button type="button" onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="p-4 space-y-3">
+        `;
+
+        if (!filters || Object.keys(filters).length === 0) {
+            html += '<p class="text-gray-500 italic">No filters applied</p>';
+        } else {
+            for (const [key, value] of Object.entries(filters)) {
+                if (value && (Array.isArray(value) ? value.length > 0 : value !== '')) {
+                    const displayValue = Array.isArray(value) ? value.join(', ') : value;
+                    html += `
+                    <div class="flex items-start gap-2 p-2 bg-gray-50 rounded">
+                        <span class="font-medium text-gray-700 capitalize">${String(key).replace(/_/g, ' ')}:</span>
+                        <span class="text-gray-600">${String(displayValue)}</span>
+                    </div>
+                    `;
+                }
+            }
+        }
+
+        html += `
+                </div>
+            </div>
+        </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', html);
+    };
+
+    window.showRenameFolderModal = window.showRenameFolderModal || function (folderId, currentName, currentDescription) {
+        const html = `
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="this.remove()">
+            <div class="bg-white rounded-lg shadow-xl max-w-md w-full m-4" onclick="event.stopPropagation()">
+                <div class="p-4 border-b border-gray-200">
+                    <h3 class="text-lg font-semibold">Rename Folder</h3>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Folder Name</label>
+                        <input type="text" id="folder-name-input" value="${String(currentName ?? '')}" 
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
+                        <textarea id="folder-desc-input" rows="2"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500">${String(currentDescription ?? '')}</textarea>
+                    </div>
+                </div>
+                <div class="p-4 border-t border-gray-200 flex justify-end gap-2">
+                    <button type="button" onclick="this.closest('.fixed').remove()" 
+                        class="px-4 py-2 text-gray-700 bg-gray-100 rounded hover:bg-gray-200">Cancel</button>
+                    <button type="button" onclick="window.renameFolder(${Number(folderId)})" 
+                        class="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700">Save</button>
+                </div>
+            </div>
+        </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', html);
+    };
+
+    window.renameFolder = window.renameFolder || async function (folderId) {
+        try {
+            const name = document.getElementById('folder-name-input')?.value || '';
+            const description = document.getElementById('folder-desc-input')?.value || '';
+            const csrf = getCsrfToken();
+
+            const formData = new FormData();
+            formData.append('name', name);
+            formData.append('description', description);
+
+            const res = await fetch(`/dataexploration/api/folder/${folderId}/rename/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf || '' },
+                body: formData,
+                credentials: 'same-origin'
+            });
+
+            if (!res.ok) {
+                let msg = 'Failed to rename folder';
+                try {
+                    const data = await res.json();
+                    msg = data.message || data.error || msg;
+                } catch (e) {
+                    // ignore
+                }
+                throw new Error(msg);
+            }
+
+            document.querySelector('.fixed')?.remove();
+            if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+            window.showMessage('Folder renamed successfully', 'success');
+        } catch (e) {
+            console.error('Error renaming folder:', e);
+            window.showMessage(e?.message || 'Error renaming folder', 'error');
+        }
+    };
+
+    window.deleteFolder = window.deleteFolder || async function (folderId, folderName) {
+        if (!confirm(`Are you sure you want to delete the folder "${folderName}"? This will fail if the folder contains items.`)) return;
+        try {
+            const csrf = getCsrfToken();
+            const res = await fetch(`/dataexploration/api/folder/${folderId}/delete/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf || '' },
+                credentials: 'same-origin'
+            });
+
+            if (res.ok) {
+                if (window.htmx) htmx.trigger(document.body, 'refresh-folders');
+                window.showMessage('Folder deleted successfully', 'success');
+                return;
+            }
+
+            let msg = 'Failed to delete folder';
+            try {
+                const data = await res.json();
+                msg = data.message || data.error || msg;
+            } catch (e) {
+                // ignore
+            }
+            throw new Error(msg);
+        } catch (e) {
+            console.error('Error deleting folder:', e);
+            window.showMessage(e?.message || 'Error deleting folder', 'error');
+        }
+    };
 });
 
 /**

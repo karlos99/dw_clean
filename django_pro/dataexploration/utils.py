@@ -59,7 +59,10 @@ def can_user_edit_folder(user, folder):
         if folder.parent is None:
             return role_name in ['Project Admin', 'District Admin']
         # Subfolders? Maybe department heads?
-        return role_name in ['Project Admin', 'District Admin'] # For now
+        if role_name in ['Project Admin', 'District Admin']:
+            return True
+        # If a non-USER district subfolder tracks an owner (creator), allow them to manage it.
+        return folder.owner == user
         
     if folder.folder_type == 'SCHOOL':
         # Only admins can edit root school folder
@@ -72,8 +75,11 @@ def can_user_edit_folder(user, folder):
                 return True
             return False
             
-        # Subfolders in school?
-        # If user is in school, maybe they can edit subfolders they own?
+        # Subfolders in school: allow school staff to manage folders within their school.
+        # This matches the UI behavior (delete/rename buttons shown) and avoids locking out creators
+        # when historical folders were created without an owner.
+        if folder.school and folder.school in user.schools.all():
+            return True
         return folder.owner == user
 
     return False

@@ -212,7 +212,9 @@ def _get_saved_default_columns():
     return DEFAULT_COLUMNS
 
 
-def _get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False):
+def _get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False, use_students=False):
+    if col == 'ltel' and use_students:
+        return "s.ltel", 'ltel'
     if col == 'ell':
         ell_candidates = []
         if 'ell' in db_columns:
@@ -329,7 +331,6 @@ def load_students(request):
     saved_config = {}
     if saved_query_id:
         try:
-            from .models import SavedQuery
             from .utils import can_user_view_query
             query_obj = SavedQuery.objects.get(pk=saved_query_id)
             if can_user_view_query(request.user, query_obj):
@@ -385,7 +386,7 @@ def load_students(request):
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
     
-    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll):
+    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False):
         """Append SQL filter clauses + params for the provided filters dict."""
         if not isinstance(filters_to_apply, dict):
             return
@@ -471,7 +472,7 @@ def load_students(request):
                 continue
 
             # Standard columns
-            expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
+            expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students)
             if expr:
                  conditions = []
                  if real_values:
@@ -667,17 +668,51 @@ def load_students(request):
             return result
         
         # Apply student list filter
+        # A student list is a fixed set of students; when present it should override other
+        # user-selected filters (grade/status/year/search/column-filters).
         student_list_id = request.GET.get('student_list')
         if student_list_id:
+            list_ssids = None
+
+            # Preferred: student lists stored as SavedQuery(query_type='student_list')
             try:
-                from .models import StudentList
-                from .utils import get_user_folders
-                slist = StudentList.objects.get(pk=student_list_id)
-                if slist.folder in get_user_folders(request.user):
-                     base_where_clauses.append("cs.ssid IN (SELECT ssid FROM dataexploration_studentlistitem WHERE student_list_id = %s)")
-                     base_params.append(student_list_id)
-            except:
-                pass
+                from .utils import can_user_view_query
+                slq = SavedQuery.objects.get(pk=student_list_id, query_type='student_list')
+                if can_user_view_query(request.user, slq):
+                    list_ssids = slq.config.get('student_ids') or []
+            except SavedQuery.DoesNotExist:
+                list_ssids = None
+            except Exception:
+                list_ssids = None
+
+            # Legacy fallback: StudentList / StudentListItem
+            if list_ssids is None:
+                try:
+                    from .models import StudentList
+                    from .utils import get_user_folders
+                    slist = StudentList.objects.get(pk=student_list_id)
+                    if slist.folder in get_user_folders(request.user):
+                        base_where_clauses.append(
+                            "cs.ssid IN (SELECT ssid FROM dataexploration_studentlistitem WHERE student_list_id = %s)"
+                        )
+                        base_params.append(student_list_id)
+                        list_ssids = None  # legacy path handled by SQL above
+                except Exception:
+                    pass
+
+            # If we have an explicit SSID list, apply it and ignore other filters.
+            if isinstance(list_ssids, list) and list_ssids:
+                normalized_ssids = [str(s).strip() for s in list_ssids if str(s).strip()]
+                if normalized_ssids:
+                    base_where_clauses.append("cs.ssid = ANY(%s)")
+                    base_params.append(normalized_ssids)
+
+                    # Override user-driven filters; the list defines membership.
+                    search = None
+                    school_year = None
+                    grade = None
+                    status = None
+                    filters = {}
 
         # Apply filters
         if search:
@@ -712,14 +747,24 @@ def load_students(request):
             or sort_by in enroll_fields
         )
 
+        # Determine if we need students join (for ltel overrides)
+        students_fields = {'ltel'}
+        needs_students = (
+            any(c in students_fields for c in selected_columns)
+            or (isinstance(filters, dict) and any(k in students_fields for k in filters.keys()))
+            or sort_by in students_fields
+        )
+
         join_sql = ""
         if needs_enroll:
-            join_sql = "LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+            join_sql += " LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+        if needs_students:
+            join_sql += " LEFT JOIN students s ON s.state_student_number = cs.ssid"
 
         # Column filters (applied to the main query)
         where_clauses = list(base_where_clauses)
         params = list(base_params)
-        _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_enroll)
+        _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
 
         where_sql = " AND ".join(where_clauses)
         
@@ -750,7 +795,7 @@ def load_students(request):
         base_col_selects = []
         base_col_expressions = {}
         for col in base_cols:
-            expr, alias = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
+            expr, alias = _get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students)
             if expr and alias:
                 base_col_expressions[col] = expr
                 if expr != f"cs.{alias}":
@@ -878,7 +923,7 @@ def load_students(request):
                 # Cache miss - query database
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll)
+                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 distinct_query = f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {join_sql} WHERE {option_where_sql}"
@@ -1069,6 +1114,7 @@ def load_students(request):
             'total_pages': total_pages,
             'column_definitions': dynamic_definitions,
             'filter_options': filter_options,
+            'filters': filters,
             'sort_by': sort_by,
             'sort_dir': sort_dir,
         })
@@ -1099,7 +1145,6 @@ def export_students_csv(request):
     saved_config = {}
     if saved_query_id:
         try:
-            from .models import SavedQuery
             from .utils import can_user_view_query
             query_obj = SavedQuery.objects.get(pk=saved_query_id)
             if can_user_view_query(request.user, query_obj):
@@ -1153,7 +1198,7 @@ def export_students_csv(request):
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
 
     # Helper for column filters (Duplicated from load_students to avoid refactoring risk)
-    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll):
+    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False):
         if not isinstance(filters_to_apply, dict): return
         for col, values in filters_to_apply.items():
             if not values: continue
@@ -1229,7 +1274,7 @@ def export_students_csv(request):
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
 
-            expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
+            expr, _ = _get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students)
             if expr:
                  conditions = []
                  if real_values:
@@ -1258,9 +1303,20 @@ def export_students_csv(request):
         or (isinstance(filters, dict) and any(k in enroll_fields for k in filters.keys()))
         or sort_by in enroll_fields
     )
+
+    # Determine if we need students join (for ltel overrides)
+    students_fields = {'ltel'}
+    needs_students = (
+        any(c in students_fields for c in selected_columns)
+        or (isinstance(filters, dict) and any(k in students_fields for k in filters.keys()))
+        or sort_by in students_fields
+    )
+
     join_sql = ""
     if needs_enroll:
-        join_sql = "LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+        join_sql += " LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+    if needs_students:
+        join_sql += " LEFT JOIN students s ON s.state_student_number = cs.ssid"
 
     # Streaming Response setup
     class Echo:
@@ -1401,14 +1457,46 @@ def export_students_csv(request):
             
             student_list_id = request.GET.get('student_list')
             if student_list_id:
+                list_ssids = None
+
+                # Preferred: student lists stored as SavedQuery(query_type='student_list')
                 try:
-                    from .models import StudentList
-                    from .utils import get_user_folders
-                    slist = StudentList.objects.get(pk=student_list_id)
-                    if slist.folder in get_user_folders(request.user):
-                         base_where_clauses.append("cs.ssid IN (SELECT ssid FROM dataexploration_studentlistitem WHERE student_list_id = %s)")
-                         base_params.append(student_list_id)
-                except: pass
+                    from .utils import can_user_view_query
+                    slq = SavedQuery.objects.get(pk=student_list_id, query_type='student_list')
+                    if can_user_view_query(request.user, slq):
+                        list_ssids = slq.config.get('student_ids') or []
+                except SavedQuery.DoesNotExist:
+                    list_ssids = None
+                except Exception:
+                    list_ssids = None
+
+                # Legacy fallback: StudentList / StudentListItem
+                if list_ssids is None:
+                    try:
+                        from .models import StudentList
+                        from .utils import get_user_folders
+                        slist = StudentList.objects.get(pk=student_list_id)
+                        if slist.folder in get_user_folders(request.user):
+                            base_where_clauses.append(
+                                "cs.ssid IN (SELECT ssid FROM dataexploration_studentlistitem WHERE student_list_id = %s)"
+                            )
+                            base_params.append(student_list_id)
+                            list_ssids = None
+                    except Exception:
+                        pass
+
+                if isinstance(list_ssids, list) and list_ssids:
+                    normalized_ssids = [str(s).strip() for s in list_ssids if str(s).strip()]
+                    if normalized_ssids:
+                        base_where_clauses.append("cs.ssid = ANY(%s)")
+                        base_params.append(normalized_ssids)
+
+                        # Override user-driven filters; the list defines membership.
+                        search = None
+                        school_year = None
+                        grade = None
+                        status = None
+                        filters = {}
 
             if search:
                 base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
@@ -1425,7 +1513,7 @@ def export_students_csv(request):
 
             where_clauses = list(base_where_clauses)
             params = list(base_params)
-            _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_enroll)
+            _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
             where_sql = " AND ".join(where_clauses)
             
             # Fetch Loop
@@ -1440,7 +1528,7 @@ def export_students_csv(request):
             base_col_selects = []
             base_col_expressions = {}
             for col in query_base_cols:
-                expr, alias = _get_column_expression(col, db_columns, enroll_columns, needs_enroll)
+                expr, alias = _get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students)
                 if expr and alias:
                     base_col_expressions[col] = expr
                     base_col_selects.append(f"{expr} AS {alias}" if expr != f"cs.{alias}" else expr)
