@@ -150,6 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const getCurrentFiltersForSave = () => {
         return {
             school_year: document.getElementById('school_year')?.value,
+            grade: document.getElementById('grade')?.value,
             status: document.getElementById('status')?.value,
             search: document.getElementById('search')?.value,
             ...filters,
@@ -285,6 +286,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (payload.sort_dir) {
             sortDir = payload.sort_dir;
         }
+
+        const searchInput = document.getElementById('search');
+        const schoolYearSelect = document.getElementById('school_year');
+        const gradeSelect = document.getElementById('grade');
+        const statusInput = document.getElementById('status');
+
+        if (payload.search !== undefined && searchInput) searchInput.value = payload.search || '';
+        if (payload.school_year !== undefined && schoolYearSelect) schoolYearSelect.value = payload.school_year || '';
+        if (payload.grade !== undefined && gradeSelect) gradeSelect.value = payload.grade || '';
+        if (payload.status !== undefined && statusInput) statusInput.value = payload.status || '';
 
         const columns = selectedColumns || [];
         const students = payload.students || [];
@@ -505,27 +516,35 @@ document.addEventListener('DOMContentLoaded', () => {
         if (savedQueryId) url.searchParams.set('saved_query', savedQueryId);
         if (studentListId) url.searchParams.set('student_list', studentListId);
 
-        if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
-            url.searchParams.set('columns', JSON.stringify(selectedColumns));
-        }
-        if (sortBy) {
-            url.searchParams.set('sort_by', sortBy);
-            url.searchParams.set('sort_dir', sortDir);
-        }
-        if (filters && Object.keys(filters).length > 0) {
-            url.searchParams.set('filters', JSON.stringify(filters));
-        } else if (lastPayload !== null) {
-            url.searchParams.set('filters', '{}');
+        const isSavedQueryLoad = Boolean(savedQueryId);
+        const isInitialSavedQueryLoad = isSavedQueryLoad && lastPayload === null;
+        if (!isInitialSavedQueryLoad) {
+            if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+                url.searchParams.set('columns', JSON.stringify(selectedColumns));
+            }
+            if (sortBy) {
+                url.searchParams.set('sort_by', sortBy);
+                url.searchParams.set('sort_dir', sortDir);
+            }
+            if (filters && Object.keys(filters).length > 0) {
+                url.searchParams.set('filters', JSON.stringify(filters));
+            } else if (lastPayload !== null) {
+                url.searchParams.set('filters', '{}');
+            }
         }
         url.searchParams.set('format', 'json');
 
         const searchInput = document.getElementById('search');
         const schoolYearSelect = document.getElementById('school_year');
+        const gradeSelect = document.getElementById('grade');
         const statusInput = document.getElementById('status');
 
-        if (searchInput && searchInput.value) url.searchParams.set('search', searchInput.value);
-        if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
-        if (statusInput && statusInput.value) url.searchParams.set('status', statusInput.value);
+        if (!isInitialSavedQueryLoad) {
+            if (searchInput && searchInput.value) url.searchParams.set('search', searchInput.value);
+            if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
+            if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
+            if (statusInput && statusInput.value) url.searchParams.set('status', statusInput.value);
+        }
 
         fetch(url.toString(), { credentials: 'same-origin' })
             .then((response) => response.json())
@@ -914,6 +933,26 @@ document.addEventListener('DOMContentLoaded', () => {
             nextUrl.searchParams.delete('student_list');
             nextUrl.searchParams.delete('page');
             window.history.replaceState({}, '', nextUrl.toString());
+            try {
+                selectedColumns = JSON.parse(appDataEl.dataset.defaultColumns || '[]');
+            } catch (e) {
+                selectedColumns = [];
+            }
+            filters = {};
+            sortBy = '';
+            sortDir = 'asc';
+
+            const searchInput = document.getElementById('search');
+            const schoolYearSelect = document.getElementById('school_year');
+            const gradeSelect = document.getElementById('grade');
+            const statusInput = document.getElementById('status');
+
+            if (searchInput) searchInput.value = '';
+            if (schoolYearSelect) schoolYearSelect.value = '';
+            if (gradeSelect) gradeSelect.value = '';
+            if (statusInput) statusInput.value = 'Active';
+
+            renderSelectedColumns();
             page = 1;
             loadData();
             return;
@@ -1051,15 +1090,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     window.openSaveListModal = async () => {
-        if (selectedStudentSsids.size === 0) {
-            if (typeof window.showMessage === 'function') {
-                window.showMessage('Select one or more students first, then save the list.', 'info');
-            } else {
-                alert('Select one or more students first, then save the list.');
-            }
-            return;
-        }
-
         const url = appDataEl.dataset.saveListModalUrl;
         const container = document.getElementById('modals-container');
         if (!url || !container) return;
@@ -1102,7 +1132,18 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        const ssids = Array.from(selectedStudentSsids);
+        let ssids = Array.from(selectedStudentSsids);
+        if (ssids.length === 0) {
+            ssids = getCurrentPageSsids();
+        }
+        if (ssids.length === 0) {
+            if (typeof window.showMessage === 'function') {
+                window.showMessage('No students available to save. Try loading data or selecting rows first.', 'info');
+            } else {
+                alert('No students available to save. Try loading data or selecting rows first.');
+            }
+            return;
+        }
 
         if (ssidsInput) ssidsInput.value = JSON.stringify(ssids);
         if (countSpan) countSpan.textContent = String(ssids.length);
@@ -1114,7 +1155,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const formData = new FormData(form);
 
                 // Ensure we submit the latest selection
-                const currentSsids = Array.from(selectedStudentSsids);
+                let currentSsids = Array.from(selectedStudentSsids);
+                if (currentSsids.length === 0) {
+                    currentSsids = getCurrentPageSsids();
+                }
                 formData.set('ssids', JSON.stringify(currentSsids));
 
                 try {

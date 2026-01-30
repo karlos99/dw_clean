@@ -1,6 +1,6 @@
 from django.db import models
 from django.conf import settings
-from studata.models import CurrentStudent, StudentEnroll, School
+from studata.models import CurrentStudent, StudentEnroll, School, StudentMarks
 from users.models import School as UserSchool
 
 
