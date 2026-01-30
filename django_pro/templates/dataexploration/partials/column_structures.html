@@ -105,3 +105,62 @@
         {% endfor %}
     </div>
 </div>
+
+<!-- Marks Tree Category -->
+<div class="border-b border-slate-100 pb-2 mt-3">
+    <button data-toggle-category="marks"
+        class="w-full flex items-center justify-between p-2 hover:bg-emerald-50 rounded-md transition border-l-2 border-emerald-500">
+        <span class="font-medium text-slate-900">Marks</span>
+        <span data-caret="closed">▶</span>
+        <span data-caret="open" class="hidden">▼</span>
+    </button>
+
+    <div data-category="marks" class="ml-4 mt-1 space-y-1 pl-3 border-l-2 border-emerald-200 hidden">
+        {% for year, subjects in marks_structure.items %}
+        <div class="mt-2">
+            <button data-toggle-category="marks_{{ year|slugify }}"
+                class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left">
+                <span class="text-sm font-medium text-slate-700">{{ year }}</span>
+                <span data-caret="closed">▶</span>
+                <span data-caret="open" class="hidden">▼</span>
+            </button>
+
+            <div data-category="marks_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                {% for subject, courses in subjects.items %}
+                <div class="pl-2 border-l border-slate-200">
+                    <button data-toggle-category="marks_{{ year|slugify }}_{{ subject|slugify }}"
+                        class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left">
+                        <span class="text-xs font-semibold text-slate-700">{{ subject }}</span>
+                        <span data-caret="closed">▶</span>
+                        <span data-caret="open" class="hidden">▼</span>
+                    </button>
+
+                    <div data-category="marks_{{ year|slugify }}_{{ subject|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                        {% for course, periods in courses.items %}
+                        <div class="pl-2 border-l border-slate-200">
+                            <button data-toggle-category="marks_{{ year|slugify }}_{{ subject|slugify }}_{{ course|slugify }}"
+                                class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left">
+                                <span class="text-xs text-slate-700">{{ course }}</span>
+                                <span data-caret="closed">▶</span>
+                                <span data-caret="open" class="hidden">▼</span>
+                            </button>
+
+                            <div data-category="marks_{{ year|slugify }}_{{ subject|slugify }}_{{ course|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                                {% for period, col_key in periods.items %}
+                                <label class="flex items-center space-x-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                                    <input type="checkbox" data-column="{{ col_key }}"
+                                        class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-600">
+                                    <span class="text-xs text-slate-700">{{ period }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>

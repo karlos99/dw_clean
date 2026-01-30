@@ -29,6 +29,8 @@ def get_test_columns(column_filters=None):
         # Add column-specific filters from base student data
         if column_filters:
             for col, value in column_filters.items():
+                if isinstance(value, (list, tuple, set)):
+                    value = next((v for v in value if v), '')
                 if value and value != 'All' and col in COLUMN_DEFINITIONS:
                     # Only apply filters for non-test columns
                     if not col.startswith('test_'):
@@ -201,5 +203,81 @@ def get_test_columns(column_filters=None):
         except Exception:
             # If other_info is missing/unavailable, keep base assessment structure working.
             pass
+
+        return columns
+
+
+def get_mark_columns(column_filters=None):
+    """Get dynamic mark columns from student_marks_list organized by year/subject/course/period.
+
+    Returns structure:
+        {
+            year: {
+                subject: {
+                    course_name: {
+                        period: column_key
+                    }
+                }
+            }
+        }
+    """
+    with connections['default'].cursor() as cursor:
+        where_clauses = ["sm.school_year IS NOT NULL"]
+        params = []
+
+        # Apply base column filters from current_student
+        if column_filters:
+            for col, value in column_filters.items():
+                if isinstance(value, (list, tuple, set)):
+                    value = next((v for v in value if v), '')
+                if col == 'search' and value:
+                    where_clauses.append(
+                        "(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)"
+                    )
+                    search_param = f"%{value}%"
+                    params.extend([search_param, search_param, search_param])
+                    continue
+                if value and value != 'All' and col in COLUMN_DEFINITIONS:
+                    if not col.startswith(('test_', 'mark_')):
+                        where_clauses.append(f"cs.{col} ILIKE %s")
+                        params.append(f"%{value}%")
+
+        where_sql = " AND ".join(where_clauses)
+
+        query = f"""
+            SELECT DISTINCT
+                sm.school_year,
+                sm.subject,
+                sm.course_name,
+                sm.mark_period
+            FROM student_marks_list sm
+            INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+            WHERE {where_sql}
+            ORDER BY sm.school_year DESC, sm.subject, sm.course_name, sm.mark_period
+        """
+
+        cursor.execute(query, params)
+
+        columns = {}
+        for (year, subject, course_name, mark_period) in cursor.fetchall():
+            year_val = (year or '').strip() or 'Unknown'
+            subject_val = (subject or '').strip() or 'Unknown'
+            course_val = (course_name or '').strip() or 'Course'
+            period_val = (mark_period or '').strip() or 'Unknown'
+
+            key_base = f"{year_val}_{subject_val}_{course_val}_{period_val}".replace(" ", "_").replace("-", "_")
+            mark_key = f"mark_{key_base}"
+
+            label = f"{course_val} ({subject_val}) {period_val}\n{year_val}"
+            COLUMN_DEFINITIONS[mark_key] = label
+
+            if year_val not in columns:
+                columns[year_val] = {}
+            if subject_val not in columns[year_val]:
+                columns[year_val][subject_val] = {}
+            if course_val not in columns[year_val][subject_val]:
+                columns[year_val][subject_val][course_val] = {}
+
+            columns[year_val][subject_val][course_val][period_val] = mark_key
 
         return columns

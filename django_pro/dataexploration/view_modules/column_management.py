@@ -7,7 +7,7 @@ from django.views.decorators.http import require_POST
 
 from ..models import DefaultColumnSelection
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
-from ..column_utils import get_test_columns
+from ..column_utils import get_test_columns, get_mark_columns
 
 
 def get_saved_default_columns():
@@ -117,9 +117,11 @@ def load_column_structures(request):
             pass
     
     test_structure = get_test_columns(column_filters)
+    marks_structure = get_mark_columns(column_filters)
     
     context = {
         'test_structure': test_structure,
+        'marks_structure': marks_structure,
         'column_definitions': COLUMN_DEFINITIONS,
     }
     

@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    const columnStructuresUrl = appDataEl.dataset.columnStructuresUrl;
+
     let selectedColumns = [];
     let columnDefinitions = {};
     let page = 1;
@@ -164,6 +166,51 @@ document.addEventListener('DOMContentLoaded', () => {
             sort_by: sortBy,
             sort_dir: sortDir,
         };
+    };
+
+    const refreshColumnStructures = async () => {
+        if (!columnStructuresUrl) return;
+        const target = document.getElementById('dynamic-column-structures');
+        if (!target) return;
+
+        const openCategories = Array.from(target.querySelectorAll('[data-category]'))
+            .filter((el) => !el.classList.contains('hidden'))
+            .map((el) => el.getAttribute('data-category'))
+            .filter(Boolean);
+
+        const columnFilters = {
+            school_year: document.getElementById('school_year')?.value || '',
+            grade: document.getElementById('grade')?.value || '',
+            status: document.getElementById('status')?.value || '',
+            search: document.getElementById('search')?.value || '',
+            ...filters,
+        };
+
+        const url = new URL(columnStructuresUrl, window.location.origin);
+        url.searchParams.set('column_filters', JSON.stringify(columnFilters));
+
+        try {
+            const res = await fetch(url.toString(), { credentials: 'same-origin' });
+            if (!res.ok) return;
+            target.innerHTML = await res.text();
+            if (window.htmx) htmx.process(target);
+            if (openCategories.length) {
+                openCategories.forEach((category) => {
+                    const el = target.querySelector(`[data-category="${cssEscape(category)}"]`);
+                    if (el) {
+                        el.classList.remove('hidden');
+                        const button = el.previousElementSibling;
+                        if (button) {
+                            button.querySelectorAll('[data-caret="open"]').forEach((c) => c.classList.remove('hidden'));
+                            button.querySelectorAll('[data-caret="closed"]').forEach((c) => c.classList.add('hidden'));
+                        }
+                    }
+                });
+            }
+            renderSelectedColumns();
+        } catch (e) {
+            // best-effort
+        }
     };
 
     const getCurrentPageSsids = () => {
@@ -508,6 +555,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadData = () => {
         const url = new URL(loadStudentsUrl, window.location.origin);
         url.searchParams.set('page', page);
+
+        refreshColumnStructures();
 
         // Include saved_query or student_list from URL if present
         const urlParams = new URLSearchParams(window.location.search);

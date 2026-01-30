@@ -14,7 +14,7 @@ import json
 
 from ..models import SavedQuery, StudentList
 from studata.models import CurrentStudent
-from ..column_utils import get_test_columns
+from ..column_utils import get_test_columns, get_mark_columns
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
 from .student_data_utils import (
@@ -39,6 +39,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         
         # Get dynamic test columns
         test_structure = get_test_columns()
+        marks_structure = get_mark_columns()
         
         # Get unique values for filters using cache
         school_years_key = "dataexp:school_years"
@@ -60,6 +61,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['school_years'] = school_years
         context['grades'] = grades
         context['test_structure'] = test_structure
+        context['marks_structure'] = marks_structure
         context['column_categories'] = COLUMN_CATEGORIES
         context['column_definitions'] = COLUMN_DEFINITIONS
         default_columns = get_saved_default_columns()
@@ -161,7 +163,7 @@ def load_students(request):
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
     
-    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False):
+    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False):
         """Append SQL filter clauses + params for the provided filters dict."""
         if not isinstance(filters_to_apply, dict):
             return
@@ -242,6 +244,67 @@ def load_students(request):
                     
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
                 
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            if col.startswith('mark_'):
+                mark_info = mark_col_map.get(col) or mark_col_map.get(col.replace('-', '_'))
+                if not mark_info:
+                    continue
+
+                conditions = []
+
+                # Match marks with selected values
+                if real_values:
+                    mark_clause = (
+                        "SELECT 1 FROM student_marks_list sm "
+                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                        "AND sm.school_year = %s "
+                        "AND sm.subject ILIKE %s "
+                        "AND sm.course_name ILIKE %s "
+                    )
+                    mark_params = [
+                        mark_info['year'],
+                        f"%{mark_info['subject']}%",
+                        f"%{mark_info['course_name']}%",
+                    ]
+
+                    if mark_info.get('mark_period'):
+                        mark_clause += "AND sm.mark_period ILIKE %s "
+                        mark_params.append(mark_info['mark_period'])
+                    else:
+                        mark_clause += "AND (sm.mark_period IS NULL OR sm.mark_period = '') "
+
+                    mark_clause += "AND sm.mark = ANY(%s)"
+                    mark_params.append(real_values)
+
+                    conditions.append(f"EXISTS ({mark_clause})")
+                    params.extend(mark_params)
+
+                if has_blank:
+                    blank_clause = (
+                        "SELECT 1 FROM student_marks_list sm "
+                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                        "AND sm.school_year = %s "
+                        "AND sm.subject ILIKE %s "
+                        "AND sm.course_name ILIKE %s "
+                    )
+                    blank_params = [
+                        mark_info['year'],
+                        f"%{mark_info['subject']}%",
+                        f"%{mark_info['course_name']}%",
+                    ]
+                    if mark_info.get('mark_period'):
+                        blank_clause += "AND sm.mark_period ILIKE %s "
+                        blank_params.append(mark_info['mark_period'])
+                    else:
+                        blank_clause += "AND (sm.mark_period IS NULL OR sm.mark_period = '') "
+
+                    blank_clause += "AND (sm.mark IS NULL OR sm.mark = '')"
+                    conditions.append(f"EXISTS ({blank_clause})")
+                    params.extend(blank_params)
+
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
@@ -441,6 +504,76 @@ def load_students(request):
             result = (infos, col_map)
             cache.set(test_cols_cache_key, result, 600)
             return result
+
+        def _parse_year_from_mark_col(col_key):
+            s = (col_key or '').replace('-', '_')
+            if not s.startswith('mark_'):
+                return None
+            tail = s[len('mark_'):]
+            if len(tail) >= 10 and tail[4] == '_' and tail[9] == '_':
+                return tail[:9].replace('_', '-')
+            parts = tail.split('_', 1)
+            if parts:
+                return parts[0].replace('_', '-')
+            return None
+
+        def _build_mark_columns_from_db(selected_mark_cols):
+            """Map selected mark_* columns to student marks metadata."""
+            if not selected_mark_cols:
+                return [], {}
+
+            mark_cols_cache_key = f"mark_cols:{hashlib.md5(json.dumps(sorted(selected_mark_cols)).encode()).hexdigest()}"
+            cached = cache.get(mark_cols_cache_key)
+            if cached:
+                return cached
+
+            normalized_to_original = {c.replace('-', '_'): c for c in selected_mark_cols}
+            years = sorted({y for y in (_parse_year_from_mark_col(c) for c in selected_mark_cols) if y})
+            if not years:
+                return [], {}
+
+            cursor.execute(
+                """
+                SELECT DISTINCT school_year, subject, course_name, mark_period
+                FROM student_marks_list
+                WHERE school_year = ANY(%s) AND school_year IS NOT NULL
+                """,
+                [years],
+            )
+
+            infos = []
+            col_map = {}
+
+            def _norm_part(v):
+                return (v or '').replace(' ', '_').replace('-', '_')
+
+            for (year, subject, course_name, mark_period) in cursor.fetchall():
+                year_norm = _norm_part(year)
+                subject_norm = _norm_part(subject)
+                course_norm = _norm_part(course_name)
+                period_norm = _norm_part(mark_period)
+
+                key_base = f"{year_norm}_{subject_norm}_{course_norm}_{period_norm}"
+                mark_norm = f"mark_{key_base}"
+
+                original_key = normalized_to_original.get(mark_norm)
+                if not original_key:
+                    continue
+
+                info = {
+                    'col_name': original_key,
+                    'year': year or '',
+                    'subject': subject or '',
+                    'course_name': course_name or '',
+                    'mark_period': (mark_period or '').strip() or None,
+                }
+                infos.append(info)
+                col_map[original_key] = info
+                col_map[original_key.replace('-', '_')] = info
+
+            result = (infos, col_map)
+            cache.set(mark_cols_cache_key, result, 600)
+            return result
         
         # Apply student list filter
         # A student list is a fixed set of students; when present it should override other
@@ -504,12 +637,19 @@ def load_students(request):
             base_where_clauses.append("cs.status = %s")
             base_params.append(status)
 
-        # Separate base columns from test columns
+        # Separate base columns from test/mark columns
         selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
-        base_cols = [c for c in selected_columns if isinstance(c, str) and (not c.startswith('test_')) and c in COLUMN_DEFINITIONS]
+        selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
+        base_cols = [
+            c for c in selected_columns
+            if isinstance(c, str)
+            and (not c.startswith(('test_', 'mark_')))
+            and c in COLUMN_DEFINITIONS
+        ]
 
         # Build test column metadata from DB to avoid parsing issues (e.g. multi-word subjects)
         test_cols_info, test_col_map = _build_test_columns_from_db(selected_test_cols)
+        mark_cols_info, mark_col_map = _build_mark_columns_from_db(selected_mark_cols)
 
         # Determine if we need student_enroll join
         enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
@@ -536,7 +676,7 @@ def load_students(request):
         # Column filters (applied to the main query)
         where_clauses = list(base_where_clauses)
         params = list(base_params)
-        _apply_column_filters(where_clauses, params, filters, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
+        _apply_column_filters(where_clauses, params, filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
 
         where_sql = " AND ".join(where_clauses)
         
@@ -563,6 +703,9 @@ def load_students(request):
         if test_cols_info and 'student_id' not in base_cols:
             base_cols.insert(0, 'student_id')
 
+        if mark_cols_info and 'stu_annual_key' not in base_cols:
+            base_cols.insert(0, 'stu_annual_key')
+
         # Build base column SELECT with safe mapping
         base_col_selects = []
         base_col_expressions = {}
@@ -586,6 +729,31 @@ def load_students(request):
             expr = base_col_expressions.get(sort_by)
             if expr:
                 order_by_expr = expr
+            elif sort_by in mark_col_map:
+                mark_info = mark_col_map.get(sort_by)
+                period_clause = ""
+                if mark_info.get('mark_period'):
+                    period_clause = "AND sm.mark_period ILIKE %s"
+                else:
+                    period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
+
+                order_by_expr = (
+                    "(SELECT sm.mark FROM student_marks_list sm "
+                    "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                    "AND sm.school_year = %s "
+                    "AND sm.subject ILIKE %s "
+                    "AND sm.course_name ILIKE %s "
+                    f"{period_clause} "
+                    "LIMIT 1)"
+                )
+                # inject params for order-by subquery
+                params.extend([
+                    mark_info['year'],
+                    f"%{mark_info['subject']}%",
+                    f"%{mark_info['course_name']}%",
+                ])
+                if mark_info.get('mark_period'):
+                    params.append(mark_info['mark_period'])
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
         
         # Build query with base columns
@@ -605,6 +773,7 @@ def load_students(request):
         students = [dict(zip(columns, row)) for row in cursor.fetchall()]
         
         student_ids = [s.get('student_id') for s in students if s.get('student_id')]
+        student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
         
         # Fetch test data in bulk for selected test columns
         if test_cols_info and student_ids:
@@ -652,6 +821,40 @@ def load_students(request):
                     student_id = student.get('student_id')
                     student[test_info['col_name']] = test_data.get(student_id, '—')
 
+        # Fetch mark data in bulk for selected mark columns
+        if mark_cols_info and student_keys:
+            for mark_info in mark_cols_info:
+                period_clause = ""
+                period_params = []
+                if mark_info.get('mark_period'):
+                    period_clause = "AND sm.mark_period ILIKE %s"
+                    period_params = [mark_info['mark_period']]
+                else:
+                    period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
+
+                query = f"""
+                    SELECT sm.stu_annual_key, sm.mark
+                    FROM student_marks_list sm
+                    WHERE sm.stu_annual_key = ANY(%s)
+                      AND sm.school_year = %s
+                      AND sm.subject ILIKE %s
+                      AND sm.course_name ILIKE %s
+                      {period_clause}
+                """
+                cursor.execute(query, [
+                    student_keys,
+                    mark_info['year'],
+                    f"%{mark_info['subject']}%",
+                    f"%{mark_info['course_name']}%",
+                    *period_params,
+                ])
+
+                mark_data = {row[0]: row[1] for row in cursor.fetchall()}
+
+                for student in students:
+                    student_key = student.get('stu_annual_key')
+                    student[mark_info['col_name']] = mark_data.get(student_key, '—')
+
         # Ensure JSON serialization safety (e.g. Decimal fields like atendace_rate)
         for student in students:
             for key, value in list(student.items()):
@@ -666,9 +869,30 @@ def load_students(request):
             excluded_filters = {'ssid', 'student_id', 'student_name'}
             always_include = {'school'}
             
+            base_filter_state = {
+                'search': search or '',
+                'school_year': school_year or '',
+                'grade': grade or '',
+                'status': status or '',
+            }
+
+            def _normalize_filter_value(value):
+                if isinstance(value, (list, tuple, set)):
+                    return sorted([str(v) for v in value if v is not None])
+                return value
+
             # Create cache key based on active filters (excluding current column)
             def _get_filter_cache_key(column, active_filters):
-                filter_str = json.dumps(sorted(active_filters.items()), sort_keys=True) if active_filters else "no_filters"
+                normalized_filters = {}
+                if isinstance(active_filters, dict):
+                    for key, val in active_filters.items():
+                        normalized_filters[key] = _normalize_filter_value(val)
+
+                payload = {
+                    'base': base_filter_state,
+                    'filters': normalized_filters or "no_filters",
+                }
+                filter_str = json.dumps(payload, sort_keys=True)
                 return f"filter_opts:{column}:{hashlib.md5(filter_str.encode()).hexdigest()}"
             
             for col in base_cols:
@@ -695,7 +919,7 @@ def load_students(request):
                 # Cache miss - query database
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
+                _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 distinct_query = f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {join_sql} WHERE {option_where_sql}"
@@ -752,7 +976,7 @@ def load_students(request):
                 # Cache miss - query database
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, db_columns, enroll_columns, needs_enroll)
+                _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
                 window_clause = ""
                 window_params = []
@@ -848,6 +1072,68 @@ def load_students(request):
                     filter_options[col_key] = values
                     # Cache for 5 minutes
                     cache.set(cache_key, values, 300)
+
+            # Add filter options for mark columns
+            for mark_info in mark_cols_info:
+                col_key = mark_info['col_name']
+
+                if isinstance(filters, dict) and col_key in filters:
+                    other_filters = {k: v for k, v in filters.items() if k != col_key}
+                else:
+                    other_filters = filters
+
+                cache_key = _get_filter_cache_key(col_key, other_filters)
+                cached_values = cache.get(cache_key)
+                if cached_values is not None:
+                    filter_options[col_key] = cached_values
+                    continue
+
+                option_where = list(base_where_clauses)
+                option_params = list(base_params)
+                _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll)
+                option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+
+                period_clause = ""
+                period_params = []
+                if mark_info.get('mark_period'):
+                    period_clause = "AND sm.mark_period ILIKE %s"
+                    period_params = [mark_info['mark_period']]
+                else:
+                    period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
+
+                options_query = f"""
+                    SELECT sm.mark AS v
+                    FROM student_marks_list sm
+                    INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                    {join_sql}
+                    WHERE {option_where_sql}
+                      AND sm.school_year = %s
+                      AND sm.subject ILIKE %s
+                      AND sm.course_name ILIKE %s
+                      {period_clause}
+                    GROUP BY v
+                    ORDER BY v ASC NULLS FIRST
+                    LIMIT 30
+                """
+
+                cursor.execute(options_query, option_params + [
+                    mark_info['year'],
+                    f"%{mark_info['subject']}%",
+                    f"%{mark_info['course_name']}%",
+                    *period_params,
+                ])
+
+                values = []
+                for row in cursor.fetchall():
+                    val = row[0]
+                    if val is None:
+                        val = ""
+                    if val not in values:
+                        values.append(val)
+
+                if values:
+                    filter_options[col_key] = values
+                    cache.set(cache_key, values, 300)
     
     total_pages = (total + limit - 1) // limit
 
@@ -875,6 +1161,12 @@ def load_students(request):
             label = f"{info['test_name']} {info['subject']} {metric_label}"
             if info.get('test_window'):
                 label += f"\n{info['test_window']}"
+            dynamic_definitions[info['col_name']] = label
+
+    if mark_cols_info:
+        for info in mark_cols_info:
+            period = info.get('mark_period') or 'Unknown'
+            label = f"{info['course_name']} ({info['subject']}) {period}\n{info['year']}"
             dynamic_definitions[info['col_name']] = label
 
     if request.GET.get('format') == 'json':

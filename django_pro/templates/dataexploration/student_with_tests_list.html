@@ -12,6 +12,7 @@
 
 {% block content %}
 <div id="app-data" data-load-students-url="{% url 'dataexploration:load_students' %}"
+    data-column-structures-url="{% url 'dataexploration:load_column_structures' %}"
     data-student-summary-url-template="{% url 'dataexploration:student_test_summary' 'SSID_PLACEHOLDER' %}"
     data-student-summary-partial-url-template="{% url 'dataexploration:student_test_summary_partial' 'SSID_PLACEHOLDER' %}"
     data-student-summary-warm-url="{% url 'dataexploration:student_test_summary_warm' %}"
