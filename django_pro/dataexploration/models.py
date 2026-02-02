@@ -342,3 +342,22 @@ class StudentListItem(models.Model):
 
     def __str__(self):
         return f"{self.ssid} in {self.student_list.name}"
+
+
+class ElementaryHomeroomTeacher(models.Model):
+    """
+    View for Elementary School Homeroom Teachers (Period 0).
+    """
+    stu_annual_key = models.CharField(max_length=32, primary_key=True)
+    ssid = models.CharField(max_length=20)
+    staff_email = models.EmailField(blank=True, null=True)
+    elem_teacher_name = models.CharField(max_length=255)
+    school_name = models.CharField(max_length=255)
+    school_year = models.CharField(max_length=20)
+
+    class Meta:
+        managed = False
+        db_table = 'elementary_homeroom_teacher'
+
+    def __str__(self):
+        return f"{self.elem_teacher_name} - {self.ssid}"

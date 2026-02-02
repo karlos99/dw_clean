@@ -45,6 +45,15 @@
 
 <body class="min-h-screen bg-slate-50 text-slate-900 antialiased font-sans flex flex-col">
 
+    {% if user.is_impersonated %}
+    <div class="bg-red-600 text-white px-4 py-3 text-center text-sm font-medium shadow-md">
+        <span class="mr-2">⚠️ You are acting as <strong>{{ user.name|default:user.email }}</strong></span>
+        <a href="{% url 'users:stop_impersonating' %}" class="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-full shadow-sm text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
+            Stop Impersonating
+        </a>
+    </div>
+    {% endif %}
+
     <!-- Navigation -->
     <nav class="bg-slate-900 text-slate-100 border-b border-slate-800">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -63,21 +72,92 @@
                             class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">
                             Data Exploration
                         </a>
-                        {% if user.is_staff %}
-                        <a href="{% url 'users:user_list' %}"
-                            class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">
-                            Users
-                        </a>
-                        <a href="/admin/"
-                            class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition">
-                            Admin
-                        </a>
+                        {% if user.is_staff or user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
+                        <div class="relative group" x-data="{ open: false }" @mouseenter="open = true" @mouseleave="open = false">
+                            <button class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-slate-200 hover:text-white hover:bg-slate-800 transition focus:outline-none" @click="open = !open">
+                                Admin
+                                <svg class="ml-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                            <div class="absolute left-0 pt-2 w-48 z-50" x-show="open" x-transition style="display: none;">
+                                <div class="rounded-md shadow-lg py-1 bg-white ring-1 ring-black ring-opacity-5">
+                                    <a href="{% url 'users:manage_users' %}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Users</a>
+                                    {% if user.is_staff %}
+                                    <a href="/admin/" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Django Admin</a>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
                         {% endif %}
                     </div>
                     {% endif %}
                 </div>
                 <div class="flex items-center">
                     {% if user.is_authenticated %}
+                    
+
+
+                    {% if user.roles.count > 1 or user.available_schools %}
+                    <div class="relative group mr-6" x-data="{ open: false }" @mouseenter="open = true" @mouseleave="open = false">
+                        <button class="flex items-center text-sm font-medium text-slate-200 hover:text-white transition focus:outline-none" @click="open = !open">
+                            <span class="mr-1 text-slate-400">Context:</span>
+                            <span class="truncate max-w-[200px]">
+                                {% if user.active_role %}{{ user.active_role.name }}{% else %}All Roles{% endif %}
+                                <span class="text-slate-500 mx-1">|</span>
+                                {% if user.active_school %}{{ user.active_school.school_name }}{% else %}All Schools{% endif %}
+                            </span>
+                            <svg class="ml-1 h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                        <div class="absolute right-0 top-full pt-2 w-72 z-50" x-show="open" x-transition style="display: none;">
+                            <div class="rounded-md shadow-lg py-1 bg-white ring-1 ring-black ring-opacity-5 max-h-[80vh] overflow-y-auto">
+                                
+                                {% if user.roles.count > 1 %}
+                                <div class="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50">
+                                    Roles
+                                </div>
+                                <form method="POST" action="{% url 'users:switch_role' %}">
+                                    {% csrf_token %}
+                                    <button type="submit" name="role_id" value="all" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 {% if not user.active_role %}font-bold text-blue-600{% endif %}">
+                                        All Roles
+                                    </button>
+                                </form>
+                                {% for role in user.roles.all %}
+                                <form method="POST" action="{% url 'users:switch_role' %}">
+                                    {% csrf_token %}
+                                    <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 {% if user.active_role.id == role.id %}font-bold text-blue-600{% endif %}">
+                                        {{ role.name }}
+                                    </button>
+                                </form>
+                                {% endfor %}
+                                {% endif %}
+
+                                {% if user.available_schools %}
+                                <div class="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 border-t border-slate-100 mt-1">
+                                    Schools
+                                </div>
+                                <form method="POST" action="{% url 'users:switch_role' %}">
+                                    {% csrf_token %}
+                                    <button type="submit" name="school_id" value="all" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 {% if not user.active_school %}font-bold text-blue-600{% endif %}">
+                                        All Schools
+                                    </button>
+                                </form>
+                                {% for school in user.available_schools %}
+                                <form method="POST" action="{% url 'users:switch_role' %}">
+                                    {% csrf_token %}
+                                    <button type="submit" name="school_id" value="{{ school.state_id }}" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 {% if user.active_school.state_id == school.state_id %}font-bold text-blue-600{% endif %}">
+                                        {{ school.school_name }}
+                                    </button>
+                                </form>
+                                {% endfor %}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
                     <span class="text-sm text-slate-200 mr-4 hidden sm:inline">{{ user.email }}</span>
                     {% if user.avatar %}
                     <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full mr-4">

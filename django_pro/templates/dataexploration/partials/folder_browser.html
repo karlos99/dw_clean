@@ -107,7 +107,7 @@
                     {{ folder.name }}
                 </span>
                 <div class="flex items-center gap-2">
-                    {% if user.is_superuser or user.role.name == "Project Admin" or user.role.name == "District Admin" or folder.folder_type == "USER" and folder.owner == user %}
+                    {% if user.is_superuser or user.is_project_admin or user.is_district_admin or folder.folder_type == "USER" and folder.owner == user %}
                     <button type="button"
                         onclick="event.stopPropagation(); showRenameFolderModal({{ folder.id }}, '{{ folder.name|escapejs }}', '{{ folder.description|default:''|escapejs }}')"
                         class="p-1 text-gray-400 hover:text-blue-600" title="Rename Folder">

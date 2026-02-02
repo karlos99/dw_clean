@@ -1,6 +1,34 @@
 from django.db.models import Q
 from .models import ReportFolder
 
+def get_user_roles(user):
+    """
+    Get the effective roles for the user, respecting active_role context.
+    """
+    if hasattr(user, 'active_role') and user.active_role:
+        return {user.active_role.name}
+    return set(user.roles.values_list('name', flat=True))
+
+def _user_has_access_to_user_school(user, user_school):
+    """
+    Check if user has access to the given users.models.School object.
+    Handles both legacy ManyToManyField and new JSONField (list of state_ids).
+    """
+    if not user_school:
+        return False
+        
+    if isinstance(user.schools, list):
+        # New JSONField storage: list of state_ids
+        from studata.models import School as StudataSchool
+        # Match by name since users.School lacks state_id
+        return StudataSchool.objects.filter(state_id__in=user.schools, school_name=user_school.name).exists()
+    
+    if hasattr(user.schools, 'all'):
+        # Legacy M2M
+        return user_school in user.schools.all()
+        
+    return False
+
 def get_user_folders(user):
     """
     Return queryset of folders a user can VIEW.
@@ -26,7 +54,20 @@ def get_user_folders(user):
     q_district = Q(folder_type='DISTRICT')
     
     # 4. School folders
-    user_school_ids = user.schools.values_list('id', flat=True)
+    user_school_ids = []
+    if isinstance(user.schools, list):
+         # Map state_ids from user.schools to users.models.School ids (best effort)
+         from studata.models import School as StudataSchool
+         from users.models import School as UserSchool
+         
+         # Fetch school names from studata
+         studata_names = StudataSchool.objects.filter(state_id__in=user.schools).values_list('school_name', flat=True)
+         # Find matching UserSchools
+         user_school_ids = UserSchool.objects.filter(name__in=studata_names).values_list('id', flat=True)
+    elif hasattr(user.schools, 'values_list'):
+         # Fallback for old ManyToManyField (if not fully migrated)
+         user_school_ids = user.schools.values_list('id', flat=True)
+         
     q_school = Q(folder_type='SCHOOL', school__id__in=user_school_ids)
     
     # Also check hierarchy: If can view parent, can view child? 
@@ -52,14 +93,14 @@ def can_user_edit_folder(user, folder):
             return True
         return False
         
-    role_name = getattr(user.role, 'name', '') if user.role else ''
+    user_roles = get_user_roles(user)
     
     if folder.folder_type == 'DISTRICT':
         # Only admins can edit root district folder
         if folder.parent is None:
-            return role_name in ['Project Admin', 'District Admin']
+            return bool({'Project Admin', 'District Admin'} & user_roles)
         # Subfolders? Maybe department heads?
-        if role_name in ['Project Admin', 'District Admin']:
+        if {'Project Admin', 'District Admin'} & user_roles:
             return True
         # If a non-USER district subfolder tracks an owner (creator), allow them to manage it.
         return folder.owner == user
@@ -67,18 +108,18 @@ def can_user_edit_folder(user, folder):
     if folder.folder_type == 'SCHOOL':
         # Only admins can edit root school folder
         if folder.parent is None:
-            if role_name in ['Project Admin', 'District Admin']:
+            if {'Project Admin', 'District Admin'} & user_roles:
                 return True
             # School Admin?
             # Assuming 'School Admin' exists and user is assigned to this school
-            if role_name == 'School Admin' and folder.school in user.schools.all():
+            if 'School Admin' in user_roles and _user_has_access_to_user_school(user, folder.school):
                 return True
             return False
             
         # Subfolders in school: allow school staff to manage folders within their school.
         # This matches the UI behavior (delete/rename buttons shown) and avoids locking out creators
         # when historical folders were created without an owner.
-        if folder.school and folder.school in user.schools.all():
+        if folder.school and _user_has_access_to_user_school(user, folder.school):
             return True
         return folder.owner == user
 
@@ -97,8 +138,12 @@ def can_create_in_folder(user, folder):
     # My Folder - always yes
     if folder.folder_type == 'USER' and folder.owner == user:
         return True
-        
-    role_name = getattr(user.role, 'name', '') if user.role else ''
+    
+    # Check roles
+    # user_roles = {r.name for r in user.roles.all()} 
+    
+    # Actually just:
+    user_roles = get_user_roles(user)
     
     # District / School folders
     # "departments will be able to create department specific queries"
@@ -106,16 +151,16 @@ def can_create_in_folder(user, folder):
     
     if folder.folder_type == 'DISTRICT':
         # Allow Project Admin and District Admin to create subfolders
-        if role_name in ['Project Admin', 'District Admin']:
+        if {'Project Admin', 'District Admin'} & user_roles:
             return True
         # Allow others? Maybe not at root level.
         return False
         
     if folder.folder_type == 'SCHOOL':
-        if role_name in ['Project Admin', 'District Admin']:
+        if {'Project Admin', 'District Admin'} & user_roles:
             return True
         # If user user belongs to school, allow them to create?
-        if folder.school in user.schools.all():
+        if _user_has_access_to_user_school(user, folder.school):
             return True # Allow school staff to create subfolders/queries
             
     return False

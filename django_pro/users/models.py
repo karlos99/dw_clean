@@ -4,6 +4,8 @@ from django.utils.translation import gettext_lazy as _
 
 class School(models.Model):
     name = models.CharField(max_length=255)
+
+    
     # Add other fields as necessary
     
     def __str__(self):
@@ -25,16 +27,14 @@ class User(AbstractUser):
     staff_id = models.CharField(_("Staff ID"), max_length=50, blank=True, null=True, unique=True, db_index=True)
     
     # Role can be dynamic as per requirement "create roles"
-    role = models.ForeignKey(
+    roles = models.ManyToManyField(
         Role, 
-        on_delete=models.SET_NULL, 
-        null=True, 
         blank=True, 
         related_name="users"
     )
     
-    # Access to multiple schools
-    schools = models.ManyToManyField(School, blank=True, related_name="users")
+    # Store a list of school state IDs from studata.models.School
+    schools = models.JSONField(default=list, blank=True)
     
     # Preferences placeholder
     preferences = models.JSONField(default=dict, blank=True)
@@ -43,6 +43,18 @@ class User(AbstractUser):
     email = models.EmailField(_("email address"), unique=True)
     
     avatar = models.URLField(max_length=500, blank=True, null=True)
+
+    @property
+    def is_project_admin(self):
+        if hasattr(self, 'active_role') and self.active_role:
+             return self.active_role.name == 'Project Admin'
+        return self.roles.filter(name='Project Admin').exists()
+
+    @property
+    def is_district_admin(self):
+        if hasattr(self, 'active_role') and self.active_role:
+             return self.active_role.name == 'District Admin'
+        return self.roles.filter(name='District Admin').exists()
 
     def __str__(self):
         return self.email

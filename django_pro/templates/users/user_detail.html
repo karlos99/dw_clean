@@ -74,18 +74,21 @@
                         class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border">
                 </div>
 
-                <!-- Role -->
+                <!-- Roles -->
                 <div>
-                    <label for="role" class="block text-sm font-medium text-slate-700 mb-2">Role</label>
-                    <select name="role" id="role"
-                        class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border">
-                        <option value="">No Role</option>
+                    <label class="block text-sm font-medium text-slate-700 mb-2">Roles</label>
+                    <div class="space-y-2 mt-2 max-h-40 overflow-y-auto border border-slate-300 rounded p-2">
                         {% for role in roles %}
-                        <option value="{{ role.id }}" {% if user_obj.role.id == role.id %}selected{% endif %}>
-                            {{ role.name }}
-                        </option>
+                        <div class="flex items-center">
+                            <input type="checkbox" name="roles" value="{{ role.id }}" id="role_{{ role.id }}"
+                            {% if role in user_obj.roles.all %}checked{% endif %}
+                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                            <label for="role_{{ role.id }}" class="ml-2 text-sm text-slate-700">
+                                {{ role.name }}
+                            </label>
+                        </div>
                         {% endfor %}
-                    </select>
+                    </div>
                 </div>
 
                 <!-- Schools -->
@@ -94,11 +97,11 @@
                     <div class="border border-slate-300 rounded-md p-4 max-h-60 overflow-y-auto">
                         {% for school in schools %}
                         <div class="flex items-center mb-2">
-                            <input type="checkbox" name="schools" value="{{ school.id }}" id="school_{{ school.id }}" 
-                            {% if school in user_obj.schools.all %}checked{% endif %}
+                            <input type="checkbox" name="schools" value="{{ school.state_id }}" id="school_{{ school.dw_schoolkey }}" 
+                            {% if school.state_id in user_obj.schools %}checked{% endif %}
                                 class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
-                            <label for="school_{{ school.id }}" class="ml-2 text-sm text-slate-700">
-                                {{ school.name }}
+                            <label for="school_{{ school.dw_schoolkey }}" class="ml-2 text-sm text-slate-700">
+                                {{ school.school_name }}
                             </label>
                         </div>
                         {% empty %}

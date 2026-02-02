@@ -10,6 +10,7 @@ COLUMN_DEFINITIONS = {
     "school_year": "School Year",
     "school": "School",
     "school_state_id": "School Code",
+    "elem_teacher_name": "Elementary Homeroom Teacher",
     
     # Demographics
     "gender": "Gender",
@@ -38,7 +39,7 @@ COLUMN_DEFINITIONS = {
 COLUMN_CATEGORIES = {
     "student_info": {
         "title": "Student Information",
-        "columns": ["ssid", "student_id", "student_name", "grade", "school_year", "school", "school_state_id"]
+        "columns": ["ssid", "student_id", "student_name", "grade", "school_year", "school", "school_state_id", "elem_teacher_name"]
     },
     "demographics": {
         "title": "Demographics",

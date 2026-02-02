@@ -259,3 +259,7 @@ All Django behavior must align with **official Django 6 documentation**:
 > If a suggestion trades performance for convenience, reject it.
 > If a solution adds complexity without measurable benefit, reject it.
 > **Optimize first. Always.**
+
+
+## Roles
+- The application will have multiple roles for the users, that will range to having access to specific user to the project magager. by default the 

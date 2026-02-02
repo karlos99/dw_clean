@@ -17,7 +17,7 @@
                         class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border"
                         autocomplete="off" hx-get="{% url 'users:manage_users' %}" hx-target="#user-content"
                         hx-swap="innerHTML" hx-trigger="keyup changed delay:600ms"
-                        hx-include="[name='role'],[name='job_title'],[name='sort'],[name='order'],[name='page_size']">
+                        hx-include="[name='role'],[name='job_title'],[name='school'],[name='sort'],[name='order'],[name='page_size']">
                     <div class="absolute inset-y-0 right-3 flex items-center text-slate-400">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
                             stroke="currentColor">
@@ -34,11 +34,28 @@
                     class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border"
                     hx-get="{% url 'users:manage_users' %}" hx-target="#user-content" hx-swap="innerHTML"
                     hx-trigger="change"
-                    hx-include="[name='q'],[name='job_title'],[name='sort'],[name='order'],[name='page_size']">
+                    hx-include="[name='q'],[name='job_title'],[name='school'],[name='sort'],[name='order'],[name='page_size']">
                     <option value="">All Roles</option>
                     <option value="none" {% if role_filter == 'none' %}selected{% endif %}>No Role</option>
                     {% for role in all_roles %}<option value="{{ role.id }}" {% if role_filter == role.id|stringformat:"s" %}
                      selected{% endif %}>{{ role.name }}</option>{% endfor %}
+                </select>
+            </div>
+
+            <div class="w-full sm:w-48">
+                <label for="school-filter" class="sr-only">Filter by school</label>
+                <select name="school" id="school-filter"
+                    class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border"
+                    hx-get="{% url 'users:manage_users' %}" hx-target="#user-content" hx-swap="innerHTML"
+                    hx-trigger="change"
+                    hx-include="[name='q'],[name='role'],[name='job_title'],[name='sort'],[name='order'],[name='page_size']">
+                    <option value="">All Schools</option>
+                    <option value="none" {% if school_filter == 'none' %}selected{% endif %}>No School Assigned</option>
+                    {% for school in all_schools %}
+                        <option value="{{ school.state_id }}" {% if school_filter == school.state_id %}selected{% endif %}>
+                            {{ school.school_name }}
+                        </option>
+                    {% endfor %}
                 </select>
             </div>
 
@@ -48,7 +65,7 @@
                     class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border"
                     hx-get="{% url 'users:manage_users' %}" hx-target="#user-content" hx-swap="innerHTML"
                     hx-trigger="change"
-                    hx-include="[name='q'],[name='role'],[name='sort'],[name='order'],[name='page_size']">
+                    hx-include="[name='q'],[name='role'],[name='school'],[name='sort'],[name='order'],[name='page_size']">
                     <option value="">All Job Titles</option>
                     <option value="none" {% if job_title_filter == 'none' %}selected{% endif %}>No Job Title</option>
                     {% for job_title in all_job_titles %}<option value="{{ job_title }}" 

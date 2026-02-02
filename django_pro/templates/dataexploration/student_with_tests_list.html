@@ -252,7 +252,7 @@
                         Export CSV
                     </button>
 
-                    {% if user.is_staff or user.role and user.role.name == 'Project Admin' or user.role and user.role.name == 'District Admin' %}
+                    {% if user.is_staff or user.is_project_admin or user.is_district_admin %}
                     
 
 

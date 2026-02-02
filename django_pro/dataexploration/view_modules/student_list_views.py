@@ -163,7 +163,7 @@ def load_students(request):
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
     
-    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False):
+    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
         """Append SQL filter clauses + params for the provided filters dict."""
         if not isinstance(filters_to_apply, dict):
             return
@@ -310,7 +310,7 @@ def load_students(request):
                 continue
 
             # Standard columns
-            expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students)
+            expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
             if expr:
                  conditions = []
                  if real_values:
@@ -637,6 +637,22 @@ def load_students(request):
             base_where_clauses.append("cs.status = %s")
             base_params.append(status)
 
+        # Apply active school context or enforce school permissions
+        if hasattr(request.user, 'active_school') and request.user.active_school:
+             # User explicitly selected a school (which is validated by middleware to be in their allowed list)
+             base_where_clauses.append("cs.school_state_id = %s")
+             base_params.append(request.user.active_school.state_id)
+        elif not (request.user.is_superuser or getattr(request.user, 'is_project_admin', False)):
+             # No specific school selected, so limit to ALL assigned schools
+             # If user is admin (and acting as admin), they pass this check and see all.
+             # If user is acting as Teacher, they fall here.
+             if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
+                  base_where_clauses.append("cs.school_state_id = ANY(%s)")
+                  base_params.append(request.user.schools)
+             else:
+                  # Non-admin user with no assigned schools sees nothing
+                  base_where_clauses.append("1=0")
+
         # Separate base columns from test/mark columns
         selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
         selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
@@ -667,16 +683,24 @@ def load_students(request):
             or sort_by in students_fields
         )
 
+        needs_eht = (
+             'elem_teacher_name' in selected_columns
+             or (isinstance(filters, dict) and 'elem_teacher_name' in filters.keys())
+             or sort_by == 'elem_teacher_name'
+        )
+
         join_sql = ""
         if needs_enroll:
             join_sql += " LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
         if needs_students:
             join_sql += " LEFT JOIN students s ON s.state_student_number = cs.ssid"
+        if needs_eht:
+            join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
 
         # Column filters (applied to the main query)
         where_clauses = list(base_where_clauses)
         params = list(base_params)
-        _apply_column_filters(where_clauses, params, filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
+        _apply_column_filters(where_clauses, params, filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
 
         where_sql = " AND ".join(where_clauses)
         
@@ -710,7 +734,7 @@ def load_students(request):
         base_col_selects = []
         base_col_expressions = {}
         for col in base_cols:
-            expr, alias = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students)
+            expr, alias = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
             if expr and alias:
                 base_col_expressions[col] = expr
                 if expr != f"cs.{alias}":

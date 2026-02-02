@@ -8,6 +8,7 @@ from django.views.decorators.http import require_POST
 from ..models import DefaultColumnSelection
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
 from ..column_utils import get_test_columns, get_mark_columns
+from ..utils import get_user_roles
 
 
 def get_saved_default_columns():
@@ -18,8 +19,10 @@ def get_saved_default_columns():
     return DEFAULT_COLUMNS
 
 
-def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False, use_students=False):
+def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False, use_students=False, use_eht=False):
     """Generate SQL expression for a column based on available tables."""
+    if col == 'elem_teacher_name' and use_eht:
+        return "eht.elem_teacher_name", "elem_teacher_name"
     if col == 'ltel' and use_students:
         return "s.ltel", "ltel"
     if col == 'ell':
@@ -57,8 +60,8 @@ def user_can_manage_defaults(user):
         return False
     if user.is_staff:
         return True
-    role_name = getattr(getattr(user, 'role', None), 'name', None)
-    return role_name in {'Project Admin', 'District Admin'}
+    user_roles = get_user_roles(user)
+    return bool({'Project Admin', 'District Admin'} & user_roles)
 
 
 @login_required
