@@ -48,6 +48,49 @@ class User(AbstractUser):
     def is_project_admin(self):
         if hasattr(self, 'active_role') and self.active_role:
              return self.active_role.name == 'Project Admin'
+        return False
+
+    def get_accessible_student_keys(self):
+        """
+        Returns a list of stu_annual_keys that this user is allowed to access.
+        Returns None if user has full access (subject to school restrictions).
+        """
+        # Determine if we need to restrict based on role
+        # Unrestricted roles:
+        if self.is_superuser:
+            return None
+            
+        unrestricted_roles = ['Project Admin', 'District Admin', 'School Admin']
+        if self.active_role and self.active_role.name in unrestricted_roles:
+            return None
+        
+        # If we are here, we are likely a Teacher or Staff or have no specific high-level role.
+        # Apply the specific restrictions requested.
+        if not self.staff_id:
+             # If no staff_id, and not an admin, access is likely zero or managed by school only?
+             # The prompt implies "only student annual key that have the staff_id".
+             # If no staff_id, query returns empty.
+             return []
+             
+        # Import here to avoid circular dependencies
+        from studata.models import Schedule, School as StudataSchool
+        
+        # Query: select DISTINCT sl.stu_annual_key ... 
+        # from schedule_list sl 
+        # inner join schools sch on sch.state_id = sl.state_school_id hiding students from invalid schools
+        
+        # We need filtering where state_school_id is valid (exists in School table) & staff_id matches.
+        
+        # Subquery for valid schools
+        valid_schools = StudataSchool.objects.values('state_id')
+        
+        keys = Schedule.objects.filter(
+            staff_employee_id=self.staff_id,
+            state_school_id__in=valid_schools
+        ).values_list('stu_annual_key', flat=True).distinct()
+        
+        return list(keys)
+
         return self.roles.filter(name='Project Admin').exists()
 
     @property

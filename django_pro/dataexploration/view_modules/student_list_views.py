@@ -653,6 +653,17 @@ def load_students(request):
                   # Non-admin user with no assigned schools sees nothing
                   base_where_clauses.append("1=0")
 
+        # Apply specific row-level permissions (e.g. Teacher seeing only their students)
+        if hasattr(request.user, 'get_accessible_student_keys'):
+            accessible_keys = request.user.get_accessible_student_keys()
+            if accessible_keys is not None:
+                # If restricted set returned
+                if not accessible_keys:
+                    base_where_clauses.append("1=0")
+                else:
+                    base_where_clauses.append("cs.stu_annual_key = ANY(%s)")
+                    base_params.append(accessible_keys)
+
         # Separate base columns from test/mark columns
         selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
         selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
