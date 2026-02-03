@@ -6,7 +6,7 @@ from django.template.loader import render_to_string
 from django.conf import settings
 import os
 
-from studata.models import CurrentStudent, StudentEnroll, School
+from studata.models import CurrentStudent, StudentEnroll, School, StudentMarks
 
 
 def _student_summary_cache_version():
@@ -26,6 +26,7 @@ def _student_summary_cache_keys(ssid: str, user_id=None):
     return {
         'student_info': f"dataexp:student_summary:{v}:{user_part}student_info:{ssid}",
         'test_records': f"dataexp:student_summary:{v}:{user_part}test_records:{ssid}",
+        'student_marks': f"dataexp:student_summary:{v}:{user_part}student_marks:{ssid}",
         'partial_html': f"dataexp:student_summary:{v}:{user_part}partial_html:{ssid}",
     }
 
@@ -113,12 +114,19 @@ def _fetch_test_records_for_ssid(ssid: str):
             LEFT JOIN school sch
                 ON sch.assessment_school_code = r.school_code
             WHERE r.ssid = %s
-            ORDER BY r.school_year, t.test_name, t.subject
+            ORDER BY r.school_year DESC, t.test_name, t.subject
             """,
             [ssid],
         )
         cols = [c[0] for c in cursor.description]
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+def _fetch_student_marks_for_ssid(ssid: str):
+    """Fetch all marks for a student from the database."""
+    return list(StudentMarks.objects.filter(ssid=ssid)
+                .order_by('-school_year', 'mark_period', 'course_name')
+                .values())
 
 
 def get_student_info_cached(ssid: str, timeout: int = 300, user_id=None):
@@ -143,6 +151,17 @@ def get_test_records_cached(ssid: str, timeout: int = 300, user_id=None):
     return test_records
 
 
+def get_student_marks_cached(ssid: str, timeout: int = 300, user_id=None):
+    """Get student marks with caching."""
+    keys = _student_summary_cache_keys(ssid, user_id=user_id)
+    cached = cache.get(keys['student_marks'])
+    if cached is not None:
+        return cached
+    marks = _fetch_student_marks_for_ssid(ssid)
+    cache.set(keys['student_marks'], marks, timeout=timeout)
+    return marks
+
+
 def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 300):
     """Get rendered HTML for student summary with caching."""
     user_id = getattr(getattr(request, 'user', None), 'pk', None)
@@ -156,6 +175,7 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
         'student_info': get_student_info_cached(ssid, timeout=timeout, user_id=user_id),
         'student_name': get_student_info_cached(ssid, timeout=timeout, user_id=user_id).get('full_name'),
         'test_records': get_test_records_cached(ssid, timeout=timeout, user_id=user_id),
+        'student_marks': get_student_marks_cached(ssid, timeout=timeout, user_id=user_id),
     }
     html = render_to_string('dataexploration/partials/student_test_summary_content.html', context, request=request)
     cache.set(keys['partial_html'], html, timeout=timeout)

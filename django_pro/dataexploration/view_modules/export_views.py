@@ -399,6 +399,41 @@ def export_students_csv(request):
                     base_where_clauses.append("cs.status = %s")
                     base_params.append(status_value)
 
+                # Apply active school context or enforce school permissions
+                if hasattr(request.user, 'active_school') and request.user.active_school:
+                     # User explicitly selected a school
+                     base_where_clauses.append("cs.school_state_id = %s")
+                     base_params.append(request.user.active_school.state_id)
+                else:
+                     # Check if user is unrestricted (Project Admin OR District Role)
+                     is_unrestricted = False
+                     if request.user.is_superuser:
+                         is_unrestricted = True
+                     elif getattr(request.user, 'is_project_admin', False):
+                         is_unrestricted = True
+                     elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
+                         is_unrestricted = True
+                         
+                     if not is_unrestricted:
+                         # No specific school selected, so limit to ALL assigned schools
+                         if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
+                              base_where_clauses.append("cs.school_state_id = ANY(%s)")
+                              base_params.append(request.user.schools)
+                         else:
+                              # Non-admin user with no assigned schools sees nothing
+                              base_where_clauses.append("1=0")
+
+                # Apply specific row-level permissions (e.g. Teacher seeing only their students)
+                if hasattr(request.user, 'get_accessible_student_keys'):
+                    accessible_keys = request.user.get_accessible_student_keys()
+                    if accessible_keys is not None:
+                        # If restricted set returned
+                        if not accessible_keys:
+                            base_where_clauses.append("1=0")
+                        else:
+                            base_where_clauses.append("cs.stu_annual_key = ANY(%s)")
+                            base_params.append(accessible_keys)
+
                 where_clauses = list(base_where_clauses)
                 params = list(base_params)
                 _apply_column_filters(where_clauses, params, filters_value, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
