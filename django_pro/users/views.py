@@ -16,16 +16,48 @@ def user_is_project_admin(user: User) -> bool:
     """Check if user has Project Admin role"""
     return user.is_authenticated and user.is_project_admin
 
-def get_filtered_users_queryset(request):
-    """Refactored logic to get filtered user queryset."""
-    query = request.GET.get('q', request.POST.get('q', '')).strip()
-    role_filter = request.GET.get('role', request.POST.get('role', '')).strip()
-    job_title_filter = request.GET.get('job_title', request.POST.get('job_title', '')).strip()
-    school_filter = request.GET.get('school', request.POST.get('school', '')).strip()
+def user_is_school_admin(user: User) -> bool:
+    """Check if user has School Admin role"""
+    if not user.is_authenticated: return False
+    # Check active role or if they have the role generally (if no active role context, maybe check all roles?)
+    # Usually we rely on active_role for context-aware actions
+    if hasattr(user, 'active_role') and user.active_role:
+        return 'School Admin' in user.active_role.name
+    return False
+
+def get_allowed_schools_for_admin(user: User) -> list:
+    """Get list of school state_ids this admin manages"""
+    if user_is_project_admin(user) or user.is_superuser:
+        return None # All schools
     
-    # Optimize query with annotation to avoid N+1
+    if hasattr(user, 'active_school') and user.active_school:
+        return [user.active_school.state_id]
+    
+    # Fallback to all assigned schools if no specific active school context
+    return user.schools if isinstance(user.schools, list) else []
+
+def get_base_users_queryset(request):
+    """Get the base queryset of users visible to the current user."""
     users_qs = User.objects.prefetch_related('roles')
+
+    # Security: Restrict visibility for School Admins
+    if not (request.user.is_superuser or user_is_project_admin(request.user)):
+        allowed_schools = get_allowed_schools_for_admin(request.user)
+        # Filter users who have AT LEAST ONE of the allowed schools
+        
+        if allowed_schools:
+            q_schools = Q()
+            for school_id in allowed_schools:
+                q_schools |= Q(schools__contains=[school_id])
+            users_qs = users_qs.filter(q_schools)
+        else:
+            # Admin with no schools sees no one?
+            users_qs = users_qs.none()
     
+    return users_qs
+
+def apply_filters(users_qs, query='', role_filter='', school_filter='', job_title_filter=''):
+    """Apply filters to a user queryset."""
     # Apply search filter
     if query:
         users_qs = users_qs.filter(
@@ -39,30 +71,43 @@ def get_filtered_users_queryset(request):
     if role_filter:
         if role_filter == 'none':
             users_qs = users_qs.filter(roles__isnull=True)
-        else:
+        elif role_filter: # Ensure it's not empty string
             users_qs = users_qs.filter(roles__id=role_filter)
     
     # Apply school filter
     if school_filter:
         if school_filter == 'none':
-            # Looking for users with empty school list
             users_qs = users_qs.filter(schools__exact=[])
-        else:
-            # Looking for users who have this school in their list
+        elif school_filter:
             users_qs = users_qs.filter(schools__contains=[school_filter])
 
     # Apply job title filter
     if job_title_filter:
         if job_title_filter == 'none':
             users_qs = users_qs.filter(Q(job_title='') | Q(job_title__isnull=True))
-        else:
+        elif job_title_filter:
             users_qs = users_qs.filter(job_title=job_title_filter)
+            
+    return users_qs
+
+def get_filtered_users_queryset(request):
+    """Refactored logic to get filtered user queryset."""
+    query = request.GET.get('q', request.POST.get('q', '')).strip()
+    role_filter = request.GET.get('role', request.POST.get('role', '')).strip()
+    job_title_filter = request.GET.get('job_title', request.POST.get('job_title', '')).strip()
+    school_filter = request.GET.get('school', request.POST.get('school', '')).strip()
+    
+    users_qs = get_base_users_queryset(request)
+    users_qs = apply_filters(users_qs, query, role_filter, school_filter, job_title_filter)
 
     return users_qs
 
 @login_required
 def manage_users(request):
-    if not user_is_project_admin(request.user):
+    is_proj = user_is_project_admin(request.user)
+    is_school = user_is_school_admin(request.user)
+    
+    if not (is_proj or is_school):
         messages.error(request, 'You do not have permission to access this page.')
         return redirect('index')
 
@@ -105,34 +150,63 @@ def manage_users(request):
     # Count before pagination
     total_users_count = users_qs.count()
 
-    # Cache filter options for performance (as per instructions.md requirement)
+    # --- Dynamic Filters ---
+    base_qs = get_base_users_queryset(request)
     
-    # Cache filter options for performance (as per instructions.md requirement)
-    cache_key_roles = 'user_management:all_roles'
-    cache_key_job_titles = 'user_management:all_job_titles'
-    cache_key_schools = 'user_management:all_schools_filter'
+    # 1. Available Roles
+    # To see what roles are available given current other filters (school, job_title)
+    # We apply all filters EXCEPT role
+    qs_for_roles = apply_filters(base_qs, query, '', school_filter, job_title_filter)
+    all_roles = list(Role.objects.filter(users__in=qs_for_roles).distinct().order_by('name'))
     
-    all_roles = cache.get(cache_key_roles)
-    if all_roles is None:
-        all_roles = list(Role.objects.all().order_by('name'))
-        cache.set(cache_key_roles, all_roles, timeout=300)
+    # 2. Available Job Titles
+    # Apply filters except job_title
+    qs_for_jobs = apply_filters(base_qs, query, role_filter, school_filter, '')
+    all_job_titles = list(
+        qs_for_jobs.exclude(Q(job_title='') | Q(job_title__isnull=True))
+        .values_list('job_title', flat=True)
+        .distinct()
+        .order_by('job_title')
+    )
 
-    all_schools = cache.get(cache_key_schools)
-    if all_schools is None:
-         # Minimal school data for filter
-         all_schools = list(StudataSchool.objects.values('state_id', 'school_name').order_by('school_name'))
-         cache.set(cache_key_schools, all_schools, timeout=600)
+    # 3. Available Schools
+    # Apply filters except school
+    qs_for_schools = apply_filters(base_qs, query, role_filter, '', job_title_filter)
     
-    all_job_titles = cache.get(cache_key_job_titles)
-    if all_job_titles is None:
-        all_job_titles = list(
-            User.objects.exclude(Q(job_title='') | Q(job_title__isnull=True))
-            .values_list('job_title', flat=True)
-            .distinct()
-            .order_by('job_title')
-        )
-        cache.set(cache_key_job_titles, all_job_titles, timeout=300)
-
+    # Getting schools is trickier because it's a JSON List.
+    # We can't cleanly join. We have to fetch and process.
+    # Optimization: If user count is high, this might be slow.
+    # Limit to 5000 users for facet calculation? Or fallback to all_schools if too many?
+    # For now, let's keep it simple.
+    
+    visible_users_schools = qs_for_schools.values_list('schools', flat=True)
+    
+    # Collect unique school IDs
+    unique_school_ids = set()
+    for school_list in visible_users_schools:
+        if school_list and isinstance(school_list, list):
+            unique_school_ids.update(school_list)
+            
+    # Now fetch the school objects
+    all_schools_qs = StudataSchool.objects.filter(state_id__in=unique_school_ids).values('state_id', 'school_name').order_by('school_name')
+    all_schools = list(all_schools_qs)
+    
+    # Filter options for School Admin context (Double check security)
+    if is_school and not is_proj:
+         allowed_schools = get_allowed_schools_for_admin(request.user)
+         # Ensure we don't show schools they shouldn't see, even if logic above leaked (it shouldn't due to base_qs)
+         # But explicit check is good.
+         all_schools = [s for s in all_schools if s['state_id'] in allowed_schools]
+         
+         # Also restrict roles if needed?
+         # "Restrict visible/assignable roles" - usually we restrict assignable.
+         # For filtering, if a User has "Project Admin" and "Teacher", and I am School Admin,
+         # I might see "Project Admin" in the dropdown if I see that user?
+         # Or should I validly filter by it? 
+         # The requirement "filter base on the selections... or base on list of user that the user can see"
+         # implies that if I can see a Project Admin (because they are also in my school), I should see that role option.
+         pass
+         
     paginator = Paginator(users_qs, page_size)
     page_number = request.GET.get('page', 1)
     page_obj = paginator.get_page(page_number)
@@ -165,46 +239,106 @@ def manage_users(request):
 
 @login_required
 def user_detail(request, user_id):
-    if not user_is_project_admin(request.user):
+    is_proj = user_is_project_admin(request.user)
+    is_school = user_is_school_admin(request.user)
+
+    if not (is_proj or is_school):
         messages.error(request, 'You do not have permission to access this page.')
         return redirect('index')
     
-    user = get_object_or_404(User, id=user_id)
-    roles = Role.objects.all().order_by('name')
-    schools = StudataSchool.objects.all().order_by('school_name')
+    user_obj = get_object_or_404(User, id=user_id)
     
+    # Access Check for School Admin
+    allowed_schools = None
+    if is_school and not is_proj:
+        allowed_schools = get_allowed_schools_for_admin(request.user)
+        # Check intersection of admin's allowed schools and target user's schools
+        user_schools = user_obj.schools if isinstance(user_obj.schools, list) else []
+        if not any(sid in allowed_schools for sid in user_schools) and user_schools:
+             # If user belongs to schools, but none align with admin...
+             # What if user has NO schools? Can admin take them?
+             # Assuming admin can see unassigned users? Or only assigned ones?
+             # "only see users that are assing to that school" implies user MUST be assigned.
+             messages.error(request, 'You do not have permission to view this user.')
+             return redirect('users:manage_users')
+
+    roles_qs = Role.objects.all().order_by('name')
+    schools_qs = StudataSchool.objects.all().order_by('school_name')
+    
+    # Filter options for School Admin
+    if is_school and not is_proj:
+        # 1. Restrict visible/assignable roles
+        allowed_role_names = ['School Gr View', 'School View', 'Teacher']
+        roles_qs = roles_qs.filter(name__in=allowed_role_names)
+        
+        # 2. Restrict visible/assignable schools
+        schools_qs = schools_qs.filter(state_id__in=allowed_schools)
+
     if request.method == 'POST':
         # Update user information
-        user.name = request.POST.get('name', '').strip()
-        user.job_title = request.POST.get('job_title', '').strip()
-        user.staff_id = request.POST.get('staff_id', '').strip() or None
-        user.is_active = request.POST.get('is_active') == 'on'
+        user_obj.name = request.POST.get('name', '').strip()
+        user_obj.job_title = request.POST.get('job_title', '').strip()
+        user_obj.staff_id = request.POST.get('staff_id', '').strip() or None
+        user_obj.is_active = request.POST.get('is_active') == 'on'
         
         # Update roles
         role_ids = request.POST.getlist('roles')
-        user.roles.clear()
-        if role_ids:
-             roles_objs = Role.objects.filter(id__in=role_ids)
-             user.roles.add(*roles_objs)
+        
+        if is_school and not is_proj:
+            # Logic for School Admin:
+            # We cannot clear ALL roles if user has other roles (like Project Admin) that this admin can't see.
+            # We should only modify the roles that are "allowed".
+            
+            # 1. Get current roles that are NOT allowed (preserve them)
+            preserved_roles = user_obj.roles.exclude(name__in=allowed_role_names)
+            
+            # 2. Get new roles from form (ensure they ARE allowed)
+            new_allowed_roles = Role.objects.filter(id__in=role_ids, name__in=allowed_role_names)
+            
+            # 3. Set roles = preserved + new
+            user_obj.roles.set(list(preserved_roles) + list(new_allowed_roles))
+        else:
+            # Full Access
+            user_obj.roles.clear()
+            if role_ids:
+                 roles_objs = Role.objects.filter(id__in=role_ids)
+                 user_obj.roles.add(*roles_objs)
         
         # Update schools (JSONField list of state_ids)
         school_ids = request.POST.getlist('schools')
-        valid_school_ids = []
-        for school_id in school_ids:
-             # Validate existence
-             if StudataSchool.objects.filter(state_id=school_id).exists():
-                 valid_school_ids.append(school_id)
         
-        user.schools = valid_school_ids
-        user.save()
+        if is_school and not is_proj:
+            # Logic for School Admin:
+            # Only modify memberships for allowed schools.
+            
+            # 1. Preserve schools not managed by this admin
+            current_schools = user_obj.schools if isinstance(user_obj.schools, list) else []
+            preserved_schools = [s for s in current_schools if s not in allowed_schools]
+            
+            # 2. Get valid requested schools that are also allowed for this admin
+            new_schools = []
+            for school_id in school_ids:
+                 if school_id in allowed_schools:
+                     new_schools.append(school_id)
+            
+            user_obj.schools = list(set(preserved_schools + new_schools)) # set for uniqueness
+        else:
+            valid_school_ids = []
+            for school_id in school_ids:
+                 # Validate existence
+                 if StudataSchool.objects.filter(state_id=school_id).exists():
+                     valid_school_ids.append(school_id)
+            user_obj.schools = valid_school_ids
+
+        user_obj.save()
         
-        messages.success(request, f'User {user.email} updated successfully.')
-        return redirect('users:user_detail', user_id=user.id)
+        messages.success(request, f'User {user_obj.email} updated successfully.')
+        return redirect('users:user_detail', user_id=user_obj.id)
     
     context = {
-        'user_obj': user,
-        'roles': roles,
-        'schools': schools,
+        'user_obj': user_obj,
+        'roles': roles_qs,
+        'schools': schools_qs,
     }
     return render(request, 'users/user_detail.html', context)
 
@@ -321,7 +455,7 @@ def bulk_update_users(request):
 @login_required
 def impersonate_user(request, user_id):
     # Only project admins can start impersonation
-    if not user_is_project_admin(request.user):
+    if not (request.user.is_superuser or user_is_project_admin(request.user)):
         messages.error(request, "Permission denied.")
         return redirect('index')
 

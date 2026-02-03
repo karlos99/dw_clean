@@ -1,46 +1,60 @@
 {% load dataexploration_tags %}
-<div class="overflow-x-auto">
-    <table class="min-w-full divide-y divide-slate-200 border">
-        <thead class="bg-slate-50">
-            <tr>
-                {% for col in selected_columns %}
-                <th draggable="true" data-column="{{ col }}"
-                    class="px-4 py-3 text-left text-xs font-medium text-slate-700 uppercase tracking-wider cursor-move hover:bg-slate-100 border-r">
-                    {{ column_definitions|get_item:col }}</th>
+<div class="overflow-hidden rounded-xl shadow-md border border-slate-200 bg-white">
+    <div class="overflow-x-auto">
+        <table class="min-w-full text-sm text-left">
+            <thead class="bg-slate-900 text-white uppercase tracking-wider font-semibold text-xs">
+                <tr>
+                    {% for col in selected_columns %}
+                    <th draggable="true" data-column="{{ col }}"
+                        class="px-6 py-4 cursor-move whitespace-nowrap">
+                        {{ column_definitions|get_item:col }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 text-slate-600">
+                {% for student in students %}
+                <tr class="bg-white even:bg-slate-50 hover:bg-slate-100 transition-colors duration-150">
+                    {% for col in selected_columns %}
+                    <td class="px-6 py-3 whitespace-nowrap">{{ student|get_item:col|default:"—" }}</td>
+                    {% endfor %}
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="{{ selected_columns|length }}" class="px-6 py-12 text-center text-slate-500 italic bg-white">
+                        <div class="flex flex-col items-center justify-center space-y-2">
+                           <svg class="w-8 h-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>No students found matching current criteria.</span>
+                        </div>
+                    </td>
+                </tr>
                 {% endfor %}
-            </tr>
-        </thead>
-        <tbody class="bg-white divide-y divide-slate-100">
-            {% for student in students %}
-            <tr class="hover:bg-slate-50">
-                {% for col in selected_columns %}
-                <td class="px-4 py-2 text-sm text-slate-900 border-r whitespace-nowrap">{{
-                    student|get_item:col|default:"—" }}</td>
-                {% endfor %}
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="{{ selected_columns|length }}" class="px-6 py-8 text-center text-slate-500">No students
-                    found</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-<!-- Pagination -->
-{% if total_pages > 1 %}
-<div class="px-4 py-3 border-t flex items-center justify-between">
-    <div class="text-sm text-slate-700">Showing {{ students|length }} of {{ total }} students</div>
-    <div class="flex gap-2">
-        {% if page > 1 %}
-        <button data-action="prev-page" data-page="{{ page|add:'-1' }}"
-            class="px-3 py-1 text-sm border rounded hover:bg-slate-50">Previous</button>
-        {% endif %}
-        <span class="px-3 py-1 text-sm">Page {{ page }} of {{ total_pages }}</span>
-        {% if page < total_pages %} <button data-action="next-page" data-page="{{ page|add:'1' }}"
-            class="px-3 py-1 text-sm border rounded hover:bg-slate-50">Next</button>
-            {% endif %}
+            </tbody>
+        </table>
     </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <div class="bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-between">
+        <div class="text-xs text-slate-500">Showing <span class="font-semibold text-slate-800">{{ students|length }}</span> of <span class="font-semibold text-slate-800">{{ total }}</span> students</div>
+        <div class="flex gap-2 text-xs font-medium">
+            {% if page > 1 %}
+            <button data-action="prev-page" data-page="{{ page|add:'-1' }}"
+                class="px-3 py-1.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 transition shadow-sm">Previous</button>
+            {% else %}
+            <button disabled class="px-3 py-1.5 border border-slate-200 rounded-md bg-slate-100 text-slate-400 cursor-not-allowed">Previous</button>
+            {% endif %}
+            
+            <span class="px-3 py-1.5 text-slate-600 flex items-center">Page {{ page }} of {{ total_pages }}</span>
+            
+            {% if page < total_pages %} 
+            <button data-action="next-page" data-page="{{ page|add:'1' }}"
+                class="px-3 py-1.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 transition shadow-sm">Next</button>
+            {% else %}
+            <button disabled class="px-3 py-1.5 border border-slate-200 rounded-md bg-slate-100 text-slate-400 cursor-not-allowed">Next</button>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 </div>
-{% endif %}

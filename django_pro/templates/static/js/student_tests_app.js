@@ -400,11 +400,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         html += '</colgroup>';
 
-        html += '<thead class="bg-slate-50 sticky top-0 z-10"><tr class="bg-slate-50">';
+        html += '<thead class="bg-slate-900 text-white sticky top-0 z-10 shadow-md"><tr class="bg-slate-900">';
 
         // Selection column header
-        html += '<th class="px-4 py-2 text-left text-xs font-semibold text-slate-700 uppercase bg-slate-50">';
-        html += '<input type="checkbox" data-action="select-all-visible" class="rounded border-slate-300 text-blue-600 focus:ring-blue-600" aria-label="Select all visible students">';
+        html += '<th class="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase bg-slate-900 border-b border-slate-800">';
+        html += '<input type="checkbox" data-action="select-all-visible" class="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900 cursor-pointer" aria-label="Select all visible students">';
         html += '</th>';
 
         columns.forEach((col) => {
@@ -414,16 +414,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const hasFilter = optionsForCol.length > 0 || hasActiveFilter;
             const isSorted = sortBy === col;
             const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
-            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="relative group px-4 py-2 text-left text-xs font-semibold text-slate-700 uppercase bg-slate-50">`;
+            const sortColorClass = isSorted ? 'text-blue-400' : 'text-slate-600 group-hover:text-slate-400';
+
+            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="relative group px-4 py-3 text-left text-xs font-bold text-slate-300 uppercase bg-slate-900 border-b border-slate-800 hover:bg-slate-800 transition-colors select-none">`;
             html += `<div class="flex items-center justify-between gap-2">`;
-            html += `<div class="flex items-center gap-2 min-w-0">`;
-            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="flex-1 text-left hover:text-slate-900 whitespace-pre-wrap break-words">${escapeHtml(label)}</button>`;
-            html += `<button draggable="false" type="button" data-action="sort" data-column="${escapeHtml(col)}" class="text-xs text-slate-500 hover:text-slate-700 flex-shrink-0">${sortIcon}</button>`;
+            html += `<div class="flex items-center gap-2 min-w-0 flex-1 cursor-pointer group/sort" data-action="sort" data-column="${escapeHtml(col)}">`;
+            html += `<span class="whitespace-pre-wrap break-words group-hover/sort:text-white transition-colors">${escapeHtml(label)}</span>`;
+            html += `<span class="text-[10px] ${sortColorClass} group-hover/sort:text-white transition-colors flex-shrink-0">${sortIcon}</span>`;
             html += `</div>`;
             if (hasFilter) {
-                html += `<div class="relative">`;
-                html += `<button draggable="false" type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="text-xs text-slate-500 hover:text-slate-700">▾</button>`;
-                html += `<div class="hidden absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg border border-slate-200 py-1 z-20" data-filter-panel="${escapeHtml(col)}">`;
+                const filterIconClass = hasActiveFilter ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300';
+                html += `<div class="relative ml-1">`;
+                html += `<button draggable="false" type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="p-1 rounded hover:bg-slate-700 ${filterIconClass} transition-colors" title="Filter list">`;
+                html += `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>`;
+                html += `</button>`;
+                html += `<div class="hidden absolute right-0 mt-2 w-56 bg-white rounded-md shadow-xl border border-slate-200 py-1 z-20 text-slate-700 font-normal normal-case text-left" data-filter-panel="${escapeHtml(col)}">`;
                 html += `<div class="max-h-56 overflow-auto p-2 space-y-1">`;
                 if (optionsForCol.length === 0) {
                     html += `<div class="text-xs text-slate-500">No options available.</div>`;
@@ -452,7 +457,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Remove column action (X)
-            html += `<button draggable="false" type="button" data-action="remove-column" data-column="${escapeHtml(col)}" class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-600 hover:bg-red-50 rounded p-0.5" title="Remove column">✕</button>`;
+            html += `<button draggable="false" type="button" data-action="remove-column" data-column="${escapeHtml(col)}" class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 hover:text-red-400 hover:bg-slate-800 rounded p-0.5 ml-1" title="Remove column">✕</button>`;
             html += `</div>`;
 
             // Resize handle
