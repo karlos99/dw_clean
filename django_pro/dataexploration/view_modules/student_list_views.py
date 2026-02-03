@@ -642,16 +642,24 @@ def load_students(request):
              # User explicitly selected a school (which is validated by middleware to be in their allowed list)
              base_where_clauses.append("cs.school_state_id = %s")
              base_params.append(request.user.active_school.state_id)
-        elif not (request.user.is_superuser or getattr(request.user, 'is_project_admin', False)):
-             # No specific school selected, so limit to ALL assigned schools
-             # If user is admin (and acting as admin), they pass this check and see all.
-             # If user is acting as Teacher, they fall here.
-             if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
-                  base_where_clauses.append("cs.school_state_id = ANY(%s)")
-                  base_params.append(request.user.schools)
-             else:
-                  # Non-admin user with no assigned schools sees nothing
-                  base_where_clauses.append("1=0")
+        else:
+             # Check if user is unrestricted (Project Admin OR District Role)
+             is_unrestricted = False
+             if request.user.is_superuser:
+                 is_unrestricted = True
+             elif getattr(request.user, 'is_project_admin', False):
+                 is_unrestricted = True
+             elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
+                 is_unrestricted = True
+                 
+             if not is_unrestricted:
+                 # No specific school selected, so limit to ALL assigned schools
+                 if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
+                      base_where_clauses.append("cs.school_state_id = ANY(%s)")
+                      base_params.append(request.user.schools)
+                 else:
+                      # Non-admin user with no assigned schools sees nothing
+                      base_where_clauses.append("1=0")
 
         # Apply specific row-level permissions (e.g. Teacher seeing only their students)
         if hasattr(request.user, 'get_accessible_student_keys'):

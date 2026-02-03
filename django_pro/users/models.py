@@ -61,8 +61,9 @@ class User(AbstractUser):
             return None
             
         unrestricted_roles = ['Project Admin', 'District Admin', 'School Admin']
-        if self.active_role and self.active_role.name in unrestricted_roles:
-            return None
+        if self.active_role:
+             if self.active_role.name in unrestricted_roles or 'District' in self.active_role.name:
+                 return None
         
         # If we are here, we are likely a Teacher or Staff or have no specific high-level role.
         # Apply the specific restrictions requested.

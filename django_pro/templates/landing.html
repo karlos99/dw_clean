@@ -4,9 +4,11 @@
 {% block title %}Login - DS Data{% endblock %}
 
 {% block content %}
-<div class="flex items-center justify-center min-h-[calc(100vh-8rem)]"> <!-- Adjust height accounting for nav/footer -->
+<div id="bg-animation" class="fixed inset-0 z-0 w-full h-full pointer-events-none" style="top: 80px;"></div>
+
+<div class="relative z-10 flex items-center justify-center min-h-[calc(100vh-8rem)]"> <!-- Adjust height accounting for nav/footer -->
     <div class="max-w-md w-full mx-auto px-4">
-      <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-8 text-center">
+      <div class="bg-white/90 backdrop-blur-sm rounded-xl shadow-sm ring-1 ring-slate-200 p-8 text-center">
         <!-- Logo/Icon -->
         <svg class="w-20 h-20 mx-auto mb-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
@@ -20,30 +22,33 @@
         </p>
     
         <!-- Google Sign In Button -->
-        <a
-          href="{% provider_login_url 'google' %}"
-          class="inline-flex w-full items-center justify-center bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-semibold py-3 px-6 rounded-md transition shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-        >
-          <svg class="w-6 h-6 mr-3" viewBox="0 0 24 24">
-            <path
-              fill="#4285F4"
-              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-            />
-          </svg>
-          Sign in with Google
-        </a>
+        <form action="{% provider_login_url 'google' %}" method="post">
+          {% csrf_token %}
+          <button
+            type="submit"
+            class="inline-flex w-full items-center justify-center bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-semibold py-3 px-6 rounded-md transition shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          >
+            <svg class="w-6 h-6 mr-3" viewBox="0 0 24 24">
+              <path
+                fill="#4285F4"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+              />
+            </svg>
+            Sign in with Google
+          </button>
+        </form>
     
         <p class="text-sm text-slate-500 mt-6">
           By signing in, you agree to our Terms of Service and Privacy Policy.
@@ -51,4 +56,176 @@
       </div>
     </div>
 </div>
+
+<script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+    // --- Configuration ---
+    const PARTICLE_COUNT = 450; 
+    const CONNECTION_DISTANCE = 110; 
+    const WAVE_SPEED = 0.002;
+    const WAVE_HEIGHT = 50; 
+    
+    // Aesthetic Colors
+    const COLORS = [0x3498db, 0xe67e22, 0x1abc9c];
+    const BG_COLOR = 0xfaf9f5;
+
+    // --- Scene Setup ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(BG_COLOR);
+    scene.fog = new THREE.FogExp2(BG_COLOR, 0.0015);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+    camera.position.z = 500;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight); // Will adjust to container via CSS for fullscreen
+    
+    const container = document.getElementById('bg-animation');
+    container.appendChild(renderer.domElement);
+
+    // --- Particle System ---
+    const particles = new THREE.BufferGeometry();
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const initialPositions = []; 
+    const colors = new Float32Array(PARTICLE_COUNT * 3);
+    const sizes = new Float32Array(PARTICLE_COUNT);
+
+    const particleData = [];
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const x = Math.random() * 1000 - 500;
+        const y = Math.random() * 1000 - 500;
+        const z = Math.random() * 1000 - 500;
+
+        positions[i * 3] = x;
+        positions[i * 3 + 1] = y;
+        positions[i * 3 + 2] = z;
+
+        initialPositions.push({ x, y, z });
+
+        const color = new THREE.Color(COLORS[Math.floor(Math.random() * COLORS.length)]);
+        colors[i * 3] = color.r;
+        colors[i * 3 + 1] = color.g;
+        colors[i * 3 + 2] = color.b;
+
+        sizes[i] = Math.random() * 6; 
+
+        particleData.push({
+            phase: Math.random() * Math.PI * 2,
+            speed: 0.5 + Math.random() * 0.5
+        });
+    }
+
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    particles.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    particles.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+    const pMaterial = new THREE.PointsMaterial({
+        vertexColors: true,
+        size: 5, 
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.8
+    });
+
+    const pointCloud = new THREE.Points(particles, pMaterial);
+    scene.add(pointCloud);
+
+    // --- Lines (UPDATED FOR VISIBILITY) ---
+    const lineGeometry = new THREE.BufferGeometry();
+    const lineMaterial = new THREE.LineBasicMaterial({
+        color: 0x333333, // Darker gray for better contrast
+        transparent: true,
+        opacity: 0.3, 
+    });
+
+    const linesMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
+    scene.add(linesMesh);
+
+    // --- Interaction ---
+    let mouseX = 0;
+    let mouseY = 0;
+    let targetX = 0;
+    let targetY = 0;
+
+    const windowHalfX = window.innerWidth / 2;
+    const windowHalfY = window.innerHeight / 2;
+
+    document.addEventListener('mousemove', (event) => {
+        mouseX = (event.clientX - windowHalfX) * 0.5;
+        mouseY = (event.clientY - windowHalfY) * 0.5;
+    });
+
+    // --- Animation Loop ---
+    let time = 0;
+
+    function animate() {
+        requestAnimationFrame(animate);
+        time += WAVE_SPEED;
+
+        // 1. WAVE ANIMATION
+        const positionsAttribute = particles.attributes.position;
+        const currentPositions = positionsAttribute.array;
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const initial = initialPositions[i];
+            const data = particleData[i];
+            
+            // "Flow" movement
+            const waveY = Math.sin(time * 5 + initial.x * 0.005 + data.phase) * WAVE_HEIGHT;
+            const waveX = Math.cos(time * 3 + initial.z * 0.005) * 20;
+
+            currentPositions[i * 3] = initial.x + waveX;     // X
+            currentPositions[i * 3 + 1] = initial.y + waveY; // Y
+            currentPositions[i * 3 + 2] = initial.z;         // Z
+        }
+        positionsAttribute.needsUpdate = true;
+
+        // 2. LINE CONNECTIONS
+        const linePositions = [];
+        
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            for (let j = i + 1; j < PARTICLE_COUNT; j++) {
+                
+                const dx = currentPositions[i * 3] - currentPositions[j * 3];
+                const dy = currentPositions[i * 3 + 1] - currentPositions[j * 3 + 1];
+                const dz = currentPositions[i * 3 + 2] - currentPositions[j * 3 + 2];
+                const distSq = dx * dx + dy * dy + dz * dz;
+
+                if (distSq < CONNECTION_DISTANCE * CONNECTION_DISTANCE) {
+                    linePositions.push(
+                        currentPositions[i * 3], currentPositions[i * 3 + 1], currentPositions[i * 3 + 2],
+                        currentPositions[j * 3], currentPositions[j * 3 + 1], currentPositions[j * 3 + 2]
+                    );
+                }
+            }
+        }
+
+        linesMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+
+        // 3. DRAMATIC CAMERA MOVEMENT
+        targetX = mouseX * 0.001;
+        targetY = mouseY * 0.001;
+
+        pointCloud.rotation.y += 0.002;
+        linesMesh.rotation.y += 0.002;
+        
+        pointCloud.rotation.x += (targetY - pointCloud.rotation.x) * 0.05;
+        linesMesh.rotation.x += (targetY - linesMesh.rotation.x) * 0.05;
+
+        camera.position.z = 500 + Math.sin(time * 2) * 50;
+
+        renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+</script>
 {% endblock %}
