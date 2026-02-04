@@ -72,13 +72,14 @@
                 <!-- Desktop Menu -->
                 <div class="hidden md:flex items-center space-x-8">
                     {% if user.is_authenticated %}
-                        <!-- Main Links -->
-                        <a href="/" class="text-xs font-semibold uppercase tracking-[0.15em] text-slate-300 hover:text-blue-400 transition duration-300">
-                            Home
+                        <!-- Dynamic Navigation from Page Management -->
+                        {% for page in navigation_pages %}
+                        <a href="{{ page.url_path }}" 
+                           class="text-xs font-semibold uppercase tracking-[0.15em] text-slate-300 hover:text-blue-400 transition duration-300">
+                            {% if page.icon %}<i class="{{ page.icon }} mr-1"></i>{% endif %}
+                            {{ page.name }}
                         </a>
-                        <a href="{% url 'dataexploration:student_tests_list' %}" class="text-xs font-semibold uppercase tracking-[0.15em] text-slate-300 hover:text-blue-400 transition duration-300">
-                            Data Exploration
-                        </a>
+                        {% endfor %}
                         
                         {% if user.is_staff or user.active_role.name == 'Project Admin' or user.active_role.name == 'School Admin' or not user.active_role and user.is_project_admin %}
                         <div class="relative group" x-data="{ open: false }" @mouseenter="open = true" @mouseleave="open = false">
@@ -91,6 +92,7 @@
                             <div class="absolute left-0 top-full pt-4 w-48 z-50" x-show="open" x-transition style="display: none;">
                                 <div class="rounded-none border border-slate-200 shadow-xl py-1 bg-white">
                                     <a href="{% url 'users:manage_users' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Users</a>
+                                    <a href="{% url 'users:manage_pages' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Pages</a>
                                     {% if user.is_staff %}
                                     <a href="/admin/" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Django Admin</a>
                                     {% endif %}
@@ -99,35 +101,26 @@
                         </div>
                         {% endif %}
 
+                        <!-- Context Switcher -->
+                        {% if user.roles.count >= 2 %}
                         <!-- Separator -->
                         <div class="h-4 w-px bg-slate-700 mx-2"></div>
-
-                        <!-- Context Switcher -->
-                        {% if user.roles.count > 1 or user.available_schools %}
+                        
                         <div class="relative group" x-data="{ open: false }" @mouseenter="open = true" @mouseleave="open = false">
                             <button class="flex items-center text-xs font-medium uppercase tracking-widest text-slate-400 hover:text-white transition focus:outline-none" @click="open = !open">
                                 <span class="truncate max-w-[200px]">
-                                    {% if user.active_role %}{{ user.active_role.name }}{% else %}All Roles{% endif %}
-                                    <span class="text-slate-600 mx-1">|</span>
-                                    {% if user.active_school %}{{ user.active_school.school_name }}{% else %}All Schools{% endif %}
+                                    {% if user.active_role %}{{ user.active_role.name }}{% else %}{{ user.roles.first.name }}{% endif %}
                                 </span>
                                 <svg class="ml-1 h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
                                 </svg>
                             </button>
                             <!-- Context Dropdown -->
-                            <div class="absolute right-0 top-full pt-4 w-80 z-50" x-show="open" x-transition style="display: none;">
+                            <div class="absolute right-0 top-full pt-4 w-64 z-50" x-show="open" x-transition style="display: none;">
                                 <div class="bg-white border border-slate-200 shadow-2xl max-h-[80vh] overflow-y-auto">
-                                    {% if user.roles.count > 1 %}
                                     <div class="px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 border-b border-slate-100">
-                                        Roles
+                                        Switch Role
                                     </div>
-                                    <form method="POST" action="{% url 'users:switch_role' %}">
-                                        {% csrf_token %}
-                                        <button type="submit" name="role_id" value="all" class="w-full text-left px-5 py-3 text-xs uppercase tracking-wider text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition {% if not user.active_role %}font-bold text-blue-600{% endif %}">
-                                            All Roles
-                                        </button>
-                                    </form>
                                     {% for role in user.roles.all %}
                                     <form method="POST" action="{% url 'users:switch_role' %}">
                                         {% csrf_token %}
@@ -136,27 +129,6 @@
                                         </button>
                                     </form>
                                     {% endfor %}
-                                    {% endif %}
-
-                                    {% if user.available_schools %}
-                                    <div class="px-5 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 border-t border-b border-slate-100">
-                                        Schools
-                                    </div>
-                                    <form method="POST" action="{% url 'users:switch_role' %}">
-                                        {% csrf_token %}
-                                        <button type="submit" name="school_id" value="all" class="w-full text-left px-5 py-3 text-xs uppercase tracking-wider text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition {% if not user.active_school %}font-bold text-blue-600{% endif %}">
-                                            All Schools
-                                        </button>
-                                    </form>
-                                    {% for school in user.available_schools %}
-                                    <form method="POST" action="{% url 'users:switch_role' %}">
-                                        {% csrf_token %}
-                                        <button type="submit" name="school_id" value="{{ school.state_id }}" class="w-full text-left px-5 py-3 text-xs uppercase tracking-wider text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition {% if user.active_school.state_id == school.state_id %}font-bold text-blue-600{% endif %}">
-                                            {{ school.school_name }}
-                                        </button>
-                                    </form>
-                                    {% endfor %}
-                                    {% endif %}
                                 </div>
                             </div>
                         </div>
@@ -193,7 +165,7 @@
 
     <footer class="bg-white border-t border-slate-200 mt-auto">
         <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-            <p class="text-center text-sm text-slate-500">&copy; {% now "Y" %} DS Data.</p>
+            <p class="text-center text-sm text-slate-500">&copy; {% now "Y" %} DS_DATA</p>
         </div>
     </footer>
 

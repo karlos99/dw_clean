@@ -252,18 +252,48 @@ def user_detail(request, user_id):
     allowed_schools = None
     if is_school and not is_proj:
         allowed_schools = get_allowed_schools_for_admin(request.user)
+        # Check if school admin has any schools assigned
+        if allowed_schools is None or (isinstance(allowed_schools, list) and len(allowed_schools) == 0):
+            messages.error(request, 'You have no schools assigned. Please contact an administrator.')
+            return redirect('users:manage_users')
+        
         # Check intersection of admin's allowed schools and target user's schools
         user_schools = user_obj.schools if isinstance(user_obj.schools, list) else []
-        if not any(sid in allowed_schools for sid in user_schools) and user_schools:
-             # If user belongs to schools, but none align with admin...
-             # What if user has NO schools? Can admin take them?
-             # Assuming admin can see unassigned users? Or only assigned ones?
-             # "only see users that are assing to that school" implies user MUST be assigned.
-             messages.error(request, 'You do not have permission to view this user.')
-             return redirect('users:manage_users')
+        
+        # If target user has schools assigned, at least one must match the admin's schools
+        if user_schools and not any(sid in allowed_schools for sid in user_schools):
+            messages.error(request, 'You do not have permission to view this user.')
+            return redirect('users:manage_users')
 
     roles_qs = Role.objects.all().order_by('name')
     schools_qs = StudataSchool.objects.all().order_by('school_name')
+    
+    # Define available grade levels (must match database values)
+    GRADE_CHOICES = [
+        ('PK', 'Pre-Kindergarten'),
+        ('PS', 'Preschool'),
+        ('TK', 'Transitional Kindergarten'),
+        ('KN', 'Kindergarten'),
+        ('01', '1st Grade'),
+        ('02', '2nd Grade'),
+        ('03', '3rd Grade'),
+        ('04', '4th Grade'),
+        ('05', '5th Grade'),
+        ('06', '6th Grade'),
+        ('07', '7th Grade'),
+        ('08', '8th Grade'),
+        ('09', '9th Grade'),
+        ('10', '10th Grade'),
+        ('11', '11th Grade'),
+        ('12', '12th Grade'),
+        ('AD', 'Adult Education'),
+        ('US', 'Ungraded Secondary'),
+    ]
+    
+    # Filter grade levels based on school admin's schools
+    # Note: Grade filtering by school would require grade data in School model
+    # For now, showing all grades for all admins
+    available_grades = GRADE_CHOICES
     
     # Filter options for School Admin
     if is_school and not is_proj:
@@ -330,16 +360,43 @@ def user_detail(request, user_id):
                      valid_school_ids.append(school_id)
             user_obj.schools = valid_school_ids
 
+        # Update grade levels
+        grade_levels = request.POST.getlist('grade_levels')
+        user_obj.grade_levels = grade_levels if grade_levels else []
+
         user_obj.save()
         
         messages.success(request, f'User {user_obj.email} updated successfully.')
+        
+        # Check if this is a modal request
+        is_modal = request.GET.get('modal') == '1'
+        if is_modal:
+            # Return modal content with updated data
+            context = {
+                'user_obj': user_obj,
+                'roles': roles_qs,
+                'schools': schools_qs,
+                'available_grades': available_grades,
+                'is_modal': True,
+            }
+            return render(request, 'users/user_detail_modal.html', context)
+        
         return redirect('users:user_detail', user_id=user_obj.id)
+    
+    # Check if this is a modal request
+    is_modal = request.GET.get('modal') == '1'
     
     context = {
         'user_obj': user_obj,
         'roles': roles_qs,
         'schools': schools_qs,
+        'available_grades': available_grades,
+        'is_modal': is_modal,
     }
+    
+    if is_modal:
+        return render(request, 'users/user_detail_modal.html', context)
+    
     return render(request, 'users/user_detail.html', context)
 
 

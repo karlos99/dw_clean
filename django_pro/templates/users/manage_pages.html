@@ -1,0 +1,423 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Pages{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="pageManager()">
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-slate-900">Page Management</h1>
+        <p class="mt-2 text-sm text-slate-600">Manage pages and views that users can access</p>
+    </div>
+
+    <!-- Filters and Add Button -->
+    <div class="mb-6 bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+        <div class="flex flex-col lg:flex-row gap-4 items-end">
+            <!-- Search -->
+            <div class="flex-1">
+                <label class="block text-sm font-medium text-slate-700 mb-2">Search</label>
+                <input type="text" 
+                       x-model="search"
+                       @input.debounce.300ms="applyFilters()"
+                       placeholder="Search by name, slug, URL..."
+                       class="w-full px-4 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+            </div>
+
+            <!-- Status Filter -->
+            <div class="w-full lg:w-48">
+                <label class="block text-sm font-medium text-slate-700 mb-2">Status</label>
+                <select x-model="statusFilter" 
+                        @change="applyFilters()"
+                        class="w-full px-4 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                    <option value="">All Statuses</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="draft">Draft</option>
+                </select>
+            </div>
+
+            <!-- Sort By -->
+            <div class="w-full lg:w-48">
+                <label class="block text-sm font-medium text-slate-700 mb-2">Sort By</label>
+                <select x-model="sortBy" 
+                        @change="applyFilters()"
+                        class="w-full px-4 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                    <option value="menu_order">Menu Order</option>
+                    <option value="name">Name</option>
+                    <option value="slug">Slug</option>
+                    <option value="status">Status</option>
+                    <option value="created_at">Created Date</option>
+                    <option value="updated_at">Updated Date</option>
+                </select>
+            </div>
+
+            <!-- Sort Direction -->
+            <button @click="toggleSortDirection(); applyFilters()"
+                    class="px-4 py-2 border border-slate-300 rounded-md bg-white hover:bg-slate-50 transition">
+                <span x-show="sortDir === 'asc'">↑ Asc</span>
+                <span x-show="sortDir === 'desc'">↓ Desc</span>
+            </button>
+
+            <!-- Add Page Button -->
+            <button @click="openAddModal()"
+                    class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition whitespace-nowrap">
+                + Add Page
+            </button>
+        </div>
+    </div>
+
+    <!-- Pages Table -->
+    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Slug</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">URL Path</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Menu</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Order</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for page in pages %}
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="px-6 py-4">
+                            <div class="flex items-center">
+                                {% if page.icon %}
+                                <i class="{{ page.icon }} mr-2 text-slate-400"></i>
+                                {% endif %}
+                                <div>
+                                    <div class="text-sm font-medium text-slate-900">{{ page.name }}</div>
+                                    {% if page.description %}
+                                    <div class="text-xs text-slate-500">{{ page.description|truncatewords:10 }}</div>
+                                    {% endif %}
+                                    {% if page.allowed_users.exists %}
+                                    <div class="text-xs text-blue-600 mt-1">
+                                        <i class="fa-user"></i> {{ page.allowed_users.count }} specific user{{ page.allowed_users.count|pluralize }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </td>
+                        <td class="px-6 py-4">
+                            <code class="text-xs bg-slate-100 px-2 py-1 rounded">{{ page.slug }}</code>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-slate-600">
+                            <code class="text-xs bg-slate-100 px-2 py-1 rounded">{{ page.url_path }}</code>
+                        </td>
+                        <td class="px-6 py-4">
+                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full
+                                {% if page.status == 'active' %}bg-green-100 text-green-800
+                                {% elif page.status == 'inactive' %}bg-red-100 text-red-800
+                                {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                                {{ page.get_status_display }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 text-sm">
+                            {% if page.show_in_menu %}
+                            <span class="text-green-600">✓ Show</span>
+                            {% else %}
+                            <span class="text-slate-400">✗ Hide</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 text-sm text-slate-600">
+                            {{ page.menu_order }}
+                        </td>
+                        <td class="px-6 py-4 text-right text-sm space-x-2">
+                            <button @click="openEditModal({{ page.id }})"
+                                    class="text-blue-600 hover:text-blue-900">
+                                Edit
+                            </button>
+                            <button @click="confirmDelete({{ page.id }}, '{{ page.name|escapejs }}')"
+                                    class="text-red-600 hover:text-red-900">
+                                Delete
+                            </button>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="px-6 py-12 text-center text-slate-500">
+                            No pages found. Click "Add Page" to create one.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Add/Edit Modal -->
+    <div x-show="showModal" 
+         x-cloak
+         class="fixed inset-0 z-50 overflow-y-auto"
+         @keydown.escape.window="closeModal()">
+        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <!-- Background overlay -->
+            <div x-show="showModal"
+                 x-transition:enter="ease-out duration-300"
+                 x-transition:enter-start="opacity-0"
+                 x-transition:enter-end="opacity-100"
+                 x-transition:leave="ease-in duration-200"
+                 x-transition:leave-start="opacity-100"
+                 x-transition:leave-end="opacity-0"
+                 class="fixed inset-0 transition-opacity bg-slate-500 bg-opacity-75"
+                 @click="closeModal()"></div>
+
+            <!-- Modal panel -->
+            <div x-show="showModal"
+                 x-transition:enter="ease-out duration-300"
+                 x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+                 x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100"
+                 x-transition:leave="ease-in duration-200"
+                 x-transition:leave-start="opacity-100 translate-y-0 sm:scale-100"
+                 x-transition:leave-end="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+                 class="inline-block w-full max-w-2xl my-8 overflow-hidden text-left align-middle transition-all transform bg-white rounded-lg shadow-xl">
+                
+                <form :action="modalMode === 'add' ? '{% url 'users:add_page' %}' : `/users/pages/${editingPageId}/edit/`" 
+                      method="POST">
+                    {% csrf_token %}
+                    
+                    <div class="px-6 py-4 border-b border-slate-200">
+                        <h3 class="text-lg font-semibold text-slate-900" x-text="modalMode === 'add' ? 'Add New Page' : 'Edit Page'"></h3>
+                    </div>
+
+                    <div class="px-6 py-4 max-h-[70vh] overflow-y-auto space-y-4">
+                        <!-- Name -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Page Name *</label>
+                            <input type="text" name="name" x-model="formData.name" required
+                                   class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+
+                        <!-- Slug -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Slug *</label>
+                            <input type="text" name="slug" x-model="formData.slug" required
+                                   class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                            <p class="mt-1 text-xs text-slate-500">URL-friendly identifier (auto-generated if empty)</p>
+                        </div>
+
+                        <!-- Description -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
+                            <textarea name="description" x-model="formData.description" rows="3"
+                                      class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500"></textarea>
+                        </div>
+
+                        <!-- URL Path -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">URL Path *</label>
+                            <input type="text" name="url_path" x-model="formData.url_path" required
+                                   placeholder="/path/to/page"
+                                   class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+
+                        <!-- Icon -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Icon Class</label>
+                            <input type="text" name="icon" x-model="formData.icon"
+                                   placeholder="fa-home"
+                                   class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <!-- Status -->
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                                <select name="status" x-model="formData.status"
+                                        class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="active">Active</option>
+                                    <option value="inactive">Inactive</option>
+                                    <option value="draft">Draft</option>
+                                </select>
+                            </div>
+
+                            <!-- Menu Order -->
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">Menu Order</label>
+                                <input type="number" name="menu_order" x-model="formData.menu_order" min="0"
+                                       class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                            </div>
+                        </div>
+
+                        <!-- Parent Page -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Parent Page</label>
+                            <select name="parent_page" x-model="formData.parent_page_id"
+                                    class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                                <option value="">None (Top Level)</option>
+                                {% for p in pages %}
+                                <option value="{{ p.id }}">{{ p.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <!-- Required Roles -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-2">Required Roles</label>
+                            <div class="border border-slate-300 rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
+                                {% for role in all_roles %}
+                                <label class="flex items-center">
+                                    <input type="checkbox" name="required_roles" value="{{ role.name }}"
+                                           :checked="formData.required_roles.includes('{{ role.name }}')"
+                                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                                    <span class="ml-2 text-sm text-slate-700">{{ role.name }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                            <p class="mt-1 text-xs text-slate-500">Leave empty to allow all authenticated users</p>
+                        </div>
+
+                        <!-- Allowed Users -->
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Specific Users (by Email)</label>
+                            <textarea name="allowed_user_emails" x-model="formData.allowed_user_emails" rows="2"
+                                      placeholder="user1@example.com, user2@example.com"
+                                      class="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500"></textarea>
+                            <p class="mt-1 text-xs text-slate-500">Comma-separated list of user emails who can access this page (overrides role restrictions)</p>
+                        </div>
+
+                        <!-- Checkboxes -->
+                        <div class="space-y-2">
+                            <label class="flex items-center">
+                                <input type="checkbox" name="is_public" x-model="formData.is_public"
+                                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                                <span class="ml-2 text-sm text-slate-700">Public Access (no login required)</span>
+                            </label>
+                            <label class="flex items-center">
+                                <input type="checkbox" name="show_in_menu" x-model="formData.show_in_menu"
+                                       class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                                <span class="ml-2 text-sm text-slate-700">Show in Navigation Menu</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="px-6 py-4 border-t border-slate-200 flex justify-end space-x-3">
+                        <button type="button" @click="closeModal()"
+                                class="px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition">
+                            <span x-text="modalMode === 'add' ? 'Add Page' : 'Update Page'"></span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function pageManager() {
+    return {
+        search: '{{ search }}',
+        statusFilter: '{{ status_filter }}',
+        sortBy: '{{ sort_by }}',
+        sortDir: '{{ sort_dir }}',
+        showModal: false,
+        modalMode: 'add', // 'add' or 'edit'
+        editingPageId: null,
+        formData: {
+            name: '',
+            slug: '',
+            description: '',
+            url_path: '',
+            icon: '',
+            status: 'active',
+            is_public: false,
+            show_in_menu: true,
+            menu_order: 0,
+            parent_page_id: '',
+            required_roles: [],
+            allowed_user_emails: ''
+        },
+
+        applyFilters() {
+            const params = new URLSearchParams();
+            if (this.search) params.set('search', this.search);
+            if (this.statusFilter) params.set('status', this.statusFilter);
+            if (this.sortBy) params.set('sort_by', this.sortBy);
+            if (this.sortDir) params.set('sort_dir', this.sortDir);
+            
+            window.location.href = '{% url "users:manage_pages" %}?' + params.toString();
+        },
+
+        toggleSortDirection() {
+            this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+        },
+
+        openAddModal() {
+            this.modalMode = 'add';
+            this.resetFormData();
+            this.showModal = true;
+        },
+
+        async openEditModal(pageId) {
+            this.modalMode = 'edit';
+            this.editingPageId = pageId;
+            
+            // Fetch page data
+            const response = await fetch(`/users/pages/${pageId}/detail/`);
+            const data = await response.json();
+            
+            if (data.success) {
+                this.formData = data.page;
+            }
+            
+            this.showModal = true;
+        },
+
+        closeModal() {
+            this.showModal = false;
+            this.resetFormData();
+        },
+
+        resetFormData() {
+            this.formData = {
+                name: '',
+                slug: '',
+                description: '',
+                url_path: '',
+                icon: '',
+                status: 'active',
+                is_public: false,
+                show_in_menu: true,
+                menu_order: 0,
+                parent_page_id: '',
+                required_roles: [],
+                allowed_user_emails: ''
+            };
+        },
+
+        async confirmDelete(pageId, pageName) {
+            if (!confirm(`Are you sure you want to delete the page "${pageName}"?`)) {
+                return;
+            }
+
+            const response = await fetch(`/users/pages/${pageId}/delete/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert('Error deleting page: ' + data.error);
+            }
+        }
+    };
+}
+</script>
+
+<style>
+[x-cloak] { display: none !important; }
+</style>
+{% endblock %}

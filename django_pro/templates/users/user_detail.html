@@ -111,6 +111,40 @@
                     <p class="mt-1 text-xs text-slate-500">Select all schools this user can access</p>
                 </div>
 
+                <!-- Grade Levels -->
+                <div x-data="{ 
+                        showGrades: false,
+                        gradeRoles: ['School Gr View', 'Teacher', 'School View'],
+                        updateGradeVisibility() {
+                            const checkedRoles = Array.from(document.querySelectorAll('input[name=roles]:checked'))
+                                .map(cb => cb.closest('div').querySelector('label').textContent.trim());
+                            this.showGrades = checkedRoles.some(role => this.gradeRoles.includes(role));
+                        }
+                     }" 
+                     x-init="updateGradeVisibility()"
+                     @change.window="updateGradeVisibility()">
+                    <div x-show="showGrades" x-transition style="display: none;">
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Grade Level Access</label>
+                        <div class="border border-slate-300 rounded-md p-4 max-h-60 overflow-y-auto">
+                            <div class="grid grid-cols-3 gap-3">
+                                {% for grade in available_grades %}
+                                <div class="flex items-center">
+                                    <input type="checkbox" name="grade_levels" value="{{ grade.0 }}" id="grade_{{ grade.0 }}" 
+                                    {% if grade.0 in user_obj.grade_levels %}checked{% endif %}
+                                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                                    <label for="grade_{{ grade.0 }}" class="ml-2 text-sm text-slate-700">
+                                        {{ grade.1 }}
+                                    </label>
+                                </div>
+                                {% empty %}
+                                <p class="text-sm text-slate-500 col-span-3">No grades available</p>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <p class="mt-1 text-xs text-slate-500">Select grade levels this user can access</p>
+                    </div>
+                </div>
+
                 <!-- Active Status -->
                 <div>
                     <div class="flex items-center">

@@ -72,6 +72,7 @@
     </div>
 
 <div class="bg-white shadow-sm ring-1 ring-slate-200 overflow-hidden rounded-xl">
+    <div class="overflow-x-auto">
     <table class="min-w-full divide-y divide-slate-200">
         <thead class="bg-slate-50">
             <tr>
@@ -140,31 +141,36 @@
                     <input type="checkbox" name="user_ids" value="{{ user_obj.id }}" @click="$dispatch('checkbox-changed')" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="flex items-center">
+                    <div class="flex items-center min-w-[200px]">
                         {% if user_obj.avatar %}
-                        <img class="h-10 w-10 rounded-full mr-4" src="{{ user_obj.avatar }}" alt="">
+                        <img class="h-10 w-10 rounded-full mr-4 flex-shrink-0" src="{{ user_obj.avatar }}" alt="">
                         {% else %}
-                        <div class="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center mr-4">
+                        <div class="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center mr-4 flex-shrink-0">
                             <span class="text-slate-500 font-medium text-sm">{{ user_obj.name|first }}</span>
                         </div>
                         {% endif %}
-                        <div>
-                            <div class="text-sm font-medium text-slate-900">{{ user_obj.name }}</div>
-                            <div class="text-sm text-slate-500">{{ user_obj.email }}</div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium text-slate-900 truncate">{{ user_obj.name }}</div>
+                            <div class="text-sm text-slate-500 truncate">{{ user_obj.email }}</div>
                         </div>
                     </div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <span
-                        class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-                        {% for role in user_obj.roles.all %}{{ role.name }}{% if not forloop.last %}, {% endif %}{% empty %}No Role{% endfor %}
-                    </span>
+                <td class="px-6 py-4">
+                    <div class="min-w-[120px]">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 whitespace-nowrap">
+                            {% for role in user_obj.roles.all %}{{ role.name }}{% if not forloop.last %}, {% endif %}{% empty %}No Role{% endfor %}
+                        </span>
+                    </div>
+                </td>
+                <td class="px-6 py-4 text-sm text-slate-500">
+                    <div class="min-w-[120px] max-w-[200px] truncate">
+                        {{ user_obj.job_title|default:"-" }}
+                    </div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    {{ user_obj.job_title|default:"-" }}
-                </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    {{ user_obj.schools|length }} schools
+                    <div class="min-w-[80px]">
+                        {{ user_obj.schools|length }} schools
+                    </div>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     {% if user_obj.is_active %}
@@ -189,8 +195,11 @@
                     </a>
                     {% endif %}
                     {% endif %}
-                    <a href="{% url 'users:user_detail' user_obj.id %}"
-                        class="text-blue-600 hover:text-blue-900">Edit</a>
+                    <button type="button"
+                        @click="$dispatch('open-user-modal', { userId: {{ user_obj.id }} })"
+                        class="text-blue-600 hover:text-blue-900 hover:underline">
+                        Edit
+                    </button>
                 </td>
             </tr>
             {% empty %}
@@ -200,6 +209,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 </form>
 

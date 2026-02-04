@@ -637,21 +637,21 @@ def load_students(request):
             base_where_clauses.append("cs.status = %s")
             base_params.append(status)
 
+        # Check if user is unrestricted (Project Admin OR District Role)
+        is_unrestricted = False
+        if request.user.is_superuser:
+            is_unrestricted = True
+        elif getattr(request.user, 'is_project_admin', False):
+            is_unrestricted = True
+        elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
+            is_unrestricted = True
+
         # Apply active school context or enforce school permissions
         if hasattr(request.user, 'active_school') and request.user.active_school:
              # User explicitly selected a school (which is validated by middleware to be in their allowed list)
              base_where_clauses.append("cs.school_state_id = %s")
              base_params.append(request.user.active_school.state_id)
         else:
-             # Check if user is unrestricted (Project Admin OR District Role)
-             is_unrestricted = False
-             if request.user.is_superuser:
-                 is_unrestricted = True
-             elif getattr(request.user, 'is_project_admin', False):
-                 is_unrestricted = True
-             elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
-                 is_unrestricted = True
-                 
              if not is_unrestricted:
                  # No specific school selected, so limit to ALL assigned schools
                  if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
@@ -660,6 +660,29 @@ def load_students(request):
                  else:
                       # Non-admin user with no assigned schools sees nothing
                       base_where_clauses.append("1=0")
+
+        # Apply grade level restrictions for specific roles
+        # Only apply if user has explicitly assigned grade levels
+        if not is_unrestricted and hasattr(request.user, 'grade_levels'):
+            user_grade_levels = request.user.grade_levels
+            # Only apply grade restriction if explicitly configured (non-empty list)
+            if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
+                # Check if current active role should be grade-restricted
+                grade_restricted_roles = {'School Gr View', 'School View'}
+                current_role = None
+                
+                # Get the current role (from active_role or if user has only one role)
+                if hasattr(request.user, 'active_role') and request.user.active_role:
+                    current_role = request.user.active_role.name
+                elif request.user.roles.count() == 1:
+                    # If user has only one role, use that
+                    current_role = request.user.roles.first().name
+                
+                # Only apply grade filter for School Gr View and School View roles
+                # Teachers are handled by row-level permissions (get_accessible_student_keys)
+                if current_role in grade_restricted_roles:
+                    base_where_clauses.append("cs.grade = ANY(%s)")
+                    base_params.append(user_grade_levels)
 
         # Apply specific row-level permissions (e.g. Teacher seeing only their students)
         if hasattr(request.user, 'get_accessible_student_keys'):

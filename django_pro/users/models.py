@@ -2,6 +2,9 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+# Import Page model from models_pages
+from .models_pages import Page
+
 class School(models.Model):
     name = models.CharField(max_length=255)
 
@@ -36,6 +39,9 @@ class User(AbstractUser):
     # Store a list of school state IDs from studata.models.School
     schools = models.JSONField(default=list, blank=True)
     
+    # Store grade levels user can access (e.g., ['KG', '01', '02', '03'])
+    grade_levels = models.JSONField(default=list, blank=True)
+    
     # Preferences placeholder
     preferences = models.JSONField(default=dict, blank=True)
 
@@ -54,23 +60,36 @@ class User(AbstractUser):
         """
         Returns a list of stu_annual_keys that this user is allowed to access.
         Returns None if user has full access (subject to school restrictions).
+        Only applies teacher-level restrictions when user is actively in Teacher role.
         """
         # Determine if we need to restrict based on role
         # Unrestricted roles:
         if self.is_superuser:
             return None
             
-        unrestricted_roles = ['Project Admin', 'District Admin', 'School Admin']
-        if self.active_role:
-             if self.active_role.name in unrestricted_roles or 'District' in self.active_role.name:
-                 return None
+        # Check active role if it exists (set by middleware in request context)
+        active_role_name = None
+        if hasattr(self, 'active_role') and self.active_role:
+            active_role_name = self.active_role.name
         
-        # If we are here, we are likely a Teacher or Staff or have no specific high-level role.
-        # Apply the specific restrictions requested.
+        # If user has only one role, use that
+        if active_role_name is None and self.roles.count() == 1:
+            active_role_name = self.roles.first().name
+            
+        # Unrestricted roles get full access
+        unrestricted_roles = ['Project Admin', 'District Admin', 'School Admin', 'School Gr View', 'School View']
+        if active_role_name and (active_role_name in unrestricted_roles or 'District' in active_role_name):
+            return None
+        
+        # Only apply teacher restrictions if explicitly in Teacher role
+        # If user has Teacher role but is using another role context, don't restrict
+        if active_role_name and active_role_name != 'Teacher':
+            return None
+        
+        # At this point, user is in Teacher role or has only Teacher role
+        # Apply the specific restrictions for teachers
         if not self.staff_id:
-             # If no staff_id, and not an admin, access is likely zero or managed by school only?
-             # The prompt implies "only student annual key that have the staff_id".
-             # If no staff_id, query returns empty.
+             # If no staff_id, teacher has no access
              return []
              
         # Import here to avoid circular dependencies
