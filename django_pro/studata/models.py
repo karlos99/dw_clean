@@ -132,6 +132,7 @@ class School(models.Model):
             models.Index(fields=['state_id']),
             models.Index(fields=['sis_key']),
             models.Index(fields=['school_group']),
+            models.Index(fields=['school_group', 'state_id']),
         ]
 
     def __str__(self):
@@ -152,6 +153,10 @@ class Test(models.Model):
         db_table = 'tests'
         verbose_name = 'Test'
         verbose_name_plural = 'Tests'
+        indexes = [
+            models.Index(fields=['test_name', 'subject', 'school_year']),
+            models.Index(fields=['school_year']),
+        ]
 
     def __str__(self):
         return f"{self.test_name} - {self.subject} ({self.school_year})"
@@ -179,6 +184,8 @@ class Result(models.Model):
             models.Index(fields=['ssid']),
             models.Index(fields=['school_year']),
             models.Index(fields=['school_code']),
+            models.Index(fields=['local_student_id', 'school_year']),
+            models.Index(fields=['test_group_key']),
         ]
 
     def __str__(self):
@@ -215,6 +222,9 @@ class Schedule(models.Model):
         indexes = [
             models.Index(fields=['ssid', 'school_year']),
             models.Index(fields=['staff_employee_id', 'school_year']),
+            models.Index(fields=['state_school_id']),
+            models.Index(fields=['period', 'state_school_id']),
+            models.Index(fields=['staff_name']),
         ]
 
     def __str__(self):
@@ -248,6 +258,8 @@ class StudentMarks(models.Model):
             models.Index(fields=['ssid', 'school_year']),
             models.Index(fields=['staff_employee_id', 'school_year']),
             models.Index(fields=['mark_period']),
+            models.Index(fields=['stu_annual_key', 'school_year']),
+            models.Index(fields=['subject', 'course_name']),
         ]
 
     def __str__(self):

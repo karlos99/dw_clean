@@ -96,6 +96,47 @@ document.addEventListener('DOMContentLoaded', () => {
         el.setAttribute('aria-hidden', 'true');
     };
 
+    const showLoading = (message = 'Loading data...') => {
+        const loadingBar = document.getElementById('loading-bar');
+        const loadingBarProgress = document.getElementById('loading-bar-progress');
+        if (loadingBar) {
+            loadingBar.classList.remove('hidden');
+            loadingBar.setAttribute('aria-hidden', 'false');
+        }
+        if (loadingBarProgress) {
+            // Animate progress bar from 0 to 90% while loading
+            loadingBarProgress.style.width = '0%';
+            setTimeout(() => {
+                loadingBarProgress.style.width = '30%';
+            }, 50);
+            setTimeout(() => {
+                loadingBarProgress.style.width = '60%';
+            }, 300);
+            setTimeout(() => {
+                loadingBarProgress.style.width = '90%';
+            }, 800);
+        }
+    };
+
+    const hideLoading = () => {
+        const loadingBar = document.getElementById('loading-bar');
+        const loadingBarProgress = document.getElementById('loading-bar-progress');
+        if (loadingBarProgress) {
+            // Complete the progress bar to 100%
+            loadingBarProgress.style.width = '100%';
+        }
+        // Hide after a brief moment to show completion
+        setTimeout(() => {
+            if (loadingBar) {
+                loadingBar.classList.add('hidden');
+                loadingBar.setAttribute('aria-hidden', 'true');
+            }
+            if (loadingBarProgress) {
+                loadingBarProgress.style.width = '0%';
+            }
+        }, 200);
+    };
+
     const loadOverlayHtml = async (url, targetEl) => {
         if (!url || !targetEl) return;
         targetEl.innerHTML = '<div class="p-6 text-slate-500">Loading…</div>';
@@ -558,6 +599,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const loadData = () => {
+        showLoading('Loading student data...');
+        
         const url = new URL(loadStudentsUrl, window.location.origin);
         url.searchParams.set('page', page);
 
@@ -604,9 +647,11 @@ document.addEventListener('DOMContentLoaded', () => {
             .then((response) => response.json())
             .then((payload) => {
                 renderTable(payload);
+                hideLoading();
             })
             .catch((error) => {
                 console.error('Error loading data:', error);
+                hideLoading();
                 const targetEl = document.querySelector('#student-table');
                 if (targetEl) {
                     targetEl.innerHTML = '<div class="text-center py-8 text-red-600">Failed to load data.</div>';
@@ -922,8 +967,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const exportBtn = event.target.closest('[data-action="export-csv"]');
         if (exportBtn) {
+            showLoading('Preparing CSV export...');
+            
             const baseUrl = appDataEl.dataset.exportCsvUrl;
-            if (!baseUrl) return;
+            if (!baseUrl) {
+                hideLoading();
+                return;
+            }
 
             const url = new URL(baseUrl, window.location.origin);
             const params = new URLSearchParams(window.location.search);
@@ -953,6 +1003,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (statusInput && statusInput.value) url.searchParams.set('status', statusInput.value);
 
             window.location.href = url.toString();
+            
+            // Hide loading after a short delay (browser handles download)
+            setTimeout(() => hideLoading(), 1000);
             return;
         }
 

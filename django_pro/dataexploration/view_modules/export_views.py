@@ -24,6 +24,10 @@ from .column_management import (
 def export_students_csv(request):
     """Export filtered student data as CSV."""
     
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"CSV Export: Function called, user={request.user.username}")
+    
     # 1. Parse parameters (Shared logic with load_students)
     saved_query_id = request.GET.get('saved_query')
     saved_config = {}
@@ -81,7 +85,7 @@ def export_students_csv(request):
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
 
     # Helper for column filters (Duplicated from load_students to avoid refactoring risk)
-    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False):
+    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
         if not isinstance(filters_to_apply, dict): return
         for col, values in filters_to_apply.items():
             if not values: continue
@@ -157,7 +161,7 @@ def export_students_csv(request):
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
 
-            expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students)
+            expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
             if expr:
                  conditions = []
                  if real_values:
@@ -178,7 +182,8 @@ def export_students_csv(request):
     
     # Pre-calculate test column metadata
     selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
-    base_cols = [c for c in selected_columns if isinstance(c, str) and (not c.startswith('test_')) and c in COLUMN_DEFINITIONS]
+    selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
+    base_cols = [c for c in selected_columns if isinstance(c, str) and (not c.startswith(('test_', 'mark_'))) and c in COLUMN_DEFINITIONS]
 
     enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
     needs_enroll = (
@@ -195,11 +200,20 @@ def export_students_csv(request):
         or sort_by in students_fields
     )
 
+    # Determine if we need elementary_homeroom_teacher join
+    needs_eht = (
+        'elem_teacher_name' in selected_columns
+        or (isinstance(filters, dict) and 'elem_teacher_name' in filters.keys())
+        or sort_by == 'elem_teacher_name'
+    )
+
     join_sql = ""
     if needs_enroll:
         join_sql += " LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
     if needs_students:
         join_sql += " LEFT JOIN students s ON s.state_student_number = cs.ssid"
+    if needs_eht:
+        join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
 
     # Streaming Response setup
     class Echo:
@@ -209,10 +223,13 @@ def export_students_csv(request):
     writer = csv.writer(pseudo_buffer)
     
     def stream_csv():
+        import logging
+        logger = logging.getLogger(__name__)
         try:
             # Yield Header
             header_labels = [COLUMN_DEFINITIONS.get(col, col) for col in selected_columns]
             yield writer.writerow(header_labels)
+            logger.info(f"CSV Export: Header yielded, starting data export with {len(selected_columns)} columns")
 
             with connections['default'].cursor() as cursor:
                 # Re-implement helper logic inline or simplified
@@ -335,6 +352,57 @@ def export_students_csv(request):
                                 test_col_map[original_key] = info
                                 test_col_map[original_key.replace('-', '_')] = info
 
+                # Build marks metadata (BEFORE the fetch loop)
+                mark_cols_info = []
+                mark_col_map = {}
+                if selected_mark_cols:
+                    # Build mark column metadata
+                    def _parse_year_from_mark_col(col_key):
+                        s = (col_key or '').replace('-', '_')
+                        if not s.startswith('mark_'): return None
+                        tail = s[len('mark_'):]  
+                        if len(tail) >= 10 and tail[4] == '_' and tail[9] == '_':
+                            return tail[:9].replace('_', '-')
+                        parts = tail.split('_', 1)
+                        return parts[0].replace('_', '-') if parts else None
+                    
+                    normalized_to_original = {c.replace('-', '_'): c for c in selected_mark_cols}
+                    years = sorted({y for y in (_parse_year_from_mark_col(c) for c in selected_mark_cols) if y})
+                    
+                    if years:
+                        cursor.execute(
+                            """
+                            SELECT DISTINCT school_year, subject, course_name, mark_period
+                            FROM student_marks_list
+                            WHERE school_year = ANY(%s) AND school_year IS NOT NULL
+                            """,
+                            [years],
+                        )
+                        
+                        def _norm_part(v): return (v or '').replace(' ', '_').replace('-', '_')
+                        
+                        for (year, subject, course_name, mark_period) in cursor.fetchall():
+                            year_val = (year or '').strip() or 'Unknown'
+                            subject_val = (subject or '').strip() or 'Unknown'
+                            course_val = (course_name or '').strip() or 'Course'
+                            period_val = (mark_period or '').strip() or 'Unknown'
+                            
+                            key_base = f"{_norm_part(year_val)}_{_norm_part(subject_val)}_{_norm_part(course_val)}_{_norm_part(period_val)}"
+                            mark_key = f"mark_{key_base}"
+                            
+                            original_key = normalized_to_original.get(mark_key)
+                            if original_key:
+                                info = {
+                                    'col_name': original_key,
+                                    'year': year,
+                                    'subject': (subject or ''),
+                                    'course_name': (course_name or ''),
+                                    'mark_period': (mark_period or '').strip() or None,
+                                }
+                                mark_cols_info.append(info)
+                                mark_col_map[original_key] = info
+                                mark_col_map[original_key.replace('-', '_')] = info
+
                 # Build Where Clauses
                 base_where_clauses = ["1=1"]
                 base_params = []
@@ -436,7 +504,7 @@ def export_students_csv(request):
 
                 where_clauses = list(base_where_clauses)
                 params = list(base_params)
-                _apply_column_filters(where_clauses, params, filters_value, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
+                _apply_column_filters(where_clauses, params, filters_value, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
                 where_sql = " AND ".join(where_clauses)
                 
                 # Fetch Loop
@@ -447,11 +515,12 @@ def export_students_csv(request):
                 query_base_cols = list(base_cols)
                 if 'ssid' not in query_base_cols: query_base_cols.insert(0, 'ssid')
                 if test_cols_info and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
+                if selected_mark_cols and 'stu_annual_key' not in query_base_cols: query_base_cols.insert(0, 'stu_annual_key')
                 
                 base_col_selects = []
                 base_col_expressions = {}
                 for col in query_base_cols:
-                    expr, alias = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students)
+                    expr, alias = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
                     if expr and alias:
                         base_col_expressions[col] = expr
                         base_col_selects.append(f"{expr} AS {alias}" if expr != f"cs.{alias}" else expr)
@@ -481,7 +550,9 @@ def export_students_csv(request):
                     
                     cols = [desc[0] for desc in cursor.description]
                     rows = cursor.fetchall()
+                    logger.info(f"CSV Export: Fetched {len(rows)} rows at offset {offset}")
                     if not rows:
+                        logger.info("CSV Export: No more rows, exiting loop")
                         break
                         
                     chunk_students = [dict(zip(cols, row)) for row in rows]
@@ -514,6 +585,32 @@ def export_students_csv(request):
                             tdata = {row[0]: row[1] for row in cursor.fetchall()}
                             for student in chunk_students:
                                 student[test_info['col_name']] = tdata.get(student.get('student_id'), '')
+                    
+                    # Fetch marks data for this chunk
+                    student_keys = [s.get('stu_annual_key') for s in chunk_students if s.get('stu_annual_key')]
+                    if mark_cols_info and student_keys:
+                        for mark_info in mark_cols_info:
+                            period_clause = "AND sm.mark_period ILIKE %s" if mark_info.get('mark_period') else "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
+                            period_params = [mark_info['mark_period']] if mark_info.get('mark_period') else []
+                            
+                            mquery = f"""
+                                SELECT sm.stu_annual_key, sm.mark
+                                FROM student_marks_list sm
+                                WHERE sm.stu_annual_key = ANY(%s)
+                                AND sm.school_year = %s
+                                AND sm.subject ILIKE %s
+                                AND sm.course_name ILIKE %s
+                                {period_clause}
+                            """
+                            cursor.execute(mquery, [
+                                student_keys, mark_info['year'],
+                                f"%{mark_info['subject']}%", f"%{mark_info['course_name']}%",
+                                *period_params
+                            ])
+                            mdata = {row[0]: row[1] for row in cursor.fetchall()}
+                            
+                            for student in chunk_students:
+                                student[mark_info['col_name']] = mdata.get(student.get('stu_annual_key'), '')
 
                     # Yield Rows
                     for student in chunk_students:
@@ -523,16 +620,24 @@ def export_students_csv(request):
                             if val is None: val = ""
                             row.append(str(val))
                         yield writer.writerow(row)
-                    
+                
+                    logger.info(f"CSV Export: Yielded {len(chunk_students)} rows")
                     offset += chunk_size
+            
+            logger.info(f"CSV Export: Completed successfully")
         except Exception as e:
             import traceback
-            traceback.print_exc()
-            # If header hasn't been sent, we can't do much inside generator but we can log it
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"CSV Export Error: {str(e)}")
+            logger.error(traceback.format_exc())
+            # Yield an error row so the user knows something went wrong
+            yield writer.writerow([f"Error exporting data: {str(e)}"])
 
-
+    logger.info(f"CSV Export: Creating StreamingHttpResponse with {len(selected_columns)} columns")
     response = StreamingHttpResponse(stream_csv(), content_type="text/csv")
     response['Content-Disposition'] = 'attachment; filename="students_export.csv"'
+    logger.info(f"CSV Export: Returning response")
     return response
 
 

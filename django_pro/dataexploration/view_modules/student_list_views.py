@@ -723,15 +723,19 @@ def load_students(request):
 
         where_sql = " AND ".join(where_clauses)
         
-        # Count total
-        count_query = f"""
-            SELECT COUNT(DISTINCT cs.ssid)
-            FROM current_student cs
-            {join_sql}
-            WHERE {where_sql}
-        """
-        cursor.execute(count_query, params)
-        total = cursor.fetchone()[0]
+        # Count total with caching
+        count_cache_key = f"dataexp:count:{hashlib.md5(json.dumps({'where': where_clauses, 'params': [str(p) for p in params], 'join': join_sql}, sort_keys=True).encode()).hexdigest()}"
+        total = cache.get(count_cache_key)
+        if total is None:
+            count_query = f"""
+                SELECT COUNT(DISTINCT cs.ssid)
+                FROM current_student cs
+                {join_sql}
+                WHERE {where_sql}
+            """
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()[0]
+            cache.set(count_cache_key, total, 300)  # Cache for 5 minutes
 
         # Copy params for later reuse
         filter_params = list(params)
@@ -801,7 +805,7 @@ def load_students(request):
         
         # Build query with base columns
         query = f"""
-        SELECT {base_col_sql}
+        SELECT /*+ Leading(cs) */ {base_col_sql}
         FROM current_student cs
         {join_sql}
         WHERE {where_sql}
@@ -839,7 +843,7 @@ def load_students(request):
                     extra_params = [test_info.get('other_info_key', '')]
 
                 query = f"""
-                    SELECT r.local_student_id, {select_expr}
+                    SELECT /*+ IndexScan(r) */ r.local_student_id, {select_expr}
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
                     WHERE r.local_student_id = ANY(%s)
@@ -876,7 +880,7 @@ def load_students(request):
                     period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
 
                 query = f"""
-                    SELECT sm.stu_annual_key, sm.mark
+                    SELECT /*+ IndexScan(sm stu_annual_key) */ sm.stu_annual_key, sm.mark
                     FROM student_marks_list sm
                     WHERE sm.stu_annual_key = ANY(%s)
                       AND sm.school_year = %s

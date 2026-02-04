@@ -1,8 +1,22 @@
 """Utilities for dynamic column generation from database."""
 
 import hashlib
+import json
+from django.core.cache import cache
 from django.db import connections
 from .constants import COLUMN_DEFINITIONS
+
+
+def _generate_cache_key(prefix, filters):
+    """Generate a consistent cache key from filters."""
+    if filters:
+        # Sort keys to ensure consistent hash
+        filter_str = json.dumps(filters, sort_keys=True)
+    else:
+        filter_str = "None"
+    
+    key_hash = hashlib.md5(filter_str.encode('utf-8')).hexdigest()
+    return f"{prefix}_{key_hash}"
 
 
 def get_test_columns(column_filters=None):
@@ -22,6 +36,16 @@ def get_test_columns(column_filters=None):
             - If a test has a test_window, the window is included in the column key to avoid collisions.
                         - Additional assessment info comes from results.other_info (JSONB) keys.
     """
+    cache_key = _generate_cache_key("test_columns", column_filters)
+    cached_data = cache.get(cache_key)
+
+    if cached_data:
+        columns, definitions = cached_data
+        COLUMN_DEFINITIONS.update(definitions)
+        return columns
+
+    new_definitions = {}
+
     with connections['default'].cursor() as cursor:
         where_clauses = ["r.school_year IS NOT NULL", "t.test_name IS NOT NULL"]
         params = []
@@ -104,8 +128,12 @@ def get_test_columns(column_filters=None):
             # Keep column header labels consistent with the existing format.
             # Test window is represented in the selection tree, not the header text.
             label_base = f"{test_name} {subject} - {year}"
+            
             COLUMN_DEFINITIONS[ss_key] = f"{label_base} SS"
+            new_definitions[ss_key] = COLUMN_DEFINITIONS[ss_key]
+            
             COLUMN_DEFINITIONS[pl_key] = f"{label_base} PL"
+            new_definitions[pl_key] = COLUMN_DEFINITIONS[pl_key]
 
             if year not in columns:
                 columns[year] = {}
@@ -192,7 +220,9 @@ def get_test_columns(column_filters=None):
 
                 # Table header label should remain consistent with the existing format.
                 label_base = f"{test_name} {subject} - {year}"
+                
                 COLUMN_DEFINITIONS[other_key] = f"{label_base} {raw_key_str}"
+                new_definitions[other_key] = COLUMN_DEFINITIONS[other_key]
 
                 add = columns[year][assessment_name]['additional_info']
                 if window_name not in add:
@@ -204,6 +234,7 @@ def get_test_columns(column_filters=None):
             # If other_info is missing/unavailable, keep base assessment structure working.
             pass
 
+        cache.set(cache_key, (columns, new_definitions), timeout=3600)
         return columns
 
 
@@ -221,6 +252,16 @@ def get_mark_columns(column_filters=None):
             }
         }
     """
+    cache_key = _generate_cache_key("mark_columns", column_filters)
+    cached_data = cache.get(cache_key)
+
+    if cached_data:
+        columns, definitions = cached_data
+        COLUMN_DEFINITIONS.update(definitions)
+        return columns
+
+    new_definitions = {}
+
     with connections['default'].cursor() as cursor:
         where_clauses = ["sm.school_year IS NOT NULL"]
         params = []
@@ -270,6 +311,7 @@ def get_mark_columns(column_filters=None):
 
             label = f"{course_val} ({subject_val}) {period_val}\n{year_val}"
             COLUMN_DEFINITIONS[mark_key] = label
+            new_definitions[mark_key] = label
 
             if year_val not in columns:
                 columns[year_val] = {}
@@ -280,4 +322,5 @@ def get_mark_columns(column_filters=None):
 
             columns[year_val][subject_val][course_val][period_val] = mark_key
 
+        cache.set(cache_key, (columns, new_definitions), timeout=3600)
         return columns
