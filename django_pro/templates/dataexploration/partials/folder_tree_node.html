@@ -1,4 +1,5 @@
 {% load static %}
+{% load dataexploration_tags %}
 <details class="group" {% if folder.folder_type == 'USER' %}open{% endif %}>
     <summary 
         class="list-none flex items-center justify-between p-1.5 hover:bg-slate-100 rounded cursor-pointer text-sm"
@@ -141,7 +142,7 @@
          {% endfor %}
 
         <!-- Recursive Subfolders -->
-        {% for subfolder in folder.subfolders.all %}
+        {% for subfolder in folder.subfolders.all|filter_visible_folders:user %}
             {% include "dataexploration/partials/folder_tree_node.html" with folder=subfolder is_root=False %}
         {% endfor %}
     </div>

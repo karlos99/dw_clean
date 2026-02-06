@@ -82,6 +82,46 @@ def get_user_folders(user):
     
     return ReportFolder.objects.filter(q_owner | q_shared | q_district | q_school).distinct()
 
+def can_user_view_folder(user, folder):
+    """
+    Check if user can view the specific folder.
+    This logic MUST match get_user_folders query logic.
+    """
+    if not user.is_authenticated:
+        return False
+        
+    if user.is_superuser:
+        return True
+        
+    # 1. Own folders
+    if folder.owner == user:
+        return True
+        
+    # 2. Shared folders (check prefetched shares if available to save DB hits)
+    # Using .all() calculates on prefetched data if available
+    for share in folder.shares.all():
+        if share.shared_with_id == user.id:
+            return True
+            
+    # 3. District folders - accessible to all authenticated users currently
+    if folder.folder_type == 'DISTRICT':
+        return True
+        
+    # 4. School folders
+    if folder.folder_type == 'SCHOOL':
+        user_roles = get_user_roles(user)
+        unrestricted_roles = {'District Admin', 'Project Admin', 'District View'}
+        
+        if user_roles & unrestricted_roles:
+            return True
+            
+        # Check if user has access to this specific school
+        return _user_has_access_to_user_school(user, folder.school)
+        
+    # USER folders that are not owned and not shared are hidden
+    return False
+
+
 def can_user_edit_folder(user, folder):
     """
     Check if user can edit this folder (rename, change desc) OR add items to it.
@@ -124,20 +164,13 @@ def can_user_edit_folder(user, folder):
 
         # School Admin can edit folders in their school
         if 'School Admin' in user_roles:
+            # Cannot edit the root school folder (legacy name of the school)
+            if folder.parent is None:
+                return False
             return True
 
-        # Prevent non-admins (Teachers) from editing root-like folders
-        if folder.parent is None:
-             return False
-             
-        # Prevent editing folders that are direct children of DISTRICT folders (e.g. "Schools" -> "Truman")
-        if folder.parent.folder_type == 'DISTRICT':
-             return False
-            
-        # Subfolders in school: allow school staff to manage folders within their school.
-        # This matches the UI behavior (delete/rename buttons shown) and avoids locking out creators
-        # when historical folders were created without an owner.
-        return True
+        # Non-admins (Teachers) cannot edit school folders
+        return False
         
     return False
 
@@ -178,8 +211,8 @@ def can_create_in_folder(user, folder):
         if {'Project Admin', 'District Admin'} & user_roles:
             return True
         # If user user belongs to school, allow them to create?
-        if _user_has_access_to_user_school(user, folder.school):
-            return True # Allow school staff to create subfolders/queries
+        if 'School Admin' in user_roles and _user_has_access_to_user_school(user, folder.school):
+            return True # Allow school admin to create subfolders/queries
             
     return False
 

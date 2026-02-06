@@ -36,7 +36,7 @@ def get_test_columns(column_filters=None):
             - If a test has a test_window, the window is included in the column key to avoid collisions.
                         - Additional assessment info comes from results.other_info (JSONB) keys.
     """
-    cache_key = _generate_cache_key("test_columns", column_filters)
+    cache_key = _generate_cache_key("test_columns_v2", column_filters)
     cached_data = cache.get(cache_key)
 
     if cached_data:
@@ -127,7 +127,7 @@ def get_test_columns(column_filters=None):
             # Store in COLUMN_DEFINITIONS with descriptive names
             # Keep column header labels consistent with the existing format.
             # Test window is represented in the selection tree, not the header text.
-            label_base = f"{test_name} {subject} - {year}"
+            label_base = f"{test_name} {subject} ({year})"
             
             COLUMN_DEFINITIONS[ss_key] = f"{label_base} SS"
             new_definitions[ss_key] = COLUMN_DEFINITIONS[ss_key]
@@ -219,7 +219,7 @@ def get_test_columns(column_filters=None):
                 other_key = f"test_{test_key}_OI_{key_norm}_{key_hash}"
 
                 # Table header label should remain consistent with the existing format.
-                label_base = f"{test_name} {subject} - {year}"
+                label_base = f"{test_name} {subject} ({year})"
                 
                 COLUMN_DEFINITIONS[other_key] = f"{label_base} {raw_key_str}"
                 new_definitions[other_key] = COLUMN_DEFINITIONS[other_key]

@@ -1257,7 +1257,7 @@ def load_students(request):
         for info in test_cols_info:
             metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
             metric_label = metric_map.get(info['metric'], info['metric'])
-            label = f"{info['test_name']} {info['subject']} {metric_label}"
+            label = f"{info['test_name']} {info['subject']} ({info['year']}) {metric_label}"
             if info.get('test_window'):
                 label += f"\n{info['test_window']}"
             dynamic_definitions[info['col_name']] = label
@@ -1297,7 +1297,7 @@ def load_students(request):
         'total': total,
         'page': page,
         'total_pages': total_pages,
-        'column_definitions': COLUMN_DEFINITIONS,
+        'column_definitions': dynamic_definitions,
     }
 
     return render(request, 'dataexploration/partials/student_table.html', context)
