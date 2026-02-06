@@ -262,4 +262,10 @@ All Django behavior must align with **official Django 6 documentation**:
 
 
 ## Roles
-- The application will have multiple roles for the users, that will range to having access to specific user to the project magager. by default the 
+- Project Admin: (superUser)
+- District Admin: (All Students, can edit all folders)
+- District View: (All Students View)
+- School Admin: School level Students. Can add Schoool level Roles(school view, Grade view). Can edit School folder
+- School View: School level Students. 
+- School Gr view: School gr level view. 
+- Teacher (default): students base on the enrollment table(school year)
