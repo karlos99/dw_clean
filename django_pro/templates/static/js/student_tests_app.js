@@ -284,7 +284,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const renderSelectedColumns = () => {
         if (selectedCountEl) selectedCountEl.textContent = selectedColumns.length;
-        if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = `${selectedColumns.length} selected`;
+        if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = String(selectedColumns.length);
         syncCheckboxes();
     };
 
@@ -305,7 +305,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const toggleSidebar = (show) => {
         if (!sidebarEl) return;
-        sidebarEl.classList.toggle('hidden', !show);
+        
+        if (show) {
+            // Show sidebar
+            sidebarEl.classList.remove('hidden');
+            // Force reflow
+            sidebarEl.offsetHeight;
+            // Slide in
+            sidebarEl.classList.remove('-translate-x-full');
+        } else {
+            // Slide out
+            sidebarEl.classList.add('-translate-x-full');
+            // Hide after animation
+            setTimeout(() => {
+                if (sidebarEl.classList.contains('-translate-x-full')) {
+                    sidebarEl.classList.add('hidden');
+                }
+            }, 300);
+        }
+        
+        // Handle backdrop overlay
+        const backdrop = document.getElementById('column-selector-backdrop');
+        if (backdrop) {
+            backdrop.classList.toggle('hidden', !show);
+        }
+        
+        // Update floating tab position when sidebar opens/closes
+        const floatingTab = document.querySelector('[data-action="toggle-column-selector"]');
+        if (floatingTab) {
+            if (show) {
+                // Move tab to the right when sidebar is open (only on large screens)
+                if (window.innerWidth >= 1024) {
+                    floatingTab.style.left = '320px'; // 80 * 4 = 320px (w-80)
+                }
+            } else {
+                // Reset to left edge when sidebar is closed
+                floatingTab.style.left = '0';
+            }
+        }
     };
 
     const escapeHtml = (value) => {
@@ -563,6 +600,9 @@ document.addEventListener('DOMContentLoaded', () => {
         renderSelectedStudentCount();
         syncSelectAllCheckboxState();
         scheduleWarmStudentSummaries();
+        
+        // Initialize horizontal scroll synchronization after table renders
+        setTimeout(() => initializeScrollSync(), 100);
     };
 
     document.addEventListener('click', async (event) => {
@@ -1308,6 +1348,71 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
+    };
+
+    const initializeScrollSync = () => {
+        const mainContainer = document.getElementById('table-scroll-container');
+        const topScrollBar = document.getElementById('h-scroll-top');
+        const topScrollContent = document.getElementById('h-scroll-content-top');
+        const table = document.querySelector('#student-table table');
+        
+        if (!mainContainer || !topScrollBar || !topScrollContent || !table) return;
+        
+        // Set the width of the top scroll content to match table width
+        const updateTopScrollWidth = () => {
+            const tableWidth = table.offsetWidth;
+            topScrollContent.style.width = `${tableWidth}px`;
+        };
+        
+        updateTopScrollWidth();
+        
+        // Sync scroll positions
+        let isTopScrolling = false;
+        let isMainScrolling = false;
+        
+        topScrollBar.addEventListener('scroll', () => {
+            if (isMainScrolling) return;
+            isTopScrolling = true;
+            mainContainer.scrollLeft = topScrollBar.scrollLeft;
+            updateScrollIndicators();
+            setTimeout(() => { isTopScrolling = false; }, 50);
+        });
+        
+        mainContainer.addEventListener('scroll', () => {
+            if (isTopScrolling) return;
+            isMainScrolling = true;
+            topScrollBar.scrollLeft = mainContainer.scrollLeft;
+            updateScrollIndicators();
+            setTimeout(() => { isMainScrolling = false; }, 50);
+        });
+        
+        // Update scroll indicators
+        const updateScrollIndicators = () => {
+            const leftShadow = document.getElementById('scroll-shadow-left');
+            const rightShadow = document.getElementById('scroll-shadow-right');
+            
+            if (!leftShadow || !rightShadow) return;
+            
+            const scrollLeft = mainContainer.scrollLeft;
+            const maxScroll = mainContainer.scrollWidth - mainContainer.clientWidth;
+            
+            // Show left shadow if scrolled right
+            leftShadow.style.opacity = scrollLeft > 10 ? '1' : '0';
+            
+            // Show right shadow if can scroll more right
+            rightShadow.style.opacity = scrollLeft < maxScroll - 10 ? '1' : '0';
+        };
+        
+        // Initial check
+        updateScrollIndicators();
+        
+        // Update on window resize
+        const resizeObserver = new ResizeObserver(() => {
+            updateTopScrollWidth();
+            updateScrollIndicators();
+        });
+        
+        resizeObserver.observe(table);
     };
 
     renderSelectedColumns();

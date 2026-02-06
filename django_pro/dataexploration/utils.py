@@ -54,21 +54,28 @@ def get_user_folders(user):
     q_district = Q(folder_type='DISTRICT')
     
     # 4. School folders
-    user_school_ids = []
-    if isinstance(user.schools, list):
-         # Map state_ids from user.schools to users.models.School ids (best effort)
-         from studata.models import School as StudataSchool
-         from users.models import School as UserSchool
-         
-         # Fetch school names from studata
-         studata_names = StudataSchool.objects.filter(state_id__in=user.schools).values_list('school_name', flat=True)
-         # Find matching UserSchools
-         user_school_ids = UserSchool.objects.filter(name__in=studata_names).values_list('id', flat=True)
-    elif hasattr(user.schools, 'values_list'):
-         # Fallback for old ManyToManyField (if not fully migrated)
-         user_school_ids = user.schools.values_list('id', flat=True)
-         
-    q_school = Q(folder_type='SCHOOL', school__id__in=user_school_ids)
+    user_roles = get_user_roles(user)
+    unrestricted_roles = {'District Admin', 'Project Admin', 'District View'}
+    
+    if user_roles & unrestricted_roles:
+         # Admins and District View can see all school folders
+         q_school = Q(folder_type='SCHOOL')
+    else:
+        user_school_ids = []
+        if isinstance(user.schools, list):
+             # Map state_ids from user.schools to users.models.School ids (best effort)
+             from studata.models import School as StudataSchool
+             from users.models import School as UserSchool
+             
+             # Fetch school names from studata
+             studata_names = StudataSchool.objects.filter(state_id__in=user.schools).values_list('school_name', flat=True)
+             # Find matching UserSchools
+             user_school_ids = UserSchool.objects.filter(name__in=studata_names).values_list('id', flat=True)
+        elif hasattr(user.schools, 'values_list'):
+             # Fallback for old ManyToManyField (if not fully migrated)
+             user_school_ids = user.schools.values_list('id', flat=True)
+             
+        q_school = Q(folder_type='SCHOOL', school__id__in=user_school_ids)
     
     # Also check hierarchy: If can view parent, can view child? 
     # Usually yes, but sticking to basic scope for now.
@@ -106,22 +113,33 @@ def can_user_edit_folder(user, folder):
         return folder.owner == user
         
     if folder.folder_type == 'SCHOOL':
-        # Only admins can edit root school folder
-        if folder.parent is None:
-            if {'Project Admin', 'District Admin'} & user_roles:
-                return True
-            # School Admin?
-            # Assuming 'School Admin' exists and user is assigned to this school
-            if 'School Admin' in user_roles and _user_has_access_to_user_school(user, folder.school):
-                return True
+        # Project Admin and District Admin can edit ALL school folders
+        if {'Project Admin', 'District Admin'} & user_roles:
+            return True
+
+        # User must have access to the school to even consider editing
+        has_school_access = folder.school and _user_has_access_to_user_school(user, folder.school)
+        if not has_school_access:
             return False
+
+        # School Admin can edit folders in their school
+        if 'School Admin' in user_roles:
+            return True
+
+        # Prevent non-admins (Teachers) from editing root-like folders
+        if folder.parent is None:
+             return False
+             
+        # Prevent editing folders that are direct children of DISTRICT folders (e.g. "Schools" -> "Truman")
+        if folder.parent.folder_type == 'DISTRICT':
+             return False
             
         # Subfolders in school: allow school staff to manage folders within their school.
         # This matches the UI behavior (delete/rename buttons shown) and avoids locking out creators
         # when historical folders were created without an owner.
-        if folder.school and _user_has_access_to_user_school(user, folder.school):
-            return True
-        return folder.owner == user
+        return True
+        
+    return False
 
     return False
 

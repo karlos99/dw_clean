@@ -21,8 +21,6 @@ from .student_data_utils import (
 from .column_management import (
     get_saved_default_columns as _get_saved_default_columns,
     get_column_expression as _get_column_expression,
-    user_can_manage_defaults as _user_can_manage_defaults,
-    manage_default_columns,
     load_column_structures,
 )
 
@@ -73,9 +71,7 @@ __all__ = [
     '_get_student_enroll_columns',
     '_get_saved_default_columns',
     '_get_column_expression',
-    '_user_can_manage_defaults',
     # Views
-    'manage_default_columns',
     'load_column_structures',
     'StudentTestSummaryView',
     'StudentTestSummaryPartialView',

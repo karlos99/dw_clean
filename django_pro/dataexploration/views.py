@@ -59,7 +59,6 @@ from .view_modules.student_summary import (
 
 # Import from column management module
 from .view_modules.column_management import (
-    manage_default_columns,
     load_column_structures,
 )
 
@@ -74,7 +73,6 @@ __all__ = [
     'StudentTestSummaryPartialView',
     'warm_student_test_summary_cache',
     # Column management
-    'manage_default_columns',
     'load_column_structures',
     # Folder and query management
     'folder_browser',

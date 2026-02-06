@@ -1,4 +1,4 @@
-<div id="rename-modal" class="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog"
+<div id="rename-modal" class="fixed inset-0 z-[60] overflow-y-auto" aria-labelledby="modal-title" role="dialog"
     aria-modal="true">
     <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
         <div class="fixed inset-0 bg-slate-900 bg-opacity-75 transition-opacity" aria-hidden="true"
@@ -8,15 +8,14 @@
 
         <div
             class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-            <form id="rename-form" hx-target="#modals-container">
+            <form id="rename-form" hx-post="{{ submit_url }}" hx-target="#modals-container" hx-swap="innerHTML" hx-on::after-request="if(event.detail.successful) document.getElementById('modals-container').innerHTML = ''">
                 {% csrf_token %}
                 <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">Rename <span
-                            id="rename-type"></span></h3>
+                    <h3 class="text-lg leading-6 font-medium text-gray-900" id="modal-title">Rename {{ item_type|title }}</h3>
                     <div class="mt-4 space-y-4">
                         <div>
                             <label for="rename_name" class="block text-sm font-medium text-gray-700">Name</label>
-                            <input type="text" name="name" id="rename_name" required
+                            <input type="text" name="name" id="rename_name" required value="{{ initial_name }}"
                                 class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
                         </div>
 
@@ -24,7 +23,7 @@
                             <label for="rename_description"
                                 class="block text-sm font-medium text-gray-700">Description</label>
                             <textarea name="description" id="rename_description" rows="2"
-                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-blue-500 focus:border-blue-500 sm:text-sm"></textarea>
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-blue-500 focus:border-blue-500 sm:text-sm">{{ initial_description }}</textarea>
                         </div>
                     </div>
                 </div>

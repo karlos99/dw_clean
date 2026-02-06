@@ -1,12 +1,14 @@
 """Folder, query, and student list management views."""
 
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import JsonResponse, HttpResponseForbidden
+from django.http import JsonResponse, HttpResponseForbidden, HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from django.db import transaction
 import json
+import traceback
 
 from ..models import ReportFolder, SavedQuery, StudentList, StudentListItem, FolderShare, QueryShare
 from ..utils import (
@@ -16,37 +18,50 @@ from ..utils import (
     can_user_manage_list,
     can_create_in_folder,
     can_user_view_query,
+    get_user_roles,
 )
 
 @login_required
 def folder_browser(request):
     """Return the folder browser HTML partial."""
-    # Get only top-level folders (no parent) that user has access to
-    folders = get_user_folders(request.user).filter(parent__isnull=True).prefetch_related(
-        'queries', 'student_lists', 'subfolders', 'shares'
-    ).order_by('folder_type', 'name')
-    
-    # Get queries shared with this user (via QueryShare)
-    # Annotate with permission flags for template
-    shared_queries = SavedQuery.objects.filter(
-        shares__shared_with=request.user
-    ).select_related('owner').prefetch_related('shares').order_by('-updated_at')
-    
-    # Add permission info to each query
-    shared_queries_with_perms = []
-    for query in shared_queries:
-        share = query.shares.filter(shared_with=request.user).first()
-        shared_queries_with_perms.append({
-            'query': query,
-            'can_edit': share.can_edit if share else False,
-            'can_reshare': share.can_reshare if share else False
-        })
-    
-    context = {
-        'folders': folders,
-        'shared_queries': shared_queries_with_perms
-    }
-    return render(request, 'dataexploration/partials/folder_browser.html', context)
+    try:
+        # Ensure default user folder exists
+        ReportFolder.objects.get_or_create(
+            owner=request.user,
+            name="My Reports",
+            folder_type='USER',
+            defaults={'description': 'My personal saved reports'}
+        )
+
+        # Get only top-level folders (no parent) that user has access to
+        folders = get_user_folders(request.user).filter(parent__isnull=True).prefetch_related(
+            'queries', 'student_lists', 'subfolders', 'shares'
+        ).order_by('folder_type', 'name')
+        
+        # Get queries shared with this user (via QueryShare)
+        # Annotate with permission flags for template
+        shared_queries = SavedQuery.objects.filter(
+            shares__shared_with=request.user
+        ).select_related('owner').prefetch_related('shares').order_by('-updated_at')
+        
+        # Add permission info to each query
+        shared_queries_with_perms = []
+        for query in shared_queries:
+            share = query.shares.filter(shared_with=request.user).first()
+            shared_queries_with_perms.append({
+                'query': query,
+                'can_edit': share.can_edit if share else False,
+                'can_reshare': share.can_reshare if share else False
+            })
+        
+        context = {
+            'folders': folders,
+            'shared_queries': shared_queries_with_perms
+        }
+        return render(request, 'dataexploration/partials/folder_browser.html', context)
+    except Exception as e:
+        traceback.print_exc()
+        return HttpResponse(f"Error loading folders: {str(e)}", status=500)
 
 @login_required
 def save_query_modal(request):
@@ -54,11 +69,15 @@ def save_query_modal(request):
     # Ensure default user folders exist
     ReportFolder.objects.get_or_create(
         owner=request.user,
-        name="My Queries",
+        name="My Reports",
         folder_type='USER',
-        defaults={'description': 'My personal saved queries'}
+        defaults={'description': 'My personal saved reports'}
     )
-    folders = get_user_folders(request.user)
+    
+    # Get all viewable folders, then filter for writable ones
+    all_folders = get_user_folders(request.user)
+    folders = [f for f in all_folders if can_create_in_folder(request.user, f)]
+    
     existing_queries = SavedQuery.objects.filter(
         owner=request.user,
         query_type='filter',
@@ -76,11 +95,15 @@ def save_student_list_modal(request):
     # Ensure default user folders exist
     ReportFolder.objects.get_or_create(
         owner=request.user,
-        name="My Student Lists",
+        name="My Reports",
         folder_type='USER',
-        defaults={'description': 'My personal student lists'}
+        defaults={'description': 'My personal saved reports'}
     )
-    folders = get_user_folders(request.user)
+    
+    # Get all viewable folders, then filter for writable ones
+    all_folders = get_user_folders(request.user)
+    folders = [f for f in all_folders if can_create_in_folder(request.user, f)]
+    
     existing_lists = SavedQuery.objects.filter(
         owner=request.user,
         query_type='student_list',
@@ -168,12 +191,12 @@ def save_query(request):
             if not can_create_in_folder(request.user, folder):
                 return HttpResponseForbidden("You do not have permission to save to this folder")
         else:
-            default_name = "My Queries" if query_type == 'filter' else "My Student Lists"
+            default_name = "My Reports"
             folder, _ = ReportFolder.objects.get_or_create(
                 owner=request.user,
                 name=default_name,
                 folder_type='USER',
-                defaults={'description': f'My personal {"saved queries" if query_type == "filter" else "student lists"}'}
+                defaults={'description': 'My personal saved reports'}
             )
 
         # Get or create query
@@ -547,30 +570,52 @@ def share_modal(request):
         query = get_object_or_404(SavedQuery, pk=item_id)
         folder = query.folder
         submit_url = reverse('dataexploration:share_query', args=[item_id])
+        current_shares = query.shares.select_related('shared_with').all()
     elif item_type == 'list':
         slist = get_object_or_404(StudentList, pk=item_id)
         folder = slist.folder
-        # For lists, we share the folder too (same logic)
-        submit_url = reverse('dataexploration:share_query', args=[item_id])  # We'll need to add share_list endpoint
-    
-    # Get current shares for the folder
-    if folder and folder.owner == request.user:
+        # For legacy lists, we share via the folder (legacy behavior)
+        submit_url = reverse('dataexploration:share_folder', args=[folder.id])  
         current_shares = folder.shares.select_related('shared_with').all()
+
+    # Get current shares for the folder
+    # if folder and folder.owner == request.user:
+    #     current_shares = folder.shares.select_related('shared_with').all()
 
     return render(request, 'dataexploration/partials/share_modal.html', {
         'item_name': item_name,
+        'item_id': item_id,
         'submit_url': submit_url,
         'item_type': item_type,
         'folder': folder,
         'current_shares': current_shares,
-        'is_owner': folder and folder.owner == request.user
+        'is_owner': (item_type == 'query' and query.owner == request.user) or (item_type == 'list' and slist.owner == request.user)
     })
 
 @login_required
 def create_folder_modal(request):
     parent_id = request.GET.get('parent_id')
+    
+    # Build hierarchy of folders the user can create in (currently only their own)
+    def get_folder_hierarchy(parent=None, level=0):
+        qs = ReportFolder.objects.filter(owner=request.user, parent=parent).order_by('name')
+        results = []
+        for folder in qs:
+            results.append({
+                'id': folder.id,
+                'name': folder.name,
+                'level': level,
+                # Use plain spaces for safe rendering in select options if needed, or handle in template
+                'indent': level 
+            })
+            results.extend(get_folder_hierarchy(folder, level + 1))
+        return results
+
+    folder_options = get_folder_hierarchy()
+    
     return render(request, 'dataexploration/partials/create_folder_modal.html', {
-        'parent_id': parent_id
+        'parent_id': parent_id,
+        'folder_options': folder_options
     })
 
 @require_POST
@@ -595,7 +640,7 @@ def create_folder(request):
     else:
         # Creating root folder check
          if folder_type in ['SCHOOL', 'DISTRICT']:
-             user_roles = set(request.user.roles.values_list('name', flat=True))
+             user_roles = get_user_roles(request.user)
              if not (request.user.is_superuser or {'Project Admin', 'District Admin'} & user_roles):
                   return HttpResponseForbidden()
 
@@ -628,7 +673,7 @@ def create_folder(request):
         school=school_context
     )
     
-    response = render(request, 'dataexploration/partials/save_success.html', {'message': 'Folder created successfully!'})
+    response = HttpResponse("")
     response['HX-Trigger'] = 'refresh-folders'
     return response
 

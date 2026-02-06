@@ -621,21 +621,50 @@ def load_students(request):
 
         # Apply filters
         if search:
-            base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
-            search_param = f'%{search}%'
-            base_params.extend([search_param, search_param, search_param])
+            # Handle search if it comes in as a list
+            if isinstance(search, list):
+                search = search[0] if search else ''
+            
+            if search:
+                base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
+                search_param = f'%{search}%'
+                base_params.extend([search_param, search_param, search_param])
         
         if school_year:
-            base_where_clauses.append("cs.school_year = %s")
-            base_params.append(school_year)
+            if isinstance(school_year, list):
+                if len(school_year) == 1:
+                    base_where_clauses.append("cs.school_year = %s")
+                    base_params.append(school_year[0])
+                elif len(school_year) > 1:
+                    base_where_clauses.append("cs.school_year = ANY(%s)")
+                    base_params.append(school_year)
+            else:
+                base_where_clauses.append("cs.school_year = %s")
+                base_params.append(school_year)
         
         if grade:
-            base_where_clauses.append("cs.grade = %s")
-            base_params.append(grade)
+            if isinstance(grade, list):
+                if len(grade) == 1:
+                    base_where_clauses.append("cs.grade = %s")
+                    base_params.append(grade[0])
+                elif len(grade) > 1:
+                    base_where_clauses.append("cs.grade = ANY(%s)")
+                    base_params.append(grade)
+            else:
+                base_where_clauses.append("cs.grade = %s")
+                base_params.append(grade)
 
         if status:
-            base_where_clauses.append("cs.status = %s")
-            base_params.append(status)
+            if isinstance(status, list):
+                if len(status) == 1:
+                    base_where_clauses.append("cs.status = %s")
+                    base_params.append(status[0])
+                elif len(status) > 1:
+                    base_where_clauses.append("cs.status = ANY(%s)")
+                    base_params.append(status)
+            else:
+                base_where_clauses.append("cs.status = %s")
+                base_params.append(status)
 
         # Check if user is unrestricted (Project Admin OR District Role)
         is_unrestricted = False

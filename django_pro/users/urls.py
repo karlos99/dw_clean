@@ -18,4 +18,5 @@ urlpatterns = [
     path('pages/<int:page_id>/edit/', page_views.edit_page, name='edit_page'),
     path('pages/<int:page_id>/delete/', page_views.delete_page, name='delete_page'),
     path('pages/<int:page_id>/detail/', page_views.get_page_detail, name='get_page_detail'),
+    path('pages/default-columns/', page_views.manage_default_columns, name='manage_default_columns'),
 ]

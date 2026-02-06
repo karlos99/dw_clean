@@ -2,11 +2,14 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseForbidden
 from django.utils.text import slugify
 
 from .models_pages import Page
 from .models import Role
+from dataexploration.models import DefaultColumnSelection
+from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
+from dataexploration.column_utils import get_test_columns
 
 
 def user_is_project_admin(user):
@@ -273,3 +276,55 @@ def get_page_detail(request, page_id):
     }
     
     return JsonResponse(data)
+
+
+@login_required
+def manage_default_columns(request):
+    """Admin interface for setting default columns shown to users in data exploration."""
+    if not user_is_project_admin(request.user):
+        return HttpResponseForbidden("You don't have permission to manage default columns.")
+
+    test_structure = get_test_columns()
+    
+    # Get saved default columns or fall back to constants
+    selection = DefaultColumnSelection.objects.order_by('-updated_at', '-id').first()
+    if selection and selection.columns:
+        default_columns = selection.columns
+    else:
+        default_columns = DEFAULT_COLUMNS
+
+    if request.method == 'POST':
+        import json
+        columns_json = request.POST.get('columns', '[]')
+        try:
+            columns = json.loads(columns_json)
+            selection, created = DefaultColumnSelection.objects.update_or_create(
+                id=1,
+                defaults={'columns': columns}
+            )
+            messages.success(request, 'Default columns updated successfully.')
+            return render(request, 'users/manage_default_columns.html', {
+                'column_categories': COLUMN_CATEGORIES,
+                'column_definitions': COLUMN_DEFINITIONS,
+                'test_structure': test_structure,
+                'selected_columns': columns,
+                'success': True,
+            })
+        except Exception as e:
+            messages.error(request, f'Error saving default columns: {str(e)}')
+            return render(request, 'users/manage_default_columns.html', {
+                'column_categories': COLUMN_CATEGORIES,
+                'column_definitions': COLUMN_DEFINITIONS,
+                'test_structure': test_structure,
+                'selected_columns': default_columns,
+                'error': str(e),
+            })
+
+    context = {
+        'column_categories': COLUMN_CATEGORIES,
+        'column_definitions': COLUMN_DEFINITIONS,
+        'test_structure': test_structure,
+        'selected_columns': default_columns,
+    }
+
+    return render(request, 'users/manage_default_columns.html', context)
