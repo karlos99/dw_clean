@@ -81,7 +81,7 @@
                         </a>
                         {% endfor %}
                         
-                        {% if user.is_staff or user.active_role.name == 'Project Admin' or user.active_role.name == 'School Admin' or not user.active_role and user.is_project_admin %}
+                        {% if user.is_staff or user.active_role and user.active_role.name == 'Project Admin' or user.active_role and user.active_role.name == 'School Admin' or not user.active_role and user.is_project_admin %}
                         <div class="relative group" x-data="{ open: false }" @mouseenter="open = true" @mouseleave="open = false">
                             <button class="flex items-center text-xs font-semibold uppercase tracking-[0.15em] text-slate-300 hover:text-blue-400 transition duration-300 focus:outline-none" @click="open = !open">
                                 Admin
@@ -93,6 +93,9 @@
                                 <div class="rounded-none border border-slate-200 shadow-xl py-1 bg-white">
                                     <a href="{% url 'users:manage_users' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Users</a>
                                     <a href="{% url 'users:manage_pages' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Pages</a>
+                                    {% if usage_page_access %}
+                                    <a href="{{ usage_page_url }}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Usage</a>
+                                    {% endif %}
                                     {% if user.is_staff %}
                                     <a href="/admin/" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Django Admin</a>
                                     {% endif %}

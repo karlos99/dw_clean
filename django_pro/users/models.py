@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 # Import Page model from models_pages
@@ -121,3 +122,37 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+class UsageSession(models.Model):
+    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='usage_sessions')
+    session_key = models.CharField(max_length=64, db_index=True)
+    login_at = models.DateTimeField(default=timezone.now)
+    last_activity_at = models.DateTimeField(null=True, blank=True)
+    logout_at = models.DateTimeField(null=True, blank=True)
+    total_seconds = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'session_key']),
+            models.Index(fields=['login_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} @ {self.login_at}"
+
+
+class PageVisit(models.Model):
+    session = models.ForeignKey(UsageSession, on_delete=models.CASCADE, related_name='page_visits')
+    path = models.TextField()
+    started_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    duration_seconds = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['started_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.path} ({self.session_id})"

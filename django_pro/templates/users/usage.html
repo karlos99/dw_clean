@@ -1,0 +1,177 @@
+{% extends 'base.html' %}
+
+{% block title %}Usage{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-6 py-8">
+    <div class="flex items-start justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900">Usage</h1>
+            <p class="text-sm text-slate-600 mt-1">Monitor user activity and time spent by section.</p>
+        </div>
+        <div class="w-full lg:w-auto">
+            <form method="get" class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div>
+                        <label for="user" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">User</label>
+                        <select id="user" name="user" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
+                            <option value="">All users</option>
+                            {% for u in users %}
+                                <option value="{{ u.id }}" {% if selected_user|default:'' == u.id|stringformat:'s' %}selected{% endif %}>{{ u.email }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="group_by" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Group results by</label>
+                        <select id="group_by" name="group_by" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
+                            <option value="" {% if not group_by %}selected{% endif %}>None</option>
+                            <option value="role" {% if group_by == 'role' %}selected{% endif %}>Role</option>
+                            <option value="title" {% if group_by == 'title' %}selected{% endif %}>Title</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="quick" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Quick range</label>
+                        <select id="quick" name="quick" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
+                            <option value="" {% if not quick_filter %}selected{% endif %}>All time</option>
+                            <option value="week" {% if quick_filter == 'week' %}selected{% endif %}>This week</option>
+                            <option value="year" {% if quick_filter == 'year' %}selected{% endif %}>This year</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Custom range</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input id="start_date" name="start_date" type="date" value="{{ start_date }}" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white" />
+                            <input id="end_date" name="end_date" type="date" value="{{ end_date }}" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white" />
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-4 flex items-center justify-end gap-2">
+                    <a href="{% url 'users:usage_report' %}" class="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-100 border border-slate-200 rounded hover:bg-slate-200">Reset</a>
+                    <button type="submit" class="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100">Apply filters</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if top_page %}
+    <div class="mt-6 bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Most visited page (excluding /)</h2>
+        <div class="mt-2 text-sm text-slate-700">
+            <div><span class="font-semibold">Page:</span> {{ top_page.path }}</div>
+            <div><span class="font-semibold">Users:</span> {{ top_page.user_count }}</div>
+            <div><span class="font-semibold">Time:</span> {{ top_page.total_minutes }} min</div>
+            <div class="mt-2 text-xs text-slate-500">
+                <span class="font-semibold">User list:</span> {{ top_page.users|join:", " }}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="mt-6 bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+        <table class="min-w-full text-sm">
+            <thead class="bg-slate-900 text-white text-xs uppercase tracking-wider">
+                <tr>
+                    <th class="px-4 py-3 text-left">User</th>
+                    <th class="px-4 py-3 text-left">Login</th>
+                    <th class="px-4 py-3 text-left">Last Activity</th>
+                    <th class="px-4 py-3 text-left">Logout</th>
+                    <th class="px-4 py-3 text-left">Total Time</th>
+                    <th class="px-4 py-3 text-left">Pages</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {% if grouped_sessions %}
+                    {% for group_label, group_sessions in grouped_sessions.items %}
+                        <tr class="bg-slate-50">
+                            <td colspan="6" class="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-600">{{ group_label }}</td>
+                        </tr>
+                        {% for session in group_sessions %}
+                        <tr class="bg-white">
+                            <td class="px-4 py-3 text-slate-700">{{ session.user.email }}</td>
+                            <td class="px-4 py-3 text-slate-700">{{ session.login_at_display }}</td>
+                            <td class="px-4 py-3 text-slate-700">{{ session.last_activity_at_display }}</td>
+                            <td class="px-4 py-3 text-slate-700">{{ session.logout_at_display }}</td>
+                            <td class="px-4 py-3 text-slate-700">
+                                {% if session.total_minutes %}
+                                    {{ session.total_minutes }} min
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3 text-slate-700">
+                                <details class="text-xs">
+                                    <summary class="cursor-pointer text-blue-700 hover:text-blue-900">View</summary>
+                                    <div class="mt-2 space-y-2">
+                                        {% for visit in session.visits %}
+                                            <div class="border border-slate-200 rounded p-2">
+                                                <div class="font-medium text-slate-800">{{ visit.path }}</div>
+                                                <div class="text-slate-500">{{ visit.started_at_display }} → {{ visit.ended_at_display }}</div>
+                                                <div class="text-slate-500">{{ visit.duration_minutes }} min</div>
+                                            </div>
+                                        {% empty %}
+                                            <div class="text-slate-500">No page visits recorded.</div>
+                                        {% endfor %}
+                                    </div>
+                                </details>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="px-4 py-10 text-center text-slate-500">No usage records found.</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    {% for session in sessions %}
+                    <tr class="bg-white">
+                        <td class="px-4 py-3 text-slate-700">{{ session.user.email }}</td>
+                        <td class="px-4 py-3 text-slate-700">{{ session.login_at_display }}</td>
+                        <td class="px-4 py-3 text-slate-700">{{ session.last_activity_at_display }}</td>
+                        <td class="px-4 py-3 text-slate-700">{{ session.logout_at_display }}</td>
+                        <td class="px-4 py-3 text-slate-700">
+                            {% if session.total_minutes %}
+                                {{ session.total_minutes }} min
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-slate-700">
+                            <details class="text-xs">
+                                <summary class="cursor-pointer text-blue-700 hover:text-blue-900">View</summary>
+                                <div class="mt-2 space-y-2">
+                                    {% for visit in session.visits %}
+                                        <div class="border border-slate-200 rounded p-2">
+                                            <div class="font-medium text-slate-800">{{ visit.path }}</div>
+                                            <div class="text-slate-500">{{ visit.started_at_display }} → {{ visit.ended_at_display }}</div>
+                                            <div class="text-slate-500">{{ visit.duration_minutes }} min</div>
+                                        </div>
+                                    {% empty %}
+                                        <div class="text-slate-500">No page visits recorded.</div>
+                                    {% endfor %}
+                                </div>
+                            </details>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="px-4 py-10 text-center text-slate-500">No usage records found.</td>
+                    </tr>
+                    {% endfor %}
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if page_obj.has_other_pages %}
+    <div class="mt-4 flex items-center gap-2 text-sm">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}{% if query_string %}&{{ query_string }}{% endif %}" class="px-3 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50">Previous</a>
+        {% endif %}
+        <span class="text-slate-600">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if query_string %}&{{ query_string }}{% endif %}" class="px-3 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
