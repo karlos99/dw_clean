@@ -8,6 +8,7 @@ import json
 import csv
 import hashlib
 
+
 from ..models import SavedQuery, StudentList
 from ..constants import COLUMN_DEFINITIONS
 from ..utils import can_user_view_query, get_user_folders
@@ -209,11 +210,18 @@ def export_students_csv(request):
 
     join_sql = ""
     if needs_enroll:
-        join_sql += " LEFT JOIN student_enroll se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+        join_sql += (
+            " LEFT JOIN ("
+            " SELECT DISTINCT ON (student_id, school_year) *"
+            " FROM student_enroll"
+            " ORDER BY student_id, school_year, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
+            " ) se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+        )
     if needs_students:
-        join_sql += " LEFT JOIN students s ON s.state_student_number = cs.ssid"
+        join_sql += " LEFT JOIN students s ON s.student_annual_key = cs.stu_annual_key"
     if needs_eht:
         join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
+
 
     # Streaming Response setup
     class Echo:
