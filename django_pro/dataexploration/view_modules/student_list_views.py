@@ -49,12 +49,56 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
                 cursor.execute("SELECT DISTINCT school_year FROM current_student WHERE school_year IS NOT NULL ORDER BY school_year DESC")
                 school_years = [row[0] for row in cursor.fetchall()]
                 cache.set(school_years_key, school_years, 3600)
-        
-        grades_key = "dataexp:grades"
+
+        # Apply role-based restrictions for grade filter options
+        is_unrestricted = False
+        if self.request.user.is_superuser:
+            is_unrestricted = True
+        elif getattr(self.request.user, 'is_project_admin', False):
+            is_unrestricted = True
+        elif hasattr(self.request.user, 'active_role') and self.request.user.active_role and 'District' in self.request.user.active_role.name:
+            is_unrestricted = True
+
+        grade_filter_clauses = ["grade IS NOT NULL"]
+        grade_filter_params = []
+
+        if hasattr(self.request.user, 'active_school') and self.request.user.active_school:
+            grade_filter_clauses.append("school_state_id = %s")
+            grade_filter_params.append(self.request.user.active_school.state_id)
+        else:
+            if not is_unrestricted:
+                if hasattr(self.request.user, 'schools') and isinstance(self.request.user.schools, list) and self.request.user.schools:
+                    grade_filter_clauses.append("school_state_id = ANY(%s)")
+                    grade_filter_params.append(self.request.user.schools)
+                else:
+                    grade_filter_clauses.append("1=0")
+
+        # Apply grade level restrictions for specific roles
+        if not is_unrestricted and hasattr(self.request.user, 'grade_levels'):
+            user_grade_levels = self.request.user.grade_levels
+            if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
+                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
+                current_role = None
+                if hasattr(self.request.user, 'active_role') and self.request.user.active_role:
+                    current_role = self.request.user.active_role.name
+                elif self.request.user.roles.count() == 1:
+                    current_role = self.request.user.roles.first().name
+                if current_role in grade_restricted_roles:
+                    grade_filter_clauses.append("grade = ANY(%s)")
+                    grade_filter_params.append(user_grade_levels)
+
+        active_school_id = getattr(getattr(self.request.user, 'active_school', None), 'state_id', None)
+        grade_levels_key = json.dumps(self.request.user.grade_levels or [], sort_keys=True)
+        schools_key = json.dumps(self.request.user.schools or [], sort_keys=True)
+        grades_key = f"dataexp:grades:{self.request.user.id}:{active_school_id}:{hashlib.md5(grade_levels_key.encode()).hexdigest()}:{hashlib.md5(schools_key.encode()).hexdigest()}"
         grades = cache.get(grades_key)
         if not grades:
             with connections['default'].cursor() as cursor:
-                cursor.execute("SELECT DISTINCT grade FROM current_student WHERE grade IS NOT NULL ORDER BY grade")
+                where_sql = " AND ".join(grade_filter_clauses)
+                cursor.execute(
+                    f"SELECT DISTINCT grade FROM current_student WHERE {where_sql} ORDER BY grade",
+                    grade_filter_params,
+                )
                 grades = [row[0] for row in cursor.fetchall()]
                 cache.set(grades_key, grades, 3600)
         
@@ -697,7 +741,7 @@ def load_students(request):
             # Only apply grade restriction if explicitly configured (non-empty list)
             if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
                 # Check if current active role should be grade-restricted
-                grade_restricted_roles = {'School Gr View', 'School View'}
+                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
                 current_role = None
                 
                 # Get the current role (from active_role or if user has only one role)
