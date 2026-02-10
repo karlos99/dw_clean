@@ -5,11 +5,16 @@ from django.contrib import messages
 from django.core.paginator import Paginator
 from django.core.cache import cache
 from django.db.models import Q, Count
+from django.utils import timezone
+from zoneinfo import ZoneInfo
 from django.urls import reverse
 from urllib.parse import urlencode
-from .models import User, Role, School
+from .models import User, Role, School, UsageSession, PageVisit
+from .models_pages import Page
+from .context_processors import user_can_access_page
 from studata.models import School as StudataSchool
 from typing import Optional
+from datetime import datetime, timedelta
 
 
 def user_is_project_admin(user: User) -> bool:
@@ -236,6 +241,174 @@ def manage_users(request):
         return render(request, 'users/_user_table.html', context)
     
     return render(request, 'users/user_list.html', context)
+
+
+@login_required
+def usage_report(request):
+    usage_page = Page.objects.filter(slug='usage').first()
+    if usage_page:
+        if not user_can_access_page(request.user, usage_page):
+            messages.error(request, 'You do not have permission to access this page.')
+            return redirect('index')
+    else:
+        is_project_admin = request.user.is_superuser or request.user.is_project_admin
+        if hasattr(request.user, 'active_role') and request.user.active_role:
+            is_project_admin = is_project_admin or request.user.active_role.name == 'Project Admin'
+        if not is_project_admin:
+            messages.error(request, 'You do not have permission to access this page.')
+            return redirect('index')
+
+    pacific_tz = ZoneInfo('America/Los_Angeles')
+    now = timezone.now()
+
+    sessions_qs = UsageSession.objects.select_related('user').prefetch_related(
+        'page_visits',
+        'user__roles',
+    ).order_by('-login_at')
+
+    user_filter = request.GET.get('user', '').strip()
+    if user_filter:
+        sessions_qs = sessions_qs.filter(user__id=user_filter)
+
+    quick_filter = request.GET.get('quick', '').strip()
+    start_date = request.GET.get('start_date', '').strip()
+    end_date = request.GET.get('end_date', '').strip()
+
+    pacific_now = timezone.localtime(now, pacific_tz)
+    date_start_dt = None
+    date_end_dt = None
+
+    if quick_filter == 'week':
+        start_of_week = pacific_now - timedelta(days=pacific_now.weekday())
+        date_start_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        date_end_dt = pacific_now.replace(hour=23, minute=59, second=59, microsecond=999999)
+    elif quick_filter == 'year':
+        start_of_year = pacific_now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        date_start_dt = start_of_year
+        date_end_dt = pacific_now.replace(hour=23, minute=59, second=59, microsecond=999999)
+    else:
+        if start_date:
+            try:
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                date_start_dt = timezone.make_aware(start_dt, pacific_tz)
+            except ValueError:
+                date_start_dt = None
+        if end_date:
+            try:
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+                end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+                date_end_dt = timezone.make_aware(end_dt, pacific_tz)
+            except ValueError:
+                date_end_dt = None
+
+    if date_start_dt:
+        sessions_qs = sessions_qs.filter(login_at__gte=date_start_dt)
+    if date_end_dt:
+        sessions_qs = sessions_qs.filter(login_at__lte=date_end_dt)
+
+    paginator = Paginator(sessions_qs, 25)
+    page_number = request.GET.get('page', 1)
+    page_obj = paginator.get_page(page_number)
+
+    group_by = request.GET.get('group_by', '').strip()
+    sessions = []
+    for session in page_obj.object_list:
+        effective_end = session.logout_at or session.last_activity_at or now
+        total_seconds = session.total_seconds
+        if not total_seconds and session.login_at and effective_end:
+            total_seconds = max(0, int((effective_end - session.login_at).total_seconds()))
+
+        visits = list(session.page_visits.all())
+        visits.sort(key=lambda v: v.started_at or timezone.make_aware(datetime.min))
+        formatted_visits = []
+        for visit in visits:
+            visit_end = visit.ended_at or session.logout_at or session.last_activity_at or now
+            duration_seconds = visit.duration_seconds
+            if not duration_seconds and visit.started_at and visit_end:
+                duration_seconds = max(0, int((visit_end - visit.started_at).total_seconds()))
+            formatted_visits.append({
+                'path': visit.path,
+                'started_at_display': timezone.localtime(visit.started_at, pacific_tz).strftime('%Y-%m-%d %H:%M:%S') if visit.started_at else '—',
+                'ended_at_display': timezone.localtime(visit_end, pacific_tz).strftime('%Y-%m-%d %H:%M:%S') if visit_end else '—',
+                'duration_seconds': duration_seconds,
+                'duration_minutes': int((duration_seconds + 59) // 60) if duration_seconds else 0,
+            })
+
+        role_name = session.user.roles.first().name if session.user.roles.exists() else 'No Role'
+        title_name = session.user.job_title or 'No Title'
+
+        sessions.append({
+            'user': session.user,
+            'login_at_display': timezone.localtime(session.login_at, pacific_tz).strftime('%Y-%m-%d %H:%M:%S') if session.login_at else '—',
+            'logout_at_display': timezone.localtime(session.logout_at, pacific_tz).strftime('%Y-%m-%d %H:%M:%S') if session.logout_at else '—',
+            'last_activity_at_display': timezone.localtime(session.last_activity_at, pacific_tz).strftime('%Y-%m-%d %H:%M:%S') if session.last_activity_at else '—',
+            'total_minutes': int((total_seconds + 59) // 60) if total_seconds else 0,
+            'visits': formatted_visits,
+            'role_name': role_name,
+            'title_name': title_name,
+        })
+
+    # Most visited page summary (excluding landing '/')
+    from collections import defaultdict
+    page_agg = defaultdict(lambda: {'total_seconds': 0, 'users': set()})
+    for session in sessions:
+        for visit in session['visits']:
+            path = visit.get('path')
+            if not path or path == '/':
+                continue
+            duration_seconds = visit.get('duration_seconds') or 0
+            page_agg[path]['total_seconds'] += duration_seconds
+            page_agg[path]['users'].add(session['user'].email)
+
+    top_page = None
+    if page_agg:
+        sorted_pages = sorted(
+            page_agg.items(),
+            key=lambda item: (len(item[1]['users']), item[1]['total_seconds']),
+            reverse=True,
+        )
+        top_path, stats = sorted_pages[0]
+        top_page = {
+            'path': top_path,
+            'user_count': len(stats['users']),
+            'total_minutes': int((stats['total_seconds'] + 59) // 60),
+            'users': sorted(stats['users']),
+        }
+
+    users = User.objects.order_by('email')
+
+    grouped_sessions = None
+    if group_by in {'role', 'title'}:
+        grouped_sessions = {}
+        for session in sessions:
+            key = session['role_name'] if group_by == 'role' else session['title_name']
+            grouped_sessions.setdefault(key, []).append(session)
+
+    query_params = {
+        'user': user_filter,
+        'group_by': group_by,
+        'quick': quick_filter,
+        'start_date': start_date,
+        'end_date': end_date,
+    }
+    query_params = {k: v for k, v in query_params.items() if v}
+
+    context = {
+        'sessions': sessions,
+        'grouped_sessions': grouped_sessions,
+        'group_by': group_by,
+        'page_obj': page_obj,
+        'users': users,
+        'selected_user': user_filter,
+        'quick_filter': quick_filter,
+        'start_date': start_date,
+        'end_date': end_date,
+        'query_string': urlencode(query_params),
+        'top_page': top_page,
+        'timezone_label': 'America/Los_Angeles',
+    }
+
+    return render(request, 'users/usage.html', context)
 
 @login_required
 def user_detail(request, user_id):

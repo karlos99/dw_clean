@@ -1,4 +1,7 @@
-from .models import Role
+from .models import Role, UsageSession, PageVisit
+from django.conf import settings
+from django.utils import timezone
+from datetime import timedelta
 from django.apps import apps
 # Use apps.get_model to avoid potential circular imports during startup if safe
 # form studata.models import School as StudataSchool - safer to do lazy load or try/except but typically okay here.
@@ -103,3 +106,124 @@ class ActiveRoleMiddleware:
              # If we save to session, 'All' becomes impossible to reach by default without explicit 'all' flag.
         else:
              request.user.active_role = None
+
+
+class UsageTrackingMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+
+        if not getattr(request, 'user', None) or not request.user.is_authenticated:
+            return response
+
+        if request.session.get('impersonator_id'):
+            try:
+                if not request.session.session_key:
+                    request.session.save()
+                session_key = request.session.session_key
+                now = timezone.now()
+                usage_session = UsageSession.objects.filter(
+                    user=request.user,
+                    session_key=session_key,
+                    logout_at__isnull=True,
+                ).order_by('-login_at').first()
+                if usage_session:
+                    self._close_active_visit(request, usage_session, now)
+                    usage_session.logout_at = now
+                    usage_session.last_activity_at = now
+                    usage_session.total_seconds = max(0, int((usage_session.logout_at - usage_session.login_at).total_seconds()))
+                    usage_session.save(update_fields=['logout_at', 'last_activity_at', 'total_seconds'])
+            except Exception:
+                pass
+            return response
+
+        path = request.path or ''
+        if self._is_ignored_path(path):
+            return response
+
+        try:
+            if not request.session.session_key:
+                request.session.save()
+            session_key = request.session.session_key
+
+            now = timezone.now()
+            idle_minutes = getattr(settings, 'USAGE_TRACKING_IDLE_MINUTES', 30)
+            idle_delta = timedelta(minutes=idle_minutes)
+
+            usage_session = UsageSession.objects.filter(
+                user=request.user,
+                session_key=session_key,
+                logout_at__isnull=True,
+            ).order_by('-login_at').first()
+
+            if usage_session and usage_session.last_activity_at and now - usage_session.last_activity_at > idle_delta:
+                self._close_active_visit(request, usage_session, now)
+                usage_session.logout_at = now
+                usage_session.total_seconds = max(0, int((usage_session.logout_at - usage_session.login_at).total_seconds()))
+                usage_session.save(update_fields=['logout_at', 'total_seconds'])
+                usage_session = None
+
+            if not usage_session:
+                usage_session = UsageSession.objects.create(
+                    user=request.user,
+                    session_key=session_key,
+                    login_at=now,
+                    last_activity_at=now,
+                )
+                request.session['usage_visit_id'] = None
+                request.session['usage_visit_path'] = None
+
+            current_visit_id = request.session.get('usage_visit_id')
+            current_visit_path = request.session.get('usage_visit_path')
+
+            if current_visit_id and current_visit_path != path:
+                self._close_active_visit(request, usage_session, now)
+                current_visit_id = None
+                current_visit_path = None
+
+            if not current_visit_id:
+                visit = PageVisit.objects.create(
+                    session=usage_session,
+                    path=path,
+                    started_at=now,
+                )
+                request.session['usage_visit_id'] = visit.id
+                request.session['usage_visit_path'] = path
+
+            usage_session.last_activity_at = now
+            usage_session.save(update_fields=['last_activity_at'])
+        except Exception:
+            # Best-effort tracking; do not break requests
+            pass
+
+        return response
+
+    @staticmethod
+    def _is_ignored_path(path: str) -> bool:
+        if not path:
+            return True
+        ignored_prefixes = (
+            '/static/',
+            '/media/',
+            '/admin/',
+        )
+        ignored_paths = (
+            '/favicon.ico',
+        )
+        if path in ignored_paths:
+            return True
+        return path.startswith(ignored_prefixes)
+
+    @staticmethod
+    def _close_active_visit(request, usage_session, now):
+        visit_id = request.session.get('usage_visit_id')
+        if not visit_id:
+            return
+        visit = PageVisit.objects.filter(id=visit_id, session=usage_session).first()
+        if not visit or visit.ended_at:
+            return
+        visit.ended_at = now
+        visit.duration_seconds = max(0, int((visit.ended_at - visit.started_at).total_seconds()))
+        visit.save(update_fields=['ended_at', 'duration_seconds'])
