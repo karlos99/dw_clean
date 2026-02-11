@@ -815,6 +815,13 @@ def load_students(request):
             )
         if needs_students:
             join_sql += " LEFT JOIN students s ON s.student_annual_key = cs.stu_annual_key"
+            join_sql += (
+                " LEFT JOIN ("
+                " SELECT DISTINCT ON (state_student_number) *"
+                " FROM students"
+                " ORDER BY state_student_number, school_year DESC NULLS LAST, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
+                " ) sssid ON sssid.state_student_number = cs.ssid"
+            )
         if needs_eht:
             join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
 

@@ -27,6 +27,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let draggedColumn = null;
     let resizeState = null;
 
+    const stateStorageKey = 'dataexp:student_list_state';
+    let stateRestored = false;
+
     // Row selection for saving student lists
     const selectedStudentSsids = new Set();
 
@@ -200,6 +203,65 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     };
 
+    const saveViewState = () => {
+        try {
+            const payload = {
+                selectedColumns,
+                filters,
+                sortBy,
+                sortDir,
+                search: document.getElementById('search')?.value || '',
+                school_year: document.getElementById('school_year')?.value || '',
+                grade: document.getElementById('grade')?.value || '',
+                status: document.getElementById('status')?.value || '',
+                page,
+            };
+            sessionStorage.setItem(stateStorageKey, JSON.stringify(payload));
+        } catch (e) {
+            // best-effort
+        }
+    };
+
+    const restoreViewState = () => {
+        if (stateRestored) return;
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('saved_query') || urlParams.get('student_list')) {
+            stateRestored = true;
+            return;
+        }
+        try {
+            const raw = sessionStorage.getItem(stateStorageKey);
+            if (!raw) {
+                stateRestored = true;
+                return;
+            }
+            const stored = JSON.parse(raw);
+            if (Array.isArray(stored.selectedColumns) && stored.selectedColumns.length) {
+                selectedColumns = stored.selectedColumns;
+            }
+            if (stored.filters && typeof stored.filters === 'object') {
+                filters = stored.filters;
+            }
+            if (stored.sortBy) sortBy = stored.sortBy;
+            if (stored.sortDir) sortDir = stored.sortDir;
+            if (typeof stored.page === 'number' && stored.page > 0) page = stored.page;
+
+            const searchInput = document.getElementById('search');
+            const schoolYearSelect = document.getElementById('school_year');
+            const gradeSelect = document.getElementById('grade');
+            const statusInput = document.getElementById('status');
+
+            if (searchInput && stored.search !== undefined) searchInput.value = stored.search || '';
+            if (schoolYearSelect && stored.school_year !== undefined) schoolYearSelect.value = stored.school_year || '';
+            if (gradeSelect && stored.grade !== undefined) gradeSelect.value = stored.grade || '';
+            if (statusInput && stored.status !== undefined) statusInput.value = stored.status || '';
+        } catch (e) {
+            // ignore
+        } finally {
+            stateRestored = true;
+        }
+    };
+
     const getCurrentQueryConfigForSave = () => {
         return {
             columns: selectedColumns,
@@ -285,6 +347,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderSelectedColumns = () => {
         if (selectedCountEl) selectedCountEl.textContent = selectedColumns.length;
         if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = String(selectedColumns.length);
+        const selectedLabels = selectedColumns
+            .map((col) => {
+                const label = columnDefinitions[col] || col;
+                return label.includes('\n') ? label.split('\n')[0] : label;
+            })
+            .join(', ');
+        const tooltipText = selectedLabels || 'No columns selected';
+        if (selectedCountEl) selectedCountEl.setAttribute('title', tooltipText);
+        if (selectedCountToolbarEl) selectedCountToolbarEl.setAttribute('title', tooltipText);
         syncCheckboxes();
     };
 
@@ -330,20 +401,117 @@ document.addEventListener('DOMContentLoaded', () => {
             backdrop.classList.toggle('hidden', !show);
         }
         
+        try {
+            sessionStorage.setItem('columnSidebarOpen', show ? 'true' : 'false');
+        } catch (e) {
+            // ignore
+        }
+        
         // Update floating tab position when sidebar opens/closes
-        const floatingTab = document.querySelector('[data-action="toggle-column-selector"]');
-        if (floatingTab) {
-            if (show) {
-                // Move tab to the right when sidebar is open (only on large screens)
-                if (window.innerWidth >= 1024) {
-                    floatingTab.style.left = '320px'; // 80 * 4 = 320px (w-80)
-                }
-            } else {
-                // Reset to left edge when sidebar is closed
-                floatingTab.style.left = '0';
-            }
+        applyToggleEdgeLeft();
+    };
+
+    const draggableToggle = document.querySelector('[data-draggable="column-toggle"]');
+    let dragState = null;
+    let lastDragAt = 0;
+
+    const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+    const getToggleEdgeLeft = () => {
+        const sidebarOpen = sessionStorage.getItem('columnSidebarOpen') === 'true';
+        const edgeLeft = sidebarOpen && window.innerWidth >= 1024 ? 320 : 0;
+        const edgeOffset = 8;
+        return edgeLeft + edgeOffset;
+    };
+
+    const applyToggleEdgeLeft = () => {
+        if (!draggableToggle) return;
+        draggableToggle.style.left = `${getToggleEdgeLeft()}px`;
+    };
+
+    const restoreTogglePosition = () => {
+        if (!draggableToggle) return;
+        const stored = localStorage.getItem('columnTogglePosition');
+        applyToggleEdgeLeft();
+        if (!stored) return;
+        try {
+            const pos = JSON.parse(stored);
+            if (!pos || typeof pos.top !== 'number') return;
+            draggableToggle.style.top = `${pos.top}px`;
+            draggableToggle.style.transform = 'none';
+        } catch (e) {
+            // ignore
         }
     };
+
+    const saveTogglePosition = () => {
+        if (!draggableToggle) return;
+        const rect = draggableToggle.getBoundingClientRect();
+        localStorage.setItem('columnTogglePosition', JSON.stringify({
+            top: rect.top,
+        }));
+        localStorage.setItem('columnToggleUserMoved', 'true');
+    };
+
+    const startDrag = (event) => {
+        if (!draggableToggle) return;
+        const isPrimary = event.button === 0 || event.type.startsWith('touch');
+        if (!isPrimary) return;
+        const rect = draggableToggle.getBoundingClientRect();
+        const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+        const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+
+        dragState = {
+            startX: clientX,
+            startY: clientY,
+            offsetX: clientX - rect.left,
+            offsetY: clientY - rect.top,
+            moved: false,
+        };
+
+        draggableToggle.classList.add('cursor-grabbing');
+        event.preventDefault();
+    };
+
+    const moveDrag = (event) => {
+        if (!dragState || !draggableToggle) return;
+        const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+        const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+        const deltaX = Math.abs(clientX - dragState.startX);
+        const deltaY = Math.abs(clientY - dragState.startY);
+        if (deltaX > 4 || deltaY > 4) dragState.moved = true;
+
+        const maxTop = window.innerHeight - draggableToggle.offsetHeight - 8;
+        const nextTop = clamp(clientY - dragState.offsetY, 8, Math.max(8, maxTop));
+
+        draggableToggle.style.left = `${getToggleEdgeLeft()}px`;
+        draggableToggle.style.top = `${nextTop}px`;
+        draggableToggle.style.transform = 'none';
+        event.preventDefault();
+    };
+
+    const endDrag = () => {
+        if (!dragState || !draggableToggle) return;
+        draggableToggle.classList.remove('cursor-grabbing');
+        if (dragState.moved) {
+            saveTogglePosition();
+            lastDragAt = Date.now();
+        }
+        dragState = null;
+    };
+
+    if (draggableToggle) {
+        restoreTogglePosition();
+        applyToggleEdgeLeft();
+        draggableToggle.addEventListener('mousedown', startDrag);
+        draggableToggle.addEventListener('touchstart', startDrag, { passive: false });
+        window.addEventListener('mousemove', moveDrag);
+        window.addEventListener('touchmove', moveDrag, { passive: false });
+        window.addEventListener('mouseup', endDrag);
+        window.addEventListener('touchend', endDrag);
+        window.addEventListener('touchcancel', endDrag);
+        window.addEventListener('resize', applyToggleEdgeLeft);
+    }
 
     const escapeHtml = (value) => {
         return String(value ?? '')
@@ -644,6 +812,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const loadData = () => {
         showLoading('Loading student data...');
+
+        restoreViewState();
         
         const url = new URL(loadStudentsUrl, window.location.origin);
         url.searchParams.set('page', page);
@@ -691,6 +861,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .then((response) => response.json())
             .then((payload) => {
                 renderTable(payload);
+                saveViewState();
                 hideLoading();
             })
             .catch((error) => {
@@ -989,6 +1160,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const openSidebarBtn = event.target.closest('[data-action="toggle-column-selector"]');
         if (openSidebarBtn) {
+            if (Date.now() - lastDragAt < 300) {
+                return;
+            }
             const isHidden = sidebarEl?.classList.contains('hidden');
             toggleSidebar(isHidden);
             return;
@@ -1441,6 +1615,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     renderSelectedColumns();
     renderSelectedStudentCount();
+    restoreViewState();
+    try {
+        const sidebarOpen = sessionStorage.getItem('columnSidebarOpen') === 'true';
+        if (sidebarOpen) {
+            toggleSidebar(true);
+        }
+    } catch (e) {
+        // ignore
+    }
     loadData();
 
     // --- Folder browser helpers (the folder browser HTML is loaded via HTMX;
