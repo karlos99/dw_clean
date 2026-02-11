@@ -8,9 +8,9 @@ import json
 import csv
 import hashlib
 
-
 from ..models import SavedQuery, StudentList
 from ..constants import COLUMN_DEFINITIONS
+from ..column_utils import _get_display_name
 from ..utils import can_user_view_query, get_user_folders
 from .student_data_utils import (
     get_current_student_columns,
@@ -218,6 +218,7 @@ def export_students_csv(request):
             " ) se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
         )
     if needs_students:
+        join_sql += " LEFT JOIN students s ON s.student_annual_key = cs.stu_annual_key"
         join_sql += (
             " LEFT JOIN ("
             " SELECT DISTINCT ON (state_student_number) *"
@@ -227,7 +228,6 @@ def export_students_csv(request):
         )
     if needs_eht:
         join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
-
 
     # Streaming Response setup
     class Echo:
@@ -240,11 +240,6 @@ def export_students_csv(request):
         import logging
         logger = logging.getLogger(__name__)
         try:
-            # Yield Header
-            header_labels = [COLUMN_DEFINITIONS.get(col, col) for col in selected_columns]
-            yield writer.writerow(header_labels)
-            logger.info(f"CSV Export: Header yielded, starting data export with {len(selected_columns)} columns")
-
             with connections['default'].cursor() as cursor:
                 # Re-implement helper logic inline or simplified
                 def _parse_year_from_test_col(col_key):
@@ -416,6 +411,32 @@ def export_students_csv(request):
                                 mark_cols_info.append(info)
                                 mark_col_map[original_key] = info
                                 mark_col_map[original_key.replace('-', '_')] = info
+
+                # Prepare Dynamic Headers
+                dynamic_labels = COLUMN_DEFINITIONS.copy()
+                if test_cols_info:
+                    for info in test_cols_info:
+                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
+                        metric_label = metric_map.get(info['metric'], info['metric'])
+                        
+                        display_test = _get_display_name(info['test_name'])
+                        display_subject = _get_display_name(info['subject'])
+                        
+                        label = f"{display_test} {display_subject} ({info['year']}) {metric_label}"
+                        if info.get('test_window'):
+                            label += f" {info['test_window']}"
+                        dynamic_labels[info['col_name']] = label
+
+                if mark_cols_info:
+                    for info in mark_cols_info:
+                        period = info.get('mark_period') or 'Unknown'
+                        label = f"{info['course_name']} ({info['subject']}) {period} {info['year']}"
+                        dynamic_labels[info['col_name']] = label
+
+                # Yield Header
+                header_labels = [dynamic_labels.get(col, col) for col in selected_columns]
+                yield writer.writerow(header_labels)
+                logger.info(f"CSV Export: Header yielded, starting data export with {len(selected_columns)} columns")
 
                 # Build Where Clauses
                 base_where_clauses = ["1=1"]

@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const columnStructuresUrl = appDataEl.dataset.columnStructuresUrl;
+    const columnStatisticsUrl = appDataEl.dataset.columnStatisticsUrl;
 
     let selectedColumns = [];
     let columnDefinitions = {};
@@ -269,6 +270,38 @@ document.addEventListener('DOMContentLoaded', () => {
             sort_by: sortBy,
             sort_dir: sortDir,
         };
+    };
+
+    const statsCache = {};
+    const clearStatsCache = () => {
+        Object.keys(statsCache).forEach(k => delete statsCache[k]);
+    };
+
+    const fetchColumnStats = async (col) => {
+        if (statsCache[col]) return statsCache[col];
+        if (!columnStatisticsUrl) return null;
+
+        const url = new URL(columnStatisticsUrl, window.location.origin);
+        url.searchParams.set('target_columns', JSON.stringify([col]));
+        url.searchParams.set('school_year', document.getElementById('school_year')?.value || '');
+        url.searchParams.set('grade', document.getElementById('grade')?.value || '');
+        url.searchParams.set('status', document.getElementById('status')?.value || '');
+        url.searchParams.set('search', document.getElementById('search')?.value || '');
+        if (filters && Object.keys(filters).length) {
+             url.searchParams.set('filters', JSON.stringify(filters));
+        }
+
+        try {
+            const res = await fetch(url.toString(), { credentials: 'same-origin' });
+            if (!res.ok) return null;
+            const data = await res.json();
+            const stats = data.columns && data.columns[col];
+            if (stats) statsCache[col] = stats;
+            return stats;
+        } catch (e) {
+            console.error(e);
+            return null;
+        }
     };
 
     const refreshColumnStructures = async () => {
@@ -653,7 +686,7 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '<input type="checkbox" data-action="select-all-visible" class="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900 cursor-pointer" aria-label="Select all visible students">';
         html += '</th>';
 
-        columns.forEach((col) => {
+        columns.forEach((col, index) => {
             const label = columnDefinitions[col] || col;
             const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
             const hasActiveFilter = Array.isArray(filters[col]) && filters[col].length > 0;
@@ -661,6 +694,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const isSorted = sortBy === col;
             const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
             const sortColorClass = isSorted ? 'text-blue-400' : 'text-slate-600 group-hover:text-slate-400';
+            
+            const isRightSide = index > (columns.length - 3) && columns.length > 3;
+            const alignClass = isRightSide ? 'right-0' : 'left-0';
 
             html += `<th draggable="true" data-column="${escapeHtml(col)}" class="relative group px-4 py-3 text-left text-xs font-bold text-slate-300 uppercase bg-slate-900 border-b border-slate-800 hover:bg-slate-800 transition-colors select-none">`;
             html += `<div class="flex items-center justify-between gap-2">`;
@@ -668,6 +704,18 @@ document.addEventListener('DOMContentLoaded', () => {
             html += `<span class="whitespace-pre-wrap break-words group-hover/sort:text-white transition-colors">${escapeHtml(label)}</span>`;
             html += `<span class="text-[10px] ${sortColorClass} group-hover/sort:text-white transition-colors flex-shrink-0">${sortIcon}</span>`;
             html += `</div>`;
+
+            // Stats Button
+            html += `<div class="relative ml-1">`;
+            html += `<button draggable="false" type="button" data-action="toggle-stats" data-column="${escapeHtml(col)}" class="p-1 rounded hover:bg-slate-700 text-slate-500 group-hover:text-slate-300 transition-colors" title="Column Statistics">`;
+            html += `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2z"></path></svg>`;
+            html += `</button>`;
+            html += `<div class="hidden absolute ${alignClass} top-full mt-2 w-72 bg-white rounded-md shadow-xl border border-slate-200 z-30 text-slate-700 font-normal normal-case text-left cursor-default p-0" data-stats-panel="${escapeHtml(col)}">`;
+            html += `<div class="p-2 border-b border-slate-100 font-bold text-slate-800 bg-slate-50 rounded-t-md flex justify-between items-center text-xs"><span>Statistics</span><button data-action="toggle-stats" data-column="${escapeHtml(col)}" class="text-slate-400 hover:text-red-500 px-1">×</button></div>`;
+            html += `<div class="p-2 max-h-80 overflow-y-auto" data-stats-content="${escapeHtml(col)}"><div class="animate-pulse flex space-x-4"><div class="flex-1 space-y-2 py-1"><div class="h-2 bg-slate-200 rounded"></div><div class="h-2 bg-slate-200 rounded w-5/6"></div></div></div></div>`;
+            html += `</div>`;
+            html += `</div>`;
+
             if (hasFilter || col === 'atendace_rate') {
                 const filterIconClass = hasActiveFilter ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300';
                 html += `<div class="relative ml-1">`;
@@ -795,6 +843,66 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     document.addEventListener('click', async (event) => {
+        const toggleStatsEl = event.target.closest('[data-action="toggle-stats"]');
+        if (toggleStatsEl) {
+            event.preventDefault();
+            event.stopPropagation();
+            const col = toggleStatsEl.dataset.column;
+            const panel = document.querySelector(`[data-stats-panel="${cssEscape(col)}"]`);
+            if (!panel) return;
+            
+            const isHidden = panel.classList.contains('hidden');
+            
+            // Close all others
+            document.querySelectorAll('[data-stats-panel]').forEach(p => {
+                if (p !== panel && !p.classList.contains('hidden')) p.classList.add('hidden');
+            });
+
+            if (isHidden) {
+                panel.classList.remove('hidden');
+                const contentEl = panel.querySelector(`[data-stats-content]`);
+                if (contentEl) {
+                     contentEl.innerHTML = '<div class="space-y-2 p-2"><div class="animate-pulse h-2 bg-slate-200 rounded w-full"></div><div class="animate-pulse h-2 bg-slate-200 rounded w-3/4"></div></div>';
+                     const stats = await fetchColumnStats(col);
+                     if (stats) {
+                         // Render stats
+                         let html = `<div class="space-y-3 text-xs">`;
+                         html += `<div class="grid grid-cols-2 gap-2 text-center pb-2 border-b border-slate-100">`;
+                         html += `<div><div class="text-[10px] text-slate-500 uppercase tracking-wider">Count</div><div class="font-bold text-slate-800 text-sm">${stats.count}</div></div>`;
+                         html += `<div><div class="text-[10px] text-slate-500 uppercase tracking-wider">Unique</div><div class="font-bold text-slate-800 text-sm">${stats.unique}</div></div>`;
+                         if (stats.avg !== undefined && stats.avg !== null) {
+                             html += `<div><div class="text-[10px] text-slate-500 uppercase tracking-wider">Avg</div><div class="font-bold text-slate-800 text-sm">${stats.avg}</div></div>`;
+                             html += `<div><div class="text-[10px] text-slate-500 uppercase tracking-wider">Median</div><div class="font-bold text-slate-800 text-sm">${stats.median}</div></div>`;
+                         }
+                         html += `</div>`;
+                         
+                         html += `<div><div class="text-slate-500 mb-2 font-semibold flex justify-between items-center"><span>Values</span> <span class="text-[10px] font-normal text-slate-400">Top 50</span></div>`;
+                         html += `<div class="space-y-1.5 max-h-48 overflow-y-auto pr-1">`;
+                         
+                         // Sort distribution by count desc
+                         const dist = (stats.distribution || []).sort((a, b) => b.count - a.count);
+                         
+                         dist.forEach(d => {
+                            const pct = d.percent;
+                            html += `<div class="flex items-center gap-2 text-[11px]">`;
+                            html += `<div class="w-24 truncate text-slate-700" title="${escapeHtml(d.value)}">${(d.value === '' || d.value === null) ? '<em class="text-slate-400">(Blank)</em>' : escapeHtml(d.value)}</div>`;
+                            html += `<div class="flex-1 h-3 bg-slate-100 rounded-sm overflow-hidden relative"><div class="absolute top-0 left-0 h-full bg-blue-500" style="width:${pct}%"></div></div>`;
+                            html += `<div class="w-16 text-right text-slate-500 font-mono text-[10px]"><span class="font-bold text-slate-700">${d.count}</span> (${pct}%)</div>`;
+                            html += `</div>`;
+                         });
+                         html += `</div></div>`;
+                         html += `</div>`;
+                         contentEl.innerHTML = html;
+                     } else {
+                         contentEl.innerHTML = '<div class="text-red-500 p-2 text-xs">Failed to load statistics.</div>';
+                     }
+                }
+            } else {
+                panel.classList.add('hidden');
+            }
+            return;
+        }
+
         const openSummaryEl = event.target.closest('[data-action="open-student-summary"]');
         if (openSummaryEl) {
             const isPlainLeftClick = event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
@@ -829,6 +937,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const loadData = () => {
         showLoading('Loading student data...');
+        clearStatsCache();
 
         restoreViewState();
         

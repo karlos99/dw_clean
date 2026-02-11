@@ -18,6 +18,7 @@ urlpatterns = [
     path('student-summary/warm/', warm_student_test_summary_cache, name='student_test_summary_warm'),
     path('api/students/', load_students, name='load_students'),
     path('api/students/export-csv/', views.export_students_csv, name='export_students_csv'),
+    path('api/students/statistics/', views.get_column_statistics, name='get_column_statistics'),
     path('api/column-structures/', load_column_structures, name='load_column_structures'),
     path('api/folders/', views.folder_browser, name='folder_browser'),
     path('api/save-query/', views.save_query, name='save_query'),
