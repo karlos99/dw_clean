@@ -78,14 +78,31 @@ def save_query_modal(request):
     all_folders = get_user_folders(request.user)
     folders = [f for f in all_folders if can_create_in_folder(request.user, f)]
     
+    # Get queries in any of the writable folders OR owned by the user
+    # This ensures we see reports we can overwrite in shared folders (like District)
+    # as well as our own private reports.
+    folder_ids = [f.id for f in folders]
+    
     existing_queries = SavedQuery.objects.filter(
-        owner=request.user,
+        folder_id__in=folder_ids,
         query_type='filter',
         is_active=True,
     ).order_by('name')
+
+    # Serialize for JS filtering
+    existing_queries_data = [
+        {
+            'id': q.id,
+            'name': q.name,
+            'description': q.description,
+            'folder_id': q.folder_id 
+        } for q in existing_queries
+    ]
+
     context = {
         'folders': folders,
         'existing_queries': existing_queries,
+        'existing_queries_json': json.dumps(existing_queries_data),
     }
     return render(request, 'dataexploration/partials/save_query_modal.html', context)
 
@@ -596,22 +613,36 @@ def share_modal(request):
 def create_folder_modal(request):
     parent_id = request.GET.get('parent_id')
     
-    # Build hierarchy of folders the user can create in (currently only their own)
-    def get_folder_hierarchy(parent=None, level=0):
-        qs = ReportFolder.objects.filter(owner=request.user, parent=parent).order_by('name')
+    # Build hierarchy of folders the user can create in
+    all_folders = get_user_folders(request.user)
+    folder_map = {}
+    for f in all_folders:
+        pid = f.parent_id
+        if pid not in folder_map:
+            folder_map[pid] = []
+        folder_map[pid].append(f)
+
+    def get_folder_hierarchy(parent_id=None, level=0):
+        # Default behavior of get_user_folders covers access, but we need to check write access
+        children = sorted(folder_map.get(parent_id, []), key=lambda x: x.name)
         results = []
-        for folder in qs:
-            results.append({
-                'id': folder.id,
-                'name': folder.name,
-                'level': level,
-                # Use plain spaces for safe rendering in select options if needed, or handle in template
-                'indent': level 
-            })
-            results.extend(get_folder_hierarchy(folder, level + 1))
+        for folder in children:
+            if can_create_in_folder(request.user, folder):
+                results.append({
+                    'id': folder.id,
+                    'name': folder.name,
+                    'level': level,
+                    'indent': level 
+                })
+            # Recurse even if we can't write to this one? 
+            # If I can't write to District Folder root, can I write to subfolder?
+            # Generally permissions flow down. But if I can write to subfolder, I must be able to Traverse to it.
+            # get_user_folders ensures I can View it.
+            # Building the tree requires recursion.
+            results.extend(get_folder_hierarchy(folder.id, level + 1))
         return results
 
-    folder_options = get_folder_hierarchy()
+    folder_options = get_folder_hierarchy(None, 0)
     
     return render(request, 'dataexploration/partials/create_folder_modal.html', {
         'parent_id': parent_id,
