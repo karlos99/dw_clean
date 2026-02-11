@@ -62,8 +62,15 @@ from .view_modules.column_management import (
     load_column_structures,
 )
 
+# Import from statistics module
+from .view_modules.statistics_views import (
+    get_column_statistics,
+)
+
 # Export all public views
 __all__ = [
+    # Statistics
+    'get_column_statistics',
     # List and data views
     'StudentWithTestsListView',
     'load_students',
