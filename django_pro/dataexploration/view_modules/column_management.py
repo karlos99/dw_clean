@@ -24,7 +24,7 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
     if col == 'elem_teacher_name' and use_eht:
         return "eht.elem_teacher_name", "elem_teacher_name"
     if col == 'ltel' and use_students:
-        return "s.ltel", "ltel"
+        return "COALESCE(s.ltel, sssid.ltel)", "ltel"
     if col == 'ell':
         ell_candidates = []
         if 'ell' in db_columns:
