@@ -14,7 +14,7 @@ import json
 
 from ..models import SavedQuery, StudentList
 from studata.models import CurrentStudent
-from ..column_utils import get_test_columns, get_mark_columns
+from ..column_utils import get_test_columns, get_mark_columns, _get_display_name
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
 from .student_data_utils import (
@@ -835,8 +835,7 @@ def load_students(request):
         )
 
         needs_eht = (
-             'elem_teacher_name' in selected_columns
-             or (isinstance(filters, dict) and 'elem_teacher_name' in filters.keys())
+             (isinstance(filters, dict) and 'elem_teacher_name' in filters.keys())
              or sort_by == 'elem_teacher_name'
         )
 
@@ -895,7 +894,7 @@ def load_students(request):
         if test_cols_info and 'student_id' not in base_cols:
             base_cols.insert(0, 'student_id')
 
-        if mark_cols_info and 'stu_annual_key' not in base_cols:
+        if (mark_cols_info or 'elem_teacher_name' in base_cols) and 'stu_annual_key' not in base_cols:
             base_cols.insert(0, 'stu_annual_key')
 
         # Build base column SELECT with safe mapping
@@ -915,13 +914,16 @@ def load_students(request):
 
         base_col_sql = ", ".join(base_col_selects)
 
-        # Sorting
+        # Sorting (Optimized with Redis Caching)
         order_by_expr = "cs.student_name"
+        need_joined_sort = False
+        
         if sort_by:
             expr = base_col_expressions.get(sort_by)
             if expr:
                 order_by_expr = expr
             elif sort_by in mark_col_map:
+                # Keep subquery for marks (less frequent)
                 mark_info = mark_col_map.get(sort_by)
                 period_clause = ""
                 if mark_info.get('mark_period'):
@@ -938,32 +940,144 @@ def load_students(request):
                     f"{period_clause} "
                     "LIMIT 1)"
                 )
-                # inject params for order-by subquery
                 params.extend([
                     mark_info['year'],
-                    f"%{mark_info['subject']}%",
+                     f"%{mark_info['subject']}%",
                     f"%{mark_info['course_name']}%",
                 ])
                 if mark_info.get('mark_period'):
                     params.append(mark_info['mark_period'])
+            elif sort_by in test_col_map:
+                # Use subquery for now, but we'll cache the result ids
+                test_info = test_col_map.get(sort_by)
+                metric_col = test_info['metric']
+                
+                window_clause = ""
+                window_params = []
+                if test_info.get('test_window'):
+                    window_clause = "AND t.test_window ILIKE %s"
+                    window_params = [test_info['test_window']]
+                
+                select_expr = ""
+                extra_params = []
+                
+                if metric_col == 'ss':
+                     select_expr = "CAST(NULLIF(regexp_replace(r.ss, '[^0-9.]', '', 'g'), '') AS NUMERIC)"
+                elif metric_col == 'pl':
+                     select_expr = "CASE WHEN r.pl ~ '^[0-9]+$' THEN LPAD(r.pl, 10, '0') ELSE r.pl END"
+                else:
+                    select_expr = "(r.other_info ->> %s)"
+                    extra_params = [test_info.get('other_info_key', '')]
+
+                order_by_expr = (
+                    f"(SELECT {select_expr} FROM results r "
+                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    "WHERE r.local_student_id = cs.student_id "
+                    "AND r.school_year = %s "
+                    "AND t.test_name ILIKE %s "
+                    "AND t.subject ILIKE %s "
+                    f"{window_clause} "
+                    "LIMIT 1)"
+                )
+                params.extend(extra_params)
+                params.extend([
+                    test_info['year'],
+                    f"%{test_info['test_name']}%",
+                    f"%{test_info['subject']}%",
+                ])
+                params.extend(window_params)
+
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
+
+        # Check Redis cache for sorted IDs
+        # Include full params in key to ensure uniqueness for filters
+        # Note: We rely on cache invalidation via TTL (5 mins) matching the count cache
+        cache_key_components = {
+            'sql_hash': hashlib.md5((where_sql + join_sql).encode()).hexdigest(),
+            'params': [str(p) for p in params], # params includes where + sort params
+            'sort': f"{sort_by}:{sort_dir}",
+            'limit': limit,
+            'offset': offset 
+        }
+        # Actually, for pagination optimization we should cache the FULL list of IDs for this filter+sort,
+        # but fetching all IDs might be heavy. 
+        # For now, let's cache the specific page result to speed up subsequent views of the same page/sort.
         
-        # Build query with base columns
-        query = f"""
-        SELECT /*+ Leading(cs) */ {base_col_sql}
-        FROM current_student cs
-        {join_sql}
-        WHERE {where_sql}
-        ORDER BY {order_by_expr} {sort_dir}
-        LIMIT %s OFFSET %s
-        """
-        
-        params.extend([limit, offset])
-        cursor.execute(query, params)
-        
-        columns = [desc[0] for desc in cursor.description]
-        students = [dict(zip(columns, row)) for row in cursor.fetchall()]
-        
+        page_cache_key = f"dataexp:page:{hashlib.md5(json.dumps(cache_key_components, sort_keys=True).encode()).hexdigest()}"
+        cached_ssids = cache.get(page_cache_key)
+
+        if cached_ssids:
+            # HIT: Retrieve students by SSID from DB (unordered), then reorder in Python
+            # This avoids the expensive JOIN/SORT query provided we just fetch by ID.
+            
+            # We must still fetch the data columns...
+            # Construct a simpler query for retrieving known SSIDs
+            placeholders = ",".join(["%s"] * len(cached_ssids))
+            if not placeholders:
+                 columns = []
+                 students = []
+            else:
+                id_fetch_query = f"""
+                SELECT {base_col_sql}
+                FROM current_student cs
+                {join_sql}
+                WHERE cs.ssid IN ({placeholders})
+                """
+                # We need to recreate params ONLY for join columns (if any) + SSIDs
+                # This is tricky because join_sql doesn't have params here (it joins on fields).
+                # But wait, join_sql is just string.
+                # However base_col_expressions might have params (unlikely for base columns).
+                # To be safe, re-running the full query w/ cached result is not what we want.
+                
+                # Simpler approach: If we have SSIDs, we can just fetch those students.
+                # But we need their dynamic columns too.
+                # The `test_data` fetching below relies on `student_ids` or `student_keys` derived from `students`.
+                
+                # So:
+                # 1. Fetch base row data for these SSIDs.
+                # 2. Sort them in Python to match the cached order.
+                # 3. Proceed to fetch Test/Mark data as usual.
+                
+                cursor.execute(f"SELECT {base_col_sql} FROM current_student cs {join_sql} WHERE cs.ssid = ANY(%s)", [cached_ssids])
+                cols = [desc[0] for desc in cursor.description]
+                unordered_students = {row[cols.index('ssid')]: dict(zip(cols, row)) for row in cursor.fetchall()}
+                
+                # Reconstruct ordered list
+                students = []
+                for ssid in cached_ssids:
+                    if ssid in unordered_students:
+                        students.append(unordered_students[ssid])
+            
+            # Set columns for zip from the cached execution context (simulated)
+            columns = [c for c in base_col_expressions] # Approximate, but we used the cursor above.
+             
+        else:
+            # MISS: Run expensive sort query
+            query = f"""
+            SELECT /*+ Leading(cs) */ {base_col_sql}
+            FROM current_student cs
+            {join_sql}
+            WHERE {where_sql}
+            ORDER BY {order_by_expr} {sort_dir}
+            LIMIT %s OFFSET %s
+            """
+            
+            # We need to preserve params for the full query
+            # (params already contains where_params + sort_params)
+            query_params = list(params)
+            query_params.extend([limit, offset])
+            
+            cursor.execute(query, query_params)
+            
+            columns = [desc[0] for desc in cursor.description]
+            students = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            
+            # Cache the SSIDs of this result page
+            result_ssids = [s.get('ssid') for s in students if s.get('ssid')]
+            if result_ssids:
+                cache.set(page_cache_key, result_ssids, 300)
+
+        # Proceed with Detail Fetching (Test/Marks) for the identified students
         student_ids = [s.get('student_id') for s in students if s.get('student_id')]
         student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
         
@@ -1046,6 +1160,23 @@ def load_students(request):
                 for student in students:
                     student_key = student.get('stu_annual_key')
                     student[mark_info['col_name']] = mark_data.get(student_key, '—')
+
+        # Fast fetch elem_teacher_name if requested but not joined
+        if 'elem_teacher_name' in base_cols and not needs_eht and student_keys:
+            q_eht = """
+                SELECT sl.stu_annual_key, regexp_replace(sl.staff_name, '^([^,]+),\\s*(\\w).*$', '\\1, \\2.')
+                FROM schedule_list sl
+                JOIN school sch ON sch.state_id = sl.state_school_id
+                WHERE sl.stu_annual_key = ANY(%s)
+                AND sl.period = '0'
+                AND sch.school_group = 'Elementary School'
+            """
+            cursor.execute(q_eht, [student_keys])
+            eht_map = {row[0]: row[1] for row in cursor.fetchall()}
+            for student in students:
+                key = student.get('stu_annual_key')
+                if key:
+                    student['elem_teacher_name'] = eht_map.get(key, '')
 
         # Ensure JSON serialization safety (e.g. Decimal fields like atendace_rate)
         for student in students:
@@ -1350,7 +1481,9 @@ def load_students(request):
         for info in test_cols_info:
             metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
             metric_label = metric_map.get(info['metric'], info['metric'])
-            label = f"{info['test_name']} {info['subject']} ({info['year']}) {metric_label}"
+            display_test = _get_display_name(info['test_name'])
+            display_subject = _get_display_name(info['subject'])
+            label = f"{display_test} {display_subject} ({info['year']}) {metric_label}"
             if info.get('test_window'):
                 label += f"\n{info['test_window']}"
             dynamic_definitions[info['col_name']] = label
