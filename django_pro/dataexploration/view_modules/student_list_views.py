@@ -216,6 +216,42 @@ def load_students(request):
             if not values:
                 continue
 
+            if col == 'atendace_rate':
+                expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
+                if expr:
+                    conditions = []
+                    import re
+                    for val in values:
+                        val_str = str(val).strip()
+                        if not val_str: # Blank
+                            conditions.append(f"({expr} IS NULL)")
+                            continue
+                        
+                        # Check for operators: <, <=, >, >=, = followed by number
+                        match = re.match(r'^([<>]=?|=)?\s*(\d+(?:\.\d+)?)$', val_str)
+                        if match:
+                            op = match.group(1) or '='
+                            num = match.group(2)
+                            conditions.append(f"{expr} {op} %s")
+                            params.append(num)
+                            continue
+                        
+                        # Check for range: num - num
+                        match_range = re.match(r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$', val_str)
+                        if match_range:
+                            low, high = match_range.groups()
+                            conditions.append(f"{expr} BETWEEN %s AND %s")
+                            params.extend([low, high])
+                            continue
+                        
+                        # Fallback to equality
+                        conditions.append(f"{expr} = %s")
+                        params.append(val)
+                    
+                    if conditions:
+                        where_clauses.append(f"({' OR '.join(conditions)})")
+                    continue
+
             # Handle blank values (represented by empty string)
             has_blank = "" in values
             real_values = [v for v in values if v != ""]

@@ -668,13 +668,30 @@ document.addEventListener('DOMContentLoaded', () => {
             html += `<span class="whitespace-pre-wrap break-words group-hover/sort:text-white transition-colors">${escapeHtml(label)}</span>`;
             html += `<span class="text-[10px] ${sortColorClass} group-hover/sort:text-white transition-colors flex-shrink-0">${sortIcon}</span>`;
             html += `</div>`;
-            if (hasFilter) {
+            if (hasFilter || col === 'atendace_rate') {
                 const filterIconClass = hasActiveFilter ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300';
                 html += `<div class="relative ml-1">`;
                 html += `<button draggable="false" type="button" data-action="toggle-filter" data-column="${escapeHtml(col)}" class="p-1 rounded hover:bg-slate-700 ${filterIconClass} transition-colors" title="Filter list">`;
                 html += `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>`;
                 html += `</button>`;
                 html += `<div class="hidden absolute right-0 mt-2 w-56 bg-white rounded-md shadow-xl border border-slate-200 py-1 z-20 text-slate-700 font-normal normal-case text-left" data-filter-panel="${escapeHtml(col)}">`;
+                
+                if (col === 'atendace_rate') {
+                     html += `<div class="p-2 border-b border-slate-200 space-y-2 bg-slate-50">`;
+                     html += `<div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Range %</div>`;
+                     html += `<div class="flex gap-2 items-center">`;
+                     html += `<input type="number" placeholder="Min" id="filter-min-${col}" class="w-16 text-xs border border-slate-300 rounded px-1.5 py-1" min="0" max="100">`;
+                     html += `<span class="text-slate-400 text-xs">to</span>`;
+                     html += `<input type="number" placeholder="Max" id="filter-max-${col}" class="w-16 text-xs border border-slate-300 rounded px-1.5 py-1" min="0" max="100">`;
+                     html += `</div>`;
+                     html += `<div class="flex flex-wrap gap-1.5">`;
+                     html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value="<90" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">< 90%</button>`;
+                     html += `<button type="button" data-action="quick-filter" data-column="${col}" data-value=">=95" class="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors">95%+</button>`;
+                     html += `</div>`;
+                     html += `<button type="button" data-action="apply-range" data-column="${col}" class="w-full text-xs bg-blue-600 text-white py-1 rounded hover:bg-blue-700 transition-colors">Apply Range</button>`;
+                     html += `</div>`;
+                }
+
                 html += `<div class="flex items-center justify-between px-2 py-1 text-[11px] text-slate-500 border-b border-slate-200">`;
                 html += `<button draggable="false" type="button" data-action="select-all-filter-options" data-column="${escapeHtml(col)}" class="hover:text-slate-700">Select all</button>`;
                 html += `<button draggable="false" type="button" data-action="clear-all-filter-options" data-column="${escapeHtml(col)}" class="hover:text-slate-700">Clear</button>`;
@@ -1116,6 +1133,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 filters[col] = values;
             } else {
                 delete filters[col];
+            }
+            loadData();
+            return;
+        }
+
+        const applyRangeBtn = event.target.closest('[data-action="apply-range"]');
+        if (applyRangeBtn) {
+            const col = applyRangeBtn.dataset.column;
+            const minInput = document.getElementById(`filter-min-${col}`);
+            const maxInput = document.getElementById(`filter-max-${col}`);
+            const min = minInput ? minInput.value : '';
+            const max = maxInput ? maxInput.value : '';
+            
+            let val = '';
+            if (min && max) {
+                val = `${min}-${max}`;
+            } else if (min) {
+                val = `>=${min}`;
+            } else if (max) {
+                val = `<=${max}`;
+            }
+
+            if (val) {
+                filters[col] = [val];
+            } else {
+                delete filters[col];
+            }
+            loadData();
+            return;
+        }
+
+        const quickFilterBtn = event.target.closest('[data-action="quick-filter"]');
+        if (quickFilterBtn) {
+            const col = quickFilterBtn.dataset.column;
+            const val = quickFilterBtn.dataset.value;
+            if (val) {
+                filters[col] = [val];
             }
             loadData();
             return;

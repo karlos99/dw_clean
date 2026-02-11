@@ -2,9 +2,22 @@
 
 import hashlib
 import json
+import re
 from django.core.cache import cache
 from django.db import connections
 from .constants import COLUMN_DEFINITIONS
+
+
+def _get_display_name(name):
+    """Normalize test names for display (e.g. Dibbles -> Dibles)."""
+    if not name:
+        return name
+    name = str(name)
+    if 'Dibbles' in name:
+        name = name.replace('Dibbles', 'Dibles')
+    if 'iready' in name.lower():
+        name = re.sub(r'(?i)iready', 'iReady', name)
+    return name
 
 
 def _generate_cache_key(prefix, filters):
@@ -110,7 +123,7 @@ def get_test_columns(column_filters=None):
                 year, test_name, subject = row
                 test_window = None
 
-            assessment_name = (test_name or '').strip() or 'Assessment'
+            assessment_name = _get_display_name((test_name or '').strip()) or 'Assessment'
             testing_name = (subject or '').strip() or 'Testing'
             window_name = (test_window or '').strip()
             
@@ -127,7 +140,8 @@ def get_test_columns(column_filters=None):
             # Store in COLUMN_DEFINITIONS with descriptive names
             # Keep column header labels consistent with the existing format.
             # Test window is represented in the selection tree, not the header text.
-            label_base = f"{test_name} {subject} ({year})"
+            display_test_name = _get_display_name(test_name)
+            label_base = f"{display_test_name} {subject} ({year})"
             
             COLUMN_DEFINITIONS[ss_key] = f"{label_base} SS"
             new_definitions[ss_key] = COLUMN_DEFINITIONS[ss_key]
@@ -195,7 +209,7 @@ def get_test_columns(column_filters=None):
             for (year, test_name, subject, test_window, raw_key) in cursor.fetchall():
                 if not raw_key:
                     continue
-                assessment_name = (test_name or '').strip() or 'Assessment'
+                assessment_name = _get_display_name((test_name or '').strip()) or 'Assessment'
                 testing_name = (subject or '').strip() or 'Testing'
                 window_name = (test_window or '').strip() if test_window else ''
 
@@ -219,7 +233,8 @@ def get_test_columns(column_filters=None):
                 other_key = f"test_{test_key}_OI_{key_norm}_{key_hash}"
 
                 # Table header label should remain consistent with the existing format.
-                label_base = f"{test_name} {subject} ({year})"
+                display_test_name = _get_display_name(test_name)
+                label_base = f"{display_test_name} {subject} ({year})"
                 
                 COLUMN_DEFINITIONS[other_key] = f"{label_base} {raw_key_str}"
                 new_definitions[other_key] = COLUMN_DEFINITIONS[other_key]
