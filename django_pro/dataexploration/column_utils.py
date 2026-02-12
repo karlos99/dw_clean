@@ -14,7 +14,7 @@ def _get_display_name(name):
         return name
     name = str(name)
     if 'Dibbles' in name:
-        name = name.replace('Dibbles', 'Dibles')
+        name = name.replace('Dibbles', 'Dibels')
     if 'iready' in name.lower():
         name = re.sub(r'(?i)iready', 'iReady', name)
     return name

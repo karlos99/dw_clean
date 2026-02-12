@@ -269,3 +269,48 @@ All Django behavior must align with **official Django 6 documentation**:
 - School View: School level Students. 
 - School Gr view: School gr level view. 
 - Teacher (default): students base on the enrollment table(school year)
+
+
+## Placement Cards
+ - the placement cards application allow teacher to enter notes about the students that exist in their class, and give the school admin or designated user to place them in a next year classsrooms.
+ - only the elementary student, schools (tk, kn, 1 -5 grade)
+ - the list of students will include information that is include the in formation from the student summary from the data exploration app.
+ - the school admin will select what questions the teacher will be entering in for the notes, but will also have the ability to create new questions, but only for their school. 
+ - the level of student access will match similar to the logic from the dataexploration application.
+   - differents in logic will be the ability to the school administrator to add grade level access that will give a user the ability to assing students to a next year classroom.
+- school administrator will be able to create next year classrooms that will not require a teacher assing to them during the placements but the then can be updated to then be able to assign a teacher.
+- the school adiminstrations will have the control of what questions the teachers will see, and will also allow to create and edit the questions that the school sees, and also edit the type of questions for the notes or the teacher. 
+- the teacher will then be able to change the focus to see the current students list or the next year list, by focusion on a the school year. ex if the current school year is 2025-2025, and option to see the current students and once the principal has assign a clasroom for 2026-2027 a list of those students too, with the notes from the other teachers(read only).
+- do not touch any of the existing models or edit existing database tables only add new. 
+-  ### Teacher notes (base)
+    - this is the list of questions that the teacher will be entering in the form
+            - Academic
+              -- Reading Standard (muli-choice) [Above, At, Below, Well Below ]
+              -- Math Standard (muli-choice) [Above, At, Below, Well Below ]
+            - Behavior & Study Habits
+              -- Study/Work Habits (textbox)
+              -- classroom Behavior
+            - Physical & Health
+              -- Adaptive PE (checkbox)
+              -- Physical Handicap (checbox)
+              -- Wears Glasses (checkbox)
+              -- Allegies (checbox) if checked expand texbox to details if any
+              -- Medication (checkbox)
+              -- Counseling (checkbox) if check expand texbox to include detail if any
+            - Behavior & Attendance
+              -- Playground Habits (texbox)
+              -- Tardiness (textbox)
+              -- SARB (textbox)
+
+            - Parent Involment
+              -- Parent Teacher Conference (checkbox)
+              -- Classroom Involment (checkbox)
+              -- Field Trips
+            
+            -Additional Information
+              - should Not be in the same Class with (list of the school Students ) [list]
+                -notes about the student not to be in same class
+              - Other information (textbox)
+              - Additional Comments (textbox)
+    ## classroom break down 
+      - one created a clasroom the user that is placing the student in the classroom needs to have a breakdown of the statictic of the classroom, using varius messurments that the user will select. 
