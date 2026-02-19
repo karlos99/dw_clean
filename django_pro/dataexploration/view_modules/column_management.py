@@ -109,18 +109,13 @@ def manage_default_columns(request):
 
 
 def load_column_structures(request):
-    """Load dynamic column structures based on current filters via HTMX."""
-    column_filters_json = request.GET.get('column_filters', '')
-    column_filters = {}
-    if column_filters_json:
-        import json
-        try:
-            column_filters = json.loads(column_filters_json)
-        except:
-            pass
-    
-    test_structure = get_test_columns(column_filters)
-    marks_structure = get_mark_columns(column_filters)
+    """Load dynamic column structures for the selector via HTMX.
+
+    Always return the full assessment/marks tree so opening a saved report
+    never hides other available dynamic columns.
+    """
+    test_structure = get_test_columns()
+    marks_structure = get_mark_columns()
     
     context = {
         'test_structure': test_structure,
