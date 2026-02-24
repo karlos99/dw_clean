@@ -1,0 +1,73 @@
+{% load placementcards_tags %}
+
+<div class="grid lg:grid-cols-2 gap-4">
+    <div id="students-list">{% include 'placementcards/partials/students_list.html' %}</div>
+    <div class="bg-white border border-slate-200 p-3 space-y-2">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+            <h2 class="text-lg font-semibold">Classrooms ({{ placement_year }})</h2>
+            <form id="bulk-classroom-export-form" method="get" action="{% url 'placementcards:export_classrooms_csv' %}" class="flex items-center gap-2 flex-wrap">
+                <input type="hidden" name="student_year" value="{{ student_year }}">
+                <input type="hidden" name="placement_year" value="{{ placement_year }}">
+                <button type="submit" name="scope" value="selected" class="px-2 py-1 text-xs border border-slate-300 bg-white text-slate-700">Export Selected CSV</button>
+                <button type="submit" name="scope" value="all" class="px-2 py-1 text-xs border border-slate-300 bg-white text-slate-700">Export All CSV</button>
+            </form>
+        </div>
+        {% for classroom in classrooms %}
+        <div data-classroom-drop="{{ classroom.id }}" class="border border-slate-200 p-3 text-sm space-y-2">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" name="classroom_ids" value="{{ classroom.id }}" form="bulk-classroom-export-form">
+                    <div class="font-medium">{{ classroom.classroom_name }} ({{ classroom.grade }})</div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <a href="{% url 'placementcards:export_classrooms_csv' %}?student_year={{ student_year }}&placement_year={{ placement_year }}&classroom_ids={{ classroom.id }}" class="text-xs text-blue-600">Export CSV</a>
+                    <div class="text-xs text-slate-500">{{ classroom.assignment_count }} assigned</div>
+                </div>
+            </div>
+
+            <details data-persist-key="classroom-assigned-{{ classroom.id }}">
+                <summary class="cursor-pointer text-xs text-blue-700 font-medium">Show / Hide Assigned Students</summary>
+                <div class="space-y-1 mt-2">
+                    {% with assigned_students=classroom_assignments|get_item:classroom.id %}
+                    {% if assigned_students %}
+                        {% for assigned in assigned_students %}
+                        <div class="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 px-2 py-1">
+                            <div>
+                                <div class="text-sm font-medium">{{ assigned.student_name }}</div>
+                                <div class="text-xs text-slate-500">{{ assigned.ssid }}{% if assigned.grade %} · Grade {{ assigned.grade }}{% endif %}</div>
+                                <div class="text-xs text-slate-600">Current HR Teacher: {{ assigned.current_hr_teacher|default:'—' }}</div>
+                            </div>
+                            <form hx-post="{% url 'placementcards:unassign_student' %}" hx-target="#placement-workspace" hx-swap="innerHTML">
+                                {% csrf_token %}
+                                <input type="hidden" name="student_ssid" value="{{ assigned.ssid }}">
+                                <input type="hidden" name="placement_year" value="{{ placement_year }}">
+                                {% include 'placementcards/partials/placement_filter_hidden_fields.html' %}
+                                <button type="submit" class="text-xs px-2 py-1 border border-slate-300 bg-white text-slate-700">Unassign</button>
+                            </form>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-xs text-slate-500">No students assigned.</div>
+                    {% endif %}
+                    {% endwith %}
+                </div>
+            </details>
+
+            <details
+                data-persist-key="classroom-stats-{{ classroom.id }}"
+                hx-get="{% url 'placementcards:classroom_stats' classroom.id %}?student_year={{ student_year }}{% for metric in selected_metrics %}&metrics={{ metric }}{% endfor %}"
+                hx-trigger="toggle"
+                hx-target="#classroom-stats-{{ classroom.id }}"
+                hx-swap="innerHTML"
+            >
+                <summary class="cursor-pointer text-xs text-blue-700 font-medium">Show / Hide Stats</summary>
+                <div class="mt-2 space-y-2">
+                    <div id="classroom-stats-{{ classroom.id }}"></div>
+                </div>
+            </details>
+        </div>
+        {% empty %}
+        <div class="text-sm text-slate-500">No classrooms for selected placement year.</div>
+        {% endfor %}
+    </div>
+</div>

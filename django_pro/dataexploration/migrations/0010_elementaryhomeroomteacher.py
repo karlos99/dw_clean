@@ -26,13 +26,13 @@ class Migration(migrations.Migration):
             },
         ),
         migrations.RunSQL(
-            """
+            r"""
             CREATE OR REPLACE VIEW elementary_homeroom_teacher AS
             SELECT DISTINCT
                 sl.stu_annual_key,
                 sl.ssid,
                 sl.staff_email,
-                regexp_replace(sl.staff_name, '^([^,]+),\s*(\w).*$', '\\1, \\2.') as elem_teacher_name,
+                regexp_replace(sl.staff_name, '^([^,]+),\s*(\w).*$', '\1, \2.') as elem_teacher_name,
                 sl.school_name,
                 sl.school_year
             FROM schedule_list sl

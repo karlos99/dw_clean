@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     'users.apps.UsersConfig',
     'studata',
     'dataexploration',
+    'placementcards',
     'assesments',
     # Allauth
     'allauth',

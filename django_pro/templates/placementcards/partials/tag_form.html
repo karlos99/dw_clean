@@ -1,0 +1,23 @@
+{% load placementcards_tags %}
+
+<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" hx-on:click="if(event.target === this){ this.innerHTML = '' }">
+    <div class="bg-white border border-slate-300 p-4 w-full max-w-md space-y-4">
+        <h2 class="font-semibold text-lg">{% if mode == 'edit' %}Edit Tag{% else %}Create Tag{% endif %}</h2>
+        <form hx-post="{% if mode == 'edit' %}{% url 'placementcards:edit_tag' tag.id %}{% else %}{% url 'placementcards:create_tag' %}{% endif %}" hx-target="#tags-table" hx-swap="innerHTML" class="space-y-3">
+            {% csrf_token %}
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Name</label>
+                <input type="text" name="name" value="{{ tag.name }}" class="w-full border border-slate-300 px-3 py-2 text-sm">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Color</label>
+                <input type="color" name="color" value="{{ tag.color|default:'#64748b'|tag_picker_value }}" class="w-16 h-10 border border-slate-300 p-1">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Description</label>
+                <textarea name="description" class="w-full border border-slate-300 px-3 py-2 text-sm">{{ tag.description }}</textarea>
+            </div>
+            <button type="submit" class="px-4 py-2 text-sm bg-slate-900 text-white">Save</button>
+        </form>
+    </div>
+</div>
