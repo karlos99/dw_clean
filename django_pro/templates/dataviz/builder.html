@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+{% load static %}
+{% load dataexploration_tags %}
+
+{% block title %}DataViz Builder{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@latest/dist/echarts.min.js"></script>
+<script>
+    {% include 'static/js/dataviz_utils.js' %}
+    {% include 'static/js/dataviz_chart_renderer.js' %}
+    {% include 'static/js/dataviz_app.js' %}
+</script>
+{% endblock %}
+
+{% block content %}
+<div id="dataviz-app-data"
+     data-load-students-url="{% url 'dataexploration:load_students' %}"
+     data-render-chart-url="{% url 'dataviz:render_chart' %}"
+     data-csrf-token="{{ csrf_token }}"
+     data-default-columns="{{ default_columns_json|escapejs }}"
+     data-column-definitions="{{ column_definitions_json|escapejs }}"></div>
+
+<div class="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-6" id="dataviz-app">
+
+    {# ── Header ────────────────────────────────────────────────────────── #}
+    <div class="bg-white border border-slate-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div>
+            <h1 class="text-base font-bold uppercase tracking-widest text-slate-900">DataViz Builder</h1>
+            <p class="text-xs text-slate-500 mt-0.5">Select columns → load dataset → configure &amp; explore</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span id="dv-load-status" class="text-xs text-slate-500"></span>
+            <button type="button" id="dv-load-data"
+                class="px-4 py-2 text-xs font-bold uppercase tracking-wider text-white bg-slate-900 hover:bg-slate-700 rounded-lg transition-colors">
+                &#9654; Load Dataset
+            </button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4 items-start">
+
+        {# ── Left sidebar ──────────────────────────────────────────────────── #}
+        <div class="space-y-3">
+            <div class="flex items-center gap-2 px-1">
+                <span class="w-5 h-5 rounded-full bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center shrink-0">1</span>
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Build Dataset</span>
+            </div>
+
+            {# Filters block #}
+            <details open class="bg-white border border-slate-200 rounded-lg overflow-hidden group">
+                <summary class="flex items-center justify-between px-4 py-2.5 cursor-pointer select-none hover:bg-slate-50 transition-colors list-none">
+                    <span class="text-[11px] font-bold uppercase tracking-wider text-slate-600">&#128269; Filters</span>
+                    <span class="text-slate-400 text-xs group-open:rotate-180 transition-transform">&#9660;</span>
+                </summary>
+                <div class="px-4 pb-4 pt-2 space-y-3 border-t border-slate-100">
+                    <div>
+                        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Saved Query</label>
+                        <select id="dv-saved-query" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white">
+                            <option value="">None</option>
+                            {% for query in saved_queries %}
+                            <option value="{{ query.id }}">{{ query.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Search</label>
+                        <input id="dv-search" type="text" placeholder="Name, SSID, or ID"
+                            class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">School Year</label>
+                            <input id="dv-school-year" type="text" placeholder="2025-2026"
+                                class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Grade</label>
+                            <input id="dv-grade" type="text" placeholder="e.g. 5"
+                                class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Status</label>
+                        <select id="dv-status" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white">
+                            <option value="Active" selected>Active</option>
+                            <option value="Inactive">Inactive</option>
+                            <option value="">All</option>
+                        </select>
+                    </div>
+                </div>
+            </details>
+
+            {# Columns block #}
+            <details open class="bg-white border border-slate-200 rounded-lg overflow-hidden group">
+                <summary class="flex items-center justify-between px-4 py-2.5 cursor-pointer select-none hover:bg-slate-50 transition-colors list-none">
+                    <span class="text-[11px] font-bold uppercase tracking-wider text-slate-600">&#9776; Columns</span>
+                    <div class="flex items-center gap-3">
+                        <button type="button" id="dv-use-default-columns"
+                            class="text-[11px] font-semibold text-blue-600 hover:text-blue-900"
+                            onclick="event.stopPropagation()">Use defaults</button>
+                        <span class="text-slate-400 text-xs group-open:rotate-180 transition-transform">&#9660;</span>
+                    </div>
+                </summary>
+                <div class="max-h-80 overflow-y-auto border-t border-slate-100">
+                    <div class="p-3 space-y-3">
+                        {% for category_key, category in column_categories.items %}
+                        <div>
+                            <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 px-1">{{ category.title }}</p>
+                            <div class="space-y-0.5">
+                                {% for col in category.columns %}
+                                <label class="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-slate-50 cursor-pointer">
+                                    <input type="checkbox" class="dv-col rounded border-slate-300 text-blue-600 w-3.5 h-3.5" value="{{ col }}">
+                                    <span class="text-xs text-slate-700">{{ column_definitions|get_item:col }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% include 'dataexploration/partials/column_structures.html' %}
+                    </div>
+                </div>
+            </details>
+
+            <p class="text-[11px] text-slate-400 px-1 leading-relaxed">
+                Tip: save filter sets in Data Exploration, then select them as a saved query above.
+            </p>
+        </div>
+
+        {# ── Right main panel ──────────────────────────────────────────────── #}
+        <div class="space-y-3 min-w-0">
+            <div class="flex items-center gap-2 px-1">
+                <span class="w-5 h-5 rounded-full bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center shrink-0">2</span>
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Configure &amp; Explore</span>
+            </div>
+
+            {# Chart controls card #}
+            <div class="bg-white border border-slate-200 rounded-lg p-4" id="dv-chart-controls">
+                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-3">
+                    <div>
+                        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Chart Type</label>
+                        <select id="dv-chart-type" class="w-full px-2 py-2 text-sm border border-slate-300 rounded-lg bg-white">
+                            <optgroup label="Bar &amp; Line">
+                                <option value="bar">Bar</option>
+                                <option value="stacked_bar">Stacked Bar</option>
+                                <option value="line">Line</option>
+                                <option value="area">Area</option>
+                                <option value="stacked_area">Stacked Area</option>
+                            </optgroup>
+                            <optgroup label="Distribution">
+                                <option value="histogram">Histogram</option>
+                                <option value="box">Box Plot</option>
+                                <option value="violin">Violin</option>
+                            </optgroup>
+                            <optgroup label="Part-of-Whole">
+                                <option value="pie">Pie</option>
+                                <option value="donut">Donut</option>
+                                <option value="funnel">Funnel</option>
+                                <option value="treemap">Treemap</option>
+                            </optgroup>
+                            <optgroup label="Other">
+                                <option value="scatter">Scatter</option>
+                                <option value="heatmap">Heatmap</option>
+                                <option value="radar">Radar</option>
+                                <option value="gauge">Gauge</option>
+                            </optgroup>
+                        </select>
+                    </div>
+                    <div id="dv-wrap-x">
+                        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">X / Category</label>
+                        <select id="dv-x-col" class="w-full px-2 py-2 text-sm border border-slate-300 rounded-lg bg-white"></select>
+                    </div>
+                    <div id="dv-wrap-y">
+                        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Y / Value</label>
+                        <select id="dv-y-col" class="w-full px-2 py-2 text-sm border border-slate-300 rounded-lg bg-white"></select>
+                    </div>
+                    <div id="dv-wrap-stack">
+                        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Stack / Series</label>
+                        <select id="dv-stack-col" class="w-full px-2 py-2 text-sm border border-slate-300 rounded-lg bg-white"></select>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Aggregation</label>
+                        <select id="dv-agg" class="w-full px-2 py-2 text-sm border border-slate-300 rounded-lg bg-white">
+                            <option value="count">Count</option>
+                            <option value="sum">Sum</option>
+                            <option value="avg">Average</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mb-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">Quick Guide</p>
+                    <p class="text-xs text-slate-600">1) Load dataset → 2) Pick chart type → 3) Select X and Y columns → 4) Adjust filters and style.</p>
+                    <p id="dv-chart-type-help" class="mt-1 text-[11px] text-slate-500 italic">Bar: compare values across categories.</p>
+                </div>
+
+                <div id="dv-multi-x-wrap" class="hidden mb-3">
+                    <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">X Axis Dimensions (multi-select)</label>
+                    <div id="dv-multi-x-tags" class="flex flex-wrap gap-2 min-h-[28px]"></div>
+                    <p class="mt-1 text-[11px] text-slate-400">Pick multiple base dimensions to combine on X axis (e.g., Grade + School).</p>
+                </div>
+
+                <div id="dv-group-series-wrap" class="hidden mb-3">
+                    <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Series Metrics (multi-select)</label>
+                    <div id="dv-group-series-tags" class="flex flex-wrap gap-2 min-h-[28px]"></div>
+                    <p id="dv-series-help" class="mt-1 text-[11px] text-slate-400">Use with Bar / Stacked Bar to compare multiple metrics as grouped or stacked series.</p>
+                </div>
+
+                <details id="dv-style-panel" class="mb-3 border border-slate-100 rounded-lg bg-slate-50 overflow-hidden">
+                    <summary class="px-3 py-2 cursor-pointer text-[11px] font-bold uppercase tracking-wider text-slate-500 select-none hover:bg-slate-100 flex items-center gap-1.5 transition-colors list-none">
+                        &#9881; Style &amp; Options
+                    </summary>
+                    <div class="p-3 grid grid-cols-2 md:grid-cols-4 gap-3 border-t border-slate-200">
+                        <div class="col-span-2">
+                            <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Chart Title</label>
+                            <input type="text" id="dv-opt-title" placeholder="Optional title…"
+                                class="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-lg">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Color Palette</label>
+                            <select id="dv-opt-palette" class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg bg-white">
+                                <option value="default">Default</option>
+                                <option value="blue">Blue</option>
+                                <option value="warm">Warm</option>
+                                <option value="earth">Earth</option>
+                                <option value="green">Green</option>
+                                <option value="purple">Purple</option>
+                                <option value="mono">Monochrome</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Background</label>
+                            <select id="dv-opt-bg" class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg bg-white">
+                                <option value="white">White</option>
+                                <option value="light">Light Gray</option>
+                                <option value="dark">Dark</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Legend</label>
+                            <select id="dv-opt-legend" class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-lg bg-white">
+                                <option value="bottom">Bottom</option>
+                                <option value="top">Top</option>
+                                <option value="left">Left</option>
+                                <option value="right">Right</option>
+                                <option value="hidden">Hidden</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col justify-center gap-2 pt-1">
+                            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-labels" class="rounded border-slate-300 text-blue-600"> Data labels
+                            </label>
+                            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-smooth" class="rounded border-slate-300 text-blue-600"> Smooth lines
+                            </label>
+                        </div>
+                    </div>
+                </details>
+
+                <div class="flex flex-wrap items-center gap-2">
+                    <button type="button" id="dv-render-chart"
+                        class="px-4 py-2 text-xs font-bold uppercase tracking-wider text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors">
+                        &#9654; Render Chart
+                    </button>
+                    <span id="dv-recommendations" class="text-xs text-slate-500 italic"></span>
+                </div>
+            </div>
+
+            {# Empty state #}
+            <div id="dv-empty-state"
+                class="bg-white border border-dashed border-slate-300 rounded-lg py-20 text-center text-slate-400 text-sm">
+                Load a dataset to get started.
+            </div>
+
+            {# Chart + tabs (shown after data loads) #}
+            <div id="dv-chart-wrap" class="hidden space-y-3">
+
+                <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                    <div id="dv-chart" class="w-full h-[540px] lg:h-[600px]"></div>
+                </div>
+
+                {# Tabbed data / summary section #}
+                <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+
+                    {# Tab bar #}
+                    <div class="flex items-center border-b border-slate-200 bg-slate-50">
+                        <button type="button" id="dv-tab-data"
+                            class="px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 border-slate-900 text-slate-900 transition-colors">
+                            &#128196; Data Preview
+                        </button>
+                        <span id="dv-filter-status" class="ml-auto pr-4 text-xs text-slate-500"></span>
+                    </div>
+
+                    {# Data preview panel #}
+                    <div id="dv-panel-data" class="p-3">
+                        <div id="dv-filter-bar" class="hidden mb-3 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                            <div class="flex items-center gap-2">
+                                <input id="dv-filter-search" type="text" placeholder="Search across all columns…"
+                                    class="flex-1 px-3 py-1.5 text-sm border border-slate-300 rounded-lg bg-white">
+                                <button type="button" id="dv-filter-clear"
+                                    class="px-3 py-1.5 text-xs font-semibold text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100">
+                                    Clear
+                                </button>
+                            </div>
+                            <div id="dv-filter-cols" class="flex flex-wrap gap-2"></div>
+                        </div>
+                        <div class="overflow-auto rounded-lg border border-slate-200 max-h-72">
+                            <table class="min-w-full text-xs">
+                                <thead id="dv-preview-head" class="bg-slate-50 sticky top-0"></thead>
+                                <tbody id="dv-preview-body" class="divide-y divide-slate-100"></tbody>
+                            </table>
+                        </div>
+                        <div id="dv-preview-pager" class="mt-2 flex items-center justify-between text-xs text-slate-600">
+                            <span id="dv-preview-page-status">Rows 0-0 of 0</span>
+                            <div class="flex items-center gap-1">
+                                <button type="button" id="dv-preview-prev" class="px-2 py-1 border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Prev</button>
+                                <button type="button" id="dv-preview-next" class="px-2 py-1 border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>{# /dv-chart-wrap #}
+        </div>{# /right panel #}
+    </div>
+</div>
+{% endblock %}
