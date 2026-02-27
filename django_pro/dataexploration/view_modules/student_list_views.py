@@ -178,18 +178,49 @@ def load_students(request):
     # Extract saved filters (they may be nested under 'filters' key or at top level)
     saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
     
+    def _parse_multi(param_val, fallback):
+        """Parse a URL param that may be a JSON array string, a plain string, or a list from saved config."""
+        if not param_val:
+            return fallback
+        if isinstance(param_val, list):
+            return param_val if param_val else fallback
+        # Try JSON array
+        val_str = str(param_val).strip()
+        if val_str.startswith('['):
+            try:
+                parsed = json.loads(val_str)
+                if isinstance(parsed, list) and parsed:
+                    return parsed
+                return fallback
+            except Exception:
+                pass
+        # Single value
+        return val_str if val_str else fallback
+
     # Get filters - URL params take precedence over saved config
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
-    school_year = request.GET.get('school_year', '') or saved_filters.get('school_year', '') or saved_config.get('school_year', '')
-    grade = request.GET.get('grade', '') or saved_filters.get('grade', '') or saved_config.get('grade', '')
+    
+    _sy_raw = request.GET.get('school_year', '')
+    school_year = _parse_multi(
+        _sy_raw,
+        _parse_multi(saved_filters.get('school_year', ''),
+                     _parse_multi(saved_config.get('school_year', ''), ''))
+    )
+    
+    _gr_raw = request.GET.get('grade', '')
+    grade = _parse_multi(
+        _gr_raw,
+        _parse_multi(saved_filters.get('grade', ''),
+                     _parse_multi(saved_config.get('grade', ''), ''))
+    )
     
     status_param = request.GET.get('status')
     if status_param is not None:
-        status = status_param
+        status = _parse_multi(status_param, '')
     elif 'status' in saved_filters:
-        status = saved_filters['status']
+        status = _parse_multi(saved_filters['status'], '')
     elif 'status' in saved_config:
-        status = saved_config['status']
+        status = _parse_multi(saved_config['status'], '')
     else:
         status = 'Active'
 

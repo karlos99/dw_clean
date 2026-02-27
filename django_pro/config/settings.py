@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'dataexploration',
     'placementcards',
     'assesments',
+    'dataviz.apps.DatavizConfig',
     # Allauth
     'allauth',
     'allauth.account',
@@ -209,3 +210,6 @@ CACHES = {
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Allow larger POST bodies for chart rendering (rows payload)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50 MB
