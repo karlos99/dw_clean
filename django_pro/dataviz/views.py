@@ -6,12 +6,28 @@ import traceback
 import pandas as pd
 
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.cache import cache
 from django.db import connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 from django.views.generic import TemplateView
+
+
+def _is_project_admin(user) -> bool:
+    """Return True for superusers and Project Admins only."""
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    if hasattr(user, 'active_role') and user.active_role and user.active_role.name == 'Project Admin':
+        return True
+    if hasattr(user, 'roles') and user.roles.filter(name='Project Admin').exists():
+        return True
+    return False
+
+
+_FORBIDDEN = JsonResponse({'error': 'Forbidden'}, status=403)
 
 from dataexploration.column_utils import get_mark_columns, get_test_columns
 from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
@@ -970,8 +986,11 @@ def _build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     return option
 
 
-class DataVizBuilderView(LoginRequiredMixin, TemplateView):
+class DataVizBuilderView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
     template_name = 'dataviz/builder.html'
+
+    def test_func(self):
+        return _is_project_admin(self.request.user)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1074,6 +1093,8 @@ class DataVizBuilderView(LoginRequiredMixin, TemplateView):
 @login_required
 @require_POST
 def render_chart_api(request):
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     try:
         body = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
@@ -1113,6 +1134,8 @@ MAX_SQL_ROWS = 2000
 @require_POST
 def sql_lab_api(request):
     """Execute a read-only SQL query against the default database and return rows + column info."""
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     try:
         body = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
@@ -1170,6 +1193,8 @@ def sql_lab_api(request):
 @login_required
 def sql_schema_api(request):
     """Return list of user-visible tables / views for the SQL Lab table browser."""
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     try:
         from django.db import connection
         with connection.cursor() as cursor:
@@ -1195,6 +1220,8 @@ from dataviz.models import SavedChart, Dashboard, DashboardChart
 
 @login_required
 def chart_list_api(request):
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     if request.method == 'GET':
         charts = SavedChart.objects.filter(owner=request.user)
         return JsonResponse({'charts': [c.to_dict() for c in charts]})
@@ -1204,6 +1231,8 @@ def chart_list_api(request):
 @login_required
 @require_POST
 def save_chart_api(request):
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     try:
         body = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
@@ -1237,6 +1266,8 @@ def save_chart_api(request):
 
 @login_required
 def chart_detail_api(request, chart_id):
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     try:
         chart = SavedChart.objects.get(pk=chart_id, owner=request.user)
     except SavedChart.DoesNotExist:
@@ -1256,6 +1287,8 @@ def chart_detail_api(request, chart_id):
 
 @login_required
 def dashboard_list_api(request):
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     if request.method == 'GET':
         dashboards = Dashboard.objects.filter(owner=request.user)
         return JsonResponse({'dashboards': [d.to_dict(include_charts=True) for d in dashboards]})
@@ -1280,6 +1313,8 @@ def dashboard_list_api(request):
 
 @login_required
 def dashboard_detail_api(request, dashboard_id):
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     try:
         db = Dashboard.objects.get(pk=dashboard_id, owner=request.user)
     except Dashboard.DoesNotExist:
@@ -1308,6 +1343,8 @@ def dashboard_detail_api(request, dashboard_id):
 @login_required
 def dashboard_add_chart_api(request, dashboard_id):
     """Add or remove a SavedChart from a Dashboard."""
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     try:
         db = Dashboard.objects.get(pk=dashboard_id, owner=request.user)
     except Dashboard.DoesNotExist:
@@ -1362,6 +1399,8 @@ def dashboard_add_chart_api(request, dashboard_id):
 @login_required
 def dashboard_slot_api(request, slot_id):
     """Update width or delete a single slot."""
+    if not _is_project_admin(request.user):
+        return _FORBIDDEN
     try:
         slot = DashboardChart.objects.select_related('dashboard').get(
             pk=slot_id, dashboard__owner=request.user

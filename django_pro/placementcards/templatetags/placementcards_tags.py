@@ -2,6 +2,25 @@ from django import template
 
 register = template.Library()
 
+_GRADE_DISPLAY = {
+    'TK': 'TK',
+    'KN': 'KN',
+    '01': '1st',
+    '02': '2nd',
+    '03': '3rd',
+    '04': '4th',
+    '05': '5th',
+}
+
+
+@register.filter
+def format_grade(value):
+    """Render a grade value (single or comma-separated combo) as a human-friendly string."""
+    if not value:
+        return ''
+    parts = [_GRADE_DISPLAY.get(g.strip(), g.strip()) for g in value.split(',') if g.strip()]
+    return ' / '.join(parts)
+
 
 def _hex_to_rgb(value: str):
     color = (value or '').strip()

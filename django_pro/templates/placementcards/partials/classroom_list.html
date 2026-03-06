@@ -1,3 +1,4 @@
+{% load placementcards_tags %}
 <div class="bg-white border border-slate-200 overflow-x-auto">
     <table class="min-w-full text-sm">
         <thead class="bg-slate-50 border-b border-slate-200">
@@ -14,7 +15,7 @@
             {% for classroom in classrooms %}
             <tr class="border-b border-slate-100">
                 <td class="px-3 py-2">{{ classroom.school_year }}</td>
-                <td class="px-3 py-2">{{ classroom.grade }}</td>
+                <td class="px-3 py-2">{{ classroom.grade|format_grade }}</td>
                 <td class="px-3 py-2">{{ classroom.classroom_name }}</td>
                 <td class="px-3 py-2">{{ classroom.assigned_teacher_name|default:'—' }}</td>
                 <td class="px-3 py-2">{{ classroom.assignment_count }}</td>

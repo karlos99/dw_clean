@@ -20,6 +20,18 @@ from placementcards.view_modules.card_data_utils import (
 from studata.models import CurrentStudent, Result, StudentEnroll, Test
 
 
+_GRADE_ORDER = ['TK', 'KN', '01', '02', '03', '04', '05']
+_GRADES_LIST = [
+    ('TK', 'TK'),
+    ('KN', 'Kindergarten'),
+    ('01', '1st Grade'),
+    ('02', '2nd Grade'),
+    ('03', '3rd Grade'),
+    ('04', '4th Grade'),
+    ('05', '5th Grade'),
+]
+
+
 def _classroom_list_context(school, school_year: str | None):
     classrooms = NextYearClassroom.objects.filter(school=school)
     if school_year:
@@ -105,16 +117,26 @@ def create_classroom_modal(request: HttpRequest):
             except ValueError:
                 pass
         
-        return render(request, 'placementcards/partials/classroom_form.html', {'mode': 'create', 'school_year': next_year})
+        return render(request, 'placementcards/partials/classroom_form.html', {
+            'mode': 'create',
+            'school_year': next_year,
+            'selected_grades': [],
+            'grades_list': _GRADES_LIST,
+        })
 
     school_year = request.POST.get('school_year', '').strip()
     if not school_year:
         return HttpResponse('School year is required', status=400)
 
+    raw_grades = [g.strip() for g in request.POST.getlist('grades') if g.strip()]
+    grade_value = ','.join(g for g in _GRADE_ORDER if g in raw_grades)
+    if not grade_value:
+        return HttpResponse('At least one grade is required', status=400)
+
     NextYearClassroom.objects.create(
         school=school,
         school_year=school_year,
-        grade=request.POST.get('grade', '').strip(),
+        grade=grade_value,
         classroom_name=request.POST.get('classroom_name', '').strip(),
         assigned_teacher_name=request.POST.get('assigned_teacher_name', '').strip(),
         max_capacity=int(request.POST.get('max_capacity')) if request.POST.get('max_capacity', '').isdigit() else None,
@@ -133,6 +155,7 @@ def edit_classroom_modal(request: HttpRequest, classroom_id: int):
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id, school=school)
 
     if request.method == 'GET':
+        selected_grades = [g.strip() for g in classroom.grade.split(',') if g.strip()]
         return render(
             request,
             'placementcards/partials/classroom_form.html',
@@ -140,6 +163,8 @@ def edit_classroom_modal(request: HttpRequest, classroom_id: int):
                 'mode': 'edit',
                 'classroom': classroom,
                 'school_year': classroom.school_year,
+                'selected_grades': selected_grades,
+                'grades_list': _GRADES_LIST,
             },
         )
 
@@ -147,8 +172,13 @@ def edit_classroom_modal(request: HttpRequest, classroom_id: int):
     if not school_year:
         return HttpResponse('School year is required', status=400)
 
+    raw_grades = [g.strip() for g in request.POST.getlist('grades') if g.strip()]
+    grade_value = ','.join(g for g in _GRADE_ORDER if g in raw_grades)
+    if not grade_value:
+        return HttpResponse('At least one grade is required', status=400)
+
     classroom.school_year = school_year
-    classroom.grade = request.POST.get('grade', '').strip()
+    classroom.grade = grade_value
     classroom.classroom_name = request.POST.get('classroom_name', '').strip()
     classroom.assigned_teacher_name = request.POST.get('assigned_teacher_name', '').strip()
     classroom.max_capacity = int(request.POST.get('max_capacity')) if request.POST.get('max_capacity', '').isdigit() else None

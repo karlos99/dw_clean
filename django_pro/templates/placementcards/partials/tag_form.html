@@ -1,7 +1,10 @@
 {% load placementcards_tags %}
 
 <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" hx-on:click="if(event.target === this){ this.innerHTML = '' }">
-    <div class="bg-white border border-slate-300 p-4 w-full max-w-md space-y-4">
+    <div class="bg-white border border-slate-300 p-4 w-full max-w-md space-y-4 relative">
+        <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600" onclick="this.closest('.fixed').remove()">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
         <h2 class="font-semibold text-lg">{% if mode == 'edit' %}Edit Tag{% else %}Create Tag{% endif %}</h2>
         <form hx-post="{% if mode == 'edit' %}{% url 'placementcards:edit_tag' tag.id %}{% else %}{% url 'placementcards:create_tag' %}{% endif %}" hx-target="#tags-table" hx-swap="innerHTML" class="space-y-3">
             {% csrf_token %}

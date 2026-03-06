@@ -98,7 +98,7 @@ class PlacementCard(models.Model):
 class NextYearClassroom(models.Model):
     school = models.ForeignKey(School, on_delete=models.PROTECT, related_name='next_year_classrooms')
     school_year = models.CharField(max_length=20)
-    grade = models.CharField(max_length=10)
+    grade = models.CharField(max_length=50)
     classroom_name = models.CharField(max_length=255)
     assigned_teacher_name = models.CharField(max_length=255, blank=True)
     max_capacity = models.IntegerField(null=True, blank=True)
