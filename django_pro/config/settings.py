@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     'studata',
     'dataexploration',
     'placementcards',
+    'mathr.apps.MathrConfig',
     'assesments',
     'dataviz.apps.DatavizConfig',
     # Allauth
