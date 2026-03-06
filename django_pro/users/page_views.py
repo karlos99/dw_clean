@@ -2,14 +2,82 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q
+from django.contrib.auth import get_user_model
 from django.http import JsonResponse, HttpResponseForbidden
 from django.utils.text import slugify
+import re
 
 from .models_pages import Page
 from .models import Role
 from dataexploration.models import DefaultColumnSelection
 from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
 from dataexploration.column_utils import get_test_columns
+
+
+def _build_parent_page_options():
+    pages = list(Page.objects.all().only('id', 'name', 'parent_page_id').order_by('menu_order', 'name', 'id'))
+    children_by_parent = {}
+    for page in pages:
+        children_by_parent.setdefault(page.parent_page_id, []).append(page)
+
+    options = []
+
+    def walk(parent_id, depth, path_ids):
+        for item in children_by_parent.get(parent_id, []):
+            if item.id in path_ids:
+                continue
+            options.append({
+                'id': item.id,
+                'label': f"{'— ' * depth}{item.name}",
+            })
+            walk(item.id, depth + 1, path_ids | {item.id})
+
+    walk(None, 0, set())
+    return options
+
+
+def _creates_parent_cycle(page, candidate_parent):
+    current = candidate_parent
+    seen_ids = set()
+    while current is not None:
+        if current.id == page.id:
+            return True
+        if current.id in seen_ids:
+            return True
+        seen_ids.add(current.id)
+        current = current.parent_page
+    return False
+
+
+def _parse_emails(raw_value: str) -> list[str]:
+    if not raw_value:
+        return []
+    tokens = re.split(r'[\n,;]+', raw_value)
+    cleaned = []
+    seen = set()
+    for token in tokens:
+        email = token.strip()
+        if not email:
+            continue
+        email_key = email.lower()
+        if email_key in seen:
+            continue
+        seen.add(email_key)
+        cleaned.append(email)
+    return cleaned
+
+
+def _resolve_users_by_emails(raw_value: str):
+    User = get_user_model()
+    found_users = []
+    not_found = []
+    for email in _parse_emails(raw_value):
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
+            not_found.append(email)
+            continue
+        found_users.append(user)
+    return found_users, not_found
 
 
 def user_is_project_admin(user):
@@ -31,11 +99,11 @@ def manage_pages(request):
     # Get filter parameters
     search = request.GET.get('search', '')
     status_filter = request.GET.get('status', '')
-    sort_by = request.GET.get('sort_by', 'menu_order')
+    sort_by = request.GET.get('sort_by', 'app_reference')
     sort_dir = request.GET.get('sort_dir', 'asc')
     
     # Base queryset
-    pages = Page.objects.all().prefetch_related('allowed_users')
+    pages = Page.objects.all().prefetch_related('allowed_users', 'menu_allowed_users')
     
     # Apply search filter
     if search:
@@ -43,7 +111,8 @@ def manage_pages(request):
             Q(name__icontains=search) |
             Q(slug__icontains=search) |
             Q(description__icontains=search) |
-            Q(url_path__icontains=search)
+            Q(url_path__icontains=search) |
+            Q(app_reference__icontains=search)
         )
     
     # Apply status filter
@@ -54,13 +123,14 @@ def manage_pages(request):
     sort_field = sort_by
     if sort_dir == 'desc':
         sort_field = f'-{sort_by}'
-    pages = pages.order_by(sort_field, 'id')
+    pages = pages.order_by(sort_field, 'menu_order', 'name', 'id')
     
     # Get all roles for the add/edit form
     all_roles = Role.objects.all().order_by('name')
     
     context = {
         'pages': pages,
+        'parent_page_options': _build_parent_page_options(),
         'all_roles': all_roles,
         'search': search,
         'status_filter': status_filter,
@@ -84,6 +154,7 @@ def add_page(request):
         description = request.POST.get('description', '').strip()
         url_path = request.POST.get('url_path', '').strip()
         icon = request.POST.get('icon', '').strip()
+        app_reference = request.POST.get('app_reference', '').strip()
         status = request.POST.get('status', 'active')
         is_public = request.POST.get('is_public') == 'on'
         show_in_menu = request.POST.get('show_in_menu') == 'on'
@@ -92,9 +163,11 @@ def add_page(request):
         
         # Get required roles
         required_roles = request.POST.getlist('required_roles')
+        menu_roles = request.POST.getlist('menu_roles')
         
         # Get allowed user emails
         allowed_user_emails = request.POST.get('allowed_user_emails', '').strip()
+        menu_allowed_user_emails = request.POST.get('menu_allowed_user_emails', '').strip()
         
         # Auto-generate slug if not provided
         if not slug:
@@ -125,6 +198,7 @@ def add_page(request):
         page = Page.objects.create(
             name=name,
             slug=slug,
+            app_reference=app_reference,
             description=description,
             url_path=url_path,
             icon=icon,
@@ -134,21 +208,22 @@ def add_page(request):
             menu_order=menu_order,
             parent_page=parent_page,
             required_roles=required_roles,
+            menu_roles=menu_roles,
             created_by=request.user
         )
         
         # Add allowed users by email
-        if allowed_user_emails:
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            
-            emails = [e.strip() for e in allowed_user_emails.split(',') if e.strip()]
-            for email in emails:
-                try:
-                    user = User.objects.get(email=email)
-                    page.allowed_users.add(user)
-                except User.DoesNotExist:
-                    messages.warning(request, f'User with email "{email}" not found.')
+        users, not_found = _resolve_users_by_emails(allowed_user_emails)
+        if users:
+            page.allowed_users.add(*users)
+        for email in not_found:
+            messages.warning(request, f'User with email "{email}" not found.')
+
+        menu_users, menu_not_found = _resolve_users_by_emails(menu_allowed_user_emails)
+        if menu_users:
+            page.menu_allowed_users.add(*menu_users)
+        for email in menu_not_found:
+            messages.warning(request, f'User with email "{email}" not found for menu visibility.')
         
         messages.success(request, f'Page "{page.name}" created successfully.')
         return redirect('users:manage_pages')
@@ -168,6 +243,7 @@ def edit_page(request, page_id):
     if request.method == 'POST':
         page.name = request.POST.get('name', '').strip()
         page.slug = request.POST.get('slug', '').strip()
+        page.app_reference = request.POST.get('app_reference', '').strip()
         page.description = request.POST.get('description', '').strip()
         page.url_path = request.POST.get('url_path', '').strip()
         page.icon = request.POST.get('icon', '').strip()
@@ -179,7 +255,11 @@ def edit_page(request, page_id):
         parent_id = request.POST.get('parent_page')
         if parent_id:
             try:
-                page.parent_page = Page.objects.get(id=parent_id)
+                candidate_parent = Page.objects.get(id=parent_id)
+                if candidate_parent.id == page.id or _creates_parent_cycle(page, candidate_parent):
+                    messages.error(request, 'Invalid parent page selection (would create a menu loop).')
+                    return redirect('users:manage_pages')
+                page.parent_page = candidate_parent
             except Page.DoesNotExist:
                 page.parent_page = None
         else:
@@ -187,9 +267,11 @@ def edit_page(request, page_id):
         
         # Get required roles
         page.required_roles = request.POST.getlist('required_roles')
+        page.menu_roles = request.POST.getlist('menu_roles')
         
         # Get allowed user emails
         allowed_user_emails = request.POST.get('allowed_user_emails', '').strip()
+        menu_allowed_user_emails = request.POST.get('menu_allowed_user_emails', '').strip()
         
         # Validate
         if not page.name:
@@ -207,19 +289,19 @@ def edit_page(request, page_id):
         
         page.save()
         
-        # Update allowed users by email
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-        
         page.allowed_users.clear()
-        if allowed_user_emails:
-            emails = [e.strip() for e in allowed_user_emails.split(',') if e.strip()]
-            for email in emails:
-                try:
-                    user = User.objects.get(email=email)
-                    page.allowed_users.add(user)
-                except User.DoesNotExist:
-                    messages.warning(request, f'User with email "{email}" not found.')
+        users, not_found = _resolve_users_by_emails(allowed_user_emails)
+        if users:
+            page.allowed_users.add(*users)
+        for email in not_found:
+            messages.warning(request, f'User with email "{email}" not found.')
+
+        page.menu_allowed_users.clear()
+        menu_users, menu_not_found = _resolve_users_by_emails(menu_allowed_user_emails)
+        if menu_users:
+            page.menu_allowed_users.add(*menu_users)
+        for email in menu_not_found:
+            messages.warning(request, f'User with email "{email}" not found for menu visibility.')
         
         messages.success(request, f'Page "{page.name}" updated successfully.')
         return redirect('users:manage_pages')
@@ -255,6 +337,7 @@ def get_page_detail(request, page_id):
     
     # Get allowed user emails
     allowed_user_emails = ', '.join(page.allowed_users.values_list('email', flat=True))
+    menu_allowed_user_emails = ', '.join(page.menu_allowed_users.values_list('email', flat=True))
     
     data = {
         'success': True,
@@ -262,6 +345,7 @@ def get_page_detail(request, page_id):
             'id': page.id,
             'name': page.name,
             'slug': page.slug,
+            'app_reference': page.app_reference,
             'description': page.description,
             'url_path': page.url_path,
             'icon': page.icon,
@@ -271,7 +355,9 @@ def get_page_detail(request, page_id):
             'menu_order': page.menu_order,
             'parent_page_id': page.parent_page.id if page.parent_page else None,
             'required_roles': page.required_roles,
+            'menu_roles': page.menu_roles,
             'allowed_user_emails': allowed_user_emails,
+            'menu_allowed_user_emails': menu_allowed_user_emails,
         }
     }
     

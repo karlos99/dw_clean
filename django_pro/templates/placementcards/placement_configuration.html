@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block title %}Placement Configuration{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8 space-y-8">
+    <div class="border-b border-slate-200 pb-4">
+        <h1 class="text-2xl font-bold text-slate-900">Placement Configuration</h1>
+        <p class="text-sm text-slate-500 mt-1">Manage classrooms and placement tags in one place.</p>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <section class="bg-white shadow rounded-lg border border-slate-200 overflow-hidden">
+            <div class="flex items-center justify-between p-4 bg-slate-50 border-b border-slate-200">
+                <h2 class="text-lg font-semibold text-slate-900">Classrooms</h2>
+                <button hx-get="{% url 'placementcards:create_classroom' %}" hx-target="#classroom-form-shell" hx-swap="innerHTML" class="inline-flex items-center px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
+                    Add Classroom
+                </button>
+            </div>
+            <div class="p-4 border-b border-slate-200 bg-slate-50">
+                <form method="get" class="flex items-center gap-3">
+                    <label class="text-sm font-medium text-slate-700">Filter Year:</label>
+                    <input type="text" name="school_year" value="{{ school_year }}" class="rounded-md border-slate-300 py-1 px-2 text-sm focus:border-blue-500 focus:ring-blue-500" placeholder="e.g. 2026-2027">
+                    <button type="submit" class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white bg-slate-900">Apply</button>
+                </form>
+            </div>
+            <div id="classroom-list" class="divide-y divide-slate-200">
+                {% include 'placementcards/partials/classroom_list.html' %}
+            </div>
+            <div id="classroom-form-shell"></div>
+        </section>
+
+        <section class="bg-white shadow rounded-lg border border-slate-200 overflow-hidden">
+            <div class="flex items-center justify-between p-4 bg-slate-50 border-b border-slate-200">
+                <h2 class="text-lg font-semibold text-slate-900">Tags</h2>
+                {% if can_manage_tags %}
+                <button hx-get="{% url 'placementcards:create_tag' %}" hx-target="#tag-form-shell" hx-swap="innerHTML" class="px-3 py-2 text-sm font-medium text-white bg-slate-900">Add Tag</button>
+                {% endif %}
+            </div>
+            <div id="tags-table" class="p-4">
+                {% include 'placementcards/partials/tags_table.html' %}
+            </div>
+            <div id="tag-form-shell"></div>
+        </section>
+    </div>
+
+    <section class="bg-white shadow rounded-lg border border-slate-200 overflow-hidden">
+        <div class="p-4 bg-slate-50 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Teacher Notes Questions</h2>
+            <p class="text-sm text-slate-500 mt-1">Control what teachers collect on placement cards by creating and editing question templates.</p>
+        </div>
+        <div class="p-4">
+            {% include 'placementcards/partials/questions_panel.html' %}
+        </div>
+    </section>
+</div>
+{% endblock %}

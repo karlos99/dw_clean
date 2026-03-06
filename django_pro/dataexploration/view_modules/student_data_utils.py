@@ -19,7 +19,7 @@ def _student_summary_cache_version():
     return f"v2:{mtime}"
 
 
-def _student_summary_cache_keys(ssid: str, user_id=None):
+def _student_summary_cache_keys(ssid: str, user_id=None, embedded: bool = False):
     """Generate cache keys for student summary data."""
     v = _student_summary_cache_version()
     user_part = f"u{user_id}:" if user_id else ""
@@ -27,7 +27,7 @@ def _student_summary_cache_keys(ssid: str, user_id=None):
         'student_info': f"dataexp:student_summary:{v}:{user_part}student_info:{ssid}",
         'test_records': f"dataexp:student_summary:{v}:{user_part}test_records:{ssid}",
         'student_marks': f"dataexp:student_summary:{v}:{user_part}student_marks:{ssid}",
-        'partial_html': f"dataexp:student_summary:{v}:{user_part}partial_html:{ssid}",
+        'partial_html': f"dataexp:student_summary:{v}:{user_part}partial_html:{'embedded' if embedded else 'full'}:{ssid}",
     }
 
 
@@ -162,10 +162,10 @@ def get_student_marks_cached(ssid: str, timeout: int = 300, user_id=None):
     return marks
 
 
-def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 300):
+def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 300, embedded: bool = False):
     """Get rendered HTML for student summary with caching."""
     user_id = getattr(getattr(request, 'user', None), 'pk', None)
-    keys = _student_summary_cache_keys(ssid, user_id=user_id)
+    keys = _student_summary_cache_keys(ssid, user_id=user_id, embedded=embedded)
     cached = cache.get(keys['partial_html'])
     if cached is not None:
         return cached
@@ -176,6 +176,7 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
         'student_name': get_student_info_cached(ssid, timeout=timeout, user_id=user_id).get('full_name'),
         'test_records': get_test_records_cached(ssid, timeout=timeout, user_id=user_id),
         'student_marks': get_student_marks_cached(ssid, timeout=timeout, user_id=user_id),
+        'embedded': embedded,
     }
     html = render_to_string('dataexploration/partials/student_test_summary_content.html', context, request=request)
     cache.set(keys['partial_html'], html, timeout=timeout)

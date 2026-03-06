@@ -1,0 +1,479 @@
+{% extends 'base.html' %}
+
+{% block title %}Place Students{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6 space-y-4">
+    <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-semibold">Place Students</h1>
+        <a href="{% url 'placementcards:teacher_notes' %}" class="text-sm text-blue-600 hover:text-blue-800">Teacher Notes</a>
+    </div>
+
+    <form method="get" action="{% url 'placementcards:place_students' %}" class="bg-white border border-slate-200 p-4 grid md:grid-cols-6 gap-3">
+        <input id="placement-filter-overlay" type="checkbox" class="peer sr-only">
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Student Year</label>
+            <input type="text" name="student_year" value="{{ student_year }}" class="w-full border border-slate-300 px-3 py-2 text-sm">
+        </div>
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Placement Year</label>
+            <input type="text" name="placement_year" value="{{ placement_year }}" class="w-full border border-slate-300 px-3 py-2 text-sm">
+        </div>
+        {% if 'grade' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Grade</label>
+            <select name="grade" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in grade_options %}
+                <option value="{{ option }}" {% if grade_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'gender' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Gender</label>
+            <select name="gender" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in gender_options %}
+                <option value="{{ option }}" {% if gender_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'ell' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">ELL</label>
+            <select name="ell" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in ell_options %}
+                <option value="{{ option }}" {% if ell_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'sped' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">SPED</label>
+            <select name="sped" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in sped_options %}
+                <option value="{{ option }}" {% if sped_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'sed' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">SED</label>
+            <select name="sed" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in sed_options %}
+                <option value="{{ option }}" {% if sed_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'foster' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Foster</label>
+            <select name="foster" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in foster_options %}
+                <option value="{{ option }}" {% if foster_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'homeless' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Homeless</label>
+            <select name="homeless" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in homeless_options %}
+                <option value="{{ option }}" {% if homeless_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'gate' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">GATE</label>
+            <select name="gate" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in gate_options %}
+                <option value="{{ option }}" {% if gate_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'in_504' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">504</label>
+            <select name="in_504" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in in_504_options %}
+                <option value="{{ option }}" {% if in_504_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'dli' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">DLI</label>
+            <select name="dli" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in dli_options %}
+                <option value="{{ option }}" {% if dli_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'ltel' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">LTEL</label>
+            <select name="ltel" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in ltel_options %}
+                <option value="{{ option }}" {% if ltel_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'status' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Status</label>
+            <select name="status" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in status_options %}
+                <option value="{{ option }}" {% if status_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'race' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Race</label>
+            <select name="race" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in race_options %}
+                <option value="{{ option }}" {% if race_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'search' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Search</label>
+            <input type="text" name="search" value="{{ search }}" placeholder="Name or SSID" class="w-full border border-slate-300 px-3 py-2 text-sm">
+        </div>
+        {% endif %}
+        {% if 'homeroom_teacher' in enabled_filters %}
+        <div>
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Current HR Teacher</label>
+            <select name="homeroom_teacher" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All</option>
+                {% for option in homeroom_teacher_options %}
+                <option value="{{ option }}" {% if homeroom_teacher_filter == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if 'assessment_pl' in enabled_filters %}
+        <div class="md:col-span-3">
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Assessment PL Selections</label>
+            <div class="border border-slate-200 p-2 bg-slate-50 text-xs text-slate-700">
+                {% if selected_assessment_keys %}
+                {{ selected_assessment_keys|length }} assessment PL filter(s) selected in Filter Menu.
+                {% else %}
+                No assessment PL filters selected.
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% if 'tags' in enabled_filters %}
+        <div class="md:col-span-6">
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Tags</label>
+            <div class="flex flex-wrap gap-2">
+                {% for tag in tags %}
+                <label class="inline-flex items-center gap-2 text-xs border border-slate-200 px-2 py-1">
+                    <input type="checkbox" name="tag_ids" value="{{ tag.id }}" {% if tag.id in selected_tag_ids %}checked{% endif %}>
+                    {% include 'placementcards/partials/tag_badge.html' with tag=tag %}
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        <div class="md:col-span-6 flex items-center gap-3">
+            <button type="submit" class="px-4 py-2 text-sm bg-slate-900 text-white">Apply Filters</button>
+            <label for="placement-filter-overlay" class="px-4 py-2 text-sm border border-slate-300 text-slate-700 bg-white cursor-pointer">Filter Menu</label>
+            <a href="{% url 'placementcards:place_students' %}?student_year={{ student_year }}&placement_year={{ placement_year }}" class="px-4 py-2 text-sm border border-slate-300 text-slate-700 bg-white">Clear</a>
+        </div>
+
+        <div class="hidden peer-checked:flex fixed inset-0 bg-black/30 z-50 items-center justify-center">
+            <label for="placement-filter-overlay" class="absolute inset-0"></label>
+            <div class="relative bg-white border border-slate-300 w-full max-w-2xl p-5 space-y-4">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-base font-semibold text-slate-900">Placement Filter Menu</h3>
+                    <label for="placement-filter-overlay" class="text-sm text-slate-500 cursor-pointer">Close</label>
+                </div>
+                <div class="grid md:grid-cols-2 gap-4">
+                    <div class="space-y-2">
+                        <details open class="border border-slate-200 bg-slate-50">
+                            <summary class="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-700">Student Information Filters</summary>
+                            <div class="space-y-1 text-sm px-3 pb-3 pt-1">
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="race" {% if 'race' in enabled_filters %}checked{% endif %}> Race</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="ell" {% if 'ell' in enabled_filters %}checked{% endif %}> ELL</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="homeroom_teacher" {% if 'homeroom_teacher' in enabled_filters %}checked{% endif %}> Current HR Teacher</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="grade" {% if 'grade' in enabled_filters %}checked{% endif %}> Grade</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="gender" {% if 'gender' in enabled_filters %}checked{% endif %}> Gender</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="search" {% if 'search' in enabled_filters %}checked{% endif %}> Search</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="tags" {% if 'tags' in enabled_filters %}checked{% endif %}> Tags</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="assessment_pl" {% if 'assessment_pl' in enabled_filters %}checked{% endif %}> Assessment PL</label>
+                            </div>
+                        </details>
+
+                        <details class="border border-slate-200 bg-slate-50">
+                            <summary class="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-700">Program & Support Filters</summary>
+                            <div class="space-y-1 text-sm px-3 pb-3 pt-1">
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="sped" {% if 'sped' in enabled_filters %}checked{% endif %}> SPED</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="sed" {% if 'sed' in enabled_filters %}checked{% endif %}> SED</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="foster" {% if 'foster' in enabled_filters %}checked{% endif %}> Foster</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="homeless" {% if 'homeless' in enabled_filters %}checked{% endif %}> Homeless</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="gate" {% if 'gate' in enabled_filters %}checked{% endif %}> GATE</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="in_504" {% if 'in_504' in enabled_filters %}checked{% endif %}> 504</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="dli" {% if 'dli' in enabled_filters %}checked{% endif %}> DLI</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="ltel" {% if 'ltel' in enabled_filters %}checked{% endif %}> LTEL</label>
+                                <label class="block"><input type="checkbox" name="enabled_filters" value="status" {% if 'status' in enabled_filters %}checked{% endif %}> Status</label>
+                            </div>
+                        </details>
+
+                        <details class="border border-slate-200 bg-slate-50">
+                            <summary class="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-700">Classroom Statistics Elements</summary>
+                            <div class="space-y-1 text-sm px-3 pb-3 pt-1">
+                                <label class="block"><input type="checkbox" name="metrics" value="gender" {% if 'gender' in selected_metrics %}checked{% endif %}> Gender</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="race" {% if 'race' in selected_metrics %}checked{% endif %}> Race</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="ell" {% if 'ell' in selected_metrics %}checked{% endif %}> ELL</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="sped" {% if 'sped' in selected_metrics %}checked{% endif %}> SPED</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="sed" {% if 'sed' in selected_metrics %}checked{% endif %}> SED</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="foster" {% if 'foster' in selected_metrics %}checked{% endif %}> Foster</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="homeless" {% if 'homeless' in selected_metrics %}checked{% endif %}> Homeless</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="gate" {% if 'gate' in selected_metrics %}checked{% endif %}> GATE</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="in_504" {% if 'in_504' in selected_metrics %}checked{% endif %}> 504</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="dli" {% if 'dli' in selected_metrics %}checked{% endif %}> DLI</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="ltel" {% if 'ltel' in selected_metrics %}checked{% endif %}> LTEL</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="status" {% if 'status' in selected_metrics %}checked{% endif %}> Status</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="homeroom_teacher" {% if 'homeroom_teacher' in selected_metrics %}checked{% endif %}> Current HR Teacher</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="assessment_pl" {% if 'assessment_pl' in selected_metrics %}checked{% endif %}> Assessment PL</label>
+                                <label class="block"><input type="checkbox" name="metrics" value="tags" {% if 'tags' in selected_metrics %}checked{% endif %}> Tags</label>
+                            </div>
+                        </details>
+                    </div>
+                    <div class="md:col-span-2">
+                        <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">Assessment PL Filters</h4>
+                        <div class="space-y-2 max-h-72 overflow-y-auto border border-slate-200 p-2">
+                            {% for assessment in assessment_groups %}
+                            <details class="border border-slate-200 bg-slate-50">
+                                <summary class="cursor-pointer px-2 py-1 text-xs font-medium text-slate-700">
+                                    {{ assessment.test_name }} · {{ assessment.subject }} · {{ assessment.test_window|default:'N/A' }} · {{ assessment.school_year }}
+                                </summary>
+                                <div class="px-2 pb-2 pt-1 flex flex-wrap gap-2">
+                                    {% for pl in assessment.pl_options %}
+                                    {% with key=assessment.test_group_key|add:'::'|add:pl %}
+                                    <label class="inline-flex items-center gap-1 text-xs border border-slate-300 px-2 py-1 bg-white">
+                                        <input type="checkbox" name="assessment_keys" value="{{ key }}" {% if key in selected_assessment_keys %}checked{% endif %}>
+                                        <span>PL {{ pl }}</span>
+                                    </label>
+                                    {% endwith %}
+                                    {% endfor %}
+                                </div>
+                            </details>
+                            {% empty %}
+                            <div class="text-xs text-slate-500">No assessments found for selected student year.</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-3 pt-2 border-t border-slate-200">
+                    <label for="placement-filter-overlay" class="px-4 py-2 text-sm border border-slate-300 text-slate-700 bg-white cursor-pointer">Close</label>
+                    <button type="submit" class="px-4 py-2 text-sm bg-slate-900 text-white">Apply Menu Settings</button>
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <div class="bg-white border border-slate-200 p-3">
+        <div class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">Applied Filters</div>
+        <div class="flex flex-wrap gap-2">
+            {% for item in applied_filters %}
+            <span class="px-2 py-1 text-xs bg-slate-100 border border-slate-200 text-slate-700">{{ item }}</span>
+            {% empty %}
+            <span class="text-sm text-slate-500">No filters applied.</span>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div id="placement-workspace">
+        {% include 'placementcards/partials/placement_workspace.html' %}
+    </div>
+    <div id="placement-modal-shell"></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(() => {
+    const DROP_HIGHLIGHT = 'ring-2 ring-blue-400 bg-blue-50';
+    const DETAILS_STATE_PREFIX = 'placement-details-open:';
+
+    function detailsStateKey(detailsEl) {
+        const persistKey = detailsEl.getAttribute('data-persist-key');
+        if (!persistKey) {
+            return '';
+        }
+        return DETAILS_STATE_PREFIX + persistKey;
+    }
+
+    function restoreDetailsState(root) {
+        const scope = root || document;
+        const persistentDetails = scope.querySelectorAll('details[data-persist-key]');
+        persistentDetails.forEach((detailsEl) => {
+            const key = detailsStateKey(detailsEl);
+            if (!key) {
+                return;
+            }
+            const stored = sessionStorage.getItem(key);
+            if (stored === null) {
+                return;
+            }
+            detailsEl.open = stored === '1';
+        });
+    }
+
+    function selectedStudentSsids(assignForm) {
+        const selected = Array.from(assignForm.querySelectorAll('input[name="student_ssids"]:checked')).map((input) => input.value);
+        return selected;
+    }
+
+    function setCheckedStudents(assignForm, ssids) {
+        const allCheckboxes = assignForm.querySelectorAll('input[name="student_ssids"]');
+        allCheckboxes.forEach((checkbox) => {
+            checkbox.checked = ssids.includes(checkbox.value);
+        });
+    }
+
+    function readPayload(event) {
+        const raw = event.dataTransfer ? event.dataTransfer.getData('application/json') : '';
+        if (!raw) {
+            return null;
+        }
+        try {
+            const parsed = JSON.parse(raw);
+            if (!parsed || !Array.isArray(parsed.ssids) || parsed.ssids.length === 0) {
+                return null;
+            }
+            return parsed;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    document.addEventListener('dragstart', (event) => {
+        const dragRow = event.target.closest('[data-draggable-student]');
+        if (!dragRow || !event.dataTransfer) {
+            return;
+        }
+
+        const assignForm = document.getElementById('placement-assign-form');
+        if (!assignForm) {
+            return;
+        }
+
+        const draggedSsid = dragRow.getAttribute('data-draggable-student');
+        const draggedCheckbox = Array.from(assignForm.querySelectorAll('input[name="student_ssids"]')).find((input) => input.value === draggedSsid);
+        const selected = selectedStudentSsids(assignForm);
+        const payloadSsids = draggedCheckbox && draggedCheckbox.checked && selected.length > 0 ? selected : [draggedSsid];
+
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('application/json', JSON.stringify({ ssids: payloadSsids }));
+    });
+
+    document.addEventListener('dragover', (event) => {
+        const dropZone = event.target.closest('[data-classroom-drop]');
+        if (!dropZone) {
+            return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        dropZone.classList.add(...DROP_HIGHLIGHT.split(' '));
+    });
+
+    document.addEventListener('dragleave', (event) => {
+        const dropZone = event.target.closest('[data-classroom-drop]');
+        if (!dropZone) {
+            return;
+        }
+        dropZone.classList.remove(...DROP_HIGHLIGHT.split(' '));
+    });
+
+    document.addEventListener('drop', (event) => {
+        const dropZone = event.target.closest('[data-classroom-drop]');
+        if (!dropZone) {
+            return;
+        }
+
+        event.preventDefault();
+        dropZone.classList.remove(...DROP_HIGHLIGHT.split(' '));
+
+        const payload = readPayload(event);
+        if (!payload) {
+            return;
+        }
+
+        const assignForm = document.getElementById('placement-assign-form');
+        if (!assignForm) {
+            return;
+        }
+
+        const classroomId = dropZone.getAttribute('data-classroom-drop');
+        const classroomSelect = assignForm.querySelector('select[name="classroom_id"]');
+        if (!classroomSelect || !classroomId) {
+            return;
+        }
+
+        classroomSelect.value = classroomId;
+        setCheckedStudents(assignForm, payload.ssids);
+        assignForm.requestSubmit();
+    });
+
+    document.addEventListener('toggle', (event) => {
+        const detailsEl = event.target;
+        if (!(detailsEl instanceof HTMLDetailsElement)) {
+            return;
+        }
+        if (!detailsEl.hasAttribute('data-persist-key')) {
+            return;
+        }
+        const key = detailsStateKey(detailsEl);
+        if (!key) {
+            return;
+        }
+        sessionStorage.setItem(key, detailsEl.open ? '1' : '0');
+    }, true);
+
+    document.addEventListener('DOMContentLoaded', () => {
+        restoreDetailsState(document);
+    });
+
+    document.body.addEventListener('htmx:afterSwap', (event) => {
+        const target = event.detail && event.detail.target;
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+        if (target.id === 'placement-workspace') {
+            restoreDetailsState(target);
+        }
+    });
+})();
+</script>
+{% endblock %}
