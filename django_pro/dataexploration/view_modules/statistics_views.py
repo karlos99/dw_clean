@@ -99,27 +99,67 @@ def get_column_statistics(request):
 
     # --- Reusing Filter Logic (Duplicated from load_students) ---
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
-        if not isinstance(filters_to_apply, dict): return
+        if not isinstance(filters_to_apply, dict):
+            return
+
         for col, values in filters_to_apply.items():
-            if not values: continue
-            
-            # (Simplified version of filter logic for brevity in this tool usage, but essential parts must exist)
-            
+            if not values:
+                continue
+
+            if col == 'atendace_rate':
+                expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
+                if expr:
+                    conditions = []
+                    import re
+                    for val in values:
+                        val_str = str(val).strip()
+                        if not val_str:
+                            conditions.append(f"({expr} IS NULL)")
+                            continue
+
+                        match = re.match(r'^([<>]=?|=)?\s*(\d+(?:\.\d+)?)$', val_str)
+                        if match:
+                            op = match.group(1) or '='
+                            num = match.group(2)
+                            conditions.append(f"{expr} {op} %s")
+                            params.append(num)
+                            continue
+
+                        match_range = re.match(r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$', val_str)
+                        if match_range:
+                            low, high = match_range.groups()
+                            conditions.append(f"{expr} BETWEEN %s AND %s")
+                            params.extend([low, high])
+                            continue
+
+                        conditions.append(f"{expr} = %s")
+                        params.append(val)
+
+                    if conditions:
+                        where_clauses.append(f"({' OR '.join(conditions)})")
+                    continue
+
             has_blank = "" in values
             real_values = [v for v in values if v != ""]
 
             if col.startswith('test_'):
                 test_info = test_col_map.get(col) or test_col_map.get(col.replace('-', '_'))
-                if not test_info: continue
+                if not test_info:
+                    continue
                 metric_col = test_info['metric']
-                window_clause = "AND t.test_window ILIKE %s " if test_info.get('test_window') else ""
-                window_params = [test_info['test_window']] if test_info.get('test_window') else []
+                window_clause = ""
+                window_params = []
+                if test_info.get('test_window'):
+                    window_clause = "AND t.test_window ILIKE %s "
+                    window_params = [test_info['test_window']]
 
                 exist_query_base = (
                     "SELECT 1 FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.local_student_id = cs.student_id "
-                    "AND r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                    "AND r.school_year = %s "
+                    "AND t.test_name ILIKE %s "
+                    "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
                 exist_params_base = [test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%", *window_params]
@@ -132,30 +172,109 @@ def get_column_statistics(request):
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     val_params = list(exist_params_base)
-                    if metric_col == 'oi': val_params.append(test_info['other_info_key'])
+                    if metric_col == 'oi':
+                        val_params.append(test_info['other_info_key'])
                     val_params.append(real_values)
                     conditions.append(f"EXISTS ({val_clause})")
                     params.extend(val_params)
                 
                 if has_blank:
-                     # (Omitted full blank logic for brevity, assuming standard filtering is enough for now or copied fully)
-                     # For full robustness, this should be identical. I'll rely on the standard cols mostly.
-                     pass
+                    blank_subconditions = []
+
+                    blank_subconditions.append(f"NOT EXISTS ({exist_query_base})")
+                    params.extend(exist_params_base)
+
+                    null_clause = exist_query_base
+                    null_params = list(exist_params_base)
+                    if metric_col in {'ss', 'pl'}:
+                        null_clause += f"AND r.{metric_col} IS NULL"
+                    else:
+                        null_clause += "AND (r.other_info ->> %s) IS NULL"
+                        null_params.append(test_info['other_info_key'])
+
+                    blank_subconditions.append(f"EXISTS ({null_clause})")
+                    params.extend(null_params)
+
+                    conditions.append(f"({' OR '.join(blank_subconditions)})")
                 
-                if conditions: where_clauses.append(f"({' OR '.join(conditions)})")
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            if col.startswith('mark_'):
+                mark_info = mark_col_map.get(col) or mark_col_map.get(col.replace('-', '_'))
+                if not mark_info:
+                    continue
+
+                conditions = []
+
+                if real_values:
+                    mark_clause = (
+                        "SELECT 1 FROM student_marks_list sm "
+                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                        "AND sm.school_year = %s "
+                        "AND sm.subject ILIKE %s "
+                        "AND sm.course_name ILIKE %s "
+                    )
+                    mark_params = [
+                        mark_info['year'],
+                        f"%{mark_info['subject']}%",
+                        f"%{mark_info['course_name']}%",
+                    ]
+
+                    if mark_info.get('mark_period'):
+                        mark_clause += "AND sm.mark_period ILIKE %s "
+                        mark_params.append(mark_info['mark_period'])
+                    else:
+                        mark_clause += "AND (sm.mark_period IS NULL OR sm.mark_period = '') "
+
+                    mark_clause += "AND sm.mark = ANY(%s)"
+                    mark_params.append(real_values)
+
+                    conditions.append(f"EXISTS ({mark_clause})")
+                    params.extend(mark_params)
+
+                if has_blank:
+                    blank_clause = (
+                        "SELECT 1 FROM student_marks_list sm "
+                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                        "AND sm.school_year = %s "
+                        "AND sm.subject ILIKE %s "
+                        "AND sm.course_name ILIKE %s "
+                    )
+                    blank_params = [
+                        mark_info['year'],
+                        f"%{mark_info['subject']}%",
+                        f"%{mark_info['course_name']}%",
+                    ]
+                    if mark_info.get('mark_period'):
+                        blank_clause += "AND sm.mark_period ILIKE %s "
+                        blank_params.append(mark_info['mark_period'])
+                    else:
+                        blank_clause += "AND (sm.mark_period IS NULL OR sm.mark_period = '') "
+
+                    blank_clause += "AND (sm.mark IS NULL OR sm.mark = '')"
+                    conditions.append(f"EXISTS ({blank_clause})")
+                    params.extend(blank_params)
+
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
             
             # Standard
             expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
             if expr:
-                 conditions = []
-                 if real_values:
-                      conditions.append(f"{expr} = ANY(%s)")
-                      params.append(real_values)
-                 if has_blank:
-                      if col in {'birth_date', 'us_enter_date', 'fep_date'}: conditions.append(f"{expr} IS NULL")
-                      else: conditions.append(f"({expr} IS NULL OR {expr} = '')")
-                 if conditions: where_clauses.append(f"({' OR '.join(conditions)})")
+                conditions = []
+                if real_values:
+                    conditions.append(f"{expr} = ANY(%s)")
+                    params.append(real_values)
+                if has_blank:
+                    if col in {'birth_date', 'us_enter_date', 'fep_date'}:
+                        conditions.append(f"{expr} IS NULL")
+                    else:
+                        conditions.append(f"({expr} IS NULL OR {expr} = '')")
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
 
     # --- End Filter Logic ---
 
@@ -386,10 +505,52 @@ def get_column_statistics(request):
             base_where_clauses.append("cs.status = %s")
             base_params.append(status)
 
-        # Permissions (Simplified)
+        # Check if user is unrestricted (Project Admin OR District Role)
+        is_unrestricted = False
+        if request.user.is_superuser:
+            is_unrestricted = True
+        elif getattr(request.user, 'is_project_admin', False):
+            is_unrestricted = True
+        elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
+            is_unrestricted = True
+
+        # Apply active school context or enforce school permissions
         if hasattr(request.user, 'active_school') and request.user.active_school:
-             base_where_clauses.append("cs.school_state_id = %s")
-             base_params.append(request.user.active_school.state_id)
+            base_where_clauses.append("cs.school_state_id = %s")
+            base_params.append(request.user.active_school.state_id)
+        else:
+            if not is_unrestricted:
+                if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
+                    base_where_clauses.append("cs.school_state_id = ANY(%s)")
+                    base_params.append(request.user.schools)
+                else:
+                    base_where_clauses.append("1=0")
+
+        # Apply grade level restrictions for specific roles
+        if not is_unrestricted and hasattr(request.user, 'grade_levels'):
+            user_grade_levels = request.user.grade_levels
+            if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
+                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
+                current_role = None
+
+                if hasattr(request.user, 'active_role') and request.user.active_role:
+                    current_role = request.user.active_role.name
+                elif request.user.roles.count() == 1:
+                    current_role = request.user.roles.first().name
+
+                if current_role in grade_restricted_roles:
+                    base_where_clauses.append("cs.grade = ANY(%s)")
+                    base_params.append(user_grade_levels)
+
+        # Apply specific row-level permissions (e.g. Teacher seeing only their students)
+        if hasattr(request.user, 'get_accessible_student_keys'):
+            accessible_keys = request.user.get_accessible_student_keys()
+            if accessible_keys is not None:
+                if not accessible_keys:
+                    base_where_clauses.append("1=0")
+                else:
+                    base_where_clauses.append("cs.stu_annual_key = ANY(%s)")
+                    base_params.append(accessible_keys)
         
         # Apply Column Filters
         _apply_column_filters(base_where_clauses, base_params, filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
@@ -407,6 +568,7 @@ def get_column_statistics(request):
                 'distribution': [],
                 'type': 'string'
             }
+            is_string_stats_column = False
             
             # --- Test Columns ---
             if col.startswith('test_'):
@@ -415,6 +577,7 @@ def get_column_statistics(request):
                     continue
                 
                 metric_col = info['metric'] # ss or pl
+                is_string_stats_column = metric_col == 'pl'
                 window_clause = "AND t.test_window ILIKE %s" if info['test_window'] else ""
                 win_params = [info['test_window']] if info['test_window'] else []
                 
@@ -446,6 +609,7 @@ def get_column_statistics(request):
                 info = mark_col_map.get(col)
                 if not info:
                     continue
+                is_string_stats_column = True
                 
                 period_clause = "AND sm.mark_period ILIKE %s" if info.get('mark_period') else "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
                 period_params = [info['mark_period']] if info.get('mark_period') else []
@@ -497,8 +661,10 @@ def get_column_statistics(request):
             
             for val, cnt in rows:
                 total_count += cnt
+                if is_string_stats_column and val is not None:
+                    val = str(val)
                 is_num_val = False
-                if val is not None:
+                if val is not None and not is_string_stats_column:
                     # Try to parse as float
                     try:
                         fval = float(val)
@@ -521,14 +687,16 @@ def get_column_statistics(request):
                 values.append({'value': val, 'count': cnt, 'numeric_val': fval if is_num_val else None})
 
             # If > 90% of values are numeric, treat as numeric type
-            if total_count > 0 and (numeric_count / total_count) > 0.9:
-                 stats['type'] = 'numeric'
-                 # Re-sort values numerically
-                 values.sort(key=lambda x: (x['numeric_val'] if x['numeric_val'] is not None else float('-inf'), x['value']))
+            if is_string_stats_column:
+                stats['type'] = 'string'
+            elif total_count > 0 and (numeric_count / total_count) > 0.9:
+                stats['type'] = 'numeric'
+                # Re-sort values numerically
+                values.sort(key=lambda x: (x['numeric_val'] if x['numeric_val'] is not None else float('-inf'), x['value']))
             else:
-                 stats['type'] = 'string'
-                 # Ensure standard sort (DB usually did it but if we mix types it might vary)
-                 # DB sorted by string val. That's fine for strings.
+                stats['type'] = 'string'
+                # Ensure standard sort (DB usually did it but if we mix types it might vary)
+                # DB sorted by string val. That's fine for strings.
 
             # Cleanup
             for v in values: 
