@@ -74,11 +74,56 @@
                     {% if user.is_authenticated %}
                         <!-- Dynamic Navigation from Page Management -->
                         {% for page in navigation_pages %}
-                        <a href="{{ page.url_path }}" 
-                           class="text-xs font-semibold uppercase tracking-[0.15em] text-slate-300 hover:text-blue-400 transition duration-300">
+                        {% if page.accessible_children %}
+                        <div class="relative group" x-data="{ open: false }" @mouseenter="open = true" @mouseleave="open = false">
+                            <button class="flex items-center text-xs font-semibold uppercase tracking-[0.15em] text-slate-300 hover:text-blue-400 transition duration-300 focus:outline-none" @click="open = !open">
+                                {% if page.icon %}<i class="{{ page.icon }} mr-1"></i>{% endif %}
+                                {{ page.name }}
+                                <svg class="ml-1 h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                            <div class="absolute left-0 top-full pt-4 min-w-56 z-50" x-show="open" x-transition style="display: none;">
+                                <div class="rounded-none border border-slate-200 shadow-xl py-1 bg-white">
+                                    {% for child in page.accessible_children %}
+                                    {% if child.accessible_children %}
+                                    <div class="relative group" x-data="{ openSub: false }" @mouseenter="openSub = true" @mouseleave="openSub = false">
+                                        <button class="w-full flex items-center justify-between px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition">
+                                            <span>
+                                                {% if child.icon %}<i class="{{ child.icon }} mr-1"></i>{% endif %}
+                                                {{ child.name }}
+                                            </span>
+                                            <svg class="ml-2 h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+                                            </svg>
+                                        </button>
+                                        <div class="absolute left-full top-0 min-w-56 z-50" x-show="openSub" x-transition style="display: none;">
+                                            <div class="rounded-none border border-slate-200 shadow-xl py-1 bg-white">
+                                                {% for grandchild in child.accessible_children %}
+                                                <a href="{{ grandchild.url_path }}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">
+                                                    {% if grandchild.icon %}<i class="{{ grandchild.icon }} mr-1"></i>{% endif %}
+                                                    {{ grandchild.name }}
+                                                </a>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% else %}
+                                    <a href="{{ child.url_path }}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">
+                                        {% if child.icon %}<i class="{{ child.icon }} mr-1"></i>{% endif %}
+                                        {{ child.name }}
+                                    </a>
+                                    {% endif %}
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <a href="{{ page.url_path }}" class="text-xs font-semibold uppercase tracking-[0.15em] text-slate-300 hover:text-blue-400 transition duration-300">
                             {% if page.icon %}<i class="{{ page.icon }} mr-1"></i>{% endif %}
                             {{ page.name }}
                         </a>
+                        {% endif %}
                         {% endfor %}
                         
                         {% if user.is_staff or user.active_role and user.active_role.name == 'Project Admin' or user.active_role and user.active_role.name == 'School Admin' or not user.active_role and user.is_project_admin %}
@@ -92,7 +137,9 @@
                             <div class="absolute left-0 top-full pt-4 w-48 z-50" x-show="open" x-transition style="display: none;">
                                 <div class="rounded-none border border-slate-200 shadow-xl py-1 bg-white">
                                     <a href="{% url 'users:manage_users' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Users</a>
+                                    {% if user.is_superuser or user.active_role and user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
                                     <a href="{% url 'users:manage_pages' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Pages</a>
+                                    {% endif %}
                                     {% if usage_page_access %}
                                     <a href="{{ usage_page_url }}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Usage</a>
                                     {% endif %}

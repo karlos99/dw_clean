@@ -1,0 +1,60 @@
+<div class="mt-2 text-xs text-slate-700 space-y-1">
+    <div>Total: {{ total_students }}</div>
+    {% if 'gender' in selected_metrics %}
+    <div>Gender: {% for key, value in gender_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'race' in selected_metrics %}
+    <div>Race: {% for key, value in race_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'ell' in selected_metrics %}
+    <div>ELL: {% for key, value in ell_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'sped' in selected_metrics %}
+    <div>SPED: {% for key, value in sped_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'sed' in selected_metrics %}
+    <div>SED: {% for key, value in sed_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'foster' in selected_metrics %}
+    <div>Foster: {% for key, value in foster_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'homeless' in selected_metrics %}
+    <div>Homeless: {% for key, value in homeless_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'gate' in selected_metrics %}
+    <div>GATE: {% for key, value in gate_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'in_504' in selected_metrics %}
+    <div>504: {% for key, value in in_504_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'dli' in selected_metrics %}
+    <div>DLI: {% for key, value in dli_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'ltel' in selected_metrics %}
+    <div>LTEL: {% for key, value in ltel_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'status' in selected_metrics %}
+    <div>Status: {% for key, value in status_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'homeroom_teacher' in selected_metrics %}
+    <div>Current HR Teacher: {% for key, value in homeroom_teacher_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    {% endif %}
+    {% if 'assessment_pl' in selected_metrics %}
+    <div>Assessment PL: {% for key, value in assessment_pl_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% endfor %}</div>
+    <div class="space-y-1">
+        {% for assessment in assessment_breakdown %}
+        <details>
+            <summary class="cursor-pointer text-xs text-blue-700">{{ assessment.test_name }} · {{ assessment.subject }} · {{ assessment.test_window|default:'N/A' }} · {{ assessment.school_year }}</summary>
+            <div class="pl-3 pt-1 text-xs">
+                {% for key, value in assessment.pl_counts.items %}
+                <span class="mr-2">PL {{ key }}: {{ value }}</span>
+                {% endfor %}
+            </div>
+        </details>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if 'tags' in selected_metrics %}
+    <div>Tags: {% for key, value in tag_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% empty %}None{% endfor %}</div>
+    {% endif %}
+</div>

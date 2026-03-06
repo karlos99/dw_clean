@@ -13,6 +13,13 @@ class Page(models.Model):
     
     name = models.CharField(_("Page Name"), max_length=255)
     slug = models.SlugField(_("URL Slug"), max_length=255, unique=True)
+    app_reference = models.CharField(
+        _("App Reference"),
+        max_length=100,
+        blank=True,
+        default='',
+        help_text="Primary Django app this page belongs to (e.g., placementcards, dataexploration)",
+    )
     description = models.TextField(_("Description"), blank=True)
     url_path = models.CharField(_("URL Path"), max_length=500, help_text="Internal URL path for this page")
     icon = models.CharField(_("Icon Class"), max_length=100, blank=True, help_text="CSS class for icon (e.g., 'fa-dashboard')")
@@ -39,6 +46,18 @@ class Page(models.Model):
     # Display options
     show_in_menu = models.BooleanField(_("Show in Menu"), default=True)
     menu_order = models.IntegerField(_("Menu Order"), default=0, help_text="Lower numbers appear first")
+    menu_roles = models.JSONField(
+        _("Menu Roles"),
+        default=list,
+        blank=True,
+        help_text="Optional roles that can see this page in navigation (menu visibility only)",
+    )
+    menu_allowed_users = models.ManyToManyField(
+        'User',
+        blank=True,
+        related_name='menu_visible_pages',
+        help_text="Specific users that can see this page in navigation (menu visibility only)",
+    )
     parent_page = models.ForeignKey(
         'self', 
         on_delete=models.SET_NULL, 
