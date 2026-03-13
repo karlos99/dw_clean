@@ -38,8 +38,18 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
 @login_required
 def load_column_structures(request):
     """Return dynamic column structures for the column selector via HTMX."""
-    test_structure = get_nyl_test_columns()
-    marks_structure = get_nyl_mark_columns()
+    import json
+    
+    filters_json = request.GET.get('column_filters')
+    column_filters = None
+    if filters_json:
+        try:
+            column_filters = json.loads(filters_json)
+        except json.JSONDecodeError:
+            pass
+
+    test_structure = get_nyl_test_columns(user=request.user, column_filters=column_filters)
+    marks_structure = get_nyl_mark_columns(user=request.user, column_filters=column_filters)
 
     context = {
         'test_structure': test_structure,

@@ -20,19 +20,20 @@ def _get_display_name(name):
     return name
 
 
-def _generate_cache_key(prefix, filters):
-    """Generate a consistent cache key from filters."""
+def _generate_cache_key(prefix, filters, extra_hash_str=""):
+    """Generate a consistent cache key from filters and extra conditions."""
     if filters:
         # Sort keys to ensure consistent hash
         filter_str = json.dumps(filters, sort_keys=True)
     else:
         filter_str = "None"
     
-    key_hash = hashlib.md5(filter_str.encode('utf-8')).hexdigest()
+    combined_str = f"{filter_str}_{extra_hash_str}"
+    key_hash = hashlib.md5(combined_str.encode('utf-8')).hexdigest()
     return f"{prefix}_{key_hash}"
 
 
-def get_test_columns(column_filters=None):
+def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses=None, extra_params=None):
     """Get dynamic test columns from database organized by year and test.
     
                 Returns structure:
@@ -49,7 +50,8 @@ def get_test_columns(column_filters=None):
             - If a test has a test_window, the window is included in the column key to avoid collisions.
                         - Additional assessment info comes from results.other_info (JSONB) keys.
     """
-    cache_key = _generate_cache_key("test_columns_v4", column_filters)
+    extra_hash_str = f"{extra_join_sql}_{json.dumps(extra_where_clauses)}_{json.dumps(extra_params)}" if extra_join_sql or extra_where_clauses else ""
+    cache_key = _generate_cache_key("test_columns_v4", column_filters, extra_hash_str)
     cached_data = cache.get(cache_key)
 
     if cached_data:
@@ -62,6 +64,10 @@ def get_test_columns(column_filters=None):
     with connections['default'].cursor() as cursor:
         where_clauses = ["r.school_year IS NOT NULL", "t.test_name IS NOT NULL"]
         params = []
+        if extra_where_clauses:
+            where_clauses.extend(extra_where_clauses)
+        if extra_params:
+            params.extend(extra_params)
 
         # Add column-specific filters from base student data
         if column_filters:
@@ -92,6 +98,7 @@ def get_test_columns(column_filters=None):
             FROM results r
             INNER JOIN tests t ON r.test_group_key = t.test_group_key
             INNER JOIN current_student cs ON r.local_student_id = cs.student_id
+            {extra_join_sql}
             WHERE {where_sql}
             ORDER BY r.school_year DESC, t.test_name, t.subject, t.test_window
             """
@@ -104,6 +111,7 @@ def get_test_columns(column_filters=None):
             FROM results r
             INNER JOIN tests t ON r.test_group_key = t.test_group_key
             INNER JOIN current_student cs ON r.local_student_id = cs.student_id
+            {extra_join_sql}
             WHERE {where_sql}
             ORDER BY r.school_year DESC, t.test_name, t.subject
             """
@@ -255,7 +263,7 @@ def get_test_columns(column_filters=None):
         return columns
 
 
-def get_mark_columns(column_filters=None):
+def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses=None, extra_params=None):
     """Get dynamic mark columns from student_marks_list organized by year/subject/course/period.
 
     Returns structure:
@@ -269,7 +277,8 @@ def get_mark_columns(column_filters=None):
             }
         }
     """
-    cache_key = _generate_cache_key("mark_columns", column_filters)
+    extra_hash_str = f"{extra_join_sql}_{json.dumps(extra_where_clauses)}_{json.dumps(extra_params)}" if extra_join_sql or extra_where_clauses else ""
+    cache_key = _generate_cache_key("mark_columns", column_filters, extra_hash_str)
     cached_data = cache.get(cache_key)
 
     if cached_data:
@@ -282,6 +291,10 @@ def get_mark_columns(column_filters=None):
     with connections['default'].cursor() as cursor:
         where_clauses = ["sm.school_year IS NOT NULL"]
         params = []
+        if extra_where_clauses:
+            where_clauses.extend(extra_where_clauses)
+        if extra_params:
+            params.extend(extra_params)
 
         # Apply base column filters from current_student
         if column_filters:
@@ -310,6 +323,7 @@ def get_mark_columns(column_filters=None):
                 sm.mark_period
             FROM student_marks_list sm
             INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+            {extra_join_sql}
             WHERE {where_sql}
             ORDER BY sm.school_year DESC, sm.subject, sm.course_name, sm.mark_period
         """

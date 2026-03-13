@@ -52,7 +52,7 @@ COLUMN_CATEGORIES = {
     },
     "next_year": {
         "title": "Next Year Placement",
-        "columns": ["next_year_school_state_id", "next_year_school_name"],
+        "columns": ["next_year_school_name"],
     },
     "math_recommendation": {
         "title": "Math Recommendation",

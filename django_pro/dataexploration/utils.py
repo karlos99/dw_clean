@@ -291,3 +291,22 @@ def can_user_manage_list(user, student_list):
         
     # Check if user has edit permission on the folder
     return can_user_edit_folder(user, student_list.folder)
+
+def _apply_de_school_filter(where_clauses, params, user):
+    """Apply the active school context or enforce school permissions."""
+    is_unrestricted = False
+    if user.is_staff:
+        is_unrestricted = True
+    elif hasattr(user, 'active_role') and user.active_role and 'District' in user.active_role.name:
+        is_unrestricted = True
+
+    if hasattr(user, 'active_school') and user.active_school:
+        where_clauses.append("cs.school_state_id = %s")
+        params.append(user.active_school.state_id)
+    else:
+        if not is_unrestricted:
+            if hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
+                where_clauses.append("cs.school_state_id = ANY(%s)")
+                params.append(user.schools)
+            else:
+                where_clauses.append("1=0")

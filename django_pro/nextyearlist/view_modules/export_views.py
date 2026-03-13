@@ -13,9 +13,11 @@ from ..constants import COLUMN_DEFINITIONS
 from ..utils import can_user_view_query
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
 from ..view_modules.student_list_views import _is_unrestricted, _apply_nyl_school_filter
+from users.decorators import page_access_required
 
 
 @login_required
+@page_access_required('nextyearlist')
 def export_students_csv(request):
     """Export filtered next-year student data as a streaming CSV."""
 

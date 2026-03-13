@@ -13,6 +13,7 @@ from dataexploration.view_modules.student_data_utils import (
 )
 from ..view_modules.column_management import get_column_expression
 from ..view_modules.student_list_views import _is_unrestricted, _apply_nyl_school_filter
+from users.decorators import page_access_required
 
 
 def _np(v):
@@ -43,6 +44,7 @@ def _parse_mark_year(col_key):
 
 
 @login_required
+@page_access_required('nextyearlist')
 def get_column_statistics(request):
     """Return value distribution statistics for specific columns."""
     target_columns_json = request.GET.get('target_columns', '')
