@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     'users.apps.UsersConfig',
     'studata',
     'dataexploration',
+    'nextyearlist.apps.NextYearListConfig',
     'placementcards',
     'mathr.apps.MathrConfig',
     'assesments',
