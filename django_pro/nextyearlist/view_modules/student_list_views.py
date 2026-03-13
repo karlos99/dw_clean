@@ -11,10 +11,14 @@ from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.generic import ListView
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.utils.decorators import method_decorator
+from django.contrib.auth.decorators import login_required
 from django.db import connections
 from django.core.cache import cache
 import hashlib
 import json
+
+from users.decorators import page_access_required
 
 from dataexploration.models import SavedQuery, StudentList
 from dataexploration.column_utils import get_test_columns, get_mark_columns
@@ -40,21 +44,31 @@ def _is_unrestricted(user):
 
 
 def _apply_nyl_school_filter(where_clauses, params, user):
-    """Add school filter for school-scoped users (based on current school)."""
+    """Restrict results to students whose current school OR next-year school matches the user's school(s).
+
+    A student is visible when:
+      - cs.school_state_id matches (they currently attend the school), OR
+      - nyl.next_year_school_state_id matches (they are placed into the school for next year).
+
+    Requires that the query already JOINs nextyearlist_placement as 'nyl'.
+    """
     if _is_unrestricted(user):
         return
     if hasattr(user, 'active_school') and user.active_school:
-        where_clauses.append("cs.school_state_id = %s")
-        params.append(user.active_school.state_id)
+        sid = user.active_school.state_id
+        where_clauses.append("(cs.school_state_id = %s OR nyl.next_year_school_state_id = %s)")
+        params.extend([sid, sid])
     elif hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
-        where_clauses.append("cs.school_state_id = ANY(%s)")
-        params.append(user.schools)
+        sids = user.schools
+        where_clauses.append("(cs.school_state_id = ANY(%s) OR nyl.next_year_school_state_id = ANY(%s))")
+        params.extend([sids, sids])
     else:
         where_clauses.append("1=0")
 
 
 # ----- list view -----
 
+@method_decorator(page_access_required('nextyearlist'), name='dispatch')
 class NextYearListView(LoginRequiredMixin, ListView):
     """Display list of next-year students mirroring the dataexploration list view."""
     template_name = 'nextyearlist/student_list.html'
@@ -150,6 +164,8 @@ class NextYearListView(LoginRequiredMixin, ListView):
 
 # ----- HTMX data loader -----
 
+@login_required
+@page_access_required('nextyearlist')
 def load_students(request):
     """Load student data with dynamic columns via HTMX."""
     page = int(request.GET.get('page', 1))
@@ -668,7 +684,15 @@ def load_students(request):
 
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
 
-        page_cache_key = f"nyl:page:{hashlib.md5(json.dumps({'h': hashlib.md5((where_sql + join_sql).encode()).hexdigest(), 'p': [str(p) for p in params], 's': f'{sort_by}:{sort_dir}', 'l': limit, 'o': offset}, sort_keys=True).encode()).hexdigest()}"
+        # Include selected columns in the cache key so that adding/removing a column
+        # (e.g. next_year_school_name, math_selection, mark columns) always fetches fresh data.
+        _cache_col_key = json.dumps(
+            sorted(base_cols)
+            + sorted([mi['col_name'] for mi in mark_cols_info])
+            + sorted([ti['col_name'] for ti in test_cols_info]),
+            sort_keys=True,
+        )
+        page_cache_key = f"nyl:page:{hashlib.md5(json.dumps({'h': hashlib.md5((where_sql + join_sql).encode()).hexdigest(), 'c': hashlib.md5(_cache_col_key.encode()).hexdigest(), 'p': [str(p) for p in params], 's': f'{sort_by}:{sort_dir}', 'l': limit, 'o': offset}, sort_keys=True).encode()).hexdigest()}"
 
         rows = None
         columns = None
@@ -676,7 +700,11 @@ def load_students(request):
             rows = cache.get(page_cache_key)
 
         if not rows:
-            # Build combined SELECT including test/mark subqueries
+            # Build combined SELECT including test/mark subqueries.
+            # select_params are collected separately because SELECT subquery %s markers appear
+            # before WHERE %s markers in the SQL string, but params already holds WHERE+ORDER BY
+            # params. Final execute uses: select_params + params (correct positional order).
+            select_params = []
             test_selects = []
             for ti in test_cols_info:
                 metric_col = ti['metric']
@@ -695,10 +723,10 @@ def load_students(request):
                     f" AS \"{ti['col_name']}\""
                 )
                 test_selects.append(test_sub)
-                params.append(ti['year'])
-                params.append(f"%{ti['test_name']}%")
-                params.append(f"%{ti['subject']}%")
-                params.extend(window_params)
+                select_params.append(ti['year'])
+                select_params.append(f"%{ti['test_name']}%")
+                select_params.append(f"%{ti['subject']}%")
+                select_params.extend(window_params)
 
             mark_selects = []
             for mi in mark_cols_info:
@@ -709,11 +737,11 @@ def load_students(request):
                     f" AS \"{mi['col_name']}\""
                 )
                 mark_selects.append(mark_sub)
-                params.append(mi['year'])
-                params.append(f"%{mi['subject']}%")
-                params.append(f"%{mi['course_name']}%")
+                select_params.append(mi['year'])
+                select_params.append(f"%{mi['subject']}%")
+                select_params.append(f"%{mi['course_name']}%")
                 if mi.get('mark_period'):
-                    params.append(mi['mark_period'])
+                    select_params.append(mi['mark_period'])
 
             all_selects = base_col_sql
             if test_selects:
@@ -731,7 +759,7 @@ def load_students(request):
                 f" ORDER BY {order_by_expr} {sort_dir} NULLS LAST"
                 f" LIMIT {limit} OFFSET {offset}"
             )
-            cursor.execute(query, params)
+            cursor.execute(query, select_params + params)
             columns = [d[0] for d in cursor.description]
             rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
             cache.set(page_cache_key, rows, 60)
@@ -769,7 +797,7 @@ def load_students(request):
         filter_options = {}
         if request.GET.get('format') == 'json' and total > 0:
             excluded_filters = {'ssid', 'student_id', 'student_name', 'stu_annual_key'}
-            always_include = {'school', 'next_year_school_name', 'next_year_school_state_id'}
+            always_include = {'school', 'next_year_school_name', 'next_year_school_state_id', 'math_selection'}
             NYL_JOIN = (
                 " LEFT JOIN nextyearlist_placement nyl ON nyl.ssid = cs.ssid AND nyl.school_year = cs.school_year"
                 " LEFT JOIN mathr_recommendation mr ON mr.ssid = cs.ssid AND mr.school_year = cs.school_year"
@@ -785,9 +813,17 @@ def load_students(request):
                 sy_val = school_year[0] if isinstance(school_year, list) and school_year else (school_year or '')
                 gr_val = grade[0] if isinstance(grade, list) and grade else (grade or '')
                 st_val = status[0] if isinstance(status, list) and status else (status or '')
+                # Include user school scope so different users don't share cached filter options
+                if hasattr(request.user, 'active_school') and request.user.active_school:
+                    user_scope = f"school:{request.user.active_school.state_id}"
+                elif hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
+                    user_scope = f"schools:{','.join(sorted(request.user.schools))}"
+                else:
+                    user_scope = 'unrestricted'
                 payload = {
                     'base': {'s': str(search or ''), 'sy': str(sy_val), 'gr': str(gr_val), 'st': str(st_val)},
                     'filters': norm or 'no_filters',
+                    'scope': user_scope,
                 }
                 return f"nyl:filter_opts:{column}:{hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()}"
 
@@ -818,7 +854,7 @@ def load_students(request):
                     opt_params,
                 )
                 dc = cursor.fetchone()[0] or 0
-                if dc <= 1 or (dc > 30 and col not in always_include):
+                if col not in always_include and (dc <= 1 or dc > 30):
                     continue
                 lim = "" if col in always_include else "LIMIT 30"
                 cursor.execute(
@@ -831,7 +867,7 @@ def load_students(request):
                     filter_options[col] = values
                     cache.set(ck, values, 300)
 
-            # Test PL / OI filter options
+            # Test PL / OI filter options — scoped to students in the current filtered list
             for ti in test_cols_info:
                 if ti['metric'] not in {'pl', 'oi'}:
                     continue
@@ -848,19 +884,24 @@ def load_students(request):
                 opt_sql = " AND ".join(opt_where)
                 win_cl = "AND t.test_window ILIKE %s" if ti.get('test_window') else ""
                 win_p = [ti['test_window']] if ti.get('test_window') else []
+                student_subquery = (
+                    f"SELECT cs.student_id FROM current_student cs {NYL_JOIN} {join_sql} WHERE {opt_sql}"
+                )
                 if ti['metric'] == 'pl':
                     cursor.execute(
-                        f"SELECT r.pl AS v FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key"
-                        f" INNER JOIN current_student cs ON r.local_student_id = cs.student_id {NYL_JOIN} {join_sql}"
-                        f" WHERE {opt_sql} AND r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s {win_cl}"
+                        f"SELECT r.pl AS v FROM results r"
+                        f" INNER JOIN tests t ON r.test_group_key = t.test_group_key"
+                        f" WHERE r.local_student_id IN ({student_subquery})"
+                        f" AND r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s {win_cl}"
                         f" GROUP BY v ORDER BY v ASC NULLS FIRST LIMIT 30",
                         opt_params + [ti['year'], f"%{ti['test_name']}%", f"%{ti['subject']}%"] + win_p,
                     )
                 else:
                     cursor.execute(
-                        f"SELECT (r.other_info ->> %s) AS v FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key"
-                        f" INNER JOIN current_student cs ON r.local_student_id = cs.student_id {NYL_JOIN} {join_sql}"
-                        f" WHERE {opt_sql} AND r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s {win_cl}"
+                        f"SELECT (r.other_info ->> %s) AS v FROM results r"
+                        f" INNER JOIN tests t ON r.test_group_key = t.test_group_key"
+                        f" WHERE r.local_student_id IN ({student_subquery})"
+                        f" AND r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s {win_cl}"
                         f" GROUP BY v ORDER BY v ASC NULLS FIRST LIMIT 30",
                         [ti.get('other_info_key', '')] + opt_params + [ti['year'], f"%{ti['test_name']}%", f"%{ti['subject']}%"] + win_p,
                     )
@@ -869,7 +910,7 @@ def load_students(request):
                     filter_options[col_key] = values
                     cache.set(ck, values, 300)
 
-            # Mark filter options
+            # Mark filter options — scoped to students in the current filtered list
             for mi in mark_cols_info:
                 col_key = mi['col_name']
                 other_f = _get_other_f(col_key)
@@ -884,10 +925,13 @@ def load_students(request):
                 opt_sql = " AND ".join(opt_where)
                 per_cl = "AND sm.mark_period ILIKE %s" if mi.get('mark_period') else "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
                 per_p = [mi['mark_period']] if mi.get('mark_period') else []
+                stu_annual_subquery = (
+                    f"SELECT cs.stu_annual_key FROM current_student cs {NYL_JOIN} {join_sql} WHERE {opt_sql}"
+                )
                 cursor.execute(
                     f"SELECT sm.mark AS v FROM student_marks_list sm"
-                    f" INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key {NYL_JOIN} {join_sql}"
-                    f" WHERE {opt_sql} AND sm.school_year = %s AND sm.subject ILIKE %s AND sm.course_name ILIKE %s {per_cl}"
+                    f" WHERE sm.stu_annual_key IN ({stu_annual_subquery})"
+                    f" AND sm.school_year = %s AND sm.subject ILIKE %s AND sm.course_name ILIKE %s {per_cl}"
                     f" GROUP BY v ORDER BY v ASC NULLS FIRST LIMIT 30",
                     opt_params + [mi['year'], f"%{mi['subject']}%", f"%{mi['course_name']}%"] + per_p,
                 )
