@@ -109,13 +109,47 @@ def manage_default_columns(request):
 
 
 def load_column_structures(request):
-    """Load dynamic column structures for the selector via HTMX.
+    """Load dynamic column structures for the selector via HTMX."""
+    import json
+    
+    filters_json = request.GET.get('column_filters')
+    column_filters = None
+    if filters_json:
+        try:
+            column_filters = json.loads(filters_json)
+        except json.JSONDecodeError:
+            pass
 
-    Always return the full assessment/marks tree so opening a saved report
-    never hides other available dynamic columns.
-    """
-    test_structure = get_test_columns()
-    marks_structure = get_mark_columns()
+    # Build school filtering based on user permissions
+    where_clauses = []
+    params = []
+    user = request.user
+    
+    user_roles = get_user_roles(user)
+    unrestricted_roles = {'District Admin', 'Project Admin', 'District View'}
+    is_unrestricted = user.is_superuser or bool(user_roles & unrestricted_roles)
+    
+    if hasattr(user, 'active_school') and user.active_school:
+        where_clauses.append("cs.school_state_id = %s")
+        params.append(user.active_school.state_id)
+    else:
+        if not is_unrestricted:
+            if hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
+                where_clauses.append("cs.school_state_id = ANY(%s)")
+                params.append(user.schools)
+            else:
+                where_clauses.append("1=0")
+
+    test_structure = get_test_columns(
+        column_filters=column_filters,
+        extra_where_clauses=where_clauses,
+        extra_params=params
+    )
+    marks_structure = get_mark_columns(
+        column_filters=column_filters,
+        extra_where_clauses=where_clauses,
+        extra_params=params
+    )
     
     context = {
         'test_structure': test_structure,
