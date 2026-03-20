@@ -64,6 +64,9 @@ def create_tag_modal(request: HttpRequest):
     if not name:
         return HttpResponse('Tag name is required', status=400)
 
+    if PlacementTag.objects.filter(school=school, name=name).exists():
+        return HttpResponse(f'A tag named "{name}" already exists', status=400)
+
     max_order = PlacementTag.objects.filter(school=school).order_by('-display_order').values_list('display_order', flat=True).first() or 0
     PlacementTag.objects.create(
         school=school,
@@ -91,6 +94,10 @@ def edit_tag_modal(request: HttpRequest, tag_id: int):
     tag.name = request.POST.get('name', '').strip() or tag.name
     tag.color = _normalize_tag_color(request.POST.get('color', tag.color))
     tag.description = request.POST.get('description', '').strip()
+
+    if PlacementTag.objects.filter(school=school, name=tag.name).exclude(id=tag.id).exists():
+        return HttpResponse(f'A tag named "{tag.name}" already exists', status=400)
+
     tag.save(update_fields=['name', 'color', 'description', 'updated_at'])
     invalidate_school_caches(school.pk)
     return manage_tags(request)
@@ -104,9 +111,8 @@ def delete_tag(request: HttpRequest, tag_id: int):
         return HttpResponse('Forbidden', status=403)
 
     tag = get_object_or_404(PlacementTag, id=tag_id, school=school)
-    tag.is_active = False
-    tag.save(update_fields=['is_active', 'updated_at'])
     tag.placement_cards.clear()
+    tag.delete()
     invalidate_school_caches(school.pk)
     return manage_tags(request)
 
