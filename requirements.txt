@@ -11,3 +11,5 @@ PyJWT>=2.10.0
 cryptography>=46.0.0
 pyecharts>=2.0.9
 django-redis>=5.4.0
+reportlab>=4.2.5
+pandas>=2.3.0
