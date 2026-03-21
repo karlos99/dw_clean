@@ -1,0 +1,87 @@
+<div id="share-modal" class="fixed inset-0 z-50 overflow-y-auto" aria-labelledby="modal-title" role="dialog"
+    aria-modal="true">
+    <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div class="fixed inset-0 bg-slate-900 bg-opacity-75 transition-opacity" aria-hidden="true"
+            onclick="document.getElementById('modals-container').innerHTML=''"></div>
+
+        <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+
+        <div
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4" id="modal-title">Share {{ item_name }}</h3>
+
+                {% if is_owner %}
+                <!-- Current Shares -->
+                {% if current_shares %}
+                <div class="mb-4 border-b pb-4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-2">Currently Shared With:</h4>
+                    <div class="space-y-2">
+                        {% for share in current_shares %}
+                        <div class="flex items-center justify-between text-sm bg-gray-50 p-2 rounded">
+                            <div>
+                                <span class="text-gray-900">{{ share.shared_with.email }}</span>
+                                <span class="text-gray-500 text-xs ml-2">
+                                    {% if share.can_edit %}(Can Edit){% else %}(View Only){% endif %}
+                                </span>
+                            </div>
+                            <button type="button"
+                                hx-post="{% url 'dataexploration:unshare_folder' folder.id share.id %}"
+                                hx-confirm="Remove {{ share.shared_with.email }}'s access?"
+                                hx-target="#modals-container" class="text-red-600 hover:text-red-800 text-xs">
+                                Remove
+                            </button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Add New Share -->
+                <form id="share-form" hx-post="{{ submit_url }}" hx-target="#modals-container">
+                    {% csrf_token %}
+                    <div class="space-y-4">
+                        <div>
+                            <label for="user_email" class="block text-sm font-medium text-gray-700">Share with User
+                                Email</label>
+                            <input type="email" name="user_email" id="user_email" required
+                                placeholder="user@example.com"
+                                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                        </div>
+
+                        <div class="flex items-center">
+                            <input type="checkbox" name="can_edit" id="can_edit" value="true"
+                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                            <label for="can_edit" class="ml-2 block text-sm text-gray-700">
+                                Allow user to edit
+                            </label>
+                        </div>
+
+                        <p class="text-xs text-gray-500">
+                            The entire folder containing this {{ item_type }} will be shared.
+                        </p>
+                    </div>
+                    <div class="mt-5 sm:mt-6 sm:flex sm:flex-row-reverse">
+                        <button type="submit"
+                            class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm">
+                            Share
+                        </button>
+                        <button type="button" onclick="document.getElementById('modals-container').innerHTML=''"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+                {% else %}
+                <p class="text-sm text-gray-600">You can only share items in folders you own.</p>
+                <div class="mt-4">
+                    <button type="button" onclick="document.getElementById('modals-container').innerHTML=''"
+                        class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:text-sm">
+                        Close
+                    </button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>

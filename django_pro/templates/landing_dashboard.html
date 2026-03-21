@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - DS Data{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-slate-900">Welcome, {{ user.name|default:user.username }}</h1>
+        <p class="mt-2 text-slate-600">Here is an overview of your account and queries.</p>
+    </div>
+
+    <!-- User Info Card -->
+    <div class="bg-white rounded-lg shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+        <h2 class="text-xl font-semibold text-slate-900 mb-4">Account Information</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div>
+                <dt class="text-sm font-medium text-slate-500">Email</dt>
+                <dd class="mt-1 text-sm text-slate-900">{{ user.email }}</dd>
+            </div>
+            <div>
+                <dt class="text-sm font-medium text-slate-500">Roles</dt>
+                <dd class="mt-1 text-sm text-slate-900">
+                    {% for role in user.roles.all %}
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            {{ role.name }}
+                        </span>
+                    {% empty %}
+                        <span class="text-slate-500 italic">No roles assigned</span>
+                    {% endfor %}
+                </dd>
+            </div>
+            <div>
+                <dt class="text-sm font-medium text-slate-500">School Access</dt>
+                <dd class="mt-1 text-sm text-slate-900">{{ school_count }} schools</dd>
+            </div>
+            {% if user.job_title %}
+            <div>
+                <dt class="text-sm font-medium text-slate-500">Job Title</dt>
+                <dd class="mt-1 text-sm text-slate-900">{{ user.job_title }}</dd>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Saved Queries -->
+        <div class="bg-white rounded-lg shadow-sm ring-1 ring-slate-200 p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-slate-900">Recent Saved Queries</h2>
+                <a href="{% url 'dataexploration:student_tests_list' %}" class="text-sm text-blue-600 hover:text-blue-500 font-medium">View all &rarr;</a>
+            </div>
+            
+            {% if saved_queries %}
+            <ul class="divide-y divide-slate-100">
+                {% for query in saved_queries %}
+                <li class="py-3">
+                    <div class="flex items-center justify-between">
+                        <div class="min-w-0 flex-1">
+                            <a href="{% url 'dataexploration:student_tests_list' %}?saved_query={{ query.id }}" class="block focus:outline-none">
+                                <p class="text-sm font-medium text-slate-900 truncate hover:text-blue-600">{{ query.name }}</p>
+                                {% if query.description %}
+                                <p class="text-xs text-slate-500 truncate">{{ query.description }}</p>
+                                {% endif %}
+                            </a>
+                        </div>
+                        <time datetime="{{ query.updated_at|date:'c' }}" class="flex-shrink-0 whitespace-nowrap text-xs text-slate-500 ml-4">
+                            {{ query.updated_at|date:"M d, Y" }}
+                        </time>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="text-center py-6">
+                <p class="text-sm text-slate-500">No saved queries yet.</p>
+                <a href="{% url 'dataexploration:student_tests_list' %}" class="mt-2 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200">
+                    Create your first query
+                </a>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Shared Queries -->
+        <div class="bg-white rounded-lg shadow-sm ring-1 ring-slate-200 p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-slate-900">Shared with Me</h2>
+                <a href="{% url 'dataexploration:student_tests_list' %}" class="text-sm text-blue-600 hover:text-blue-500 font-medium">Explore &rarr;</a>
+            </div>
+
+            {% if shared_queries %}
+            <ul class="divide-y divide-slate-100">
+                {% for query in shared_queries %}
+                <li class="py-3">
+                    <div class="flex items-center justify-between">
+                        <div class="min-w-0 flex-1">
+                            <a href="{% url 'dataexploration:student_tests_list' %}?saved_query={{ query.id }}" class="block focus:outline-none">
+                                <p class="text-sm font-medium text-slate-900 truncate hover:text-blue-600">{{ query.name }}</p>
+                                <p class="text-xs text-slate-500 truncate">Shared by {{ query.owner.name|default:query.owner.email }}</p>
+                            </a>
+                        </div>
+                        <time datetime="{{ query.updated_at|date:'c' }}" class="flex-shrink-0 whitespace-nowrap text-xs text-slate-500 ml-4">
+                            {{ query.updated_at|date:"M d, Y" }}
+                        </time>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="text-center py-6">
+                <p class="text-sm text-slate-500">No queries shared with you yet.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

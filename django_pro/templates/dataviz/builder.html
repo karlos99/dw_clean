@@ -1,0 +1,1382 @@
+{% extends "base.html" %}
+{% load static %}
+{% load dataexploration_tags %}
+
+{% block title %}DataViz{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.highcharts.com/highcharts.js"></script>
+<script src="https://code.highcharts.com/highcharts-more.js"></script>
+<script src="https://code.highcharts.com/modules/heatmap.js"></script>
+<script src="https://code.highcharts.com/modules/treemap.js"></script>
+<script src="https://code.highcharts.com/modules/funnel.js"></script>
+<script src="https://code.highcharts.com/modules/solid-gauge.js"></script>
+<script src="https://code.highcharts.com/modules/histogram-bellcurve.js"></script>
+<script src="https://code.highcharts.com/modules/exporting.js"></script>
+<script src="https://code.highcharts.com/modules/accessibility.js"></script>
+<script>
+    {% include 'static/js/dataviz_utils.js' %}
+    {% include 'static/js/dataviz_chart_renderer.js' %}
+    {% include 'static/js/dataviz_app_core.js' %}
+    {% include 'static/js/dataviz_app_helpers.js' %}
+    {% include 'static/js/dataviz_app_chart.js' %}
+    {% include 'static/js/dataviz_app_data.js' %}
+    {% include 'static/js/dataviz_app_columns.js' %}
+    {% include 'static/js/dataviz_app_explore.js' %}
+    {% include 'static/js/dataviz_app_sql.js' %}
+    {% include 'static/js/dataviz_app_save.js' %}
+    {% include 'static/js/dataviz_app_dash.js' %}
+</script>
+{% endblock %}
+
+{% block content %}
+<div id="dataviz-app-data"
+     data-load-students-url="{% url 'dataexploration:load_students' %}"
+     data-render-chart-url="{% url 'dataviz:render_chart' %}"
+     data-sql-url="{% url 'dataviz:sql_lab' %}"
+     data-schema-url="{% url 'dataviz:sql_schema' %}"
+     data-charts-url="{% url 'dataviz:chart_list' %}"
+     data-save-chart-url="{% url 'dataviz:save_chart' %}"
+     data-dashboards-url="{% url 'dataviz:dashboard_list' %}"
+     data-csrf-token="{{ csrf_token }}"
+     data-default-columns="{{ default_columns_json|escapejs }}"
+     data-column-definitions="{{ column_definitions_json|escapejs }}"></div>
+
+<style>
+  :root { --dv-nav-h: 56px; --dv-topbar-h: 44px; }
+
+  #dataviz-app {
+    height: calc(100vh - var(--dv-nav-h));
+    display: flex; flex-direction: column; overflow: hidden;
+    font-family: Inter, system-ui, sans-serif;
+  }
+
+  /* ── Mode panels ─────────────────────────────────────── */
+  .dv-mode { display: none; flex: 1; overflow: hidden; }
+  .dv-mode.active { display: flex; }
+
+  /* ── Scrollable panels ───────────────────────────────── */
+  .dv-panel { overflow-y: auto; overscroll-behavior: contain; }
+  .dv-panel::-webkit-scrollbar { width: 4px; }
+  .dv-panel::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+  /* ── Drawers ─────────────────────────────────────────── */
+  .dv-drawer {
+    position: fixed; top: 0; right: 0; height: 100%;
+    width: 340px; max-width: 92vw; z-index: 60;
+    transform: translateX(100%); transition: transform .22s ease;
+  }
+  .dv-drawer.open { transform: translateX(0); }
+  .dv-backdrop {
+    position: fixed; inset: 0; z-index: 59;
+    background: rgba(15,23,42,.35); display: none;
+  }
+  .dv-backdrop.open { display: block; }
+
+  /* ── Dimension / Metric chips ────────────────────────── */
+  .dv-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all .12s; border: 1px solid transparent;
+    user-select: none;
+  }
+  .dv-chip.dim  { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+  .dv-chip.dim:hover  { background: #dbeafe; }
+  .dv-chip.metric { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+  .dv-chip.metric:hover { background: #dcfce7; }
+  .dv-chip.assessment { background: #fdf4ff; color: #7e22ce; border-color: #e9d5ff; }
+  .dv-chip.assessment:hover { background: #f3e8ff; }
+  .dv-chip.assigned { opacity: .55; }
+
+  /* ── Slot drop zones ─────────────────────────────────── */
+  .dv-slot {
+    min-height: 32px; border: 1.5px dashed #cbd5e1; border-radius: 8px;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+    padding: 4px 8px; background: #f8fafc; transition: border-color .12s;
+  }
+  .dv-slot.dragover { border-color: #3b82f6; background: #eff6ff; }
+  .dv-slot-placeholder { font-size: 11px; color: #94a3b8; font-style: italic; }
+
+  /* Badge inside slot */
+  .dv-slot-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 700;
+    background: #1e40af; color: #ffffff;
+  }
+  .dv-slot-badge .rm-btn {
+    cursor: pointer; opacity: .7; font-size: 13px; line-height: 1; padding: 0 1px;
+  }
+  .dv-slot-badge .rm-btn:hover { opacity: 1; }
+
+  /* ── Chart type gallery ──────────────────────────────── */
+  .dv-chart-gallery { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .dv-chart-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    padding: 6px 4px; border: 1.5px solid #e2e8f0; border-radius: 6px;
+    font-size: 9px; font-weight: 700; text-transform: uppercase; color: #64748b;
+    background: #fff; cursor: pointer; transition: all .12s;
+  }
+  .dv-chart-btn:hover { border-color: #3b82f6; color: #1d4ed8; background: #eff6ff; }
+  .dv-chart-btn.selected { border-color: #2563eb; background: #1d4ed8; color: #fff; }
+
+  /* ── SQL editor ──────────────────────────────────────── */
+  #dv-sql-input {
+    font-family: 'Courier New', Courier, monospace; font-size: 13px;
+    resize: vertical; min-height: 120px;
+  }
+
+  /* ── Dashboard grid ──────────────────────────────────── */
+  .dv-dash-grid { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; align-content: flex-start; }
+  .dv-dash-card {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .dv-dash-card.width-full  { width: 100%; }
+  .dv-dash-card.width-half  { width: calc(50% - 8px); min-width: 280px; }
+  .dv-dash-card.width-third { width: calc(33.33% - 11px); min-width: 240px; }
+  .dv-dash-card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-bottom: 1px solid #f1f5f9;
+    background: #f8fafc; font-size: 12px; font-weight: 700; color: #1e293b;
+  }
+  .dv-dash-card-body { flex: 1; min-height: 0; }
+  /* Explicit card heights (includes header ~37px + body) */
+  .dv-dash-card.height-sm { height: 240px; }
+  .dv-dash-card.height-md { height: 360px; }
+  .dv-dash-card.height-lg { height: 500px; }
+  .dv-dash-card.height-xl { height: 640px; }
+  .dv-dash-card-header.hidden-title { display: none; }
+
+  /* ── Flip card 3D ────────────────────────────────────── */
+  .dv-dash-card { perspective: 1200px; position: relative; }
+  .dv-dash-card-inner {
+    position: relative; width: 100%; height: 100%;
+    transition: transform .5s ease; transform-style: preserve-3d;
+  }
+  .dv-dash-card.flipped .dv-dash-card-inner { transform: rotateY(180deg); }
+  .dv-dash-card.flipped { overflow: visible; }
+  .dv-dash-card-front, .dv-dash-card-back {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    backface-visibility: hidden; -webkit-backface-visibility: hidden;
+    display: flex; flex-direction: column;
+    border-radius: 10px; overflow: hidden;
+  }
+  .dv-dash-card-front { z-index: 2; background: #fff; }
+  .dv-dash-card-back {
+    transform: rotateY(180deg); z-index: 1;
+    background: #f8fafc; padding: 12px; overflow-y: auto;
+    border: 1px solid #e2e8f0;
+  }
+  .dv-dash-card-back h4 { font-size: 12px; font-weight: 700; margin: 0 0 8px; color: #334155; }
+  .dv-dash-card-back label { display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 4px 0; color: #475569; }
+  .dv-dash-card-back select, .dv-dash-card-back input[type=text] {
+    font-size: 11px; border: 1px solid #cbd5e1; border-radius: 4px;
+    padding: 2px 6px; background: #fff;
+  }
+  .dv-back-section { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; }
+  .dv-back-section:last-child { border-bottom: none; }
+  .dv-back-filter-chip {
+    display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px;
+    background: #dbeafe; color: #1e40af; border-radius: 999px; font-size: 10px;
+    font-weight: 600; margin: 2px 2px;
+  }
+  .dv-back-filter-chip .chip-x { cursor: pointer; margin-left: 2px; }
+  .dv-back-filter-chip .chip-x:hover { color: #dc2626; }
+
+  /* ── Dashboard drag-and-drop ─────────────────────────── */
+  .dv-dash-card.dv-dragging { opacity: .4; transform: scale(.97); transition: opacity .15s, transform .15s; }
+  .dv-dash-card.dv-drag-over { box-shadow: 0 0 0 2px #3b82f6, 0 4px 12px rgba(59,130,246,.25); }
+  .dv-dash-ghost { position: absolute; pointer-events: none; opacity: .7; z-index: 100; }
+  .dv-dash-card .dv-drag-handle {
+    cursor: grab; color: #94a3b8; font-size: 14px; padding: 2px 4px;
+    border-radius: 4px; transition: background .15s;
+  }
+  .dv-dash-card .dv-drag-handle:hover { background: #e2e8f0; color: #475569; }
+  .dv-dash-card .dv-drag-handle:active { cursor: grabbing; }
+
+  /* ── Dashboard sidebar (layout templates, management) ── */
+  .dv-dash-sidebar {
+    width: 220px; min-width: 200px; max-width: 260px;
+    border-right: 1px solid #e2e8f0; background: #f8fafc;
+    display: flex; flex-direction: column; overflow-y: auto;
+  }
+  .dv-dash-sidebar-section { padding: 12px; border-bottom: 1px solid #e2e8f0; }
+  .dv-dash-sidebar-section:last-child { border-bottom: none; }
+  .dv-dash-sidebar h4 {
+    font-size: 10px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .08em; color: #64748b; margin: 0 0 8px;
+  }
+
+  /* Layout template cards */
+  .dv-layout-tmpl {
+    display: flex; gap: 3px; padding: 8px; border: 2px solid #e2e8f0;
+    border-radius: 8px; cursor: pointer; transition: all .15s;
+    background: #fff; align-items: stretch; min-height: 48px;
+  }
+  .dv-layout-tmpl:hover { border-color: #93c5fd; background: #eff6ff; }
+  .dv-layout-tmpl.selected { border-color: #3b82f6; background: #dbeafe; }
+  .dv-layout-tmpl-cell {
+    background: #cbd5e1; border-radius: 4px; min-height: 32px; flex-shrink: 0;
+  }
+  .dv-layout-tmpl.selected .dv-layout-tmpl-cell { background: #60a5fa; }
+
+  /* ── Dashboard preview mode ──────────────────────────── */
+  .dv-dash-preview .dv-flip-trigger,
+  .dv-dash-preview .dv-drag-handle,
+  .dv-dash-preview .dv-dash-card-header .flex.items-center { display: none; }
+  .dv-dash-preview .dv-dash-html-card .dv-html-toolbar { display: none; }
+  .dv-dash-preview .dv-html-editable { pointer-events: none; }
+  .dv-dash-preview .dv-dash-card {
+    box-shadow: 0 1px 3px rgba(0,0,0,.08); border-color: #f1f5f9;
+  }
+
+  /* ── Dashboard filter summary bar ────────────────────── */
+  .dv-dash-filter-bar {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px;
+    background: #fffbeb; border-bottom: 1px solid #fde68a;
+    font-size: 11px; color: #92400e; align-items: center;
+  }
+  .dv-dash-filter-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 8px; background: #fef3c7; color: #92400e;
+    border-radius: 999px; font-size: 10px; font-weight: 600;
+    border: 1px solid #fde68a;
+  }
+
+  /* ── Flip trigger (gear icon top-right on front face) ── */
+  .dv-flip-trigger {
+    position: absolute; top: 6px; right: 6px; z-index: 10;
+    width: 24px; height: 24px; border-radius: 6px;
+    background: rgba(255,255,255,.85); border: 1px solid #e2e8f0;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 13px; color: #64748b;
+    opacity: 0; transition: opacity .2s;
+    backdrop-filter: blur(2px);
+  }
+  .dv-dash-card:hover .dv-flip-trigger { opacity: 1; }
+
+  /* ── HTML element card ───────────────────────────────── */
+  .dv-dash-html-card { display: flex; flex-direction: column; }
+  .dv-dash-html-card .dv-dash-card-body {
+    padding: 12px 16px; overflow-y: auto; flex: 1;
+  }
+  .dv-dash-html-card .dv-html-editable {
+    min-height: 40px; outline: none; font-size: 13px; line-height: 1.5;
+    color: #334155;
+  }
+  .dv-dash-html-card .dv-html-editable:empty::before {
+    content: 'Click to edit…'; color: #94a3b8; font-style: italic;
+  }
+  .dv-dash-html-card .dv-html-editable:focus { background: #f0f9ff; border-radius: 4px; }
+  .dv-html-toolbar {
+    display: flex; gap: 2px; padding: 4px 8px; border-bottom: 1px solid #e2e8f0;
+    background: #f1f5f9;
+  }
+  .dv-html-toolbar button {
+    font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid transparent;
+    background: transparent; cursor: pointer; color: #475569;
+  }
+  .dv-html-toolbar button:hover { background: #e2e8f0; }
+
+  /* ── Modal ───────────────────────────────────────────── */
+  .dv-modal-overlay {
+    position: fixed; inset: 0; z-index: 80;
+    background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center;
+    display: none;
+  }
+  .dv-modal-overlay.open { display: flex; }
+  .dv-modal { background: #fff; border-radius: 12px; width: 400px; max-width: 92vw; overflow: hidden; }
+  .dv-modal-header { padding: 16px 20px 0; }
+  .dv-modal-body   { padding: 12px 20px; }
+  .dv-modal-footer { padding: 12px 20px 16px; display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* ── Compact chart-type gallery (Data tab) ─────────────── */
+  .dv-gallery-compact .dv-chart-btn {
+    font-size: 10px;
+    padding: 3px 8px;
+    flex-direction: row; gap: 3px;
+    height: auto; min-width: 0;
+  }
+  .dv-group-label {
+    display: block; font-size: 9px; font-weight: 800; letter-spacing: .08em;
+    text-transform: uppercase; color: #94a3b8; margin-bottom: 3px; margin-top: 2px;
+  }
+  /* ── Drag and drop ───────────────────────────────────── */
+  .dv-chip[draggable="true"] { cursor: grab; }
+  .dv-chip.dragging { opacity: 0.35; transform: scale(.95); cursor: grabbing; }
+  .dv-slot { cursor: default; }
+  .dv-slot.dragover { border-color: #3b82f6; background: #eff6ff; border-style: solid; }
+  .dv-slot.drop-invalid { border-color: #ef4444 !important; background: #fef2f2 !important; }
+
+  /* ── Collapsible builder sections ────────────────── */
+  .dv-builder-section > summary { list-style: none; }
+  .dv-builder-section > summary::-webkit-details-marker { display: none; }
+  .dv-builder-section > summary .dv-collapse-arrow {
+    transition: transform .15s ease;
+    display: inline-block; font-size: 8px;
+  }
+  .dv-builder-section[open] > summary .dv-collapse-arrow { transform: rotate(0deg); }
+  .dv-builder-section:not([open]) > summary .dv-collapse-arrow { transform: rotate(-90deg); }
+  .dv-builder-section:not([open]) > summary {
+    border-bottom: none;
+  }
+
+  /* ── Update badge animation ──────────────────────── */
+  #dv-chart-update-badge {
+    animation: dv-fade-in .2s ease;
+  }
+  @keyframes dv-fade-in {
+    from { opacity: 0; transform: scale(.9); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+</style>
+
+<div id="dataviz-app">
+
+    <!-- ══════════════════════════════════════════════════════════ TOP BAR -->
+    <div class="flex items-center gap-2 px-4 border-b border-slate-200 bg-white shrink-0" style="height:var(--dv-topbar-h)">
+
+        <span class="text-[12px] font-black uppercase tracking-widest text-slate-800 mr-3">DataViz</span>
+
+        <!-- Mode tabs -->
+        <div class="flex items-center gap-0.5">
+            <button id="dv-mode-explore"
+                class="px-3 py-1 text-xs font-semibold rounded-md bg-blue-600 text-white">
+                &#128202; Explore
+            </button>
+            <button id="dv-mode-sql"
+                class="px-3 py-1 text-xs font-semibold rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100">
+                &#128196; SQL Lab
+            </button>
+            <button id="dv-mode-dashboard"
+                class="px-3 py-1 text-xs font-semibold rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100">
+                &#9638; Dashboard
+            </button>
+        </div>
+
+        <span id="dv-dataset-summary" class="ml-4 text-[11px] text-slate-400 italic truncate max-w-xs hidden sm:block">
+            Load a dataset to begin.
+        </span>
+
+        <div class="ml-auto flex items-center gap-2">
+            <button id="dv-my-charts-btn"
+                class="px-3 py-1.5 text-xs font-semibold border border-slate-300 rounded-lg hover:bg-slate-100 transition-colors">
+                &#128202; My Charts
+            </button>
+            <button id="dv-save-chart-btn"
+                class="px-3 py-1.5 text-xs font-semibold bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-colors">
+                &#128190; Save Chart
+            </button>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ EXPLORE MODE -->
+    <div id="dv-explore-mode" class="dv-mode active">
+
+        <!-- LEFT: Dataset panel -->
+        <div class="shrink-0 flex flex-col border-r border-slate-200 bg-slate-50"
+             style="width:220px;min-width:180px;max-width:260px">
+
+            <div class="px-3 py-2 border-b border-slate-200 flex items-center justify-between shrink-0">
+                <span class="text-[10px] font-black uppercase tracking-widest text-slate-500">&#9670; Dataset</span>
+                <button id="dv-use-default-columns" type="button"
+                    class="text-[10px] font-semibold text-blue-600 hover:text-blue-900">Defaults</button>
+            </div>
+
+            <!-- Dim / Metric search filter -->
+            <div class="px-2 py-2 border-b border-slate-100 shrink-0">
+                <input id="dv-dim-search" type="text" placeholder="&#128269; Search columns…"
+                    class="w-full px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white">
+            </div>
+
+            <div class="flex-1 dv-panel">
+
+                <!-- Source / filters accordion -->
+                <details open class="border-b border-slate-200">
+                    <summary class="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-white list-none">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">&#128269; Source &amp; Filters</span>
+                        <span class="text-[10px] text-slate-400">&#9660;</span>
+                    </summary>
+                    <div class="px-3 pb-3 space-y-2 bg-white">
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Saved Query</label>
+                            <select id="dv-saved-query" class="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">
+                                <option value="">None</option>
+                                {% for query in saved_queries %}
+                                <option value="{{ query.id }}"
+                                        data-query-type="{{ query.query_type }}"
+                                        data-config="{{ query.config|default:'{}'|escapejs }}">{{ query.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <p id="dv-query-badge" class="hidden mt-0.5 text-[10px] text-blue-600 font-semibold truncate"></p>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Search</label>
+                            <input id="dv-search" type="text" placeholder="Name, SSID, ID"
+                                class="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg">
+                        </div>
+                        <div class="grid grid-cols-2 gap-1.5">
+                            <!-- School Year multi-select -->
+                            <div class="relative" id="dv-school-year-wrap">
+                                <label class="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Year</label>
+                                <button type="button" id="dv-school-year-btn"
+                                    class="dv-ms-btn w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white text-left truncate flex items-center justify-between gap-1">
+                                    <span class="dv-ms-label truncate text-slate-400">All</span>
+                                    <svg class="w-3 h-3 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                </button>
+                                <div id="dv-school-year-dd" class="dv-ms-dropdown hidden absolute z-50 mt-0.5 left-0 right-0 bg-white border border-slate-300 rounded-lg shadow-lg max-h-48 overflow-auto">
+                                    {% for yr in school_years %}
+                                    <label class="flex items-center gap-1.5 px-2 py-1 hover:bg-blue-50 text-xs cursor-pointer">
+                                        <input type="checkbox" class="dv-school-year-opt rounded border-slate-300 text-blue-600 focus:ring-0" value="{{ yr }}">
+                                        <span>{{ yr }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            <!-- Grade multi-select -->
+                            <div class="relative" id="dv-grade-wrap">
+                                <label class="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Grade</label>
+                                <button type="button" id="dv-grade-btn"
+                                    class="dv-ms-btn w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white text-left truncate flex items-center justify-between gap-1">
+                                    <span class="dv-ms-label truncate text-slate-400">All</span>
+                                    <svg class="w-3 h-3 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                </button>
+                                <div id="dv-grade-dd" class="dv-ms-dropdown hidden absolute z-50 mt-0.5 left-0 right-0 bg-white border border-slate-300 rounded-lg shadow-lg max-h-48 overflow-auto">
+                                    {% for g in grades %}
+                                    <label class="flex items-center gap-1.5 px-2 py-1 hover:bg-blue-50 text-xs cursor-pointer">
+                                        <input type="checkbox" class="dv-grade-opt rounded border-slate-300 text-blue-600 focus:ring-0" value="{{ g }}">
+                                        <span>{{ g }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Status multi-select -->
+                        <div class="relative" id="dv-status-wrap">
+                            <label class="block text-[10px] font-semibold text-slate-400 uppercase mb-0.5">Status</label>
+                            <button type="button" id="dv-status-btn"
+                                class="dv-ms-btn w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white text-left truncate flex items-center justify-between gap-1">
+                                <span class="dv-ms-label truncate">Active</span>
+                                <svg class="w-3 h-3 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </button>
+                            <div id="dv-status-dd" class="dv-ms-dropdown hidden absolute z-50 mt-0.5 left-0 right-0 bg-white border border-slate-300 rounded-lg shadow-lg max-h-48 overflow-auto">
+                                <label class="flex items-center gap-1.5 px-2 py-1 hover:bg-blue-50 text-xs cursor-pointer">
+                                    <input type="checkbox" class="dv-status-opt rounded border-slate-300 text-blue-600 focus:ring-0" value="Active" checked>
+                                    <span>Active</span>
+                                </label>
+                                <label class="flex items-center gap-1.5 px-2 py-1 hover:bg-blue-50 text-xs cursor-pointer">
+                                    <input type="checkbox" class="dv-status-opt rounded border-slate-300 text-blue-600 focus:ring-0" value="Inactive">
+                                    <span>Inactive</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Columns accordion -->
+                <details id="dv-col-accordion" open class="border-b border-slate-200">
+                    <summary class="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-white list-none">
+                        <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">&#9776; Select Columns</span>
+                        <span id="dv-col-count-badge" class="ml-1 px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[9px] font-black">0</span>
+                    </summary>
+                    <div class="bg-white">
+                        <!-- Quick actions -->
+                        <div class="flex items-center justify-between px-2 py-1.5 border-b border-slate-100">
+                            <button type="button" id="dv-col-select-all" class="text-[10px] text-blue-600 hover:text-blue-900 font-semibold">&#10003; Core Columns</button>
+                            <button type="button" id="dv-col-clear-all" class="text-[10px] text-slate-400 hover:text-slate-700">&#10005; Clear All</button>
+                        </div>
+                        <div class="p-2 space-y-2">
+                            {% for category_key, category in column_categories.items %}
+                            <div class="rounded border border-slate-100">
+                                <div class="flex items-center justify-between px-2 py-1 bg-slate-50 rounded-t">
+                                    <span class="text-[9px] font-black uppercase tracking-widest text-slate-500">{{ category.title }}</span>
+                                    <button type="button" class="dv-cat-toggle text-[9px] text-blue-500 hover:text-blue-800" data-category="{{ category_key }}">all</button>
+                                </div>
+                                <div class="px-1 py-1 space-y-0">
+                                    {% for col in category.columns %}
+                                    <label class="flex items-start gap-1.5 px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                                        <input type="checkbox" class="dv-col rounded border-slate-300 text-blue-600 w-3 h-3 mt-0.5 shrink-0" value="{{ col }}" data-cat="{{ category_key }}">
+                                        <span class="text-[11px] text-slate-700 leading-tight">{{ column_definitions|get_item:col }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                            {% include 'dataexploration/partials/column_structures.html' %}
+                            <!-- Custom column groups (added dynamically by JS) -->
+                            <div id="dv-custom-col-groups" class="space-y-2"></div>
+                        </div>
+                        <!-- Add Custom Group button -->
+                        <div class="px-2 pb-2 pt-1">
+                            <button type="button" id="dv-add-col-group-btn"
+                                class="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] font-semibold text-blue-600 border border-dashed border-blue-300 rounded-lg hover:bg-blue-50 hover:border-blue-500 transition-colors">
+                                &#10010; Add Custom Group
+                            </button>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- DIMENSIONS section (collapsible) -->
+                <details open class="dv-builder-section border-b border-slate-200">
+                    <summary class="flex items-center justify-between px-3 py-1.5 cursor-pointer select-none hover:bg-white list-none bg-slate-50">
+                        <span class="text-[10px] font-black uppercase tracking-widest text-blue-700">Dimensions</span>
+                        <span class="flex items-center gap-1">
+                            <span id="dv-dim-count" class="text-[10px] text-slate-400">—</span>
+                            <span class="text-[10px] text-slate-400 dv-collapse-arrow">&#9660;</span>
+                        </span>
+                    </summary>
+                    <div id="dv-dim-list" class="px-2 py-1.5 flex flex-wrap gap-1.5 min-h-[32px]">
+                        <span class="text-[11px] text-slate-400 italic px-1">Load dataset to see dimensions.</span>
+                    </div>
+                </details>
+
+                <!-- METRICS section (collapsible) -->
+                <details open class="dv-builder-section">
+                    <summary class="flex items-center justify-between px-3 py-1.5 cursor-pointer select-none hover:bg-white list-none bg-slate-50">
+                        <span class="text-[10px] font-black uppercase tracking-widest text-emerald-700">Metrics</span>
+                        <span class="flex items-center gap-1">
+                            <span id="dv-metric-count" class="text-[10px] text-slate-400">—</span>
+                            <span class="text-[10px] text-slate-400 dv-collapse-arrow">&#9660;</span>
+                        </span>
+                    </summary>
+                    <div id="dv-metric-list" class="px-2 py-1.5 flex flex-wrap gap-1.5 min-h-[32px]">
+                        <span class="text-[11px] text-slate-400 italic px-1">Load dataset to see metrics.</span>
+                    </div>
+                </details>
+            </div>
+
+            <!-- Load CTA -->
+            <div class="shrink-0 border-t border-slate-200 bg-slate-900">
+                <div class="px-3 pt-3 pb-1">
+                    <button type="button" id="dv-load-data"
+                        class="w-full py-2 text-xs font-black uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-500 active:bg-blue-700 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-60">
+                        <span id="dv-load-btn-icon">&#9654;</span>
+                        <span id="dv-load-btn-text">Load Dataset</span>
+                    </button>
+                </div>
+                <!-- Progress bar -->
+                <div id="dv-load-progress-wrap" class="hidden px-3 pt-1">
+                    <div class="w-full h-1 bg-slate-700 rounded-full overflow-hidden">
+                        <div id="dv-load-progress-bar" class="h-full bg-blue-400 rounded-full transition-all duration-300" style="width:0%"></div>
+                    </div>
+                </div>
+                <!-- Status text -->
+                <div class="px-3 pb-2 pt-1">
+                    <p id="dv-load-status" class="text-[10px] text-slate-400 min-h-[14px] truncate"></p>
+                </div>
+                <!-- Success summary -->
+                <div id="dv-load-summary" class="hidden mx-3 mb-2 px-2 py-1.5 rounded-lg bg-emerald-900 border border-emerald-700">
+                    <p id="dv-load-summary-text" class="text-[10px] text-emerald-300 font-semibold"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- CENTER: Query / Customize controls -->
+        <div class="shrink-0 flex flex-col border-r border-slate-200 bg-white overflow-hidden"
+             style="width:300px;min-width:260px;max-width:340px">
+
+            <!-- CHART BUILDER HEADER -->
+            <div class="flex items-center justify-between px-3 border-b border-slate-200 shrink-0" style="height:36px">
+                <span class="text-[10px] font-black uppercase tracking-widest text-slate-600">&#9881; Chart Builder</span>
+                <span id="dv-chart-update-badge" class="hidden text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full transition-all">&#10003; Updated</span>
+            </div>
+
+            <!-- CHART BUILDER PANEL -->
+            <div id="dv-chart-controls" class="flex-1 dv-panel divide-y divide-slate-100">
+
+                <!-- ═══ CHART TYPE (collapsible) ═══ -->
+                <details open class="dv-builder-section">
+                    <summary class="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-slate-50 list-none bg-slate-50">
+                        <span class="text-[10px] font-black uppercase tracking-widest text-slate-600">&#9646; Chart Type</span>
+                        <span class="text-[10px] text-slate-400 dv-collapse-arrow">&#9660;</span>
+                    </summary>
+                <div class="px-3 pt-1 pb-2 dv-gallery-compact">
+                    <select id="dv-chart-type" class="hidden"><option value="bar">bar</option></select>
+                    <input id="dv-chart-source" type="hidden" value="">
+                    <div class="space-y-1.5">
+                        <div>
+                            <span class="dv-group-label">Bars</span>
+                            <div class="flex flex-wrap gap-1">
+                                <button type="button" class="dv-chart-btn" data-type="bar">Bar</button>
+                                <button type="button" class="dv-chart-btn" data-type="column">Column</button>
+                                <button type="button" class="dv-chart-btn" data-type="grouped_bar">Grouped</button>
+                                <button type="button" class="dv-chart-btn" data-type="stacked_bar">Stacked</button>
+                                <button type="button" class="dv-chart-btn" data-type="waterfall">Waterfall</button>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="dv-group-label">Lines &amp; Areas</span>
+                            <div class="flex flex-wrap gap-1">
+                                <button type="button" class="dv-chart-btn" data-type="line">Line</button>
+                                <button type="button" class="dv-chart-btn" data-type="spline">Spline</button>
+                                <button type="button" class="dv-chart-btn" data-type="area">Area</button>
+                                <button type="button" class="dv-chart-btn" data-type="areaspline">Area Spline</button>
+                                <button type="button" class="dv-chart-btn" data-type="stacked_area">Stacked</button>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="dv-group-label">Part of Whole</span>
+                            <div class="flex flex-wrap gap-1">
+                                <button type="button" class="dv-chart-btn" data-type="pie">Pie</button>
+                                <button type="button" class="dv-chart-btn" data-type="donut">Donut</button>
+                                <button type="button" class="dv-chart-btn" data-type="treemap">Treemap</button>
+                                <button type="button" class="dv-chart-btn" data-type="funnel">Funnel</button>
+                                <button type="button" class="dv-chart-btn" data-type="pyramid">Pyramid</button>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="dv-group-label">Scatter &amp; Distribution</span>
+                            <div class="flex flex-wrap gap-1">
+                                <button type="button" class="dv-chart-btn" data-type="scatter">Scatter</button>
+                                <button type="button" class="dv-chart-btn" data-type="bubble">Bubble</button>
+                                <button type="button" class="dv-chart-btn" data-type="histogram">Histogram</button>
+                                <button type="button" class="dv-chart-btn" data-type="heatmap">Heatmap</button>
+                                <button type="button" class="dv-chart-btn" data-type="box">Box Plot</button>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="dv-group-label">Specialized</span>
+                            <div class="flex flex-wrap gap-1">
+                                <button type="button" class="dv-chart-btn" data-type="radar">Radar</button>
+                                <button type="button" class="dv-chart-btn" data-type="gauge">Gauge</button>
+                                <button type="button" class="dv-chart-btn" data-type="solid_gauge">Solid Gauge</button>
+                                <button type="button" class="dv-chart-btn" data-type="polar">Polar</button>
+                            </div>
+                        </div>
+                    </div>
+                    <p id="dv-chart-type-help" class="text-[10px] text-slate-400 leading-snug mt-1"></p>
+                </div>
+                </details>
+                <details open class="dv-builder-section">
+                    <summary class="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-slate-50 list-none">
+                        <span class="text-[10px] font-black uppercase tracking-widest text-blue-700">&#9670; Dimensions</span>
+                        <span class="text-[10px] text-slate-400 dv-collapse-arrow">&#9660;</span>
+                    </summary>
+                <div class="p-3 pt-1 space-y-2.5">
+                    <p class="text-[10px] text-slate-400 leading-snug">Click a dimension chip on the left to assign it here.</p>
+
+                    <div id="dv-wrap-x" class="space-y-1.5">
+                        <label class="block text-[11px] font-semibold text-slate-500">X Axis / Category</label>
+                        <div id="dv-slot-x" class="dv-slot">
+                            <span class="dv-slot-placeholder">Drop or click a dimension</span>
+                        </div>
+                        <!-- hidden select synced by JS -->
+                        <select id="dv-x-col" class="hidden"></select>
+                    </div>
+
+                    <!-- Multi-level Group By (extra X dimensions) -->
+                    <div id="dv-wrap-group-by" class="space-y-1.5">
+                        <div class="flex items-center justify-between">
+                            <label class="block text-[11px] font-semibold text-slate-500">Group Levels <span class="ml-1 text-[9px] font-normal text-slate-400">(optional)</span></label>
+                            <span class="text-[9px] text-slate-400 italic">drag dims here to sub-group</span>
+                        </div>
+                        <div id="dv-group-by-chips" class="dv-slot min-h-[30px] flex flex-wrap gap-1 items-start content-start"
+                             title="Drag a dimension chip here to add another group level. E.g. X=School + Grade stacks as 'School · Grade'">
+                            <span class="dv-slot-placeholder">Drag dimensions to add group levels</span>
+                        </div>
+                        <p id="dv-group-by-hint" class="hidden text-[10px] text-blue-600 leading-snug">
+                            X combined as: <span id="dv-group-by-preview" class="font-semibold"></span>
+                        </p>
+                    </div>
+
+                    <div id="dv-wrap-stack" class="space-y-1.5">
+                        <label class="block text-[11px] font-semibold text-slate-500">Series / Split by</label>
+                        <div id="dv-slot-series" class="dv-slot">
+                            <span class="dv-slot-placeholder">Drop or click a dimension</span>
+                        </div>
+                        <select id="dv-stack-col" class="hidden"></select>
+                    </div>
+                </div>
+                </details>
+
+                <!-- ═══ METRICS (collapsible) ═══ -->
+                <details open class="dv-builder-section">
+                    <summary class="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-slate-50 list-none">
+                        <span class="text-[10px] font-black uppercase tracking-widest text-emerald-700">&#8709; Metrics</span>
+                        <span class="text-[10px] text-slate-400 dv-collapse-arrow">&#9660;</span>
+                    </summary>
+                <div class="p-3 pt-1 space-y-2.5">
+
+                    <div id="dv-wrap-y" class="space-y-1.5">
+                        <div class="flex items-center justify-between">
+                            <label class="block text-[11px] font-semibold text-slate-500">Y Axis / Value</label>
+                            <select id="dv-agg" class="text-[11px] border border-slate-200 rounded px-1 py-0.5 bg-white">
+                                <option value="count">COUNT</option>
+                                <option value="sum">SUM</option>
+                                <option value="avg">AVG</option>
+                                <option value="min">MIN</option>
+                                <option value="max">MAX</option>
+                                <option value="median">MEDIAN</option>
+                            </select>
+                        </div>
+                        <div id="dv-slot-y" class="dv-slot">
+                            <span class="dv-slot-placeholder">Drop or click a metric</span>
+                        </div>
+                        <select id="dv-y-col" class="hidden"></select>
+                    </div>
+
+                    <div id="dv-wrap-size" class="hidden space-y-1.5">
+                        <label class="block text-[11px] font-semibold text-slate-500">Bubble Size</label>
+                        <div id="dv-slot-size" class="dv-slot">
+                            <span class="dv-slot-placeholder">Drop a metric</span>
+                        </div>
+                        <select id="dv-size-col" class="hidden"></select>
+                    </div>
+                </div>
+                </details>
+
+                <!-- ═══ FILTERS (collapsible) ═══ -->
+                <details class="dv-builder-section">
+                    <summary class="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-slate-50 list-none">
+                        <span class="text-[10px] font-black uppercase tracking-widest text-slate-500">&#9654; Filters</span>
+                        <span class="text-[10px] text-slate-400 dv-collapse-arrow">&#9660;</span>
+                    </summary>
+                <div class="p-3 pt-1 space-y-2">
+                    <div id="dv-filter-chips" class="flex flex-wrap gap-1.5 min-h-[24px]"></div>
+                    <button type="button" id="dv-add-filter-btn"
+                        class="text-[11px] font-semibold text-blue-600 hover:text-blue-900">+ Add Filter</button>
+                    <div id="dv-filter-builder" class="hidden space-y-1.5">
+                        <select id="dv-filter-col" class="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white">
+                            <option value="">— select column —</option>
+                        </select>
+                        <select id="dv-filter-op" class="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white">
+                            <option value="eq">= equals</option>
+                            <option value="ne">≠ not equals</option>
+                            <option value="contains">⊇ contains</option>
+                            <option value="gt">&gt; greater than</option>
+                            <option value="lt">&lt; less than</option>
+                        </select>
+                        <!-- Filter value: searchable multi-select populated from column data -->
+                        <div class="relative" id="dv-filter-val-wrap">
+                            <input id="dv-filter-val-search" type="text" placeholder="Search values…"
+                                class="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg"
+                                autocomplete="off">
+                            <div id="dv-filter-val-selected" class="flex flex-wrap gap-1 mt-1 min-h-0"></div>
+                            <div id="dv-filter-val-dd"
+                                class="hidden absolute z-50 mt-0.5 left-0 right-0 bg-white border border-slate-300 rounded-lg shadow-lg max-h-40 overflow-auto">
+                            </div>
+                        </div>
+                        <div class="flex gap-1.5">
+                            <button id="dv-filter-apply" type="button"
+                                class="flex-1 py-1 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-500">Apply</button>
+                            <button id="dv-filter-cancel" type="button"
+                                class="px-3 py-1 text-xs font-semibold border border-slate-300 rounded-lg hover:bg-slate-100">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+                </details>
+
+                <!-- ═══ APPEARANCE (collapsible — all options inline) ═══ -->
+                <details class="dv-builder-section">
+                    <summary class="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-slate-50 list-none">
+                        <span class="text-[10px] font-black uppercase tracking-widest text-slate-500">&#9881; Appearance</span>
+                        <span class="text-[10px] text-slate-400 dv-collapse-arrow">&#9660;</span>
+                    </summary>
+                    <div class="px-3 pb-3 space-y-3 bg-white">
+                        <!-- Title -->
+                        <div class="space-y-0.5">
+                            <label class="block text-[11px] font-semibold text-slate-500">Chart title</label>
+                            <input type="text" id="dv-opt-title" placeholder="Optional title…"
+                                class="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg">
+                        </div>
+                        <!-- Quick palette & background -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Palette</label>
+                                <select id="dv-opt-palette" class="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">
+                                    <option value="default">Default</option>
+                                    <option value="blue">Blue</option>
+                                    <option value="warm">Warm</option>
+                                    <option value="earth">Earth</option>
+                                    <option value="green">Green</option>
+                                    <option value="purple">Purple</option>
+                                    <option value="mono">Mono</option>
+                                </select>
+                            </div>
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Background</label>
+                                <select id="dv-opt-bg" class="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">
+                                    <option value="white">White</option>
+                                    <option value="light">Light</option>
+                                    <option value="dark">Dark</option>
+                                </select>
+                            </div>
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Legend</label>
+                                <select id="dv-opt-legend" class="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">
+                                    <option value="bottom">Bottom</option>
+                                    <option value="top">Top</option>
+                                    <option value="left">Left</option>
+                                    <option value="right">Right</option>
+                                    <option value="hidden">Hidden</option>
+                                </select>
+                            </div>
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Stack type</label>
+                                <select id="dv-opt-stack-mode" class="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">
+                                    <option value="normal">Normal</option>
+                                    <option value="percent">100%</option>
+                                </select>
+                            </div>
+                        </div>
+                        <!-- Quick toggles -->
+                        <div class="flex items-center flex-wrap gap-x-3 gap-y-1">
+                            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-labels" class="rounded border-slate-300 text-blue-600"> Labels
+                            </label>
+                            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-animate" class="rounded border-slate-300 text-blue-600" checked> Animate
+                            </label>
+                            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-smooth" class="rounded border-slate-300 text-blue-600"> Curved lines
+                            </label>
+                            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-markers" class="rounded border-slate-300 text-blue-600"> Point markers
+                            </label>
+                            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-zoom" class="rounded border-slate-300 text-blue-600" checked> Zoom / pan
+                            </label>
+                            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-tooltip-shared" class="rounded border-slate-300 text-blue-600" checked> Shared tooltip
+                            </label>
+                            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-inverted" class="rounded border-slate-300 text-blue-600"> Inverted axis
+                            </label>
+                            <label class="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                                <input type="checkbox" id="dv-opt-polar" class="rounded border-slate-300 text-blue-600"> Polar mode
+                            </label>
+                        </div>
+                        <!-- Numeric sliders/inputs -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Opacity</label>
+                                <input type="range" id="dv-opt-opacity" min="0.2" max="1" step="0.05" value="0.9" class="w-full">
+                            </div>
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Line width</label>
+                                <input type="number" id="dv-opt-line-width" min="1" max="8" value="2"
+                                    class="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white">
+                            </div>
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Corner radius</label>
+                                <input type="number" id="dv-opt-radius" min="0" max="30" value="6"
+                                    class="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white">
+                            </div>
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Point size</label>
+                                <input type="number" id="dv-opt-point-size" min="2" max="24" value="6"
+                                    class="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white">
+                            </div>
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Histogram bins</label>
+                                <input type="number" id="dv-opt-bins" min="4" max="40" value="12"
+                                    class="w-full px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white">
+                            </div>
+                            <div class="space-y-0.5">
+                                <label class="block text-[11px] font-semibold text-slate-500">Line curve</label>
+                                <select id="dv-opt-curve" class="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white">
+                                    <option value="linear">Linear</option>
+                                    <option value="monotone">Monotone</option>
+                                    <option value="step">Step</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Compat / recommendations -->
+                <div class="px-3 py-2 space-y-1">
+                    <p id="dv-chart-compat" class="text-[10px] text-blue-600 truncate"></p>
+                    <p id="dv-recommendations" class="text-[11px] text-slate-400 italic leading-snug"></p>
+                </div>
+            </div>
+
+            <!-- Run Query pinned bottom -->
+            <div class="shrink-0 p-3 border-t border-slate-200 space-y-1">
+                <button type="button" id="dv-render-chart"
+                    class="w-full py-2.5 text-xs font-black uppercase tracking-wider text-white bg-blue-700 hover:bg-blue-600 rounded-lg shadow-sm transition-all">
+                    &#9654; Run Query
+                </button>
+                <p id="dv-render-status" class="text-[10px] text-center text-slate-400 min-h-[14px] transition-colors"></p>
+            </div>
+        </div>
+
+        <!-- RIGHT: Chart canvas + data preview -->
+        <div class="flex-1 flex flex-col overflow-hidden bg-slate-100 min-w-0">
+
+            <div class="flex-1 relative overflow-hidden" id="dv-chart-wrap">
+                <div id="dv-empty-state"
+                    class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 pointer-events-none">
+                    <div class="text-5xl mb-3 opacity-20">&#128202;</div>
+                    <p class="text-sm font-semibold">No chart yet</p>
+                    <p class="text-xs mt-1">Configure data on the left, then click Run Query.</p>
+                </div>
+                <div id="dv-chart" class="w-full h-full"></div>
+            </div>
+
+            <!-- Data preview strip -->
+            <div class="shrink-0 border-t border-slate-200 bg-white" style="max-height:42%">
+                <div class="flex items-center border-b border-slate-200 bg-slate-50 px-3 py-1.5 gap-3">
+                    <button type="button" id="dv-tab-data"
+                        class="text-[11px] font-bold uppercase tracking-wider pb-0.5 border-b-2 border-slate-900 text-slate-900">
+                        &#128196; Data
+                    </button>
+                    <button type="button" id="dv-tab-summary"
+                        class="text-[11px] font-bold uppercase tracking-wider pb-0.5 border-b-2 border-transparent text-slate-400 hover:text-slate-700">
+                        &#128200; Summary
+                    </button>
+                    <span id="dv-filter-status" class="ml-auto text-[11px] text-slate-400"></span>
+                </div>
+
+                <div id="dv-panel-data" class="dv-panel" style="max-height:calc(42vh - 2rem)">
+                    <div class="p-2">
+                        <div id="dv-filter-bar" class="hidden mb-2 bg-slate-50 border border-slate-200 rounded-lg p-2.5 space-y-1.5">
+                            <div class="flex items-center gap-2">
+                                <input id="dv-filter-search" type="text" placeholder="Search across all columns…"
+                                    class="flex-1 px-2.5 py-1 text-xs border border-slate-300 rounded-lg bg-white">
+                                <button type="button" id="dv-filter-clear"
+                                    class="px-2.5 py-1 text-[11px] font-semibold text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-100">Clear</button>
+                            </div>
+                            <div id="dv-filter-cols" class="flex flex-wrap gap-1.5"></div>
+                        </div>
+                        <div class="overflow-auto rounded border border-slate-200">
+                            <table class="min-w-full text-xs">
+                                <thead id="dv-preview-head" class="bg-slate-50 sticky top-0"></thead>
+                                <tbody id="dv-preview-body" class="divide-y divide-slate-100"></tbody>
+                            </table>
+                        </div>
+                        <div class="mt-1.5 flex items-center justify-between text-[11px] text-slate-500">
+                            <span id="dv-preview-page-status">—</span>
+                            <div class="flex gap-1">
+                                <button type="button" id="dv-preview-prev"
+                                    class="px-2 py-0.5 border border-slate-300 rounded hover:bg-slate-50">Prev</button>
+                                <button type="button" id="dv-preview-next"
+                                    class="px-2 py-0.5 border border-slate-300 rounded hover:bg-slate-50">Next</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="dv-panel-summary" class="hidden dv-panel p-3" style="max-height:calc(42vh - 2rem)">
+                    <div class="flex flex-wrap items-center gap-2 mb-2">
+                        <div id="dv-group-by-tags" class="flex flex-wrap gap-1"></div>
+                        <div id="dv-group-filter-badge" class="hidden items-center gap-1 px-2 py-0.5 text-[11px] bg-amber-100 text-amber-800 rounded-full">
+                            <span id="dv-group-filter-label"></span>
+                            <button type="button" id="dv-group-filter-clear" class="hover:text-amber-900 font-bold">&times;</button>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 mb-2">
+                        <span id="dv-group-base-label" class="text-[11px] text-slate-500"></span>
+                        <select id="dv-group-metric-mode" class="text-xs border border-slate-300 rounded px-2 py-0.5 bg-white">
+                            <option value="all">All metrics</option>
+                            <option value="count">Count only</option>
+                            <option value="selected">Selected</option>
+                        </select>
+                        <select id="dv-group-view-mode" class="text-xs border border-slate-300 rounded px-2 py-0.5 bg-white">
+                            <option value="table">Table</option>
+                            <option value="bar">Bar</option>
+                            <option value="stacked_bar">Stacked bar</option>
+                        </select>
+                        <button type="button" id="dv-group-apply-view"
+                            class="px-2.5 py-0.5 text-xs font-semibold bg-slate-900 text-white rounded hover:bg-slate-700">Apply</button>
+                    </div>
+                    <div id="dv-group-table-wrap" class="overflow-auto rounded border border-slate-200"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ SQL LAB MODE -->
+    <div id="dv-sql-mode" class="dv-mode">
+
+        <!-- LEFT: Available tables -->
+        <div class="shrink-0 flex flex-col border-r border-slate-200 bg-slate-50"
+             style="width:200px;min-width:160px;max-width:240px">
+            <div class="px-3 py-2 border-b border-slate-200 shrink-0">
+                <span class="text-[10px] font-black uppercase tracking-widest text-slate-500">&#128196; Tables</span>
+            </div>
+            <div class="flex-1 dv-panel">
+                <div id="dv-sql-table-list" class="p-2 space-y-0.5">
+                    <p class="text-[11px] text-slate-400 italic px-1">Loading…</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT: SQL editor + results -->
+        <div class="flex-1 flex flex-col overflow-hidden bg-white">
+
+            <!-- Editor area -->
+            <div class="shrink-0 p-4 border-b border-slate-200 space-y-3">
+                <textarea id="dv-sql-input"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-sm"
+                    rows="6"
+                    placeholder="SELECT * FROM student_combined WHERE school_year = '2024-2025' LIMIT 100"></textarea>
+                <div class="flex items-center gap-3">
+                    <button id="dv-sql-run" type="button"
+                        class="px-4 py-2 text-xs font-black uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-500 rounded-lg">
+                        &#9654; Run Query
+                    </button>
+                    <span id="dv-sql-status" class="text-xs text-slate-400"></span>
+                    <button id="dv-sql-create-chart" type="button"
+                        class="hidden ml-auto px-3 py-2 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-500">
+                        &#128202; Explore in Chart Builder
+                    </button>
+                </div>
+            </div>
+
+            <!-- Results -->
+            <div class="flex-1 dv-panel p-3">
+                <div class="overflow-auto rounded border border-slate-200">
+                    <table class="min-w-full text-xs">
+                        <thead id="dv-sql-head" class="bg-slate-50 sticky top-0"></thead>
+                        <tbody id="dv-sql-body" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+                <p id="dv-sql-row-count" class="mt-2 text-[11px] text-slate-400"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════ DASHBOARD MODE -->
+    <div id="dv-dashboard-mode" class="dv-mode flex-col">
+
+        <!-- Dashboard top toolbar -->
+        <div class="shrink-0 px-4 py-2 border-b border-slate-200 bg-white flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-bold text-slate-800">&#9638; Dashboard</span>
+            <select id="dv-dashboard-select"
+                class="px-2 py-1 text-xs border border-slate-300 rounded-lg bg-white min-w-[160px]">
+                <option value="">— select or create —</option>
+            </select>
+            <button id="dv-dashboard-new" type="button"
+                class="px-2.5 py-1 text-[11px] font-semibold border border-slate-300 rounded-lg hover:bg-slate-100">
+                + New
+            </button>
+            <button id="dv-dashboard-rename" type="button"
+                class="hidden px-2.5 py-1 text-[11px] font-semibold border border-slate-300 rounded-lg hover:bg-slate-100">
+                &#9998; Rename
+            </button>
+            <button id="dv-dashboard-delete" type="button"
+                class="hidden px-2.5 py-1 text-[11px] font-semibold border border-red-200 text-red-600 rounded-lg hover:bg-red-50">
+                &#128465; Delete
+            </button>
+
+            <div class="flex items-center gap-1.5 ml-auto">
+                <button id="dv-dashboard-add-chart" type="button"
+                    class="px-2.5 py-1 text-[11px] font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-500 hidden">
+                    + Chart
+                </button>
+                <button id="dv-dashboard-add-html" type="button"
+                    class="px-2.5 py-1 text-[11px] font-semibold bg-violet-600 text-white rounded-lg hover:bg-violet-500 hidden">
+                    + Text/HTML
+                </button>
+                <button id="dv-dashboard-run-all" type="button"
+                    class="px-2.5 py-1 text-[11px] font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 hidden">
+                    &#9654; Run All
+                </button>
+                <span class="text-slate-300">|</span>
+                <button id="dv-dashboard-preview-toggle" type="button"
+                    class="px-2.5 py-1 text-[11px] font-semibold border border-slate-300 rounded-lg hover:bg-slate-100 hidden"
+                    title="Toggle preview mode — hides editing controls to show final look">
+                    &#128065; Preview
+                </button>
+            </div>
+            <span id="dv-dashboard-status" class="text-[10px] text-slate-400"></span>
+        </div>
+
+        <!-- Dashboard source-filters summary bar (populated from saved chart filters) -->
+        <div id="dv-dash-filter-bar" class="dv-dash-filter-bar hidden">
+            <span class="font-semibold text-[11px]">Active filters from charts:</span>
+            <div id="dv-dash-filter-chips" class="flex flex-wrap gap-1"></div>
+        </div>
+
+        <!-- Dashboard body: sidebar + grid -->
+        <div class="flex-1 flex overflow-hidden">
+
+            <!-- LEFT SIDEBAR: layout templates + info -->
+            <div id="dv-dash-sidebar" class="dv-dash-sidebar">
+                <!-- Layout Templates -->
+                <div class="dv-dash-sidebar-section">
+                    <h4>Layout Templates</h4>
+                    <div class="space-y-2" id="dv-layout-templates">
+                        <div class="dv-layout-tmpl" data-layout="single" title="1 column — full width">
+                            <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                        </div>
+                        <div class="dv-layout-tmpl" data-layout="two-col" title="2 columns — half/half">
+                            <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                            <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                        </div>
+                        <div class="dv-layout-tmpl" data-layout="three-col" title="3 columns — thirds">
+                            <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                            <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                            <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                        </div>
+                        <div class="dv-layout-tmpl" data-layout="sidebar-right" title="2:1 — wide left, narrow right">
+                            <div class="dv-layout-tmpl-cell" style="flex:2"></div>
+                            <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                        </div>
+                        <div class="dv-layout-tmpl" data-layout="sidebar-left" title="1:2 — narrow left, wide right">
+                            <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                            <div class="dv-layout-tmpl-cell" style="flex:2"></div>
+                        </div>
+                        <div class="dv-layout-tmpl" data-layout="top-two-bottom" title="Full top + 2 bottom">
+                            <div style="display:flex;flex-direction:column;flex:1;gap:3px">
+                                <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                                <div style="display:flex;gap:3px;flex:1">
+                                    <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                                    <div class="dv-layout-tmpl-cell" style="flex:1"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-[9px] text-slate-400 mt-2">Click a template to apply to all cards. You can still resize individual cards.</p>
+                </div>
+
+                <!-- Dashboard info -->
+                <div class="dv-dash-sidebar-section">
+                    <h4>Dashboard Info</h4>
+                    <div id="dv-dash-info" class="text-[11px] text-slate-500 space-y-1">
+                        <p class="italic">Select a dashboard</p>
+                    </div>
+                </div>
+
+                <!-- Charts in this dashboard -->
+                <div class="dv-dash-sidebar-section flex-1">
+                    <h4>Cards <span id="dv-dash-card-count" class="text-slate-400 font-normal">(0)</span></h4>
+                    <div id="dv-dash-card-list" class="space-y-1 text-[11px]">
+                        <p class="text-slate-400 italic">No cards yet</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT: Dashboard grid -->
+            <div id="dv-dashboard-grid" class="flex-1 dv-panel overflow-auto">
+                <div id="dv-dash-grid" class="dv-dash-grid">
+                    <div class="w-full text-center py-16 text-slate-400">
+                        <p class="text-lg mb-2">&#9638;</p>
+                        <p class="text-sm font-semibold">No dashboard selected</p>
+                        <p class="text-xs mt-1">Create a dashboard, save charts from Explore, then add them here.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════ DRAWERS (kept for potential future use) -->
+<div id="dv-drawer-backdrop" class="dv-backdrop" aria-hidden="true"></div>
+<div id="dv-drawer-appearance" class="dv-drawer bg-white shadow-2xl flex flex-col border-l border-slate-200 hidden" role="dialog"></div>
+
+<!-- ══════════════════════════════════════════════ ADD CUSTOM COLUMN GROUP MODAL -->
+<div id="dv-add-col-group-modal" class="dv-modal-overlay" role="dialog" aria-label="Add Custom Column Group">
+    <div class="dv-modal shadow-2xl">
+        <div class="dv-modal-header">
+            <h3 class="text-base font-bold text-slate-900">Add Custom Column Group</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Create a named group of columns to select together.</p>
+        </div>
+        <div class="dv-modal-body space-y-3">
+            <div>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-0.5">Group name *</label>
+                <input id="dv-col-group-name" type="text" placeholder="e.g. Assessment Scores"
+                    class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg">
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-1">Columns</label>
+                <p class="text-[11px] text-slate-400 mb-1.5">Select from loaded dataset columns, or type comma-separated column keys.</p>
+                <div id="dv-col-group-col-list" class="max-h-48 overflow-y-auto border border-slate-200 rounded-lg bg-white p-2 space-y-0.5">
+                    <p class="text-[11px] text-slate-400 italic">Load a dataset first to see available columns here.</p>
+                </div>
+                <input id="dv-col-group-manual" type="text" placeholder="Or type column keys separated by commas…"
+                    class="mt-2 w-full px-3 py-2 text-xs border border-slate-300 rounded-lg">
+            </div>
+            <p id="dv-col-group-error" class="text-[11px] text-red-500 hidden"></p>
+        </div>
+        <div class="dv-modal-footer border-t border-slate-100">
+            <button id="dv-col-group-cancel" type="button"
+                class="px-4 py-2 text-xs font-semibold border border-slate-300 rounded-lg hover:bg-slate-100">Cancel</button>
+            <button id="dv-col-group-confirm" type="button"
+                class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-500">Add Group</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ MY CHARTS MANAGEMENT MODAL -->
+<div id="dv-charts-manage-modal" class="dv-modal-overlay" role="dialog" aria-label="My Charts">
+    <div class="dv-modal shadow-2xl" style="width:560px;max-width:95vw">
+        <div class="dv-modal-header">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-base font-bold text-slate-900">My Charts</h3>
+                    <p class="text-xs text-slate-400 mt-0.5">Manage, rename, or delete your saved charts</p>
+                </div>
+                <button id="dv-charts-manage-close" type="button"
+                    class="w-7 h-7 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-500 text-lg">&times;</button>
+            </div>
+        </div>
+        <div class="dv-modal-body" style="max-height:420px;overflow-y:auto;padding-top:8px">
+            <div id="dv-charts-manage-list" class="space-y-1.5">
+                <p class="text-xs text-slate-400 italic">Loading…</p>
+            </div>
+        </div>
+        <div class="dv-modal-footer border-t border-slate-100">
+            <button id="dv-charts-manage-done" type="button"
+                class="px-4 py-2 text-xs font-bold bg-slate-800 text-white rounded-lg hover:bg-slate-700">Done</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ SAVE CHART MODAL -->
+<div id="dv-save-modal" class="dv-modal-overlay" role="dialog" aria-label="Save Chart">
+    <div class="dv-modal shadow-2xl">
+        <div class="dv-modal-header">
+            <h3 class="text-base font-bold text-slate-900">Save Chart</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Save the current chart configuration for reuse and dashboards.</p>
+        </div>
+        <div class="dv-modal-body space-y-3">
+            <div>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-0.5">Chart name *</label>
+                <input id="dv-chart-name" type="text" placeholder="e.g. NWEA Score by Grade"
+                    class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg">
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-0.5">Description</label>
+                <textarea id="dv-chart-desc" rows="2" placeholder="Optional description…"
+                    class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg resize-none"></textarea>
+            </div>
+            <div id="dv-save-overwrite-warn" class="hidden text-[11px] bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-800 leading-snug">
+                &#9888; A chart named <strong id="dv-save-overwrite-name"></strong> already exists.
+                Click <em>Save</em> again to overwrite it, or change the name.
+            </div>
+            <p id="dv-save-error" class="text-[11px] text-red-500 hidden"></p>
+        </div>
+        <div class="dv-modal-footer border-t border-slate-100">
+            <button id="dv-save-cancel" type="button"
+                class="px-4 py-2 text-xs font-semibold border border-slate-300 rounded-lg hover:bg-slate-100">Cancel</button>
+            <button id="dv-save-confirm" type="button"
+                class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-500">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ ADD TO DASHBOARD MODAL -->
+<div id="dv-add-to-dash-modal" class="dv-modal-overlay" role="dialog" aria-label="Add to Dashboard">
+    <div class="dv-modal shadow-2xl">
+        <div class="dv-modal-header">
+            <h3 id="dv-add-to-dash-title" class="text-base font-bold text-slate-900">Add Chart to Dashboard</h3>
+        </div>
+        <div class="dv-modal-body space-y-3">
+            <div>
+                <label id="dv-add-dash-select-label" class="block text-[11px] font-semibold text-slate-500 mb-0.5">Chart</label>
+                <select id="dv-add-dash-select" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white">
+                    <option value="">— select saved chart —</option>
+                </select>
+                <p id="dv-add-dash-no-charts" class="hidden text-[11px] text-amber-600 mt-1">No saved charts yet. Save a chart in Explore first.</p>
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold text-slate-500 mb-0.5">Width</label>
+                <select id="dv-add-dash-width" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white">
+                    <option value="half">Half width</option>
+                    <option value="full">Full width</option>
+                    <option value="third">One third</option>
+                </select>
+            </div>
+            <p id="dv-add-dash-error" class="text-[11px] text-red-500 hidden"></p>
+        </div>
+        <div class="dv-modal-footer border-t border-slate-100">
+            <button id="dv-add-dash-cancel" type="button"
+                class="px-4 py-2 text-xs font-semibold border border-slate-300 rounded-lg hover:bg-slate-100">Cancel</button>
+            <button id="dv-add-dash-confirm" type="button"
+                class="px-4 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-500">Add to Dashboard</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    /* ── Drawer wiring ──────────────────────────────────────────────── */
+    var backdrop = document.getElementById('dv-drawer-backdrop');
+    var drawers  = {
+        appearance: document.getElementById('dv-drawer-appearance'),
+    };
+
+    function openDrawer() { /* no-op: appearance controls are now inline */ }
+    function closeAll() {
+        backdrop.classList.remove('open');
+    }
+
+    backdrop.addEventListener('click', closeAll);
+    document.addEventListener('keydown', function(e){
+        if (e.key === 'Escape') { closeAll(); }
+    });
+
+    /* ── Chart type gallery ─────────────────────────────────────────── */
+    var galleryBtns  = document.querySelectorAll('.dv-chart-btn');
+    var chartTypeEl  = document.getElementById('dv-chart-type');
+
+    galleryBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            galleryBtns.forEach(function(b){ b.classList.remove('selected'); });
+            btn.classList.add('selected');
+            chartTypeEl.value = btn.dataset.type;
+            chartTypeEl.dispatchEvent(new Event('change'));
+        });
+    });
+
+    // Keep gallery buttons in sync
+    chartTypeEl.addEventListener('change', function() {
+        galleryBtns.forEach(function(b){
+            b.classList.toggle('selected', b.dataset.type === chartTypeEl.value);
+        });
+    });
+
+    // Sync initial selection
+    chartTypeEl.dispatchEvent(new Event('change'));
+
+    /* ── Explicit chart update indicator ─────────────────────────────── */
+    var updateBadge = document.getElementById('dv-chart-update-badge');
+    var renderStatus = document.getElementById('dv-render-status');
+    var _updateTimeout = null;
+
+    function flashChartUpdated() {
+        if (updateBadge) {
+            updateBadge.classList.remove('hidden');
+            clearTimeout(_updateTimeout);
+            _updateTimeout = setTimeout(function() {
+                updateBadge.classList.add('hidden');
+            }, 2000);
+        }
+        if (renderStatus) {
+            renderStatus.textContent = '\u2713 Chart updated';
+            renderStatus.classList.remove('text-slate-400');
+            renderStatus.classList.add('text-emerald-600');
+            setTimeout(function() {
+                renderStatus.classList.remove('text-emerald-600');
+                renderStatus.classList.add('text-slate-400');
+            }, 2000);
+        }
+    }
+
+    // Observe chart container for rerenders
+    var chartContainer = document.getElementById('dv-chart');
+    if (chartContainer) {
+        var chartObs = new MutationObserver(function(mutations) {
+            var hasChild = mutations.some(function(m) { return m.addedNodes.length > 0; });
+            if (hasChild && chartContainer.children.length > 0) {
+                flashChartUpdated();
+            }
+        });
+        chartObs.observe(chartContainer, { childList: true });
+    }
+
+    /* ── Collapsible section arrow rotation ──────────────────────────── */
+    document.querySelectorAll('.dv-builder-section').forEach(function(details) {
+        details.addEventListener('toggle', function() {
+            var arrow = details.querySelector('.dv-collapse-arrow');
+            if (arrow) {
+                arrow.textContent = details.open ? '\u25BC' : '\u25B6';
+            }
+        });
+    });
+}());
+</script>
+{% endblock %}
