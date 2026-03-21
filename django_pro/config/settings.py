@@ -14,7 +14,7 @@ SECRET_KEY = 'django-insecure-6p_2k_ar+j(1kf%)z1!$8h_ct(te(qby_i@qq9v^s_r3orx0j1
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(',')
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'dwdev.dsusd.us').split(',')
 
 
 # Application definition
@@ -27,14 +27,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'landing',
-    'users.apps.UsersConfig',
+    'users',
     'studata',
     'dataexploration',
-    'nextyearlist.apps.NextYearListConfig',
-    'placementcards',
-    'mathr.apps.MathrConfig',
     'assesments',
-    'dataviz.apps.DatavizConfig',
     # Allauth
     'allauth',
     'allauth.account',
@@ -48,8 +44,6 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'users.middleware.ActiveRoleMiddleware',
-    'users.middleware.UsageTrackingMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Allauth middleware
@@ -68,7 +62,6 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
-                'users.context_processors.navigation_pages',
             ],
         },
     },
@@ -167,18 +160,18 @@ STATIC_URL = 'static/'
 
 
 
-# Security settings — all driven by .env so behaviour can be toggled without code changes
-SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False') == 'True'
-SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False') == 'True'
-CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False') == 'True'
+# Security settings
+SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'True') == 'True'
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 
-# HSTS Settings — set SECURE_HSTS_SECONDS=0 in .env to disable HSTS (required for HTTP-only dev)
-SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '0'))
-SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'False') == 'True'
-SECURE_HSTS_PRELOAD = os.getenv('SECURE_HSTS_PRELOAD', 'False') == 'True'
+# HSTS Settings
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
 
 # Proxy settings (for Nginx)
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -212,6 +205,3 @@ CACHES = {
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# Allow larger POST bodies for chart rendering (rows payload)
-DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50 MB

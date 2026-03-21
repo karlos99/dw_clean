@@ -10,7 +10,6 @@ COLUMN_DEFINITIONS = {
     "school_year": "School Year",
     "school": "School",
     "school_state_id": "School Code",
-    "elem_teacher_name": "Elementary Homeroom Teacher",
     
     # Demographics
     "gender": "Gender",
@@ -39,11 +38,11 @@ COLUMN_DEFINITIONS = {
 COLUMN_CATEGORIES = {
     "student_info": {
         "title": "Student Information",
-        "columns": ["ssid", "student_id", "student_name", "grade", "school_year", "school", "school_state_id", "elem_teacher_name"]
+        "columns": ["ssid", "student_id", "student_name", "grade", "school_year", "school", "school_state_id"]
     },
     "demographics": {
         "title": "Demographics",
-        "columns": ["gender", "race", "status"]
+        "columns": ["gender", "race", "ell", "status"]
     },
     "dates": {
         "title": "Dates",
@@ -51,7 +50,7 @@ COLUMN_CATEGORIES = {
     },
     "programs": {
         "title": "Programs & Services",
-        "columns": ["ell", "sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant"]
+        "columns": ["sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant"]
     },
     "performance": {
         "title": "Performance & Behavior",

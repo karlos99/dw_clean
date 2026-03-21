@@ -132,7 +132,6 @@ class School(models.Model):
             models.Index(fields=['state_id']),
             models.Index(fields=['sis_key']),
             models.Index(fields=['school_group']),
-            models.Index(fields=['school_group', 'state_id']),
         ]
 
     def __str__(self):
@@ -153,10 +152,6 @@ class Test(models.Model):
         db_table = 'tests'
         verbose_name = 'Test'
         verbose_name_plural = 'Tests'
-        indexes = [
-            models.Index(fields=['test_name', 'subject', 'school_year']),
-            models.Index(fields=['school_year']),
-        ]
 
     def __str__(self):
         return f"{self.test_name} - {self.subject} ({self.school_year})"
@@ -184,117 +179,11 @@ class Result(models.Model):
             models.Index(fields=['ssid']),
             models.Index(fields=['school_year']),
             models.Index(fields=['school_code']),
-            models.Index(fields=['local_student_id', 'school_year']),
-            models.Index(fields=['test_group_key']),
         ]
 
     def __str__(self):
         return f"Result {self.test_id} - SSID: {self.ssid}"
 
-
-class Schedule(models.Model):
-    """Model for student course schedules"""
-    schedule_id = models.CharField(max_length=255, primary_key=True, db_index=True)
-    stu_annual_key = models.CharField(max_length=255, db_index=True)
-    ssid = models.CharField(max_length=50, db_index=True)
-    school_year = models.CharField(max_length=20)
-    student_id = models.CharField(max_length=50, blank=True, null=True)
-    school_name = models.CharField(max_length=255, blank=True, null=True)
-    state_school_id = models.CharField(max_length=50, blank=True, null=True)
-    course_state_equivalence_code = models.CharField(max_length=50, blank=True, null=True)
-    course_code = models.CharField(max_length=50, blank=True, null=True)
-    course_key = models.CharField(max_length=255, blank=True, null=True)
-    course_subject = models.CharField(max_length=255, blank=True, null=True)
-    course_name = models.CharField(max_length=255, blank=True, null=True)
-    period = models.CharField(max_length=20, blank=True, null=True)
-    staff_name = models.CharField(max_length=255, blank=True, null=True)
-    staff_email = models.EmailField(blank=True, null=True)
-    staff_employee_id = models.CharField(max_length=50, blank=True, null=True, db_index=True)
-    schedule_status = models.CharField(max_length=50, blank=True, null=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'schedule_list'
-        verbose_name = 'Schedule'
-        verbose_name_plural = 'Schedules'
-        indexes = [
-            models.Index(fields=['ssid', 'school_year']),
-            models.Index(fields=['staff_employee_id', 'school_year']),
-            models.Index(fields=['state_school_id']),
-            models.Index(fields=['period', 'state_school_id']),
-            models.Index(fields=['staff_name']),
-        ]
-
-    def __str__(self):
-        return f"{self.schedule_id} - {self.student_id} - {self.course_name}"
-
-
-class StudentMarks(models.Model):
-    """Model for student marks/grades"""
-    marks_id = models.CharField(max_length=255, primary_key=True, db_index=True)
-    stu_annual_key = models.CharField(max_length=255, db_index=True)
-    ssid = models.CharField(max_length=50, db_index=True)
-    school_year = models.CharField(max_length=20)
-    student_id = models.CharField(max_length=50, blank=True, null=True)
-    school_name = models.CharField(max_length=255, blank=True, null=True)
-    state_school_id = models.CharField(max_length=50, blank=True, null=True)
-    subject = models.CharField(max_length=255, blank=True, null=True)
-    course_name = models.CharField(max_length=255, blank=True, null=True)
-    staff_name = models.CharField(max_length=255, blank=True, null=True)
-    staff_employee_id = models.CharField(max_length=50, blank=True, null=True, db_index=True)
-    mark_period = models.CharField(max_length=50, blank=True, null=True)
-    mark = models.CharField(max_length=10, blank=True, null=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'student_marks_list'
-        verbose_name = 'Student Mark'
-        verbose_name_plural = 'Student Marks'
-        indexes = [
-            models.Index(fields=['ssid', 'school_year']),
-            models.Index(fields=['staff_employee_id', 'school_year']),
-            models.Index(fields=['mark_period']),
-            models.Index(fields=['stu_annual_key', 'school_year']),
-            models.Index(fields=['subject', 'course_name']),
-        ]
-
-    def __str__(self):
-        return f"{self.marks_id} - {self.student_id} - {self.mark}"
-
-
-class TeacherAccess(models.Model):
-    """Model for teacher access to student records"""
-    access_id = models.CharField(max_length=255, primary_key=True, db_index=True)
-    schedule_id = models.CharField(max_length=255, db_index=True)
-    stu_annual_key = models.CharField(max_length=255, db_index=True)
-    ssid = models.CharField(max_length=50, db_index=True)
-    school_year = models.CharField(max_length=20)
-    student_id = models.CharField(max_length=50, blank=True, null=True)
-    school_name = models.CharField(max_length=255, blank=True, null=True)
-    state_school_id = models.CharField(max_length=50, blank=True, null=True)
-    staff_name = models.CharField(max_length=255, blank=True, null=True)
-    staff_email = models.EmailField(blank=True, null=True)
-    staff_employee_id = models.CharField(max_length=50, blank=True, null=True, db_index=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'teacher_access_list'
-        verbose_name = 'Teacher Access'
-        verbose_name_plural = 'Teacher Accesses'
-        indexes = [
-            models.Index(fields=['schedule_id']),
-            models.Index(fields=['staff_employee_id', 'school_year']),
-            models.Index(fields=['ssid', 'school_year']),
-        ]
-
-    def __str__(self):
-        return f"{self.access_id} - {self.staff_name} - {self.student_id}"
 
 
 
