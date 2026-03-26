@@ -15,6 +15,7 @@ from dataexploration.view_modules.student_data_utils import (
 from placementcards.models import PlacementCard, PlacementTag, QuestionTemplate
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
+    can_user_place_students,
     get_accessible_students,
     get_request_school,
     invalidate_school_caches,
@@ -152,13 +153,14 @@ def teacher_notes_page(request: HttpRequest):
         return HttpResponse('Forbidden', status=403)
 
     is_school_admin = _is_school_admin(request.user)
+    can_place = can_user_place_students(request.user, school)
     students_base = get_accessible_students(request)
     school_year = request.GET.get('school_year') or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
     students = get_accessible_students(request, school_year=school_year)
 
     selected_homeroom_teachers = [value.strip() for value in request.GET.getlist('homeroom_teacher') if value.strip()]
     homeroom_teachers: list[str] = []
-    if is_school_admin and school_year:
+    if can_place and school_year:
         homeroom_teachers = list(
             Schedule.objects.filter(
                 ssid__in=students.values('ssid'),
@@ -197,6 +199,7 @@ def teacher_notes_page(request: HttpRequest):
         'tags': tags,
         'selected_tag_ids': selected_tag_ids,
         'is_school_admin': is_school_admin,
+        'can_place_students': can_place,
         'homeroom_teachers': homeroom_teachers,
         'selected_homeroom_teachers': selected_homeroom_teachers,
     }

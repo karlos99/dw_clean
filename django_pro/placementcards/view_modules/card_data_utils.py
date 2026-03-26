@@ -12,7 +12,7 @@ from studata.models import CurrentStudent, School
 
 
 ELEMENTARY_GRADES = {'TK', 'KN', 'KG', '01', '1', '02', '2', '03', '3', '04', '4', '05', '5'}
-DISALLOWED_PLACEMENT_GRADES = {'05', '5', '06', '6', '07', '7', '08', '8', '09', '9', '10', '11', '12', 'US'}
+DISALLOWED_PLACEMENT_GRADES = {'06', '6', '07', '7', '08', '8', '09', '9', '10', '11', '12', 'US'}
 
 
 def _is_elementary_school_group(value: str | None) -> bool:
@@ -63,7 +63,12 @@ def get_request_school(request: HttpRequest) -> School | None:
     return None
 
 
-def get_accessible_students(request: HttpRequest, school_year: str | None = None, grades: Iterable[str] | None = None):
+def get_accessible_students(
+    request: HttpRequest,
+    school_year: str | None = None,
+    grades: Iterable[str] | None = None,
+    apply_grade_restrictions: bool = True
+):
     user = request.user
     grade_values = set(grades or ELEMENTARY_GRADES)
     queryset = CurrentStudent.objects.filter(grade__in=grade_values)
@@ -73,16 +78,29 @@ def get_accessible_students(request: HttpRequest, school_year: str | None = None
 
     if not _is_unrestricted(user):
         school = get_request_school(request)
-        if school:
-            queryset = queryset.filter(school_state_id=school.state_id)
-        elif isinstance(getattr(user, 'schools', None), list) and user.schools:
-            queryset = queryset.filter(school_state_id__in=user.schools)
+        
+        # Strict school validation for restricted users
+        user_schools_raw = getattr(user, 'schools', []) or []
+        user_schools = set(user_schools_raw) if isinstance(user_schools_raw, list) else {str(user_schools_raw)}
+        
+        # If user has explicit schools assigned, strictly filter to those
+        if user_schools:
+            if school and school.state_id not in user_schools:
+                # If inferred school is not in allowed list, drop it (it might be from a dangerous fallback)
+                school = None
+            
+            if school:
+                queryset = queryset.filter(school_state_id=school.state_id)
+            else:
+                queryset = queryset.filter(school_state_id__in=user_schools)
         else:
+            # Restricted user with no schools assigned should see nothing
             queryset = queryset.none()
 
     role_name = _active_role_name(user) or ''
-    if role_name == 'School Gr View' and isinstance(getattr(user, 'grade_levels', None), list) and user.grade_levels:
-        queryset = queryset.filter(grade__in=user.grade_levels)
+    if apply_grade_restrictions:
+        if role_name == 'School Gr View' and isinstance(getattr(user, 'grade_levels', None), list) and user.grade_levels:
+            queryset = queryset.filter(grade__in=user.grade_levels)
 
     allowed_keys = user.get_accessible_student_keys() if hasattr(user, 'get_accessible_student_keys') else None
     if role_name == 'Teacher' and allowed_keys is not None:
@@ -101,9 +119,13 @@ def get_accessible_students(request: HttpRequest, school_year: str | None = None
 
 def can_user_manage_tags(user, school: School | None) -> bool:
     role_names = _user_role_names(user)
+    active_role = _active_role_name(user)
+    if active_role == 'School Gr View':
+        return False
+
     if user.is_superuser or 'Project Admin' in role_names or 'District Admin' in role_names:
         return True
-    if 'School Admin' not in role_names and 'School Gr View' not in role_names:
+    if 'School Admin' not in role_names:
         return False
     if school is None:
         return False
@@ -163,8 +185,15 @@ def can_user_access_placement_cards(user, school: School | None) -> bool:
     if user.is_superuser or 'Project Admin' in role_names or 'District Admin' in role_names or any('District' in role for role in role_names):
         return True
 
-    if 'Teacher' not in role_names and 'School Admin' not in role_names:
+    if 'Teacher' not in role_names and 'School Admin' not in role_names and 'School Gr View' not in role_names:
         return False
+
+    if 'School Gr View' in role_names:
+        if school is None:
+            return False
+        if isinstance(getattr(user, 'schools', None), list) and user.schools and school.state_id not in user.schools:
+            return False
+        return not _user_has_disallowed_placement_grades(user, school)
 
     if 'School Admin' in role_names and school is not None:
         if isinstance(getattr(user, 'schools', None), list) and user.schools and school.state_id not in user.schools:
@@ -183,8 +212,16 @@ def can_user_access_placement_cards(user, school: School | None) -> bool:
     return not _user_has_disallowed_placement_grades(user, school)
 
 
-def can_user_place_students(user, school: School | None) -> bool:
+def can_user_view_classrooms(user, school: School | None) -> bool:
+    """Can the user view classroom / placement pages (menu + read access)?"""
     role_names = _user_role_names(user)
+    
+    # If the user is actively viewing as a Teacher, hide classroom/placement tools
+    # They must switch to School Gr View or School Admin to see these.
+    active_role = _active_role_name(user)
+    if active_role == 'Teacher':
+        return False
+
     if user.is_superuser or 'Project Admin' in role_names or 'District Admin' in role_names:
         return True
     if 'School Admin' not in role_names and 'School Gr View' not in role_names:
@@ -195,7 +232,93 @@ def can_user_place_students(user, school: School | None) -> bool:
         return False
     if 'School Admin' in role_names:
         return _is_elementary_school_group(getattr(school, 'school_group', None))
+    # School Gr View: require can_move_placement_cards to see classrooms
+    prefs = getattr(user, 'preferences', None) or {}
+    if not prefs.get('can_move_placement_cards'):
+        return False
+    # If the user has access to grades that are elementary, allow access.
+    # We check if explicitly disallowed grades are present at the school,
+    # but for School Gr View, we should trust the grade_levels assignment.
+    # Therefore, check school group instead.
+    if _is_elementary_school_group(getattr(school, 'school_group', None)):
+        return True
+    
     return not _user_has_disallowed_placement_grades(user, school)
+
+
+def can_user_place_students(user, school: School | None) -> bool:
+    """Can the user modify placements (move students, manage classrooms)?"""
+    role_names = _user_role_names(user)
+    
+    # If the user is actively viewing as a Teacher, hide classroom/placement tools
+    active_role = _active_role_name(user)
+    if active_role == 'Teacher':
+        return False
+
+    if user.is_superuser or 'Project Admin' in role_names or 'District Admin' in role_names:
+        return True
+    if 'School Admin' not in role_names and 'School Gr View' not in role_names:
+        return False
+    if school is None:
+        return False
+    if isinstance(getattr(user, 'schools', None), list) and user.schools and school.state_id not in user.schools:
+        return False
+    if 'School Admin' in role_names:
+        return _is_elementary_school_group(getattr(school, 'school_group', None))
+    # School Gr View: require can_move_placement_cards preference
+    prefs = getattr(user, 'preferences', None) or {}
+    if not prefs.get('can_move_placement_cards'):
+        return False
+    # If the user has access to grades that are elementary, allow access.
+    if _is_elementary_school_group(getattr(school, 'school_group', None)):
+        return True
+    return not _user_has_disallowed_placement_grades(user, school)
+
+
+def can_user_export_classrooms(user, school: School | None) -> bool:
+    """Can the user export classroom CSVs?"""
+    role_names = _user_role_names(user)
+    active_role = _active_role_name(user)
+    if active_role == 'Teacher':
+        return False
+
+    if user.is_superuser or 'Project Admin' in role_names or 'District Admin' in role_names:
+        return True
+    if 'School Admin' not in role_names and 'School Gr View' not in role_names:
+        return False
+    if school is None:
+        return False
+    if isinstance(getattr(user, 'schools', None), list) and user.schools and school.state_id not in user.schools:
+        return False
+    if 'School Admin' in role_names:
+        return _is_elementary_school_group(getattr(school, 'school_group', None))
+    
+    # School Gr View: require can_export_classroom_csv preference
+    prefs = getattr(user, 'preferences', None) or {}
+    if not prefs.get('can_export_classroom_csv'):
+        return False
+    
+    if _is_elementary_school_group(getattr(school, 'school_group', None)):
+        return True
+    return not _user_has_disallowed_placement_grades(user, school)
+
+
+def can_user_configure_placements(user, school: School | None) -> bool:
+    """Can the user access the placement configuration page?"""
+    active_role = _active_role_name(user)
+    # School Gr View users are not allowed to configure placement settings
+    if active_role == 'School Gr View':
+        return False
+
+    return can_user_place_students(user, school)
+
+
+def get_user_grade_filter(user) -> list[str] | None:
+    """Return grade_levels list for School Gr View users, None for unrestricted users."""
+    role_name = _active_role_name(user) or ''
+    if role_name == 'School Gr View' and isinstance(getattr(user, 'grade_levels', None), list) and user.grade_levels:
+        return user.grade_levels
+    return None
 
 
 def placement_card_map(ssids: list[str], school_year: str):

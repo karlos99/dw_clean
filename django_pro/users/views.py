@@ -477,11 +477,14 @@ def user_detail(request, user_id):
         # 2. Restrict visible/assignable schools
         schools_qs = schools_qs.filter(state_id__in=allowed_schools)
 
+    is_school_admin_only = is_school and not is_proj
+
     if request.method == 'POST':
-        # Update user information
-        user_obj.name = request.POST.get('name', '').strip()
-        user_obj.job_title = request.POST.get('job_title', '').strip()
-        user_obj.staff_id = request.POST.get('staff_id', '').strip() or None
+        # School admins cannot edit name, job title, or staff ID
+        if not is_school_admin_only:
+            user_obj.name = request.POST.get('name', '').strip()
+            user_obj.job_title = request.POST.get('job_title', '').strip()
+            user_obj.staff_id = request.POST.get('staff_id', '').strip() or None
         user_obj.is_active = request.POST.get('is_active') == 'on'
         
         # Update roles
@@ -537,6 +540,12 @@ def user_detail(request, user_id):
         grade_levels = request.POST.getlist('grade_levels')
         user_obj.grade_levels = grade_levels if grade_levels else []
 
+        # Update placement/export permissions (stored in preferences)
+        prefs = user_obj.preferences if isinstance(user_obj.preferences, dict) else {}
+        prefs['can_move_placement_cards'] = request.POST.get('can_move_placement_cards') == 'on'
+        prefs['can_export_classroom_csv'] = request.POST.get('can_export_classroom_csv') == 'on'
+        user_obj.preferences = prefs
+
         user_obj.save()
         
         messages.success(request, f'User {user_obj.email} updated successfully.')
@@ -551,6 +560,7 @@ def user_detail(request, user_id):
                 'schools': schools_qs,
                 'available_grades': available_grades,
                 'is_modal': True,
+                'is_school_admin_only': is_school_admin_only,
             }
             return render(request, 'users/user_detail_modal.html', context)
         
@@ -565,6 +575,7 @@ def user_detail(request, user_id):
         'schools': schools_qs,
         'available_grades': available_grades,
         'is_modal': is_modal,
+        'is_school_admin_only': is_school_admin_only,
     }
     
     if is_modal:
@@ -607,7 +618,9 @@ def switch_role(request):
                   else:
                        messages.error(request, "You do not have access to this school.")
     
-    return redirect(request.META.get('HTTP_REFERER', '/'))
+    # Redirect to home page instead of referer to prevent permission issues
+    return redirect('index')
+
 
 @login_required
 def bulk_update_users(request):

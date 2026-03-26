@@ -13,10 +13,13 @@ from dataexploration.models import ElementaryHomeroomTeacher
 from placementcards.models import NextYearClassroom, PlacementCard, PlacementTag, QuestionTemplate, StudentPlacement
 from placementcards.view_modules.card_data_utils import (
     can_user_place_students,
+    can_user_configure_placements,
     can_user_manage_tags,
     get_request_school,
+    get_user_grade_filter,
     tags_usage_for_school,
 )
+from users.decorators import page_access_required
 from studata.models import CurrentStudent, Result, StudentEnroll, Test
 
 
@@ -32,42 +35,46 @@ _GRADES_LIST = [
 ]
 
 
-def _classroom_list_context(school, school_year: str | None):
+def _classroom_list_context(school, school_year: str | None, user=None):
     classrooms = NextYearClassroom.objects.filter(school=school)
     if school_year:
         classrooms = classrooms.filter(school_year=school_year)
+    # Note: We intentionally allow School Gr View to see all classrooms (no grade filter here)
+    # per user request to list all classrooms regardless of grade.
     classrooms = classrooms.annotate(assignment_count=Count('placements')).order_by('school_year', 'grade', 'classroom_name')
     return {'school': school, 'classrooms': classrooms, 'school_year': school_year}
 
 
 def _render_classroom_list(request: HttpRequest, school, school_year: str | None):
-    context = _classroom_list_context(school, school_year)
+    context = _classroom_list_context(school, school_year, user=request.user)
     return render(request, 'placementcards/partials/classroom_list.html', context)
 
 
 @login_required
 def manage_classrooms(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     school_year = request.GET.get('school_year')
-    context = _classroom_list_context(school, school_year)
+    context = _classroom_list_context(school, school_year, user=request.user)
     if request.headers.get('HX-Request') == 'true':
         return render(request, 'placementcards/partials/classroom_list.html', context)
     return render(request, 'placementcards/manage_classrooms.html', context)
 
 
 @login_required
+@page_access_required('placement-cards-configuration')
 def placement_configuration(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     school_year = request.GET.get('school_year')
     classrooms = NextYearClassroom.objects.filter(school=school)
     if school_year:
         classrooms = classrooms.filter(school_year=school_year)
+    # Note: We intentionally allow School Gr View to see all classrooms.
     classrooms = classrooms.annotate(assignment_count=Count('placements')).order_by('school_year', 'grade', 'classroom_name')
 
     tags = PlacementTag.objects.filter(school=school, is_active=True).order_by('display_order', 'name')
@@ -102,7 +109,7 @@ def placement_configuration(request: HttpRequest):
 @login_required
 def create_classroom_modal(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     if request.method == 'GET':
@@ -149,7 +156,7 @@ def create_classroom_modal(request: HttpRequest):
 @transaction.atomic
 def edit_classroom_modal(request: HttpRequest, classroom_id: int):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id, school=school)
@@ -191,7 +198,7 @@ def edit_classroom_modal(request: HttpRequest, classroom_id: int):
 @transaction.atomic
 def delete_classroom(request: HttpRequest, classroom_id: int):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id, school=school)
