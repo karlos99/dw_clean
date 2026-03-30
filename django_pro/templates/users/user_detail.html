@@ -194,6 +194,12 @@
 
                 <!-- Active Status -->
                 <div>
+                    {% if is_school_admin_only %}
+                    <p class="text-sm text-slate-900 px-4 py-2 bg-slate-50 border border-slate-300 rounded-md">
+                        Status: {% if user_obj.is_active %}Active{% else %}Inactive{% endif %}
+                    </p>
+                    <p class="mt-1 text-xs text-slate-500">Only Project Admin can change active status</p>
+                    {% else %}
                     <div class="flex items-center">
                         <input type="checkbox" name="is_active" id="is_active" {% if user_obj.is_active %}checked
                         {% endif %} class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
@@ -202,6 +208,7 @@
                         </label>
                     </div>
                     <p class="mt-1 text-xs text-slate-500 ml-6">Inactive users cannot log in</p>
+                    {% endif %}
                 </div>
             </div>
 

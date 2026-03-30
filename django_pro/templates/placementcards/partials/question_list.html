@@ -22,10 +22,13 @@
                             <button type="submit" class="text-amber-700">Hide</button>
                         </form>
                         {% if question.created_by_id == request.user.id %}
-                        <form class="inline" hx-post="{% url 'placementcards:delete_question' question.id %}" hx-target="#questions-panel" hx-swap="outerHTML" onsubmit="return confirm('Delete this question permanently?')">
-                            {% csrf_token %}
-                            <button type="submit" class="text-red-600">Delete</button>
-                        </form>
+                            {% if is_school_admin and question.id in non_deletable_default_ids %}
+                            {% else %}
+                            <form class="inline" hx-post="{% url 'placementcards:delete_question' question.id %}" hx-target="#questions-panel" hx-swap="outerHTML" onsubmit="return confirm('Delete this question permanently?')">
+                                {% csrf_token %}
+                                <button type="submit" class="text-red-600">Delete</button>
+                            </form>
+                            {% endif %}
                         {% endif %}
                     </div>
                 </td>

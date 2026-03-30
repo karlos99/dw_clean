@@ -21,21 +21,7 @@
 <form method="post" 
       hx-post="{% url 'users:user_detail' user_obj.id %}?modal=1" 
       hx-target="#modal-content"
-      hx-swap="innerHTML"
-      @htmx:after-swap="
-        const successMsg = $el.querySelector('.bg-green-50');
-        if (successMsg) {
-          setTimeout(() => {
-            const params = new URLSearchParams(window.location.search);
-            const url = new URL('{% url 'users:manage_users' %}', window.location.origin);
-            ['q', 'role', 'school', 'job_title', 'sort', 'order', 'page_size', 'page'].forEach(key => {
-              if (params.get(key)) url.searchParams.set(key, params.get(key));
-            });
-            htmx.ajax('GET', url.toString(), {target: '#user-content', swap: 'innerHTML'});
-            setTimeout(() => $dispatch('close-modal'), 500);
-          }, 800);
-        }
-      "
+            hx-swap="innerHTML"
       class="px-6 py-6">
     {% csrf_token %}
 
@@ -201,6 +187,12 @@
 
         <!-- Active Status -->
         <div>
+            {% if is_school_admin_only %}
+            <p class="text-sm text-slate-900 px-4 py-2 bg-slate-50 border border-slate-300 rounded-md">
+                Status: {% if user_obj.is_active %}Active{% else %}Inactive{% endif %}
+            </p>
+            <p class="mt-1 text-xs text-slate-500">Only Project Admin can change active status</p>
+            {% else %}
             <div class="flex items-center">
                 <input type="checkbox" name="is_active" id="is_active" {% if user_obj.is_active %}checked{% endif %} 
                     class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
@@ -209,6 +201,7 @@
                 </label>
             </div>
             <p class="mt-1 text-xs text-slate-500 ml-6">Inactive users cannot log in</p>
+            {% endif %}
         </div>
     </div>
 

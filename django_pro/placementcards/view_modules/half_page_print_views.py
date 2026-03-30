@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from importlib import import_module
 from io import BytesIO
+from types import SimpleNamespace
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
@@ -13,6 +14,7 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 
 from placementcards.models import PlacementCard, QuestionTemplate, StudentPlacement
+from placementcards.view_modules.card_views import DEFAULT_QUESTIONS
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
     can_user_place_students,
@@ -27,7 +29,7 @@ CATEGORY_LABELS = {
     'academic': 'Academic',
     'behavior': 'Behavior & Study Habits',
     'physical': 'Physical & Health',
-    'attendance': 'Behavior & Attendance',
+    'attendance': 'Attendance',
     'parent': 'Parent Involvement',
     'additional': 'Additional Information',
 }
@@ -112,6 +114,21 @@ def _questions_for_school(school_id: int):
         ),
         timeout=3600,
     )
+
+
+def _default_questions_for_export():
+    # Export forms should only include the built-in default prompts,
+    # leaving notes blank for paper completion.
+    return [
+        SimpleNamespace(
+            question_category=category,
+            question_text=text,
+            question_type=qtype,
+            field_options=options if isinstance(options, dict) else {},
+            requires_detail=requires_detail,
+        )
+        for category, text, qtype, options, requires_detail in DEFAULT_QUESTIONS
+    ]
 
 
 def _students_for_notes_export(request: HttpRequest, school_year: str, ssid: str | None = None):
@@ -984,7 +1001,7 @@ def export_teacher_notes_pdf_half(request: HttpRequest):
     if not students:
         return HttpResponse('No students found for the current view', status=404)
 
-    questions = _questions_for_school(school.pk)
+    questions = _default_questions_for_export()
     break_by_teacher = request.GET.get('sort') == 'homeroom' and _is_school_admin(request.user)
     filename = f'teacher_notes_forms_half_{school_year or "current"}_{len(students)}.pdf'
     return _pdf_response(students, school_year, questions, filename, layout_mode='half', break_by_teacher=break_by_teacher)
@@ -1003,6 +1020,6 @@ def export_student_notes_pdf(request: HttpRequest, ssid: str):
     if not students:
         return HttpResponse('Student not found for current access scope', status=404)
 
-    questions = _questions_for_school(school.pk)
+    questions = _default_questions_for_export()
     filename = f'teacher_notes_form_{ssid}_{school_year or "current"}.pdf'
     return _pdf_response(students[:1], school_year, questions, filename)
