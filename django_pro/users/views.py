@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import login
 from django.contrib import messages
@@ -58,6 +59,13 @@ def get_base_users_queryset(request):
         else:
             # Admin with no schools sees no one?
             users_qs = users_qs.none()
+
+        # School Admin should not see district-level users.
+        if user_is_school_admin(request.user):
+            users_qs = users_qs.exclude(
+                Q(roles__name__iexact='District View')
+                | Q(roles__name__iexact='District Admin')
+            )
     
     return users_qs
 
@@ -135,7 +143,7 @@ def manage_users(request):
     page_size = int(page_size)
     
     # Apply sorting
-    valid_sort_fields = ['name', 'email', 'job_title']
+    valid_sort_fields = ['name', 'email', 'job_title', 'is_active']
     if sort_by == 'role__name':
          # Sorting by M2M is tricky, let's skip for now or sort by count? or first role?
          # Simplification: Disable role sorting or leave as is (might produce duplicates)
@@ -216,6 +224,16 @@ def manage_users(request):
     page_number = request.GET.get('page', 1)
     page_obj = paginator.get_page(page_number)
 
+    # Build school name lookup for users on the current page
+    page_school_ids = set()
+    for u in page_obj:
+        if u.schools and isinstance(u.schools, list):
+            page_school_ids.update(u.schools)
+    school_name_map = {}
+    if page_school_ids:
+        for row in StudataSchool.objects.filter(state_id__in=page_school_ids).values('state_id', 'school_name'):
+            school_name_map[row['state_id']] = row['school_name']
+
     context = {
         'users': page_obj,
         'page_obj': page_obj,
@@ -233,7 +251,8 @@ def manage_users(request):
         'all_schools': all_schools,
         'sort_by': sort_by,
         'sort_order': sort_order,
-        'total_users_count': total_users_count, 
+        'total_users_count': total_users_count,
+        'school_name_map': school_name_map,
     }
     
     # Return partial for HTMX requests
@@ -485,7 +504,7 @@ def user_detail(request, user_id):
             user_obj.name = request.POST.get('name', '').strip()
             user_obj.job_title = request.POST.get('job_title', '').strip()
             user_obj.staff_id = request.POST.get('staff_id', '').strip() or None
-        user_obj.is_active = request.POST.get('is_active') == 'on'
+            user_obj.is_active = request.POST.get('is_active') == 'on'
         
         # Update roles
         role_ids = request.POST.getlist('roles')
@@ -553,16 +572,10 @@ def user_detail(request, user_id):
         # Check if this is a modal request
         is_modal = request.GET.get('modal') == '1'
         if is_modal:
-            # Return modal content with updated data
-            context = {
-                'user_obj': user_obj,
-                'roles': roles_qs,
-                'schools': schools_qs,
-                'available_grades': available_grades,
-                'is_modal': True,
-                'is_school_admin_only': is_school_admin_only,
-            }
-            return render(request, 'users/user_detail_modal.html', context)
+            # Let HTMX close the overlay and refresh the table in the parent page.
+            response = HttpResponse(status=204)
+            response['HX-Trigger'] = 'user-updated'
+            return response
         
         return redirect('users:user_detail', user_id=user_obj.id)
     

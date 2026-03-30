@@ -12,6 +12,7 @@ from studata.models import CurrentStudent, School
 
 
 ELEMENTARY_GRADES = {'TK', 'KN', 'KG', '01', '1', '02', '2', '03', '3', '04', '4', '05', '5'}
+FIFTH_GRADES = {'05', '5'}
 DISALLOWED_PLACEMENT_GRADES = {'06', '6', '07', '7', '08', '8', '09', '9', '10', '11', '12', 'US'}
 
 
@@ -71,7 +72,8 @@ def get_accessible_students(
 ):
     user = request.user
     grade_values = set(grades or ELEMENTARY_GRADES)
-    queryset = CurrentStudent.objects.filter(grade__in=grade_values)
+    # Placement cards should only include active students.
+    queryset = CurrentStudent.objects.filter(grade__in=grade_values).filter(Q(status__iexact='active') | Q(status__iexact='a'))
 
     if school_year:
         queryset = queryset.filter(school_year=school_year)

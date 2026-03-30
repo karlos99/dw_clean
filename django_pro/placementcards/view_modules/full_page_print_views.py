@@ -9,12 +9,12 @@ from placementcards.view_modules.card_data_utils import get_request_school
 from placementcards.view_modules.card_data_utils import can_user_access_placement_cards
 from placementcards.view_modules.half_page_print_views import (
     _assessment_snapshot_map,
+    _default_questions_for_export,
     _draw_section_title,
     _draw_text_wrapped,
     _is_school_admin,
     _load_reportlab,
     _question_prompt,
-    _questions_for_school,
     _resolve_school_year,
     _short_school_year,
     _student_profile_map,
@@ -176,7 +176,7 @@ def _draw_questions_columns_full(pdf: Any, questions, x: float, y: float, width:
             'academic': 'Academic',
             'behavior': 'Behavior & Study Habits',
             'physical': 'Physical & Health',
-            'attendance': 'Behavior & Attendance',
+            'attendance': 'Attendance',
             'parent': 'Parent Involvement',
             'additional': 'Additional Information',
         }.get(category_key, category_key.title())
@@ -443,7 +443,7 @@ def export_teacher_notes_pdf_full(request: HttpRequest):
     if not students:
         return HttpResponse('No students found for the current view', status=404)
 
-    questions = _questions_for_school(school.pk)
+    questions = _default_questions_for_export()
     break_by_teacher = request.GET.get('sort') == 'homeroom' and _is_school_admin(request.user)
     filename = f'teacher_notes_forms_full_{school_year or "current"}_{len(students)}.pdf'
     return _pdf_response_full(students, school_year, questions, filename, break_by_teacher=break_by_teacher)
@@ -462,6 +462,6 @@ def export_student_notes_pdf_full(request: HttpRequest, ssid: str):
     if not students:
         return HttpResponse('Student not found for current access scope', status=404)
 
-    questions = _questions_for_school(school.pk)
+    questions = _default_questions_for_export()
     filename = f'teacher_notes_form_full_{ssid}_{school_year or "current"}.pdf'
     return _pdf_response_full(students[:1], school_year, questions, filename)

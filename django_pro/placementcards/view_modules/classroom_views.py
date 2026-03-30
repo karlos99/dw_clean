@@ -11,6 +11,7 @@ from django.shortcuts import get_object_or_404, render
 
 from dataexploration.models import ElementaryHomeroomTeacher
 from placementcards.models import NextYearClassroom, PlacementCard, PlacementTag, QuestionTemplate, StudentPlacement
+from placementcards.view_modules.card_views import DEFAULT_QUESTIONS
 from placementcards.view_modules.card_data_utils import (
     can_user_place_students,
     can_user_configure_placements,
@@ -33,6 +34,18 @@ _GRADES_LIST = [
     ('04', '4th Grade'),
     ('05', '5th Grade'),
 ]
+
+
+def _is_school_admin(user) -> bool:
+    if user.is_superuser:
+        return True
+
+    role_names: set[str] = set()
+    if hasattr(user, 'active_role') and user.active_role:
+        role_names.add(user.active_role.name)
+    if hasattr(user, 'roles'):
+        role_names.update(user.roles.values_list('name', flat=True))
+    return 'School Admin' in role_names
 
 
 def _classroom_list_context(school, school_year: str | None, user=None):
@@ -89,6 +102,7 @@ def placement_configuration(request: HttpRequest):
         .order_by('question_category', 'display_order', 'id')
     )
     can_manage_tags = can_user_manage_tags(request.user, school)
+    non_deletable_default_ids = {question.id for question in questions if question.display_order < len(DEFAULT_QUESTIONS)}
 
     context = {
         'school': school,
@@ -102,6 +116,8 @@ def placement_configuration(request: HttpRequest):
         'question': None,
         'options_value': '',
         'can_manage_tags': can_manage_tags,
+        'is_school_admin': _is_school_admin(request.user),
+        'non_deletable_default_ids': non_deletable_default_ids,
     }
     return render(request, 'placementcards/placement_configuration.html', context)
 
@@ -202,7 +218,7 @@ def delete_classroom(request: HttpRequest, classroom_id: int):
         return HttpResponse('Forbidden', status=403)
 
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id, school=school)
-    school_year = request.POST.get('school_year', '').strip() or classroom.school_year
+    school_year = request.POST.get('school_year', '').strip() or None
     classroom.delete()
     return _render_classroom_list(request, school, school_year)
 
