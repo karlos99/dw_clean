@@ -481,7 +481,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                 cat_totals[xv] = sum(raw_vals.get((xv, sv), 0) for sv in stacks)
 
         series = []
-        for sv in stacks:
+        for sv in reversed(stacks):
             if show_percent:
                 data = [round(raw_vals.get((xv, sv), 0) / cat_totals[xv] * 100, 1)
                         if cat_totals.get(xv, 0) > 0 else 0.0
@@ -508,7 +508,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                 "  var total = totals[cat] || 0;"
                 "  var html = '<b>' + cat + '</b>';"
                 "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
-                "  for (var i = 0; i < params.length; i++) {"
+                "  for (var i = params.length - 1; i >= 0; i--) {"
                 "    var d = params[i];"
                 "    var cnt = (rawLookup[d.seriesName] || {})[cat] || 0;"
                 "    var pct = total > 0 ? (cnt / total * 100).toFixed(1) : '0.0';"
@@ -523,8 +523,24 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                                        'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
                                        '__formatter_js__': tooltip_js}})
         else:
+            _tjs = (
+                "function(params) {"
+                "  if (!Array.isArray(params)) params = [params];"
+                "  var cat = params[0].name || '';"
+                "  var html = '<b>' + cat + '</b>';"
+                "  for (var i = params.length - 1; i >= 0; i--) {"
+                "    var d = params[i];"
+                "    if (d.value == null) continue;"
+                "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + d.value + '</b>';"
+                "  }"
+                "  return html;"
+                "}"
+            )
             option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                           'yAxis': y_axis, 'series': series})
+                           'yAxis': y_axis, 'series': series,
+                           'tooltip': {'show': cfg.get('show_tooltip', True) is not False,
+                                       'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
+                                       '__formatter_js__': _tjs}})
     else:
         adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False)
         option.update({'xAxis': {'type': 'category', 'data': adf[x_col].astype(str).tolist(), 'name': labels['x'], **ax},
@@ -571,7 +587,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         categories = sorted(adf[x_col].astype(str).unique().tolist())
         stacks_ordered = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
         series = [make_series(sv, [float(dict(zip(adf[adf[stack_col].astype(str) == sv][x_col].astype(str), adf[adf[stack_col].astype(str) == sv]['_value'])).get(xv, 0) or 0) for xv in categories], stacked)
-                  for sv in stacks_ordered]
+                  for sv in reversed(stacks_ordered)]
         option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
                        'yAxis': {'type': 'value', 'name': labels['y'] or 'Count', **ax}, 'series': series})
     else:
@@ -676,7 +692,7 @@ def _histogram_option(df, x_col, stack_col, cfg, labels):
             all_x.extend(bns)
         x_axis = sorted(set(all_x))
         series = [{'name': g, 'type': 'bar', 'stack': 'total', 'data': [int(per_group[g].get(b, 0)) for b in x_axis]}
-                  for g in per_group]
+                  for g in reversed(list(per_group))]
     else:
         x_axis, counts = hist(df[x_col], bins)
         series = [{'name': 'Count', 'type': 'bar', 'data': [int(v) for v in counts]}]
@@ -889,7 +905,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
 
     # ── Build series ──
     series = []
-    for pv in pl_vals:
+    for pv in reversed(pl_vals):
         data_vals = []
         for pos in range(total_positions):
             cnt = raw_counts[pos].get(pv, 0)
@@ -931,7 +947,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         "  var total = totals[String(idx)] || 0;"
         "  var html = '<b>' + cat + '</b>';"
         "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
-        "  for (var i = 0; i < params.length; i++) {"
+        "  for (var i = params.length - 1; i >= 0; i--) {"
         "    var d = params[i];"
         "    if (d.value == null) continue;"
         "    var cnt = (rawCounts[String(idx)] || {})[d.seriesName] || 0;"

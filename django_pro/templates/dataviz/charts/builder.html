@@ -500,7 +500,7 @@
           </div>
 
           {# ── Stack / Series Order (drag-to-reorder) ── #}
-          <div x-show="seriesCol && stackOrder.length > 1" x-collapse class="mt-2">
+          <div x-show="(seriesCol || chartType === 'assessment_compare') && stackOrder.length > 1" x-collapse class="mt-2">
             <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Stack Order (drag to reorder)</p>
             <div class="space-y-0.5">
               <template x-for="(item, idx) in stackOrder" :key="'so_'+item">
