@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Pages – DataViz{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-800">Pages</h1>
+      <p class="text-sm text-slate-500 mt-1">Publish data pages visible to your users</p>
+    </div>
+    <div class="flex gap-3">
+      <a href="{% url 'dataviz:index' %}"
+         class="px-4 py-2 text-sm text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+        Charts
+      </a>
+      <a href="{% url 'dataviz:page_new' %}"
+         class="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">
+        + New Page
+      </a>
+    </div>
+  </div>
+
+  {% if pages %}
+  <div class="space-y-3">
+    {% for page in pages %}
+    <div class="bg-white border border-slate-200 rounded-xl px-6 py-4 shadow-sm hover:shadow-md transition flex items-center gap-4">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <h2 class="font-semibold text-slate-800 truncate">{{ page.title }}</h2>
+          {% if page.status == 'active' %}
+          <span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">Live</span>
+          {% else %}
+          <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Draft</span>
+          {% endif %}
+        </div>
+        <p class="text-xs text-slate-400 mt-0.5">/dataviz/pages/{{ page.slug }}/</p>
+      </div>
+      <div class="flex gap-2 flex-shrink-0">
+        {% if page.status == 'active' %}
+        <a href="{% url 'dataviz:page_view' page.slug %}"
+           class="text-sm px-3 py-1.5 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition"
+           target="_blank">
+          View
+        </a>
+        {% endif %}
+        <a href="{% url 'dataviz:page_edit' page.slug %}"
+           class="text-sm px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition">
+          Edit
+        </a>
+        <button hx-post="{% url 'dataviz:page_delete' page.slug %}"
+                hx-confirm="Delete '{{ page.title }}'?"
+                hx-target="closest div.bg-white"
+                hx-swap="outerHTML swap:300ms"
+                class="text-sm px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition">
+          Delete
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-center py-24 bg-white border border-dashed border-slate-300 rounded-xl">
+    <p class="text-slate-400 text-lg mb-4">No pages yet</p>
+    <a href="{% url 'dataviz:page_new' %}"
+       class="px-5 py-2.5 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">
+      Create your first page
+    </a>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

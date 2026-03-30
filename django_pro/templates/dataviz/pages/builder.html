@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Page Builder – DataViz{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack-extra.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack-all.js"></script>
+<style>
+  .row-drop-zone { min-height: 80px; }
+  .grid-stack { min-height: 80px !important; }
+  .grid-stack-item-content { overflow: hidden; }
+  .row-container { transition: all 0.2s ease; }
+  .row-container:hover .row-handle { opacity: 1; }
+  .row-handle { opacity: 0.4; transition: opacity 0.2s; cursor: grab; }
+  .row-label-input { background: transparent; border: none; font-weight: 600; outline: none; }
+  .row-label-input:focus { border-bottom: 1px solid #3b82f6; }
+</style>
+<script>
+  const _PAGE_ID        = {{ page_id|default:'null' }};
+  const _PAGE_SLUG      = "{{ page.slug|default:''|escapejs }}";
+  const _PAGE_TITLE     = "{{ page.title|default:''|escapejs }}";
+  const _PAGE_DESC      = "{{ page.description|default:''|escapejs }}";
+  const _PAGE_STATUS    = "{{ page.status|default:'draft'|escapejs }}";
+  const _PAGE_FILTERS   = JSON.parse('{{ filters_json|escapejs }}');
+  const _ROWS_JSON      = JSON.parse('{{ rows_json|escapejs }}');
+  const _SECTIONS_JSON  = JSON.parse('{{ sections_json|escapejs }}');
+  const _SAVE_URL       = "{% url 'dataviz:page_save' %}";
+  const _SECTIONS_URL   = "{% url 'dataviz:page_sections' '__slug__' %}";
+  const _SECTION_URL_TPL = "/dataviz/api/sections/SECTIONID/";
+  const _ROW_URL_TPL     = "/dataviz/api/rows/ROWID/";
+  const _CHART_LIST_URL = "{% url 'dataviz:chart_list' %}";
+  const _CHART_RENDER_TPL = "/dataviz/api/charts/CHARTID/render/";
+  const _FILTER_COLS_URL = "{% url 'dataviz:page_filter_columns' %}";
+  const _CSRF           = "{{ csrf_token }}";
+</script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
+<script src="{% static 'js/dataviz/page-builder.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<div x-data="pageBuilder()" class="h-[calc(100vh-5rem)] flex flex-col">
+
+  <!-- ── Top bar ─────────────────────────────────────────────────── -->
+  <div class="flex items-center justify-between bg-white border-b border-slate-200 px-4 py-2.5 flex-shrink-0">
+    <div class="flex items-center gap-3">
+      <a href="{% url 'dataviz:page_index' %}"
+         class="text-slate-400 hover:text-blue-600 transition">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <div>
+        <input type="text" x-model="title" placeholder="Page title…"
+               class="text-base font-semibold text-slate-800 border-0 border-b border-transparent focus:border-blue-400 focus:ring-0 px-0 py-0.5 bg-transparent w-64"
+               @blur="autoSave()">
+        <p class="text-[10px] text-slate-400 mt-0.5" x-show="pageSlug">
+          /<span x-text="pageSlug"></span>
+          <span x-show="lastSaved" class="ml-2">Saved <span x-text="lastSaved"></span></span>
+        </p>
+      </div>
+    </div>
+    <div class="flex gap-2">
+      <button @click="addRow()"
+              class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-lg transition flex items-center gap-1.5"
+              :disabled="!pageId" :class="{'opacity-40 cursor-not-allowed': !pageId}">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M4 6h16M4 18h16"/>
+        </svg>
+        + Section
+      </button>
+      <a x-show="pageSlug" :href="'/dataviz/pages/' + pageSlug + '/'" target="_blank"
+         class="px-3 py-1.5 text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition font-medium flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+        </svg>
+        Preview
+      </a>
+      <button @click="savePage('draft')"
+              class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-lg transition font-medium">
+        Save Draft
+      </button>
+      <button @click="savePage('active')"
+              class="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-medium">
+        Publish
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Toast ───────────────────────────────────────────────────── -->
+  <div x-show="toast" x-transition
+       class="fixed top-4 right-4 z-[60] px-4 py-2 rounded-lg shadow-lg text-sm"
+       :class="toastType === 'error' ? 'bg-red-600 text-white' : 'bg-green-600 text-white'"
+       x-text="toast" x-cloak></div>
+
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- ── Left sidebar: page settings + row/section list ────────── -->
+    <div class="w-64 border-r border-slate-200 bg-white flex flex-col overflow-y-auto flex-shrink-0">
+
+      <!-- Page info -->
+      <div class="p-3 space-y-3 border-b border-slate-100">
+        <div>
+          <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Slug</label>
+          <input type="text" x-model="pageSlug" @blur="autoSave()"
+                 class="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-blue-400"
+                 placeholder="auto-generated">
+        </div>
+        <div>
+          <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Description</label>
+          <textarea x-model="description" rows="2" @blur="autoSave()"
+                    class="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 resize-none focus:ring-1 focus:ring-blue-400"
+                    placeholder="Optional description…"></textarea>
+        </div>
+        <!-- Page Filters -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Page Filters</label>
+            <label class="flex items-center gap-1 text-[10px] text-slate-500">
+              <input type="checkbox" x-model="filtersEnabled"
+                     @change="if (!filtersEnabled) filters = []; autoSave()"
+                     class="rounded border-slate-300 text-blue-600 w-3 h-3">
+              Enable
+            </label>
+          </div>
+
+          <!-- Filter column picker (shown when enabled) -->
+          <div x-show="filtersEnabled" x-cloak>
+            <button @click="filterPickerOpen = !filterPickerOpen"
+                    class="w-full text-[10px] px-2 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition mb-1.5 font-medium">
+              + Add Filter Column
+            </button>
+
+            <!-- Column picker dropdown -->
+            <div x-show="filterPickerOpen" x-cloak
+                 class="bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto mb-2">
+              <template x-for="cat in filterCategories" :key="cat.key">
+                <div class="border-b border-slate-100 last:border-0">
+                  <div class="px-2 py-1 bg-slate-50 text-[9px] font-bold text-slate-500 uppercase tracking-wider"
+                       x-text="cat.title"></div>
+                  <template x-for="col in cat.columns" :key="col.key">
+                    <label class="flex items-center gap-1.5 px-2 py-1 hover:bg-blue-50 cursor-pointer text-[10px] text-slate-700"
+                           :class="{'bg-blue-50/50 text-blue-700': isFilterSelected(col.key)}">
+                      <input type="checkbox"
+                             :checked="isFilterSelected(col.key)"
+                             @change="toggleFilter(col)"
+                             class="rounded border-slate-300 text-blue-600 w-3 h-3">
+                      <span x-text="col.label"></span>
+                    </label>
+                  </template>
+                </div>
+              </template>
+              <div x-show="filterCategories.length === 0"
+                   class="text-[10px] text-slate-400 text-center py-3">Loading columns…</div>
+            </div>
+
+            <!-- Active filters list -->
+            <div class="space-y-1">
+              <template x-for="(f, idx) in filters" :key="f.id">
+                <div class="bg-slate-50 border border-slate-200 rounded-lg p-1.5 space-y-0.5">
+                  <div class="flex items-center justify-between">
+                    <span class="text-[10px] font-semibold text-slate-600" x-text="f.label"></span>
+                    <button @click="removeFilter(idx)" class="text-[10px] text-red-400 hover:text-red-600">&times;</button>
+                  </div>
+                  <div class="text-[9px] text-slate-400" x-text="f.source_col"></div>
+                  <select x-model="f.widget" @change="autoSave()"
+                          class="w-full text-[10px] border border-slate-200 rounded px-1.5 py-0.5 bg-white">
+                    <option value="select">Single select</option>
+                    <option value="multi">Multi-select</option>
+                  </select>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row / Section tree -->
+      <div class="p-3 flex-1">
+        <h3 class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">Layout Sections</h3>
+        <div class="space-y-2" x-show="rows.length > 0">
+          <template x-for="(row, ri) in rows" :key="row.id">
+            <div>
+              <div class="flex items-center gap-1 text-[11px] font-semibold text-slate-600 py-1 px-2 rounded-lg cursor-pointer group"
+                   :class="activeRow === row.id ? 'bg-blue-50 border border-blue-200' : 'bg-slate-50 border border-slate-100 hover:bg-slate-100'"
+                   @click="activeRow = activeRow === row.id ? null : row.id; selectedSection = null">
+                <svg class="w-3 h-3 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M4 6h16M4 18h16"/>
+                </svg>
+                <span class="truncate flex-1" x-text="row.label || ('Section ' + (ri + 1))"></span>
+                <button @click.stop="removeRow(row.id)"
+                        class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 text-xs">&times;</button>
+              </div>
+              <!-- Nested sections -->
+              <div class="ml-4 mt-1 space-y-0.5" x-show="activeRow === row.id">
+                <template x-for="sec in row.sections" :key="sec.id">
+                  <div class="flex items-center gap-1 text-[10px] py-1 px-2 rounded-md hover:bg-slate-50 group"
+                       :class="{'bg-blue-50/50 border border-blue-100': selectedSection === sec.id}"
+                       @click="selectedSection = selectedSection === sec.id ? null : sec.id; activeRow = row.id">
+                    <svg class="w-2.5 h-2.5 text-slate-300 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
+                         x-show="sec.element_type === 'chart'">
+                      <path d="M3 3h7v7H3zM14 3h7v7h-7z"/>
+                    </svg>
+                    <svg class="w-2.5 h-2.5 text-slate-300 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
+                         x-show="sec.element_type === 'html'">
+                      <path d="M4 6h16M4 12h10"/>
+                    </svg>
+                    <span class="truncate flex-1" x-text="sec.chart_name || sec.html_preview || sec.element_type"></span>
+                    <button @click.stop="removeSection(row.id, sec.id)"
+                            class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500">&times;</button>
+                  </div>
+                </template>
+                <div class="flex gap-1 mt-1">
+                  <button @click="addChartToRow(row.id)"
+                          class="text-[9px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">+ Chart</button>
+                  <button @click="addHtmlToRow(row.id)"
+                          class="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">+ Text</button>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div x-show="rows.length === 0" class="text-xs text-slate-400 text-center py-6">
+          <p>No sections yet</p>
+          <p class="mt-1">Click <strong>+ Section</strong> to start</p>
+        </div>
+      </div>
+
+      <!-- Selected section settings -->
+      <div x-show="selectedSection !== null" x-cloak
+           class="border-t border-slate-200 p-3 space-y-3 bg-slate-50/50">
+        <h3 class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Element Settings</h3>
+
+        <template x-if="getSection(selectedSection)?.element_type === 'chart'">
+          <label class="flex items-center gap-2 text-xs text-slate-600">
+            <input type="checkbox"
+                   :checked="getSection(selectedSection)?.show_title"
+                   @change="updateSectionProp(selectedSection, 'show_title', $event.target.checked)"
+                   class="rounded border-slate-300 text-blue-600 focus:ring-blue-400">
+            Show title bar
+          </label>
+        </template>
+
+        <template x-if="getSection(selectedSection)?.element_type === 'html'">
+          <div>
+            <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">HTML Content</label>
+            <textarea rows="6"
+                      :value="getSection(selectedSection)?.html_content || ''"
+                      @blur="updateHtmlContent(selectedSection, $event.target.value)"
+                      class="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 font-mono resize-none focus:ring-1 focus:ring-blue-400"></textarea>
+          </div>
+        </template>
+      </div>
+
+      <!-- Active row settings -->
+      <div x-show="activeRow !== null && selectedSection === null" x-cloak
+           class="border-t border-slate-200 p-3 space-y-3 bg-slate-50/50">
+        <h3 class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Section Settings</h3>
+        <div>
+          <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Label</label>
+          <input type="text"
+                 :value="getRow(activeRow)?.label || ''"
+                 @blur="updateRowProp(activeRow, 'label', $event.target.value)"
+                 class="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-blue-400"
+                 placeholder="e.g. Overview, Demographics…">
+        </div>
+        <div>
+          <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Background</label>
+          <select @change="updateRowProp(activeRow, 'bg_color', $event.target.value)"
+                  class="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-blue-400">
+            <option value="" :selected="!getRow(activeRow)?.bg_color">None</option>
+            <option value="bg-slate-50" :selected="getRow(activeRow)?.bg_color === 'bg-slate-50'">Light gray</option>
+            <option value="bg-blue-50" :selected="getRow(activeRow)?.bg_color === 'bg-blue-50'">Light blue</option>
+            <option value="bg-amber-50" :selected="getRow(activeRow)?.bg_color === 'bg-amber-50'">Light amber</option>
+            <option value="bg-green-50" :selected="getRow(activeRow)?.bg_color === 'bg-green-50'">Light green</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Main canvas: rows with grids ──────────────────────────── -->
+    <div class="flex-1 bg-slate-100 overflow-auto p-4">
+      <div id="page-canvas" class="space-y-4">
+        <template x-for="(row, ri) in rows" :key="row.id">
+          <div class="row-container bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden"
+               :class="[row.bg_color || '', activeRow === row.id ? 'ring-2 ring-blue-300' : '']"
+               @click="activeRow = row.id">
+            <!-- Row header -->
+            <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/50">
+              <svg class="w-3.5 h-3.5 text-slate-300 row-handle" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M4 8h16M4 16h16"/>
+              </svg>
+              <input type="text" :value="row.label || ''"
+                     @blur="updateRowProp(row.id, 'label', $event.target.value)"
+                     class="row-label-input text-xs text-slate-600 flex-1"
+                     :placeholder="'Section ' + (ri + 1)">
+              <div class="flex gap-1">
+                <button @click.stop="addChartToRow(row.id)"
+                        class="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition">+ Chart</button>
+                <button @click.stop="addHtmlToRow(row.id)"
+                        class="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded hover:bg-slate-200 transition">+ Text</button>
+                <button @click.stop="removeRow(row.id)"
+                        class="text-[10px] px-2 py-0.5 text-red-400 hover:text-red-600 transition">&times;</button>
+              </div>
+            </div>
+            <!-- GridStack grid for this row -->
+            <div class="p-2">
+              <div :id="'row-grid-' + row.id" class="grid-stack"></div>
+            </div>
+            <!-- Empty row placeholder -->
+            <div x-show="row.sections.length === 0"
+                 class="text-center py-8 text-xs text-slate-400">
+              Click <strong>+ Chart</strong> or <strong>+ Text</strong> to add elements
+            </div>
+          </div>
+        </template>
+
+        <!-- Empty state -->
+        <div x-show="rows.length === 0"
+             class="flex flex-col items-center justify-center py-20 text-slate-400">
+          <svg class="w-12 h-12 mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path d="M12 4v16m8-8H4"/>
+          </svg>
+          <p class="text-sm font-medium">Start by adding a section</p>
+          <p class="text-xs mt-1">Each section is a row that can hold charts and text blocks</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Right slide-over: Chart picker ────────────────────────── -->
+    <div x-show="pickerOpen" x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full"
+         class="w-96 border-l border-slate-200 bg-white flex flex-col flex-shrink-0 overflow-hidden"
+         x-cloak>
+      <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50/50">
+        <h2 class="text-sm font-semibold text-slate-700">Add Chart</h2>
+        <button @click="pickerOpen = false"
+                class="text-slate-400 hover:text-slate-600 text-lg leading-none">&times;</button>
+      </div>
+      <div class="px-4 py-2 border-b border-slate-100">
+        <input type="text" x-model="pickerSearch" placeholder="Search charts…"
+               @input.debounce.300ms="loadChartList()"
+               class="w-full text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-blue-400">
+      </div>
+      <div id="chart-picker-body" class="flex-1 overflow-y-auto p-3">
+        <div class="text-center py-10 text-sm text-slate-400">Loading charts…</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

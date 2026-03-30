@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ page.title }} – DataViz{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+<style>
+  /* Responsive grid: 12-col on desktop, single-col on mobile */
+  .page-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(12, 1fr);
+  }
+  @media (max-width: 1024px) {
+    .page-grid {
+      grid-template-columns: repeat(6, 1fr);
+    }
+    .page-grid > [style*="grid-column"] {
+      grid-column: 1 / -1 !important;
+    }
+  }
+  @media (max-width: 640px) {
+    .page-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  /* Tree menu transitions */
+  .filter-tree-values { max-height: 14rem; overflow-y: auto; }
+  .filter-tag { animation: tagIn .15s ease-out; }
+  @keyframes tagIn { from { opacity:0; transform: scale(.9); } to { opacity:1; transform: scale(1); } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8"
+     x-data="pageFilters()"
+     x-init="init()">
+
+  <!-- Page header -->
+  <div class="mb-4">
+    <h1 class="text-2xl font-bold text-slate-800">{{ page.title }}</h1>
+    {% if page.description %}
+    <p class="text-sm text-slate-500 mt-1">{{ page.description }}</p>
+    {% endif %}
+  </div>
+
+  {% if page.page_filters %}
+  <!-- Active filter tags -->
+  <div class="flex flex-wrap items-center gap-2 mb-4 min-h-[2rem]" x-show="tags.length > 0" x-cloak>
+    <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Active Filters:</span>
+    <template x-for="tag in tags" :key="tag.col + '::' + tag.value">
+      <span class="filter-tag inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full text-xs font-medium">
+        <span x-text="tag.label + ': ' + tag.value"></span>
+        <button @click="removeTag(tag.col, tag.value)"
+                class="ml-0.5 text-blue-400 hover:text-blue-700 transition" aria-label="Remove filter">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </span>
+    </template>
+    <button @click="clearAll()"
+            class="text-[10px] px-2 py-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition">
+      Clear all
+    </button>
+  </div>
+
+  <!-- Filter menu (navbar-style overlay) -->
+  <div class="relative mb-6">
+    <button @click="treeOpen = !treeOpen"
+            class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 transition shadow-sm">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M3 4a1 1 0 011-1h16a1 1 0 010 2H4a1 1 0 01-1-1zm3 6a1 1 0 011-1h10a1 1 0 010 2H7a1 1 0 01-1-1zm2 6a1 1 0 011-1h6a1 1 0 010 2H9a1 1 0 01-1-1z"/>
+      </svg>
+      <span x-text="treeOpen ? 'Hide Filters' : 'Filters'"></span>
+      <span x-show="tags.length > 0"
+            class="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center"
+            x-text="tags.length"></span>
+    </button>
+
+    <!-- Overlay dropdown panel -->
+    <div x-show="treeOpen"
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0 -translate-y-1"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100 translate-y-0"
+         x-transition:leave-end="opacity-0 -translate-y-1"
+         @click.outside="treeOpen = false"
+         @keydown.escape.window="treeOpen = false"
+         x-cloak
+         class="absolute left-0 top-full mt-2 z-50 w-full max-w-xl bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+      <div class="max-h-[28rem] overflow-y-auto divide-y divide-slate-100">
+        {% for fdef in page.page_filters %}
+        <div x-data="{ expanded: false, values: [], loading: false, loaded: false, search: '' }">
+          <button @click="expanded = !expanded; if (!loaded) { loadValues($el) }"
+                  class="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition"
+                  data-filter-id="{{ fdef.id }}"
+                  data-filter-col="{{ fdef.source_col }}"
+                  data-filter-label="{{ fdef.label }}"
+                  data-filter-widget="{{ fdef.widget|default:'select' }}">
+            <div class="flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-slate-400 transition-transform duration-200"
+                   :class="{ 'rotate-90': expanded }"
+                   fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M9 5l7 7-7 7"/>
+              </svg>
+              <span class="text-sm font-semibold text-slate-700">{{ fdef.label }}</span>
+              <span class="text-[9px] text-slate-400 uppercase">{% if fdef.widget == 'multi' %}multi{% else %}single{% endif %}</span>
+            </div>
+            <span class="text-[10px] text-blue-500 font-medium" x-show="getFilterTagCount('{{ fdef.source_col }}') > 0"
+                  x-text="getFilterTagCount('{{ fdef.source_col }}') + ' selected'"></span>
+          </button>
+          <div x-show="expanded" x-collapse x-cloak class="px-4 pb-3">
+            <input type="text" x-model="search" placeholder="Search…"
+                   class="w-full text-xs border border-slate-200 rounded-lg px-3 py-1.5 mb-2 focus:ring-1 focus:ring-blue-400 focus:border-blue-400">
+            <div x-show="loading" class="text-xs text-slate-400 py-2 text-center">Loading…</div>
+            <div x-show="!loading" class="filter-tree-values space-y-0.5">
+              <template x-for="val in filteredValues(values, search)" :key="val">
+                <label class="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-blue-50 cursor-pointer text-sm text-slate-700"
+                       :class="{'bg-blue-50/60': isValueSelected('{{ fdef.source_col }}', val)}">
+                  {% if fdef.widget == 'multi' %}
+                  <input type="checkbox"
+                         :value="val"
+                         :checked="isValueSelected('{{ fdef.source_col }}', val)"
+                         @change="toggleValue('{{ fdef.source_col }}', '{{ fdef.label }}', val, $event.target.checked, 'multi')"
+                         class="rounded border-slate-300 text-blue-600 w-3.5 h-3.5 focus:ring-blue-400">
+                  {% else %}
+                  <input type="radio"
+                         :name="'pf_{{ fdef.source_col }}'"
+                         :value="val"
+                         :checked="isValueSelected('{{ fdef.source_col }}', val)"
+                         @change="toggleValue('{{ fdef.source_col }}', '{{ fdef.label }}', val, true, 'select')"
+                         class="border-slate-300 text-blue-600 w-3.5 h-3.5 focus:ring-blue-400">
+                  {% endif %}
+                  <span x-text="val"></span>
+                </label>
+              </template>
+              <div x-show="values.length === 0 && !loading"
+                   class="text-xs text-slate-400 text-center py-2">No values available</div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Rows (layout sections) -->
+  <div class="space-y-6">
+    {% for row in rows %}
+    <section class="{% if row.bg_color %}{{ row.bg_color }}{% endif %} rounded-xl {% if row.bg_color %}p-4 -mx-2{% endif %}">
+      {% if row.label %}
+      <h2 class="text-lg font-semibold text-slate-700 mb-3">{{ row.label }}</h2>
+      {% endif %}
+
+      <div class="page-grid">
+        {% for section in row.sections.all %}
+        <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; min-height: {% widthratio section.gs_h 1 80 %}px;"
+             class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+
+          {% if section.element_type == 'chart' and section.chart %}
+            {% if section.show_title %}
+            <div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 bg-slate-50/50">
+              <span class="text-xs font-semibold text-slate-600 truncate">{{ section.chart.name }}</span>
+            </div>
+            {% endif %}
+            <div class="flex-1 min-h-[12rem] page-chart-slot"
+                 data-chart-base-url="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                 hx-get="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                 hx-trigger="intersect once"
+                 hx-swap="innerHTML">
+              <div class="flex items-center justify-center h-full text-slate-300 text-sm">Loading chart…</div>
+            </div>
+
+          {% elif section.element_type == 'html' %}
+            <div class="p-4 text-sm text-slate-600 prose max-w-none">{{ section.html_content|safe }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+
+    {# Orphan sections (backward compat: sections not in any row) #}
+    {% if orphan_sections %}
+    <div class="page-grid">
+      {% for section in orphan_sections %}
+      <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; min-height: {% widthratio section.gs_h 1 80 %}px;"
+           class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+
+        {% if section.element_type == 'chart' and section.chart %}
+          {% if section.show_title %}
+          <div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 bg-slate-50/50">
+            <span class="text-xs font-semibold text-slate-600 truncate">{{ section.chart.name }}</span>
+          </div>
+          {% endif %}
+          <div class="flex-1 min-h-[12rem] page-chart-slot"
+               data-chart-base-url="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+               hx-get="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+               hx-trigger="intersect once"
+               hx-swap="innerHTML">
+            <div class="flex items-center justify-center h-full text-slate-300 text-sm">Loading chart…</div>
+          </div>
+
+        {% elif section.element_type == 'html' %}
+          <div class="p-4 text-sm text-slate-600 prose max-w-none">{{ section.html_content|safe }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# Legacy dashboard sections #}
+    {% for section in sections %}
+      {% if section.element_type == 'dashboard' and section.dashboard %}
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <h2 class="text-base font-semibold text-slate-700 mb-4">{{ section.dashboard.name }}</h2>
+        <div class="page-grid">
+          {% for slot in section.dashboard.chart_slots.all %}
+          <div style="grid-column: span {{ slot.gs_w }}; min-height: {% widthratio slot.gs_h 1 80 %}px;"
+               class="flex flex-col">
+            {% if slot.chart %}
+              {% if slot.show_title %}
+              <p class="text-xs font-semibold text-slate-600 mb-1 truncate">{{ slot.chart.name }}</p>
+              {% endif %}
+              <div class="flex-1 min-h-[12rem]"
+                   hx-get="{% url 'dataviz:chart_render' slot.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                   hx-trigger="intersect once"
+                   hx-swap="innerHTML">
+                <div class="flex items-center justify-center h-full text-slate-300 text-sm">Loading chart…</div>
+              </div>
+            {% else %}
+              <div class="p-3 text-sm text-slate-600">{{ slot.html_content|safe }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+</div>
+
+<script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
+<script>
+  const _PAGE_SLUG = "{{ page.slug|escapejs }}";
+  const _FILTER_OPTIONS_TPL = "/dataviz/api/pages/" + _PAGE_SLUG + "/filters/FILTERID/";
+  const _STORAGE_KEY = 'pf_' + _PAGE_SLUG;
+
+  function pageFilters() {
+    return {
+      tags: [],
+      treeOpen: false,
+
+      init() {
+        // Restore tags from sessionStorage (persists across drill navigation)
+        try {
+          const saved = sessionStorage.getItem(_STORAGE_KEY);
+          if (saved) this.tags = JSON.parse(saved);
+        } catch (_) {}
+
+        // Set global QS immediately so initial chart loads include persisted filters
+        window._pageFilterQS = this.buildFilterQS();
+
+        // If we have persisted tags, update chart URLs before they fire
+        if (this.tags.length > 0) {
+          this.$nextTick(() => this._applyUrlsToSlots());
+        }
+      },
+
+      _persist() {
+        try { sessionStorage.setItem(_STORAGE_KEY, JSON.stringify(this.tags)); } catch (_) {}
+      },
+
+      /* ── Loading values for a tree node ── */
+      loadValues(btnEl) {
+        const parent = btnEl.closest('[x-data]');
+        const id = btnEl.dataset.filterId;
+        if (!parent || !id) return;
+        const scope = Alpine.$data(parent);
+        scope.loading = true;
+        fetch(_FILTER_OPTIONS_TPL.replace('FILTERID', encodeURIComponent(id)), { credentials: 'same-origin' })
+          .then(r => r.json())
+          .then(data => {
+            scope.values = (data.values || []).map(v => String(v));
+            scope.loaded = true;
+          })
+          .catch(() => { scope.values = []; })
+          .finally(() => { scope.loading = false; });
+      },
+
+      filteredValues(values, search) {
+        if (!search) return values;
+        const q = search.toLowerCase();
+        return values.filter(v => String(v).toLowerCase().includes(q));
+      },
+
+      /* ── Tag helpers ── */
+      isValueSelected(col, val) {
+        return this.tags.some(t => t.col === col && t.value === String(val));
+      },
+
+      getFilterTagCount(col) {
+        return this.tags.filter(t => t.col === col).length;
+      },
+
+      toggleValue(col, label, val, checked, widget) {
+        const v = String(val);
+        if (widget === 'select') {
+          // Single-select: remove any existing value for this column first
+          this.tags = this.tags.filter(t => t.col !== col);
+          if (checked) {
+            this.tags.push({ col, label, value: v });
+          }
+        } else {
+          // Multi-select: toggle individual value
+          if (checked) {
+            if (!this.isValueSelected(col, v)) {
+              this.tags.push({ col, label, value: v });
+            }
+          } else {
+            this.tags = this.tags.filter(t => !(t.col === col && t.value === v));
+          }
+        }
+        this._persist();
+        this.refreshCharts();
+      },
+
+      removeTag(col, val) {
+        this.tags = this.tags.filter(t => !(t.col === col && t.value === String(val)));
+        this._persist();
+        this.refreshCharts();
+      },
+
+      clearAll() {
+        this.tags = [];
+        this._persist();
+        this.refreshCharts();
+      },
+
+      buildFilterQS() {
+        const params = new URLSearchParams();
+        for (const t of this.tags) {
+          params.append('pf_' + t.col, t.value);
+        }
+        return params.toString();
+      },
+
+      _applyUrlsToSlots() {
+        const qs = this.buildFilterQS();
+        document.querySelectorAll('.page-chart-slot').forEach(el => {
+          const base = el.getAttribute('data-chart-base-url');
+          if (!base || !qs) return;
+          el.setAttribute('hx-get', base + '&' + qs);
+          htmx.process(el);
+        });
+      },
+
+      refreshCharts() {
+        const qs = this.buildFilterQS();
+        window._pageFilterQS = qs;
+        document.querySelectorAll('.page-chart-slot').forEach(el => {
+          const base = el.getAttribute('data-chart-base-url');
+          if (!base) return;
+          const url = qs ? base + '&' + qs : base;
+          el.setAttribute('hx-get', url);
+          el.innerHTML = '<div class="flex items-center justify-center h-full text-slate-300 text-sm">Loading chart…</div>';
+          htmx.process(el);
+          htmx.trigger(el, 'load');
+        });
+      },
+    };
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,24 @@
+{# Column selector for drill-through page; used by drill_columns_api #}
+<form hx-post="{% url 'dataviz:drill_columns' chart.id %}"
+      hx-target="#column-selector"
+      hx-swap="innerHTML"
+      class="flex flex-wrap gap-2">
+  {% csrf_token %}
+  <p class="w-full text-xs font-semibold text-slate-600 mb-1">
+    Columns to display (leave all unchecked = show all):
+  </p>
+  {% for col in all_columns %}
+  <label class="flex items-center gap-1.5 text-xs bg-slate-100 rounded-full px-3 py-1 cursor-pointer hover:bg-blue-50 transition">
+    <input type="checkbox" name="columns" value="{{ col }}"
+           {% if col in selected_columns %}checked{% endif %}
+           class="rounded text-blue-600">
+    {{ col }}
+  </label>
+  {% endfor %}
+  {% if all_columns %}
+  <button type="submit"
+          class="px-4 py-1 text-xs bg-blue-600 text-white rounded-full hover:bg-blue-700 transition">
+    Apply
+  </button>
+  {% endif %}
+</form>

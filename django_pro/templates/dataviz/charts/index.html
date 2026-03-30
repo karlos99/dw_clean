@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Charts – DataViz{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-800">Charts</h1>
+      <p class="text-sm text-slate-500 mt-1">Build and manage saved charts</p>
+    </div>
+    <div class="flex gap-3">
+      <a href="{% url 'dataviz:page_index' %}"
+         class="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+        Pages
+      </a>
+      <a href="{% url 'dataviz:chart_new' %}"
+         class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">
+        + New Chart
+      </a>
+    </div>
+  </div>
+
+  <!-- Chart grid -->
+  {% if charts %}
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for chart in charts %}
+    <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition flex flex-col">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <h2 class="font-semibold text-slate-800 truncate">{{ chart.name }}</h2>
+          <p class="text-xs text-slate-400 mt-0.5">{{ chart.chart_type }}</p>
+        </div>
+        <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{{ chart.chart_type }}</span>
+      </div>
+      <p class="text-sm text-slate-500 flex-1 line-clamp-2">{{ chart.description|default:'No description' }}</p>
+      <div class="mt-4 flex gap-2">
+        <a href="{% url 'dataviz:chart_view' chart.id %}"
+           class="flex-1 text-center text-sm px-3 py-1.5 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition">
+          View
+        </a>
+        <a href="{% url 'dataviz:chart_edit' chart.id %}"
+           class="flex-1 text-center text-sm px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition">
+          Edit
+        </a>
+        <button hx-delete="{% url 'dataviz:chart_detail' chart.id %}"
+                hx-confirm="Delete '{{ chart.name }}'?"
+                hx-target="closest div.bg-white"
+                hx-swap="outerHTML swap:300ms"
+                class="text-sm px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition">
+          Delete
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-center py-24 bg-white border border-dashed border-slate-300 rounded-xl">
+    <p class="text-slate-400 text-lg mb-4">No charts yet</p>
+    <a href="{% url 'dataviz:chart_new' %}"
+       class="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">
+      Create your first chart
+    </a>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

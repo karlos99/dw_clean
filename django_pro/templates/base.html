@@ -43,7 +43,8 @@
     {% block extra_head %}{% endblock %}
 </head>
 
-<body class="min-h-screen bg-slate-50 text-slate-900 antialiased font-sans flex flex-col">
+<body class="min-h-screen bg-slate-50 text-slate-900 antialiased font-sans flex flex-col"
+      hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
 
     {% if user.is_impersonated %}
     <div class="bg-red-600 text-white px-4 py-3 text-center text-sm font-medium shadow-md">

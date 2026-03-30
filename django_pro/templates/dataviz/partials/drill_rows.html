@@ -1,0 +1,121 @@
+{# Paginated drill-through rows with sortable/filterable headers #}
+{% load dataviz_tags %}
+{% if error %}
+<div class="p-4 text-sm text-red-600">{{ error }}</div>
+{% elif rows %}
+<div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50 border-b border-slate-200">
+      <tr>
+        {% for col in columns %}
+        <th class="group relative px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap select-none"
+            title="{{ col }}">
+          <div class="flex items-center gap-1">
+            {# Sort button #}
+            <button @click="toggleSort('{{ col }}')"
+                    class="hover:text-blue-600 transition flex items-center gap-0.5">
+              <span>{% if col_labels %}{{ col_labels|get_item:col|default:col }}{% else %}{{ col }}{% endif %}</span>
+              <span class="text-[10px] opacity-60"
+                    x-text="sortIcon('{{ col }}')"></span>
+            </button>
+
+            {# Filter button #}
+            <button @click="openColFilter('{{ col }}')"
+                    class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 transition ml-0.5"
+                    title="Filter this column">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M3 4h18l-7 8v5l-4 2V12L3 4z"/>
+              </svg>
+            </button>
+
+            {# Remove column button #}
+            <button @click="removeColumn('{{ col }}')"
+                    class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition ml-0.5"
+                    title="Hide this column">
+              &times;
+            </button>
+          </div>
+
+          {# Filter dropdown (positioned absolutely) #}
+          <div x-show="openFilter === '{{ col }}'" x-transition
+               @click.away="openFilter = null"
+               class="absolute left-0 top-full mt-1 z-50 w-56 bg-white border border-slate-200 rounded-lg shadow-lg p-2"
+               x-cloak>
+            <p class="text-[10px] font-bold text-slate-600 mb-1 uppercase">
+              Filter: {% if col_labels %}{{ col_labels|get_item:col|default:col }}{% else %}{{ col }}{% endif %}
+            </p>
+            <div class="flex gap-2 text-[10px] text-blue-600 mb-1">
+              <button @click="filterSelectAll('{{ col }}')" class="hover:underline">All</button>
+              <button @click="filterClearAll('{{ col }}')" class="hover:underline">None</button>
+            </div>
+            <div class="max-h-48 overflow-y-auto space-y-0.5">
+              <template x-for="val in (filterValues['{{ col }}'] || [])" :key="val">
+                <label class="flex items-center gap-1.5 text-xs py-0.5 cursor-pointer hover:bg-slate-50 rounded px-1">
+                  <input type="checkbox" :checked="isFilterChecked('{{ col }}', val)"
+                         @change="toggleFilterValue('{{ col }}', val)"
+                         class="rounded text-blue-600 w-3 h-3">
+                  <span x-text="val" class="truncate"></span>
+                </label>
+              </template>
+              <template x-if="!(filterValues['{{ col }}'] || []).length">
+                <p class="text-[10px] text-slate-400 py-2 text-center">Loading…</p>
+              </template>
+            </div>
+            <button @click="applyColFilter('{{ col }}')"
+                    class="mt-2 w-full text-center text-xs bg-blue-600 text-white rounded py-1 hover:bg-blue-700 transition">
+              Apply
+            </button>
+          </div>
+        </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for row in rows %}
+      <tr class="hover:bg-slate-50 transition">
+        {% for col in columns %}
+        <td class="px-3 py-2 text-slate-700 whitespace-nowrap">
+          {% if col == 'ssid' or col == 'student_id' %}
+            {% with ssid_val=row|get_item:'ssid' %}
+            {% if ssid_val %}
+            <a href="/dataexploration/student-summary/{{ ssid_val }}/"
+               class="text-blue-600 hover:text-blue-800 hover:underline"
+               data-action="open-student-summary" data-ssid="{{ ssid_val }}">{{ row|get_item:col|default:'—' }}</a>
+            {% else %}
+            {{ row|get_item:col|default:'—' }}
+            {% endif %}
+            {% endwith %}
+          {% else %}
+            {{ row|get_item:col|default:'—' }}
+          {% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Pagination -->
+<div class="flex items-center justify-between px-4 py-3 border-t border-slate-200 text-xs text-slate-500">
+  <span>{{ total_rows }} record{{ total_rows|pluralize }}</span>
+  <div class="flex gap-2">
+    {% if page > 1 %}
+    <button @click="loadRows({{ page|add:'-1' }})"
+            class="px-3 py-1 bg-slate-100 rounded hover:bg-slate-200 transition">
+      &larr; Prev
+    </button>
+    {% endif %}
+    <span class="px-2 py-1">Page {{ page }}</span>
+    {% if page|multiply:per_page < total_rows %}
+    <button @click="loadRows({{ page|add:'1' }})"
+            class="px-3 py-1 bg-slate-100 rounded hover:bg-slate-200 transition">
+      Next &rarr;
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+{% else %}
+<div class="px-4 py-8 text-center text-slate-400 text-sm">No rows matched the filter.</div>
+{% endif %}
