@@ -72,6 +72,24 @@ SEMANTIC_COLORS = {
     'D+': '#ca6f1e', 'D-': '#e74c3c',
 }
 
+# ── Progress Growth constants ─────────────────────────────────────────────────
+
+# Fixed semantic colours — Growth=green, Stickers=grey, Sliders=orange
+_PG_COLORS = {
+    'Growth':   '#22c55e',
+    'Stickers': '#94a3b8',
+    'Sliders':  '#f97316',
+}
+
+# Known PL orderings (lowest → highest) for auto-detection.
+_KNOWN_PL_SCALES = [
+    ['Well Below Benchmark', 'Below Benchmark', 'At Benchmark', 'Above Benchmark'],
+    ['Not Met', 'Nearly Met', 'Met', 'Exceeded'],
+    ['Far Below Basic', 'Below Basic', 'Basic', 'Proficient', 'Advanced'],
+    ['Below Basic', 'Basic', 'Proficient', 'Advanced'],
+    ['1', '2', '3', '4'],
+]
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _parse_col_year(col: str) -> str:
@@ -798,6 +816,376 @@ def _waterfall_option(df, x_col, y_col, agg, cfg, labels):
     return option
 
 
+def _auto_detect_pl_scale(values: list) -> list:
+    """Try to order PL values using known scales; fall back to alphabetical."""
+    val_set = {str(v).strip() for v in values if v and str(v).strip()}
+    for scale in _KNOWN_PL_SCALES:
+        if val_set.issubset(set(scale)):
+            return [s for s in scale if s in val_set]
+    return sorted(val_set)
+
+
+def _summary_table_option(df, row_col, col_col, cfg, col_defs):
+    """Return a special __type__=table option: count cross-tabulation.
+
+    ``row_col`` — the column whose distinct values become row labels.
+    ``col_col`` — the column whose distinct values become column headers.
+
+    The returned dict uses ``__type__: 'table'`` to signal the JS renderer
+    to build an HTML table instead of an ECharts instance.
+    """
+    _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+
+    if not row_col or row_col not in df.columns:
+        return _message_option('Summary Table: select a Row column', cfg)
+    if not col_col or col_col not in df.columns:
+        return _message_option('Summary Table: select a Column column', cfg)
+
+    mask = (
+        ~df[row_col].astype(str).str.strip().isin(_BLANK) &
+        ~df[col_col].astype(str).str.strip().isin(_BLANK)
+    )
+    _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
+    keep_cols = [row_col, col_col] + ([_dup_key] if _dup_key else [])
+    work = df.loc[mask, keep_cols].copy()
+    work[row_col] = work[row_col].astype(str).str.strip()
+    work[col_col] = work[col_col].astype(str).str.strip()
+
+    if work.empty:
+        return _message_option('Summary Table: no data after filtering blanks', cfg)
+
+    # Deduplicate so each student is counted at most once per (row_col, col_col) cell.
+    if _dup_key:
+        work = work.drop_duplicates(subset=[_dup_key, row_col, col_col], keep='first')
+
+    row_vals = sorted(work[row_col].unique().tolist())
+    col_vals = sorted(work[col_col].unique().tolist())
+
+    ct = work.groupby([row_col, col_col]).size().unstack(fill_value=0)
+    ct = ct.reindex(index=row_vals, columns=col_vals, fill_value=0)
+
+    col_totals = [0] * len(col_vals)
+    rows_data = []
+    for rv in row_vals:
+        counts = [int(ct.at[rv, cv]) for cv in col_vals]
+        for i, v in enumerate(counts):
+            col_totals[i] += v
+        rows_data.append([rv] + counts + [sum(counts)])
+
+    grand_total = sum(col_totals)
+    total_row = ['Total'] + col_totals + [grand_total]
+
+    row_label = _label(row_col, col_defs) if col_defs else row_col
+    col_label = _label(col_col, col_defs) if col_defs else col_col
+
+    return {
+        '__type__': 'table',
+        '__series_names__': [],
+        'row_col':     row_col,
+        'col_col':     col_col,
+        'row_label':   row_label,
+        'col_label':   col_label,
+        'col_headers': col_vals,
+        'rows':        rows_data,
+        'total_row':   total_row,
+        '_drillMeta': {
+            'stType':      'summary_table',
+            'stRowCol':    row_col,
+            'stColCol':    col_col,
+            'colHeaders':  col_vals,
+        },
+    }
+
+
+def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels):
+    """Progress Growth: classify students as Growth / Sliders / Stickers.
+
+    Compares two PL columns per student using a user-defined (or auto-detected)
+    ordered scale.  Students whose PL improved are "Growth", declined are
+    "Sliders", unchanged are "Stickers".
+
+    Display modes (``pg_display``):
+      stacked_bar  — bars stacked by Growth / Sliders / Stickers, x = group
+      grouped_bar  — same but side-by-side
+      donut        — overall doughnut distribution
+      pie          — overall pie distribution
+    """
+    if not pg_before_col or not pg_after_col:
+        return _message_option('Select a Before PL and an After PL column', cfg, error=True)
+    if pg_before_col not in df.columns or pg_after_col not in df.columns:
+        missing = [c for c in (pg_before_col, pg_after_col) if c not in df.columns]
+        return _message_option(f'PL column(s) not found in data: {", ".join(missing)}', cfg, error=True)
+
+    # Deduplicate rows so each student is counted at most once.
+    # The underlying query may return a student on more than one row (e.g.
+    # when current_student has multiple enrolment entries for the same year).
+    _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
+    if _dup_key:
+        df = df.drop_duplicates(subset=_dup_key, keep='first')
+
+    _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+
+    # Collect valid PL values
+    all_vals = set()
+    for col in (pg_before_col, pg_after_col):
+        all_vals.update(
+            v.strip() for v in df[col].dropna().astype(str).unique()
+            if v.strip() not in _BLANK
+        )
+
+    # Build ordered scale
+    if pl_scale:
+        ordered = [str(v).strip() for v in pl_scale if str(v).strip()]
+    else:
+        ordered = _auto_detect_pl_scale(list(all_vals))
+    if not ordered:
+        return _message_option('Could not determine PL scale — define it in the builder', cfg, error=True)
+
+    rank = {v: i for i, v in enumerate(ordered)}
+
+    # Classify each row
+    dfc = df.copy()
+    dfc['_before'] = dfc[pg_before_col].astype(str).str.strip()
+    dfc['_after']  = dfc[pg_after_col].astype(str).str.strip()
+    valid = dfc['_before'].isin(rank) & dfc['_after'].isin(rank)
+    dfc = dfc[valid].copy()
+
+    if dfc.empty:
+        return _message_option(
+            'No rows matched the PL scale. Check column names and scale values.', cfg, error=True)
+
+    before_rank = dfc['_before'].map(rank)
+    after_rank  = dfc['_after'].map(rank)
+    dfc['_pg'] = 'Stickers'
+    dfc.loc[after_rank > before_rank, '_pg'] = 'Growth'
+    dfc.loc[after_rank < before_rank, '_pg'] = 'Sliders'
+
+    ORDER = ['Growth', 'Sliders', 'Stickers']   # consistent display order
+    total = len(dfc)
+    counts = dfc['_pg'].value_counts()
+    opacity = float(cfg.get('opacity', 0.9) or 0.9)
+    border_radius = int(cfg.get('bar_border_radius', 0) or 0)
+    show_labels = bool(cfg.get('data_labels', False))
+    label_pos = cfg.get('label_position', 'top') or 'top'
+    show_percent = bool(cfg.get('show_percent', False))
+    t = _theme(cfg)
+    ax = _axis_style(cfg)
+
+    # ── Donut / Pie ───────────────────────────────────────────────────────────
+    if pg_display in ('donut', 'pie'):
+        option = _base_option(cfg, axis_trigger=False)
+        data = [
+            {'name': cat, 'value': int(counts.get(cat, 0)),
+             'itemStyle': {'color': _PG_COLORS[cat]}}
+            for cat in ORDER if counts.get(cat, 0) > 0
+        ]
+        tooltip_js = (
+            "function(params) {"
+            f"  var total = {total};"
+            "  var pct = total > 0 ? (params.value / total * 100).toFixed(1) : '0';"
+            "  return params.marker + ' ' + params.name + ': <b>' + params.value"
+            "       + '</b> (' + pct + '%)';"
+            "}"
+        )
+        option['color'] = [_PG_COLORS[cat] for cat in ORDER]
+        option['series'] = [{
+            'name': 'Progress Growth',
+            'type': 'pie',
+            'radius': ['45%', '70%'] if pg_display == 'donut' else '70%',
+            'data': data,
+            'label': {'show': bool(cfg.get('data_labels', True)), 'formatter': '{b}: {c}'},
+        }]
+        option['tooltip'] = {
+            'show': cfg.get('show_tooltip', True) is not False,
+            'trigger': 'item',
+            '__formatter_js__': tooltip_js,
+        }
+        return option
+
+    # ── Transition Matrix ────────────────────────────────────────────────────
+    if pg_display == 'matrix':
+        # Cross-tabulation: y-axis rows = Before PL, x-axis columns = After PL.
+        # ECharts category y-axis: index 0 at bottom, so ordered[0] (lowest)
+        # appears at the bottom and ordered[-1] (highest) at the top.
+        crossdata = []
+        for i, before in enumerate(ordered):
+            for j, after in enumerate(ordered):
+                count = int(((dfc['_before'] == before) & (dfc['_after'] == after)).sum())
+                if j > i:       # after rank > before rank → Growth
+                    color = _PG_COLORS['Growth']
+                    alpha = 0.85 if count > 0 else 0.10
+                elif j < i:     # after rank < before rank → Sliders
+                    color = _PG_COLORS['Sliders']
+                    alpha = 0.85 if count > 0 else 0.10
+                else:            # diagonal → Stickers
+                    color = _PG_COLORS['Stickers']
+                    alpha = 0.75 if count > 0 else 0.12
+                crossdata.append({
+                    'value': [j, i, count],
+                    'itemStyle': {
+                        'color': color, 'opacity': alpha,
+                        'borderColor': t['bg'], 'borderWidth': 2,
+                    },
+                })
+        tooltip_js = (
+            "function(params) {"
+            f"  var lvls = {json.dumps(ordered)};"
+            "  var v = params.value;"
+            "  var bef = lvls[v[1]], aft = lvls[v[0]], cnt = v[2];"
+            "  var rel = v[0] > v[1] ? '\U0001f331 Growth' : v[0] < v[1] ? '\U0001f4c9 Sliders' : '\U0001f4cc Stickers';"
+            "  return '<b>' + bef + ' \u2192 ' + aft + '</b><br/>' + rel + ': <b>' + cnt + '</b> students';"
+            "}"
+        )
+        label_js = "function(p) { return p.value[2] > 0 ? p.value[2] : ''; }"
+        mat_opt = _base_option(cfg, axis_trigger=False)
+        mat_opt['legend'] = {
+            'show': True,
+            'bottom': 0,
+            'data': [
+                {'name': 'Growth',   'icon': 'circle', 'itemStyle': {'color': _PG_COLORS['Growth']}},
+                {'name': 'Stickers', 'icon': 'circle', 'itemStyle': {'color': _PG_COLORS['Stickers']}},
+                {'name': 'Sliders',  'icon': 'circle', 'itemStyle': {'color': _PG_COLORS['Sliders']}},
+            ],
+            'textStyle': {'color': t['text']},
+        }
+        mat_opt['grid'] = {
+            'top': 50 if cfg.get('title') else 30,
+            'left': 10, 'right': 10, 'bottom': 55,
+            'containLabel': True,
+        }
+        mat_opt.update({
+            'xAxis': {
+                'type': 'category',
+                'data': ordered,
+                'name': 'After PL',
+                'nameLocation': 'middle',
+                'nameGap': 42,
+                'nameTextStyle': {'fontWeight': 'bold', 'color': t['text']},
+                **ax,
+            },
+            'yAxis': {
+                'type': 'category',
+                'data': ordered,
+                'name': 'Before PL',
+                'nameLocation': 'middle',
+                'nameGap': 60,
+                'nameTextStyle': {'fontWeight': 'bold', 'color': t['text']},
+                **ax,
+            },
+            'series': [{
+                'type': 'heatmap',
+                'data': crossdata,
+                'label': {
+                    'show': True,
+                    '__formatter_js__': label_js,
+                    'fontSize': 13,
+                    'fontWeight': 'bold',
+                    'color': '#fff',
+                },
+            }],
+            'tooltip': {
+                'show': cfg.get('show_tooltip', True) is not False,
+                'trigger': 'item',
+                '__formatter_js__': tooltip_js,
+            },
+        })
+        mat_opt['_drillMeta'] = {
+            'pgDisplay': 'matrix',
+            'xLabels': ordered,   # After PL — x-axis
+            'yLabels': ordered,   # Before PL — y-axis
+        }
+        return mat_opt
+
+    # ── Stacked / Grouped Bar ─────────────────────────────────────────────────
+    option = _base_option(cfg)
+    stacked = pg_display != 'grouped_bar'
+
+    def make_series(cat, data_vals):
+        s = {
+            'name': cat,
+            'type': 'bar',
+            'stack': 'total' if stacked else None,
+            'label': {'show': show_labels, 'position': label_pos},
+            'itemStyle': {'color': _PG_COLORS[cat], 'opacity': opacity},
+            'data': data_vals,
+        }
+        if border_radius:
+            s['itemStyle']['borderRadius'] = [border_radius, border_radius, 0, 0]
+        return s
+
+    if x_col and x_col in dfc.columns:
+        categories = sorted(dfc[x_col].fillna('(Blank)').astype(str).unique().tolist())
+        raw = {}
+        for cat in ORDER:
+            sub = dfc[dfc['_pg'] == cat]
+            raw[cat] = {k: int(v) for k, v in sub[x_col].fillna('(Blank)').astype(str).value_counts().items()}
+        cat_totals = {xv: int(sum(raw[cat].get(xv, 0) for cat in ORDER)) for xv in categories}
+
+        series = []
+        for cat in ORDER:
+            if show_percent:
+                vals = [
+                    round(raw[cat].get(xv, 0) / cat_totals[xv] * 100, 1)
+                    if cat_totals.get(xv, 0) > 0 else 0.0
+                    for xv in categories
+                ]
+            else:
+                vals = [float(raw[cat].get(xv, 0)) for xv in categories]
+            series.append(make_series(cat, vals))
+
+        tooltip_js = (
+            "function(params) {"
+            "  if (!Array.isArray(params)) params = [params];"
+            f"  var raw = {json.dumps({cat: {xv: raw[cat].get(xv, 0) for xv in categories} for cat in ORDER})};"
+            f"  var totals = {json.dumps({xv: cat_totals[xv] for xv in categories})};"
+            "  var cat = params[0].name || '';"
+            "  var total = totals[cat] || 0;"
+            "  var html = '<b>' + cat + '</b>';"
+            "  if (total > 0) html += ' <span style=\"color:#999\">(n=' + total + ')</span>';"
+            "  for (var i = 0; i < params.length; i++) {"
+            "    var d = params[i];"
+            "    var cnt = (raw[d.seriesName] || {})[cat] || 0;"
+            "    var pct = total > 0 ? (cnt / total * 100).toFixed(1) : '0.0';"
+            "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '%)';"
+            "  }"
+            "  return html;"
+            "}"
+        )
+        y_axis = {'type': 'value', 'name': '%' if show_percent else 'Students', **ax}
+        if show_percent:
+            y_axis['max'] = 100
+        option.update({
+            'xAxis': {'type': 'category', 'data': categories, 'name': labels.get('x', ''), **ax},
+            'yAxis': y_axis,
+            'series': series,
+            'tooltip': {
+                'show': cfg.get('show_tooltip', True) is not False,
+                'trigger': 'axis',
+                'axisPointer': {'type': 'shadow'},
+                '__formatter_js__': tooltip_js,
+            },
+        })
+    else:
+        # No grouping — overall counts as a simple coloured bar
+        overall_counts = [float(counts.get(cat, 0)) for cat in ORDER]
+        option.update({
+            'xAxis': {'type': 'category', 'data': ORDER, **ax},
+            'yAxis': {'type': 'value', 'name': 'Students', **ax},
+            'series': [{
+                'name': 'Students',
+                'type': 'bar',
+                'data': [
+                    {'value': v, 'itemStyle': {'color': _PG_COLORS[cat], 'opacity': opacity}}
+                    for cat, v in zip(ORDER, overall_counts)
+                ],
+                'label': {'show': show_labels, 'position': label_pos},
+            }],
+        })
+
+    _add_zoom(option, cfg)
+    return option
+
+
 def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs):
     """Grouped + stacked bar comparing 2+ PL columns from the same assessment.
 
@@ -1056,6 +1444,14 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     agg          = str(cfg.get('agg', 'count') or 'count').lower()
     if agg not in {'count', 'sum', 'avg', 'min', 'max', 'median'}:
         agg = 'count'
+    # Progress Growth extra fields
+    pg_before_col = cfg.get('pg_before_col', '')
+    pg_after_col  = cfg.get('pg_after_col', '')
+    pl_scale      = cfg.get('pl_scale', [])
+    pg_display    = cfg.get('pg_display', 'stacked_bar') or 'stacked_bar'
+    # Summary Table extra fields
+    st_row_col    = cfg.get('st_row_col', '')
+    st_col_col    = cfg.get('st_col_col', '')
 
     df = pd.DataFrame(rows)
 
@@ -1125,6 +1521,8 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'radar':        lambda: _radar_option(df, x_col, y_col, agg, cfg),
         'gauge':        lambda: _gauge_option(df, y_col, agg, cfg, labels),
         'assessment_compare': lambda: _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs),
+        'progress_growth': lambda: _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels),
+        'summary_table':   lambda: _summary_table_option(df, st_row_col, st_col_col, cfg, col_defs),
     }
 
     try:
@@ -1151,6 +1549,8 @@ CHART_TYPES = [
     ('grouped_bar',  'Grouped Bar',   'chart-grouped',       'Comparison'),
     ('stacked_bar',  'Stacked Bar',   'chart-stacked',       'Comparison'),
     ('assessment_compare', 'Assessment Compare', 'chart-assess', 'Comparison'),
+    ('progress_growth',    'Progress Growth',    'chart-growth',  'Comparison'),
+    ('summary_table',      'Summary Table',      'chart-table',   'Comparison'),
     ('waterfall',    'Waterfall',     'chart-waterfall',     'Comparison'),
     ('line',         'Line',          'chart-line',          'Trend'),
     ('spline',       'Smooth Line',   'chart-spline',        'Trend'),

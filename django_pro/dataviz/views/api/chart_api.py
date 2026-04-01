@@ -1,10 +1,13 @@
 """Chart API views: preview, save, detail, list partial."""
+import hashlib
 import json
 import traceback
 
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, render
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.views.decorators.http import require_POST, require_GET
 
@@ -44,6 +47,16 @@ def _cfg_from_post(post):
     except (json.JSONDecodeError, ValueError):
         compare_pl_cols = []
 
+    # Parse pl_scale (JSON array or comma-separated string)
+    pls_raw = post.get('pl_scale', '')
+    try:
+        if pls_raw and pls_raw.startswith('['):
+            pl_scale = json.loads(pls_raw)
+        else:
+            pl_scale = [v.strip() for v in pls_raw.split(',') if v.strip()]
+    except (json.JSONDecodeError, ValueError):
+        pl_scale = []
+
     return {
         'chart_type':        post.get('chart_type', 'bar'),
         'x_col':             post.get('x_col', ''),
@@ -52,6 +65,14 @@ def _cfg_from_post(post):
         'stack_col':         post.get('series_col', ''),
         'compare_pl_cols':   compare_pl_cols,
         'agg':               post.get('agg_func', 'count'),
+        # Progress Growth fields
+        'pg_before_col':     post.get('pg_before_col', ''),
+        'pg_after_col':      post.get('pg_after_col', ''),
+        'pl_scale':          pl_scale,
+        'pg_display':        post.get('pg_display', 'stacked_bar'),
+        # Summary Table fields
+        'st_row_col':        post.get('st_row_col', ''),
+        'st_col_col':        post.get('st_col_col', ''),
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
         'limit':             int(post.get('limit', 500) or 500),
@@ -324,37 +345,59 @@ def chart_render_api(request, chart_id):
     Return a rendered chart partial for a saved chart_id.
     Runs the underlying query and builds the ECharts option.
     Used by page/dashboard view to lazy-load chart data.
+
+    Caching: rendered HTML is cached in Redis keyed by
+      chart_id + chart.updated_at + sorted pf_* filter params
+    so that repeat views (same filters, any user) return in <10 ms.
+    The cache automatically busts when the chart config is saved
+    (updated_at changes) or when the 5-minute TTL expires.
     """
     from dataviz.utils.data_loader import run_saved_query, run_raw_sql, run_column_query
 
     chart = get_object_or_404(SavedChart, pk=chart_id)
 
+    # ── Build cache key ────────────────────────────────────────────
+    # Only pf_* params affect query results — source/source_id/source_name
+    # are breadcrumb-only and must NOT be part of the key.
+    pf_params = sorted(
+        (k, v)
+        for k in request.GET
+        if k.startswith('pf_')
+        for v in request.GET.getlist(k)
+        if v
+    )
+    pf_hash = hashlib.md5(str(pf_params).encode()).hexdigest()[:12]
+    # updated_at as an int-second timestamp busts the key on every chart save
+    updated_ts = int(chart.updated_at.timestamp())
+    cache_key = f'chart_render:{chart_id}:{updated_ts}:{pf_hash}'
+
+    # ── Cache hit ──────────────────────────────────────────────────
+    cached_html = cache.get(cache_key)
+    if cached_html is not None:
+        resp = HttpResponse(cached_html, content_type='text/html')
+        resp['X-Chart-Cache'] = 'HIT'
+        return resp
+
+    # ── Cache miss: run the full pipeline ─────────────────────────
     try:
         if chart.source_type == SavedChart.SOURCE_SQL:
             result = run_raw_sql(chart.source_sql)
         elif chart.source_type == SavedChart.SOURCE_COLUMNS:
-            # Column Picker source: selected columns stored in config['selected_columns']
             selected_columns = chart.config.get('selected_columns', [])
-            # Merge saved chart filters with page-level pf_* filters
             merged_filters = dict(chart.source_filters or {})
             for key in request.GET:
                 if key.startswith('pf_'):
-                    vals = request.GET.getlist(key)
-                    vals = [v for v in vals if v]
+                    vals = [v for v in request.GET.getlist(key) if v]
                     if vals:
-                        col = key[3:]
-                        merged_filters[col] = vals if len(vals) > 1 else vals[0]
+                        merged_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
             result = run_column_query(selected_columns, merged_filters)
         else:
-            # Merge saved chart filters with page-level filters from URL (pf_* params)
             merged_filters = dict(chart.source_filters or {})
             for key in request.GET:
                 if key.startswith('pf_'):
-                    vals = request.GET.getlist(key)
-                    vals = [v for v in vals if v]
+                    vals = [v for v in request.GET.getlist(key) if v]
                     if vals:
-                        col = key[3:]  # strip 'pf_' prefix
-                        merged_filters[col] = vals if len(vals) > 1 else vals[0]
+                        merged_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
             result = run_saved_query(chart.source_id, merged_filters, request.user)
 
         if result.get('error'):
@@ -369,10 +412,7 @@ def chart_render_api(request, chart_id):
         option_json = '{}'
         error = str(exc)
 
-    # Drill-through is enabled for ALL saved charts.  If no explicit columns
-    # were configured we fall back to a sensible default set.
-    # Source context for breadcrumbs (forwarded from the page/dashboard template)
-    return render(request, 'dataviz/partials/chart_preview.html', {
+    ctx = {
         'option_json':       option_json,
         'chart_id':          chart.pk,
         'drill_enabled':     '1',
@@ -380,7 +420,16 @@ def chart_render_api(request, chart_id):
         'drill_source_id':   request.GET.get('source_id', ''),
         'drill_source_name': request.GET.get('source_name', ''),
         'error':             error,
-    })
+    }
+    html = render_to_string('dataviz/partials/chart_preview.html', ctx, request=request)
+
+    # Cache only successful renders (no error), TTL = 5 minutes
+    if not error:
+        cache.set(cache_key, html, timeout=300)
+
+    resp = HttpResponse(html, content_type='text/html')
+    resp['X-Chart-Cache'] = 'MISS'
+    return resp
 
 
 @login_required

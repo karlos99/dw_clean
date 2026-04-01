@@ -181,10 +181,25 @@ class DataVizPage(models.Model):
         (STATUS_ACTIVE, 'Active'),
     ]
 
-    title       = models.CharField(max_length=200)
-    slug        = models.SlugField(max_length=200, unique=True, blank=True)
-    description = models.TextField(blank=True)
-    owner       = models.ForeignKey(
+    CONTAINER_FULL  = 'full'
+    CONTAINER_WIDE  = 'wide'
+    CONTAINER_XL    = 'xl'
+    CONTAINER_LG    = 'lg'
+    CONTAINER_MD    = 'md'
+    CONTAINER_CHOICES = [
+        (CONTAINER_FULL, 'Full width'),
+        (CONTAINER_WIDE, 'Wide (1536px)'),
+        (CONTAINER_XL,   'Standard (1280px)'),
+        (CONTAINER_LG,   'Narrow (1024px)'),
+        (CONTAINER_MD,   'Compact (768px)'),
+    ]
+
+    title            = models.CharField(max_length=200)
+    slug             = models.SlugField(max_length=200, unique=True, blank=True)
+    description      = models.TextField(blank=True)
+    container_width  = models.CharField(max_length=10, default=CONTAINER_XL, choices=CONTAINER_CHOICES)
+    show_header      = models.BooleanField(default=True)
+    owner            = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='dataviz_pages',
@@ -217,14 +232,16 @@ class DataVizPage(models.Model):
 
     def to_dict(self, include_sections=False):
         d = {
-            'id':          self.pk,
-            'title':       self.title,
-            'slug':        self.slug,
-            'description': self.description,
-            'status':      self.status,
-            'page_filters': self.page_filters or [],
-            'created_at':  self.created_at.isoformat(),
-            'updated_at':  self.updated_at.isoformat(),
+            'id':               self.pk,
+            'title':            self.title,
+            'slug':             self.slug,
+            'description':      self.description,
+            'status':           self.status,
+            'container_width':  self.container_width,
+            'show_header':      self.show_header,
+            'page_filters':     self.page_filters or [],
+            'created_at':       self.created_at.isoformat(),
+            'updated_at':       self.updated_at.isoformat(),
         }
         if include_sections:
             d['sections'] = [s.to_dict() for s in self.sections.select_related('dashboard').all()]

@@ -18,6 +18,9 @@ def _col_label(key):
     Dynamic test/mark columns use their last segment (e.g. 'BOY_PL') plus a
     cleaned prefix, e.g. 'Dibbles BOY PL'.
     """
+    # Sentinel keys used internally by chart builders
+    if key == 'pg_cat':
+        return 'Progress Category'
     col_map = dict(COLUMN_DEFINITIONS) if isinstance(COLUMN_DEFINITIONS, (list, tuple)) else dict(COLUMN_DEFINITIONS)
     if key in col_map:
         return col_map[key]
@@ -94,6 +97,10 @@ def drill_table(request, chart_id):
         'x_val':      request.GET.get('x_val', ''),
         'series_val': request.GET.get('series_val', ''),
         'drill_col':  request.GET.get('drill_col', ''),
+        'before_val': request.GET.get('before_val', ''),
+        'after_val':  request.GET.get('after_val', ''),
+        'st_row_val': request.GET.get('st_row_val', ''),
+        'st_col_val': request.GET.get('st_col_val', ''),
     }
     raw_drill_filters = build_drill_filter(chart, params)
 

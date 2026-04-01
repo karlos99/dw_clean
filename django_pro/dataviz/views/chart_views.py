@@ -76,7 +76,7 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
         # Flat list with emoji icons for the new builder UI
         _EMOJI = {
             'bar': '📊', 'column': '📊', 'grouped_bar': '📊', 'stacked_bar': '📊',
-            'assessment_compare': '📊',
+            'assessment_compare': '📊', 'progress_growth': '🌱',
             'waterfall': '📉', 'line': '📈', 'spline': '📈', 'area': '📈',
             'areaspline': '📈', 'stacked_area': '📈', 'pie': '🥧', 'donut': '🍩',
             'funnel': '🔻', 'treemap': '🟩', 'scatter': '⚬', 'bubble': '🫧',

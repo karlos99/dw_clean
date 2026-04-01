@@ -36,9 +36,12 @@ def page_save_api(request):
     else:
         page = DataVizPage(owner=request.user)
 
-    page.title       = title
-    page.description = body.get('description', '')
-    page.page_filters = body.get('page_filters', []) if isinstance(body.get('page_filters'), list) else []
+    page.title           = title
+    page.description     = body.get('description', '')
+    page.page_filters    = body.get('page_filters', []) if isinstance(body.get('page_filters'), list) else []
+    page.container_width = body.get('container_width', page.container_width or 'xl')
+    if 'show_header' in body:
+        page.show_header = bool(body['show_header'])
 
     was_draft = page.status != DataVizPage.STATUS_ACTIVE
     new_status = body.get('status', page.status)

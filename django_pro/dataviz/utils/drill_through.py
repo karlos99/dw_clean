@@ -22,6 +22,44 @@ def build_drill_filter(chart, params: dict) -> dict:
     fmap = chart.drill_through_filter_map or {}
     filters = {}
 
+    # summary_table: row_val + col_val map directly to the two selected columns.
+    if chart.chart_type == 'summary_table':
+        row_col = chart.config.get('st_row_col', '')
+        col_col = chart.config.get('st_col_col', '')
+        row_val = params.get('st_row_val', '')
+        col_val = params.get('st_col_val', '')
+        if row_col and row_val:
+            filters[row_col] = row_val
+        if col_col and col_val:
+            filters[col_col] = col_val
+        return filters
+
+    # progress_growth: series classification is derived (Growth/Sliders/Stickers),
+    # not a real column value.  Apply the x-group filter and store the pg
+    # category as a sentinel key for post-fetch Python filtering.
+    if chart.chart_type == 'progress_growth':
+        # Matrix mode: before_val + after_val pinpoint the exact cell transition.
+        before_val = params.get('before_val', '')
+        after_val  = params.get('after_val', '')
+        if before_val and after_val:
+            filters['pg_before_val'] = before_val
+            filters['pg_after_val']  = after_val
+            return filters
+
+        x_col = fmap.get('x_col', chart.config.get('x_col', ''))
+        series_val = params.get('series_val', '')
+        x_val = params.get('x_val', '')
+        _PG_CATS = frozenset({'Growth', 'Sliders', 'Stickers'})
+        if series_val in _PG_CATS:
+            # Stacked/grouped bar with x grouping — x_val is the group category
+            if x_col and x_val:
+                filters[x_col] = x_val
+            filters['pg_cat'] = series_val
+        elif x_val in _PG_CATS:
+            # Donut/pie or overall bar — x_val IS the pg category
+            filters['pg_cat'] = x_val
+        return filters
+
     x_col = fmap.get('x_col', chart.config.get('x_col', ''))
     if x_col and params.get('x_val'):
         filters[x_col] = params['x_val']
@@ -61,6 +99,31 @@ def execute_drill_query(
     Returns {'rows', 'columns', 'all_columns', 'total_rows', 'page',
              'per_page', 'error'}.
     """
+    # progress_growth: extract the pg_cat sentinel before it leaks into SQL
+    # filters, and ensure the before/after PL columns are fetched.
+    pg_cat_filter = None
+    if 'pg_cat' in drill_filters and chart.chart_type == 'progress_growth':
+        drill_filters = dict(drill_filters)          # don't mutate caller's dict
+        pg_cat_filter = drill_filters.pop('pg_cat')
+        cfg = chart.config
+        extra_columns = list(extra_columns or [])
+        for fk in (cfg.get('pg_before_col', ''), cfg.get('pg_after_col', '')):
+            if fk and fk not in extra_columns:
+                extra_columns.append(fk)
+
+    # Matrix mode: before_val + after_val = exact cell transition filter.
+    pg_before_val = None
+    pg_after_val  = None
+    if 'pg_before_val' in drill_filters and chart.chart_type == 'progress_growth':
+        drill_filters = dict(drill_filters)
+        pg_before_val = drill_filters.pop('pg_before_val')
+        pg_after_val  = drill_filters.pop('pg_after_val', '')
+        cfg = chart.config
+        extra_columns = list(extra_columns or [])
+        for fk in (cfg.get('pg_before_col', ''), cfg.get('pg_after_col', '')):
+            if fk and fk not in extra_columns:
+                extra_columns.append(fk)
+
     if chart.source_type == 'sql':
         result = run_raw_sql(chart.source_sql)
         rows = result.get('rows', [])
@@ -106,6 +169,108 @@ def execute_drill_query(
                 rows = [r for r in rows if r.get(fkey) in vals]
             else:
                 rows = [r for r in rows if r.get(fkey) == fval]
+
+    # summary_table: deduplicate by student id AFTER dynamic column filters so
+    # the row count matches the chart (which deduplicates on the same filtered
+    # set before doing the groupby count).
+    if rows and chart.chart_type == 'summary_table':
+        _id_col = next(
+            (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
+            None,
+        )
+        if _id_col:
+            _seen: set = set()
+            _deduped: list = []
+            for _r in rows:
+                _k = _r.get(_id_col)
+                if _k not in _seen:
+                    _seen.add(_k)
+                    _deduped.append(_r)
+            rows = _deduped
+
+    # Post-fetch classification filter for progress_growth.
+    # pg_cat_filter is one of 'Growth', 'Sliders', 'Stickers'.
+    if pg_cat_filter and rows:
+        # Deduplicate by student identifier before classification so the drill
+        # list and count match the chart (which also deduplicates its input).
+        _id_col = next(
+            (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
+            None,
+        )
+        if _id_col:
+            _seen: set = set()
+            _deduped: list = []
+            for _r in rows:
+                _k = _r.get(_id_col)
+                if _k not in _seen:
+                    _seen.add(_k)
+                    _deduped.append(_r)
+            rows = _deduped
+
+        cfg = chart.config
+        before_col = cfg.get('pg_before_col', '')
+        after_col  = cfg.get('pg_after_col', '')
+        pl_scale   = cfg.get('pl_scale', [])
+        x_col      = cfg.get('x_col', '')
+        if before_col and after_col:
+            # Replicate build_option's _BLANK_VALUES filter for x_col.
+            # The chart drops rows with blank x_col before counting; the drill
+            # must do the same so totals match when no x_col SQL filter was added
+            # (e.g. the user clicked a donut/pie slice with no group filter).
+            _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+            if x_col and x_col not in drill_filters:
+                # x_col is not already being filtered by SQL — drop blank x_col rows
+                rows = [r for r in rows if str(r.get(x_col) or '').strip() not in _BLANK]
+
+            if not pl_scale:
+                from dataviz.utils.chart_builder import _auto_detect_pl_scale
+                all_vals: set = set()
+                for r in rows:
+                    for c in (before_col, after_col):
+                        v = str(r.get(c) or '').strip()
+                        if v and v not in _BLANK:
+                            all_vals.add(v)
+                pl_scale = _auto_detect_pl_scale(list(all_vals))
+            rank = {v: i for i, v in enumerate(pl_scale)}
+
+            def _pg_class(row):
+                b = rank.get(str(row.get(before_col) or '').strip())
+                a = rank.get(str(row.get(after_col) or '').strip())
+                if b is None or a is None:
+                    return None
+                if a > b:
+                    return 'Growth'
+                if a < b:
+                    return 'Sliders'
+                return 'Stickers'
+
+            rows = [r for r in rows if _pg_class(r) == pg_cat_filter]
+
+    # Matrix drill: filter to the exact Before PL → After PL cell clicked.
+    if pg_before_val and rows:
+        _id_col = next(
+            (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
+            None,
+        )
+        if _id_col:
+            _seen: set = set()
+            _deduped: list = []
+            for _r in rows:
+                _k = _r.get(_id_col)
+                if _k not in _seen:
+                    _seen.add(_k)
+                    _deduped.append(_r)
+            rows = _deduped
+
+        cfg = chart.config
+        before_col = cfg.get('pg_before_col', '')
+        after_col  = cfg.get('pg_after_col', '')
+        if before_col and after_col:
+            rows = [
+                r for r in rows
+                if str(r.get(before_col) or '').strip() == pg_before_val.strip()
+                and str(r.get(after_col)  or '').strip() == (pg_after_val or '').strip()
+            ]
 
     # Keep a snapshot of all available columns before column restriction
     all_columns = list(cols)

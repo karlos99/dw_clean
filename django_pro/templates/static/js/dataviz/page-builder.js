@@ -17,10 +17,13 @@ function pageBuilder() {
     title:    _PAGE_TITLE,
     description: _PAGE_DESC,
     status:   _PAGE_STATUS,
+    containerWidth: (typeof _PAGE_CONTAINER_WIDTH !== 'undefined' ? _PAGE_CONTAINER_WIDTH : 'xl') || 'xl',
+    showHeader: typeof _PAGE_SHOW_HEADER !== 'undefined' ? _PAGE_SHOW_HEADER : true,
     filters:  (_PAGE_FILTERS || []).map(f => ({ ...f })),
     filtersEnabled: (_PAGE_FILTERS || []).length > 0,
     filterCategories: [],
     filterPickerOpen: false,
+    htmlEditorMode: 'visual',
 
     rows: _ROWS_JSON.map(r => ({
       id:        r.id,
@@ -62,6 +65,14 @@ function pageBuilder() {
 
       // Load available filter columns
       this._loadFilterColumns();
+
+      // Re-init rich editor when selected section changes
+      this.$watch('selectedSection', (newId) => {
+        if (newId) {
+          this.htmlEditorMode = 'visual';
+          this.initRichEditor(newId);
+        }
+      });
     },
 
     /* ── Grid management ────────────────────────────────────────── */
@@ -166,6 +177,8 @@ function pageBuilder() {
         title: this.title.trim(),
         description: this.description,
         status: 'draft',
+        container_width: this.containerWidth,
+        show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
       if (res.error) { this.showToast(res.error, 'error'); return null; }
@@ -195,6 +208,8 @@ function pageBuilder() {
         slug: this.pageSlug,
         description: this.description,
         status: this.status,
+        container_width: this.containerWidth,
+        show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
       this.lastSaved = new Date().toLocaleTimeString();
@@ -211,6 +226,8 @@ function pageBuilder() {
         slug: this.pageSlug,
         description: this.description,
         status: status || this.status,
+        container_width: this.containerWidth,
+        show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
       if (res.error) { this.showToast(res.error, 'error'); return; }
@@ -450,6 +467,45 @@ function pageBuilder() {
       if (row) this._rerenderSection(row.id, sec);
       const url = _SECTION_URL_TPL.replace('SECTIONID', sectionId);
       await this._post(url, { html_content: content });
+    },
+
+    /* ── Rich text editor ───────────────────────────────────────── */
+    richCmd(cmd, value) {
+      const editor = document.getElementById('rich-editor');
+      if (editor) editor.focus();
+      document.execCommand(cmd, false, value || null);
+    },
+
+    initRichEditor(sectionId) {
+      this.$nextTick(() => {
+        const editor = document.getElementById('rich-editor');
+        if (!editor) return;
+        const sec = this.getSection(sectionId);
+        editor.innerHTML = sec?.html_content || '<p></p>';
+      });
+    },
+
+    syncRichEditor(sectionId) {
+      const editor = document.getElementById('rich-editor');
+      if (editor) this.updateHtmlContent(sectionId, editor.innerHTML);
+    },
+
+    switchEditorMode(mode, sectionId) {
+      if (mode === 'code') {
+        // Flush visual editor content to state before switching
+        const editor = document.getElementById('rich-editor');
+        if (editor) {
+          const sec = this.getSection(sectionId);
+          if (sec) {
+            sec.html_content = editor.innerHTML;
+            sec.html_preview = editor.innerHTML.replace(/<[^>]*>/g, '').slice(0, 30);
+          }
+        }
+      } else {
+        // Populate visual editor from current state when switching back
+        this.initRichEditor(sectionId);
+      }
+      this.htmlEditorMode = mode;
     },
 
     _rerenderSection(rowId, sec) {
