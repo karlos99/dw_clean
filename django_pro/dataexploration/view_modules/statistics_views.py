@@ -213,13 +213,13 @@ def get_column_statistics(request):
                         "SELECT 1 FROM student_marks_list sm "
                         "WHERE sm.stu_annual_key = cs.stu_annual_key "
                         "AND sm.school_year = %s "
-                        "AND sm.subject ILIKE %s "
-                        "AND sm.course_name ILIKE %s "
+                        "AND sm.subject = %s "
+                        "AND sm.course_name = %s "
                     )
                     mark_params = [
                         mark_info['year'],
-                        f"%{mark_info['subject']}%",
-                        f"%{mark_info['course_name']}%",
+                        mark_info['subject'],
+                        mark_info['course_name'],
                     ]
 
                     if mark_info.get('mark_period'):
@@ -239,13 +239,13 @@ def get_column_statistics(request):
                         "SELECT 1 FROM student_marks_list sm "
                         "WHERE sm.stu_annual_key = cs.stu_annual_key "
                         "AND sm.school_year = %s "
-                        "AND sm.subject ILIKE %s "
-                        "AND sm.course_name ILIKE %s "
+                        "AND sm.subject = %s "
+                        "AND sm.course_name = %s "
                     )
                     blank_params = [
                         mark_info['year'],
-                        f"%{mark_info['subject']}%",
-                        f"%{mark_info['course_name']}%",
+                        mark_info['subject'],
+                        mark_info['course_name'],
                     ]
                     if mark_info.get('mark_period'):
                         blank_clause += "AND sm.mark_period ILIKE %s "
@@ -621,14 +621,14 @@ def get_column_statistics(request):
                         SELECT cs.stu_annual_key FROM current_student cs {join_sql} WHERE {where_sql}
                     )
                     AND sm.school_year = %s
-                    AND sm.subject ILIKE %s
-                    AND sm.course_name ILIKE %s
+                    AND sm.subject = %s
+                    AND sm.course_name = %s
                     {period_clause}
                     AND sm.mark IS NOT NULL
                     GROUP BY val
                     ORDER BY val
                 """
-                q_params = base_params + [info['year'], f"%{info['subject']}%", f"%{info['course_name']}%"] + period_params
+                q_params = base_params + [info['year'], info['subject'], info['course_name']] + period_params
 
             # --- Standard Columns ---
             else:
