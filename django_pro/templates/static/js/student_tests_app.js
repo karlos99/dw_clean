@@ -375,6 +375,17 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('input[data-column]').forEach((checkbox) => {
             checkbox.checked = selectedColumns.includes(checkbox.dataset.column);
         });
+        document.querySelectorAll('input[data-action="select-topic"]').forEach((topicCb) => {
+            const targetCategory = topicCb.dataset.targetCategory;
+            const container = document.querySelector(`[data-category="${targetCategory}"]`);
+            if (!container) return;
+            const cols = Array.from(container.querySelectorAll('input[data-column]'))
+                .map(cb => cb.dataset.column).filter(Boolean);
+            if (cols.length === 0) { topicCb.checked = false; topicCb.indeterminate = false; return; }
+            const selectedCount = cols.filter(c => selectedColumns.includes(c)).length;
+            topicCb.checked = selectedCount === cols.length;
+            topicCb.indeterminate = selectedCount > 0 && selectedCount < cols.length;
+        });
     };
 
     const renderSelectedColumns = () => {
@@ -629,6 +640,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const pageCount = payload.total_pages || 1;
         const currentPage = payload.page || 1;
         const filterOptions = payload.filter_options || {};
+        const surveyColors = payload.survey_colors || {};
 
         // Update Total Count
         const totalCountEl = document.getElementById('total-student-count');
@@ -698,10 +710,24 @@ document.addEventListener('DOMContentLoaded', () => {
             const isRightSide = index > (columns.length - 3) && columns.length > 3;
             const alignClass = isRightSide ? 'right-0' : 'left-0';
 
-            html += `<th draggable="true" data-column="${escapeHtml(col)}" class="relative group px-4 py-3 text-left text-xs font-bold text-slate-300 uppercase bg-slate-900 border-b border-slate-800 hover:bg-slate-800 transition-colors select-none">`;
+            // For survey columns use an abbreviated header; full question text goes in title attribute
+            let headerLabel = label;
+            let headerTitle = label;
+            if (col.startsWith('survey_')) {
+                const qMatch = col.match(/_Q(\d+)$/);
+                const scInfo = surveyColors[col];
+                const shortBase = scInfo && scInfo.short_label ? scInfo.short_label : '';
+                const qPart = qMatch ? `Q${qMatch[1]}` : '';
+                const topicPart = scInfo && scInfo.topic ? scInfo.topic : '';
+                const parts = [shortBase, topicPart, qPart].filter(Boolean);
+                headerLabel = parts.length > 0 ? parts.join('\n') : (qPart || label);
+                headerTitle = label;
+            }
+
+            html += `<th draggable="true" data-column="${escapeHtml(col)}" title="${escapeHtml(headerTitle)}" class="relative group px-4 py-3 text-left text-xs font-bold text-slate-300 uppercase bg-slate-900 border-b border-slate-800 hover:bg-slate-800 transition-colors select-none">`;
             html += `<div class="flex items-center justify-between gap-2">`;
             html += `<div class="flex items-center gap-2 min-w-0 flex-1 cursor-pointer group/sort" data-action="sort" data-column="${escapeHtml(col)}">`;
-            html += `<span class="whitespace-pre-wrap break-words group-hover/sort:text-white transition-colors">${escapeHtml(label)}</span>`;
+            html += `<span class="whitespace-pre-wrap break-words group-hover/sort:text-white transition-colors">${escapeHtml(headerLabel)}</span>`;
             html += `<span class="text-[10px] ${sortColorClass} group-hover/sort:text-white transition-colors flex-shrink-0">${sortIcon}</span>`;
             html += `</div>`;
 
@@ -808,6 +834,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         } else {
                             html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${escapeHtml(value)}</td>`;
                         }
+                    } else if (col.startsWith('survey_') && value !== '—' && value !== '' && surveyColors[col]) {
+                        const _scInfo = surveyColors[col];
+                        const _scMax = _scInfo.scale_max || 5;
+                        const _scColors = (_scInfo.colors || {})['scale_' + _scMax] || {};
+                        const _scBg = _scColors[String(value)];
+                        const _scStyle = _scBg ? ` style="background-color:${escapeHtml(_scBg)};"` : '';
+                        html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap text-center font-medium"${_scStyle}>${escapeHtml(value)}</td>`;
                     } else {
                         html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${escapeHtml(value)}</td>`;
                     }
@@ -1016,6 +1049,30 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     document.addEventListener('change', (event) => {
+        const topicCheckbox = event.target.closest('input[data-action="select-topic"]');
+        if (topicCheckbox) {
+            const targetCategory = topicCheckbox.dataset.targetCategory;
+            const container = document.querySelector(`[data-category="${targetCategory}"]`);
+            if (!container) return;
+            const cols = Array.from(container.querySelectorAll('input[data-column]'))
+                .map(cb => cb.dataset.column).filter(Boolean);
+            const allSelected = cols.length > 0 && cols.every(c => selectedColumns.includes(c));
+            if (allSelected) {
+                // Deselect all — but never remove the last column
+                cols.forEach(c => {
+                    if (selectedColumns.length > 1) {
+                        selectedColumns = selectedColumns.filter(sc => sc !== c);
+                    }
+                });
+            } else {
+                cols.forEach(c => { if (!selectedColumns.includes(c)) selectedColumns.push(c); });
+            }
+            page = 1;
+            renderSelectedColumns();
+            loadData();
+            return;
+        }
+
         const checkbox = event.target.closest('input[data-column]');
         if (checkbox) {
             updateColumnSelection(checkbox.dataset.column);

@@ -164,3 +164,98 @@
         {% endfor %}
     </div>
 </div>
+
+<!-- Surveys Tree Category -->
+{% if survey_structure %}
+<div class="border-b border-slate-100 pb-2 mt-3">
+    <button data-toggle-category="surveys"
+        class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded transition-colors border-l-2 border-purple-500">
+        <span class="text-xs font-semibold uppercase tracking-wider text-slate-700">Panorama</span>
+        <span data-caret="closed" class="text-slate-400">▶</span>
+        <span data-caret="open" class="hidden text-slate-400">▼</span>
+    </button>
+
+    <div data-category="surveys" class="ml-4 mt-1 space-y-1 pl-3 border-l-2 border-purple-200 hidden">
+        {% for year, survey_types in survey_structure.items %}
+        <div class="mt-2">
+            <button data-toggle-category="surveys_{{ year|slugify }}"
+                class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
+                <span class="text-sm font-medium text-slate-700">{{ year }}</span>
+                <span data-caret="closed" class="text-slate-400">▶</span>
+                <span data-caret="open" class="hidden text-slate-400">▼</span>
+            </button>
+
+            <div data-category="surveys_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                {% for section_key, survey_data in survey_types.items %}
+                <div class="pl-2 border-l border-slate-200">
+                    <button data-toggle-category="surveys_{{ year|slugify }}_{{ section_key|slugify }}"
+                        class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left transition-colors">
+                        <span class="text-xs font-semibold text-slate-700">{{ survey_data.survey_type }}{% if survey_data.grade_range %} ({{ survey_data.grade_range }}){% endif %}</span>
+                        <span data-caret="closed" class="text-slate-400">▶</span>
+                        <span data-caret="open" class="hidden text-slate-400">▼</span>
+                    </button>
+
+                    <div data-category="surveys_{{ year|slugify }}_{{ section_key|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                        {% for window, questions in survey_data.windows.items %}
+                        <div class="pl-2 border-l border-slate-200">
+                            <button data-toggle-category="surveys_{{ year|slugify }}_{{ section_key|slugify }}_{{ window|slugify }}"
+                                class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left transition-colors">
+                                <span class="text-xs text-slate-700">{{ window|default:"All Windows" }}</span>
+                                <span data-caret="closed" class="text-slate-400">▶</span>
+                                <span data-caret="open" class="hidden text-slate-400">▼</span>
+                            </button>
+
+                            <div data-category="surveys_{{ year|slugify }}_{{ section_key|slugify }}_{{ window|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                                {% with topics=survey_data|get_window_topics:window %}
+                                {% for topic_name, topic_questions in topics.items %}
+                                <div class="pl-1 border-l-2 border-purple-100">
+                                    <div class="flex items-center gap-1">
+                                        <input type="checkbox"
+                                            data-action="select-topic"
+                                            data-target-category="surveys_{{ year|slugify }}_{{ section_key|slugify }}_{{ window|slugify }}_{{ topic_name|slugify }}"
+                                            class="rounded border-purple-300 text-purple-600 focus:ring-purple-500 h-4 w-4 flex-shrink-0 cursor-pointer"
+                                            title="Select/deselect all {{ topic_name }} questions">
+                                        <button data-toggle-category="surveys_{{ year|slugify }}_{{ section_key|slugify }}_{{ window|slugify }}_{{ topic_name|slugify }}"
+                                            class="flex-1 flex items-center justify-between p-1 hover:bg-purple-50 rounded text-left transition-colors">
+                                            <span class="text-[11px] font-bold text-purple-700 uppercase tracking-wider">{{ topic_name }}</span>
+                                            <span class="text-xs text-slate-400" data-caret="closed">▶</span>
+                                            <span class="text-xs hidden text-slate-400" data-caret="open">▼</span>
+                                        </button>
+                                    </div>
+                                    <div data-category="surveys_{{ year|slugify }}_{{ section_key|slugify }}_{{ window|slugify }}_{{ topic_name|slugify }}"
+                                        class="ml-2 mt-1 space-y-1 hidden">
+                                        {% for question in topic_questions %}
+                                        <label class="flex items-start gap-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors"
+                                            title="{{ question.full_text }}">
+                                            <input type="checkbox" data-column="{{ question.key }}"
+                                                class="rounded border-slate-300 text-purple-600 focus:ring-purple-500 h-4 w-4 mt-0.5 flex-shrink-0">
+                                            <span class="text-sm text-slate-700 leading-snug">{{ question.label }}</span>
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% empty %}
+                                {% for order, question in questions.items %}
+                                <label class="flex items-start gap-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors"
+                                    title="{{ question.full_text }}">
+                                    <input type="checkbox" data-column="{{ question.key }}"
+                                        class="rounded border-slate-300 text-purple-600 focus:ring-purple-500 h-4 w-4 mt-0.5 flex-shrink-0">
+                                    <span class="text-sm text-slate-700 leading-snug">Q{{ order|add:1 }}: {{ question.label }}</span>
+                                </label>
+                                {% endfor %}
+                                {% endfor %}
+                                {% endwith %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% empty %}
+        <div class="text-xs text-slate-500 italic p-2">No published survey data available</div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}

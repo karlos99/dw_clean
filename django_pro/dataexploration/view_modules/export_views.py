@@ -633,13 +633,13 @@ def export_students_csv(request):
                                 FROM student_marks_list sm
                                 WHERE sm.stu_annual_key = ANY(%s)
                                 AND sm.school_year = %s
-                                AND sm.subject = %s
-                                AND sm.course_name = %s
+                                AND sm.subject ILIKE %s
+                                AND sm.course_name ILIKE %s
                                 {period_clause}
                             """
                             cursor.execute(mquery, [
                                 student_keys, mark_info['year'],
-                                mark_info['subject'], mark_info['course_name'],
+                                f"%{mark_info['subject']}%", f"%{mark_info['course_name']}%",
                                 *period_params
                             ])
                             mdata = {row[0]: row[1] for row in cursor.fetchall()}

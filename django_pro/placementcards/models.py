@@ -34,7 +34,7 @@ class QuestionTemplate(models.Model):
         ('academic', 'Academic'),
         ('behavior', 'Behavior & Study Habits'),
         ('physical', 'Physical & Health'),
-        ('attendance', 'Attendance'),
+        ('attendance', 'Behavior & Attendance'),
         ('parent', 'Parent Involvement'),
         ('additional', 'Additional Information'),
     ]

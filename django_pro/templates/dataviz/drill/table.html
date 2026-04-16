@@ -1,0 +1,410 @@
+{% extends "base.html" %}
+{% load static dataviz_tags %}
+
+{% block title %}Drill-Through – {{ chart.name }}{% endblock %}
+
+{% block content %}
+<div x-data="drillTable()" class="max-w-[98vw] mx-auto px-4 py-6">
+
+  <!-- ── Breadcrumbs ─────────────────────────────────────────────── -->
+  <nav class="flex items-center gap-1.5 text-xs text-slate-500 mb-4">
+    {% for crumb in breadcrumbs %}
+      {% if crumb.url %}
+        <a href="{{ crumb.url }}" class="hover:text-blue-600 hover:underline">{{ crumb.label }}</a>
+        <span class="text-slate-300">/</span>
+      {% else %}
+        <span class="font-semibold text-slate-700">{{ crumb.label }}</span>
+      {% endif %}
+    {% endfor %}
+  </nav>
+
+  <!-- ── Header row ──────────────────────────────────────────────── -->
+  <div class="flex items-start justify-between mb-4 gap-4">
+    <div class="min-w-0">
+      <h1 class="text-lg font-bold text-slate-800 truncate">{{ chart.name }} — Drill-Through</h1>
+
+      <!-- Filter chips (chart-derived + column-level) -->
+      <div class="flex flex-wrap gap-1.5 mt-2" id="filter-chips">
+        {% for f in drill_filters %}
+        <span class="inline-flex items-center gap-1 text-xs rounded-full px-2.5 py-0.5
+                      {% if f.active %}bg-blue-100 text-blue-700{% else %}bg-slate-100 text-slate-400 line-through{% endif %}">
+          <strong>{{ f.label }}</strong> = {{ f.value }}
+          {% if f.active %}
+          <button type="button" @click="removeDrillFilter('{{ f.key }}')"
+                  class="ml-0.5 text-blue-400 hover:text-red-500 font-bold leading-none"
+                  title="Remove this filter">&times;</button>
+          {% else %}
+          <button type="button" @click="restoreDrillFilter('{{ f.key }}')"
+                  class="ml-0.5 text-green-500 hover:text-green-700 font-bold leading-none"
+                  title="Restore this filter">&#8635;</button>
+          {% endif %}
+        </span>
+        {% endfor %}
+
+        {% for cf in col_filters %}
+        <span class="inline-flex items-center gap-1 text-xs rounded-full px-2.5 py-0.5 bg-amber-100 text-amber-700">
+          <strong>{{ cf.label }}</strong>: {{ cf.values|join:", " }}
+          <button type="button" @click="removeColumnFilter('{{ cf.key }}')"
+                  class="ml-0.5 text-amber-400 hover:text-red-500 font-bold leading-none">&times;</button>
+        </span>
+        {% endfor %}
+
+        {% for pf in page_filters %}
+        <span class="inline-flex items-center gap-1 text-xs rounded-full px-2.5 py-0.5 bg-violet-100 text-violet-700">
+          <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M3 4a1 1 0 011-1h16a1 1 0 010 2H4a1 1 0 01-1-1zm3 6a1 1 0 011-1h10a1 1 0 010 2H7a1 1 0 01-1-1zm2 6a1 1 0 011-1h6a1 1 0 010 2H9a1 1 0 01-1-1z"/>
+          </svg>
+          <strong>{{ pf.label }}</strong> = {{ pf.value }}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <!-- Column selector toggle -->
+      <button @click="sidebarOpen = !sidebarOpen"
+              class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-lg transition flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 5h6"/>
+        </svg>
+        Columns
+      </button>
+      <!-- CSV export -->
+      <button @click="exportCsv()"
+              class="px-3 py-1.5 text-xs bg-green-50 text-green-700 hover:bg-green-100 rounded-lg transition flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3"/>
+        </svg>
+        Export CSV
+      </button>
+      <!-- Refresh -->
+      <button @click="refresh()"
+              class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-lg transition">
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  {% if error %}
+  <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">{{ error }}</div>
+  {% endif %}
+
+  <!-- ── Layout: sidebar + table ─────────────────────────────────── -->
+  <div class="flex gap-4">
+
+    <!-- Column selector sidebar -->
+    <div x-show="sidebarOpen" x-transition
+         class="w-72 flex-shrink-0 bg-white border border-slate-200 rounded-xl shadow-sm self-start sticky top-20 max-h-[80vh] overflow-y-auto">
+
+      <div class="flex items-center justify-between p-3 pb-0">
+        <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wide">Columns</h3>
+        <button @click="sidebarOpen = false" class="text-slate-400 hover:text-slate-600">&times;</button>
+      </div>
+
+      <!-- Active columns — drag to reorder -->
+      <div class="px-3 pt-2 pb-1">
+        <p class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Visible (drag to reorder)</p>
+        <div class="space-y-0.5 min-h-[2rem]" id="visible-col-list">
+          <template x-for="(col, idx) in visibleCols" :key="col">
+            <div class="flex items-center gap-1 text-xs py-1 px-1.5 rounded bg-slate-50 hover:bg-blue-50 group cursor-grab active:cursor-grabbing transition"
+                 draggable="true"
+                 @dragstart="dragCol = idx; $event.dataTransfer.effectAllowed = 'move'"
+                 @dragend="dragCol = null"
+                 @dragover.prevent="$event.dataTransfer.dropEffect = 'move'"
+                 @drop.prevent="reorderCol(idx)">
+              <svg class="w-3 h-3 text-slate-300 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                <circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>
+                <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+                <circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
+              </svg>
+              <span x-text="colLabel(col)" class="truncate flex-1"></span>
+              <button @click="removeColumn(col)"
+                      class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition flex-shrink-0">&times;</button>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <hr class="my-2 border-slate-200">
+
+      <!-- Add columns -->
+      <div class="px-3 pb-3">
+        <p class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Add columns</p>
+        <!-- Search -->
+        <input type="text" x-model="colSearch" placeholder="Search columns…"
+               class="w-full text-xs border border-slate-200 rounded px-2 py-1 mb-2 focus:ring-1 focus:ring-blue-400">
+        <!-- Quick actions -->
+        <div class="flex gap-2 text-[10px] text-blue-600 mb-1.5">
+          <button @click="selectAllCols()" class="hover:underline">All</button>
+          <button @click="selectNoneCols()" class="hover:underline">None</button>
+        </div>
+        <!-- Available column list -->
+        <div class="max-h-60 overflow-y-auto space-y-0.5">
+          <template x-for="col in filteredAvailableColumns" :key="col">
+            <label class="flex items-center gap-1.5 text-xs py-0.5 cursor-pointer hover:bg-slate-50 rounded px-1">
+              <input type="checkbox" :value="col"
+                     :checked="visibleCols.includes(col)"
+                     @change="toggleColumn(col)"
+                     class="rounded text-blue-600 w-3 h-3">
+              <span x-text="colLabel(col)" class="truncate"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table area -->
+    <div class="flex-1 min-w-0">
+      <!-- Record count + page info -->
+      <div class="flex items-center justify-between mb-2">
+        <p class="text-sm text-slate-600">
+          <span class="font-semibold text-slate-800">{{ total_rows }}</span> record{{ total_rows|pluralize }}
+        </p>
+        <p class="text-xs text-slate-400">Page {{ page }} · {{ per_page }} per page</p>
+      </div>
+
+      <!-- Table wrapper -->
+      <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden" id="drill-table-wrapper">
+        {% include 'dataviz/partials/drill_rows.html' %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Student Summary Overlay -->
+  <div id="student-summary-overlay" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+    <div class="absolute inset-0 bg-slate-900/50" data-action="close-student-summary"></div>
+    <div class="absolute inset-0 flex items-start justify-center p-4 sm:p-6 overflow-y-auto">
+      <div class="w-full max-w-7xl bg-white rounded-xl shadow-xl ring-1 ring-slate-200">
+        <div id="student-summary-overlay-body" class="min-h-[120px]"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── Student summary overlay helpers ─────────────────────────────── */
+(function() {
+  const overlay = document.getElementById('student-summary-overlay');
+  const body = document.getElementById('student-summary-overlay-body');
+
+  function showOverlay() {
+    if (!overlay) return;
+    overlay.classList.remove('hidden');
+    overlay.setAttribute('aria-hidden', 'false');
+  }
+  function hideOverlay() {
+    if (!overlay) return;
+    overlay.classList.add('hidden');
+    overlay.setAttribute('aria-hidden', 'true');
+    if (body) body.innerHTML = '';
+  }
+  async function loadSummary(ssid) {
+    if (!body) return;
+    body.innerHTML = '<div class="p-6 text-slate-500">Loading…</div>';
+    showOverlay();
+    const url = `/dataexploration/student-summary/${encodeURIComponent(ssid)}/partial/`;
+    try {
+      const res = await fetch(url, { credentials: 'same-origin' });
+      if (!res.ok) { body.innerHTML = `<div class="p-6 text-red-700">Failed to load (${res.status}).</div>`; return; }
+      body.innerHTML = await res.text();
+      if (window.htmx) htmx.process(body);
+    } catch (e) {
+      body.innerHTML = '<div class="p-6 text-red-700">Network error.</div>';
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const openEl = e.target.closest('[data-action="open-student-summary"]');
+    if (openEl) {
+      const isPlain = e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+      if (isPlain) {
+        e.preventDefault();
+        const ssid = openEl.getAttribute('data-ssid') || '';
+        if (ssid) loadSummary(ssid);
+      }
+      return;
+    }
+    const closeEl = e.target.closest('[data-action="close-student-summary"]');
+    if (closeEl) { e.preventDefault(); hideOverlay(); }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay && !overlay.classList.contains('hidden')) hideOverlay();
+  });
+})();
+
+function drillTable() {
+  // Parse initial state from Django context
+  const universe  = JSON.parse('{{ universe_json|escapejs }}');
+  const colLabels = JSON.parse('{{ col_labels_json|escapejs }}');
+  const selCols   = JSON.parse('{{ selected_columns_json|escapejs }}');
+  const allCols   = JSON.parse('{{ all_columns_json|escapejs }}');
+  const chartId   = {{ chart.id }};
+
+  return {
+    sidebarOpen: false,
+    colSearch: '',
+    visibleCols: selCols.length ? [...selCols] : [...allCols],
+    dragCol: null,             // index of column being dragged
+    sortBy: '{{ sort_by }}',
+    sortDir: '{{ sort_dir|default:"asc" }}',
+    openFilter: null,
+    filterValues: {},
+    filterChecked: {},
+
+    /* ── Column helpers ─────────────────────────────────── */
+    get filteredAvailableColumns() {
+      const q = (this.colSearch || '').toLowerCase();
+      return universe.filter(c => {
+        if (q && !(colLabels[c] || c).toLowerCase().includes(q)) return false;
+        return true;
+      });
+    },
+    colLabel(key) { return colLabels[key] || key; },
+    selectAllCols() { this.visibleCols = [...universe]; this.applyColumns(); },
+    selectNoneCols() { this.visibleCols = []; this.applyColumns(); },
+
+    /* Toggle a column on/off from the "add" list */
+    toggleColumn(col) {
+      const idx = this.visibleCols.indexOf(col);
+      if (idx >= 0) {
+        this.visibleCols.splice(idx, 1);
+      } else {
+        this.visibleCols.push(col);
+      }
+      this.applyColumns();
+    },
+
+    /* Remove a column from the visible set (header × button or sidebar) */
+    removeColumn(col) {
+      this.visibleCols = this.visibleCols.filter(c => c !== col);
+      this.applyColumns();
+    },
+
+    /* ── Drag-to-reorder ────────────────────────────────── */
+    reorderCol(toIdx) {
+      if (this.dragCol === null || this.dragCol === toIdx) return;
+      const col = this.visibleCols.splice(this.dragCol, 1)[0];
+      this.visibleCols.splice(toIdx, 0, col);
+      this.applyColumns();
+    },
+
+    /* ── Sorting ────────────────────────────────────────── */
+    toggleSort(col) {
+      if (this.sortBy === col) {
+        this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        this.sortBy = col;
+        this.sortDir = 'asc';
+      }
+      this.loadRows(1);
+    },
+    sortIcon(col) {
+      if (this.sortBy !== col) return '↕';
+      return this.sortDir === 'asc' ? '▲' : '▼';
+    },
+
+    /* ── Drill filter removal / restore ─────────────────── */
+    removeDrillFilter(key) {
+      const url = new URL(window.location);
+      url.searchParams.set('skip_drill_' + key, '1');
+      window.location = url.toString();
+    },
+    restoreDrillFilter(key) {
+      const url = new URL(window.location);
+      url.searchParams.delete('skip_drill_' + key);
+      window.location = url.toString();
+    },
+
+    /* ── Column-level filter ────────────────────────────── */
+    async openColFilter(col) {
+      if (this.openFilter === col) { this.openFilter = null; return; }
+      this.openFilter = col;
+      if (!this.filterValues[col]) {
+        const p = new URLSearchParams(window.location.search);
+        p.set('column', col);
+        const resp = await fetch(`/dataviz/api/drill/${chartId}/filter-values/?${p}`);
+        const data = await resp.json();
+        this.filterValues[col] = data.values || [];
+      }
+      if (!this.filterChecked[col]) {
+        const url = new URL(window.location);
+        const existing = url.searchParams.getAll('cf_' + col);
+        this.filterChecked[col] = new Set(existing.length ? existing : this.filterValues[col]);
+      }
+    },
+    isFilterChecked(col, val) {
+      return this.filterChecked[col] && this.filterChecked[col].has(val);
+    },
+    toggleFilterValue(col, val) {
+      if (!this.filterChecked[col]) this.filterChecked[col] = new Set();
+      if (this.filterChecked[col].has(val)) {
+        this.filterChecked[col].delete(val);
+      } else {
+        this.filterChecked[col].add(val);
+      }
+    },
+    filterSelectAll(col) {
+      this.filterChecked[col] = new Set(this.filterValues[col] || []);
+    },
+    filterClearAll(col) {
+      this.filterChecked[col] = new Set();
+    },
+    applyColFilter(col) {
+      this.openFilter = null;
+      const url = new URL(window.location);
+      url.searchParams.delete('cf_' + col);
+      const checked = this.filterChecked[col];
+      const all = this.filterValues[col] || [];
+      if (checked && checked.size < all.length) {
+        for (const v of checked) {
+          url.searchParams.append('cf_' + col, v);
+        }
+      }
+      url.searchParams.set('page', '1');
+      window.location = url.toString();
+    },
+    removeColumnFilter(key) {
+      const url = new URL(window.location);
+      url.searchParams.delete('cf_' + key);
+      url.searchParams.set('page', '1');
+      window.location = url.toString();
+    },
+
+    /* ── CSV Export ──────────────────────────────────────── */
+    exportCsv() {
+      const p = new URLSearchParams(window.location.search);
+      p.set('sort_by', this.sortBy);
+      p.set('sort_dir', this.sortDir);
+      if (this.visibleCols.length) {
+        p.set('cols', this.visibleCols.join(','));
+      }
+      window.location.href = `/dataviz/api/drill/${chartId}/export-csv/?${p}`;
+    },
+
+    /* ── HTMX helper: build URL and swap table ──────────── */
+    _buildApiUrl(page) {
+      const p = new URLSearchParams(window.location.search);
+      p.set('page', page);
+      p.set('sort_by', this.sortBy);
+      p.set('sort_dir', this.sortDir);
+      if (this.visibleCols.length) {
+        p.set('cols', this.visibleCols.join(','));
+      } else {
+        p.delete('cols');
+      }
+      return `/dataviz/api/drill/${chartId}/rows/?${p}`;
+    },
+    loadRows(page) {
+      const url = this._buildApiUrl(page || 1);
+      htmx.ajax('GET', url, {target: '#drill-table-wrapper', swap: 'innerHTML'});
+    },
+    applyColumns() {
+      this.loadRows(1);
+    },
+    refresh() {
+      this.loadRows(1);
+    },
+  };
+}
+</script>
+{% endblock %}

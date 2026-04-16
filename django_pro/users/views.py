@@ -1,5 +1,4 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import login
 from django.contrib import messages
@@ -59,13 +58,6 @@ def get_base_users_queryset(request):
         else:
             # Admin with no schools sees no one?
             users_qs = users_qs.none()
-
-        # School Admin should not see district-level users.
-        if user_is_school_admin(request.user):
-            users_qs = users_qs.exclude(
-                Q(roles__name__iexact='District View')
-                | Q(roles__name__iexact='District Admin')
-            )
     
     return users_qs
 
@@ -143,7 +135,7 @@ def manage_users(request):
     page_size = int(page_size)
     
     # Apply sorting
-    valid_sort_fields = ['name', 'email', 'job_title', 'is_active']
+    valid_sort_fields = ['name', 'email', 'job_title']
     if sort_by == 'role__name':
          # Sorting by M2M is tricky, let's skip for now or sort by count? or first role?
          # Simplification: Disable role sorting or leave as is (might produce duplicates)
@@ -224,16 +216,6 @@ def manage_users(request):
     page_number = request.GET.get('page', 1)
     page_obj = paginator.get_page(page_number)
 
-    # Build school name lookup for users on the current page
-    page_school_ids = set()
-    for u in page_obj:
-        if u.schools and isinstance(u.schools, list):
-            page_school_ids.update(u.schools)
-    school_name_map = {}
-    if page_school_ids:
-        for row in StudataSchool.objects.filter(state_id__in=page_school_ids).values('state_id', 'school_name'):
-            school_name_map[row['state_id']] = row['school_name']
-
     context = {
         'users': page_obj,
         'page_obj': page_obj,
@@ -251,8 +233,7 @@ def manage_users(request):
         'all_schools': all_schools,
         'sort_by': sort_by,
         'sort_order': sort_order,
-        'total_users_count': total_users_count,
-        'school_name_map': school_name_map,
+        'total_users_count': total_users_count, 
     }
     
     # Return partial for HTMX requests
@@ -279,162 +260,6 @@ def usage_report(request):
 
     pacific_tz = ZoneInfo('America/Los_Angeles')
     now = timezone.now()
-    pacific_now = timezone.localtime(now, pacific_tz)
-
-    # Calculate time boundaries for statistics
-    today_start = pacific_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    last_7_days_start = (pacific_now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # School year starts August 1st - if current month is before August, use previous year
-    if pacific_now.month >= 8:
-        school_year_start = pacific_now.replace(month=8, day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        school_year_start = pacific_now.replace(year=pacific_now.year - 1, month=8, day=1, hour=0, minute=0, second=0, microsecond=0)
-
-    # Statistics queries for unique users (excluding Project Admins)
-    from django.db.models import Count
-
-    # Exclude users with Project Admin role from all analytics
-    project_admin_exclude = {'user__roles__name': 'Project Admin'}
-
-    # Get unique user IDs and their emails for each time period
-    users_today_ids = UsageSession.objects.filter(
-        login_at__gte=today_start
-    ).exclude(**project_admin_exclude).values_list('user', flat=True).distinct()
-    users_today_list = list(User.objects.filter(id__in=users_today_ids).order_by('email').values_list('email', flat=True))
-    unique_users_today = len(users_today_list)
-
-    users_last_7_days_ids = UsageSession.objects.filter(
-        login_at__gte=last_7_days_start
-    ).exclude(**project_admin_exclude).values_list('user', flat=True).distinct()
-    users_last_7_days_list = list(User.objects.filter(id__in=users_last_7_days_ids).order_by('email').values_list('email', flat=True))
-    unique_users_last_7_days = len(users_last_7_days_list)
-
-    users_school_year_ids = UsageSession.objects.filter(
-        login_at__gte=school_year_start
-    ).exclude(**project_admin_exclude).values_list('user', flat=True).distinct()
-    users_school_year_list = list(User.objects.filter(id__in=users_school_year_ids).order_by('email').values_list('email', flat=True))
-    unique_users_school_year = len(users_school_year_list)
-
-    # Calculate average session time (excluding Project Admins, capped at 30 min)
-    from django.db.models import Avg, Case, When, Value, IntegerField
-    from django.db.models.functions import Least
-    
-    # Cap session time at 30 minutes (1800 seconds) to exclude users who forget to logout
-    MAX_SESSION_SECONDS = 1800
-    
-    avg_session_today = UsageSession.objects.filter(
-        login_at__gte=today_start,
-        total_seconds__gt=0
-    ).exclude(**project_admin_exclude).annotate(
-        capped_seconds=Least('total_seconds', Value(MAX_SESSION_SECONDS))
-    ).aggregate(avg=Avg('capped_seconds'))['avg']
-    
-    avg_session_last_7_days = UsageSession.objects.filter(
-        login_at__gte=last_7_days_start,
-        total_seconds__gt=0
-    ).exclude(**project_admin_exclude).annotate(
-        capped_seconds=Least('total_seconds', Value(MAX_SESSION_SECONDS))
-    ).aggregate(avg=Avg('capped_seconds'))['avg']
-    
-    avg_session_school_year = UsageSession.objects.filter(
-        login_at__gte=school_year_start,
-        total_seconds__gt=0
-    ).exclude(**project_admin_exclude).annotate(
-        capped_seconds=Least('total_seconds', Value(MAX_SESSION_SECONDS))
-    ).aggregate(avg=Avg('capped_seconds'))['avg']
-    
-    # Convert to minutes
-    avg_time_today_minutes = int((avg_session_today or 0) / 60)
-    avg_time_last_7_days_minutes = int((avg_session_last_7_days or 0) / 60)
-    avg_time_school_year_minutes = int((avg_session_school_year or 0) / 60)
-
-    # Role usage statistics - count sessions per role (excluding Project Admins)
-    from collections import Counter, defaultdict
-    role_session_counts = Counter()
-    role_queryset = UsageSession.objects.filter(
-        login_at__gte=school_year_start
-    ).exclude(**project_admin_exclude).select_related('user').prefetch_related('user__roles')
-    
-    for session in role_queryset:
-        for role in session.user.roles.all():
-            if role.name != 'Project Admin':
-                role_session_counts[role.name] += 1
-    
-    top_role = None
-    if role_session_counts:
-        top_role_name, top_role_count = role_session_counts.most_common(1)[0]
-        top_role = {'name': top_role_name, 'session_count': top_role_count}
-
-    # Top pages statistics (excluding home page, API endpoints, and Project Admins)
-    page_stats = defaultdict(lambda: {'visits': 0, 'total_seconds': 0, 'users': set()})
-    page_visits_qs = PageVisit.objects.filter(
-        session__login_at__gte=school_year_start
-    ).exclude(session__user__roles__name='Project Admin').select_related('session__user')
-    
-    for visit in page_visits_qs:
-        path = visit.path
-        # Skip home page and API endpoints
-        if not path or path == '/' or '/api/' in path:
-            continue
-        page_stats[path]['visits'] += 1
-        page_stats[path]['total_seconds'] += visit.duration_seconds or 0
-        page_stats[path]['users'].add(visit.session.user_id)
-    
-    # Sort pages by visits and get top 5
-    sorted_pages = sorted(
-        page_stats.items(),
-        key=lambda x: (x[1]['visits'], len(x[1]['users'])),
-        reverse=True
-    )[:5]
-    
-    top_pages = []
-    for path, stats in sorted_pages:
-        top_pages.append({
-            'path': path,
-            'visits': stats['visits'],
-            'unique_users': len(stats['users']),
-            'total_minutes': int((stats['total_seconds'] + 59) // 60),
-        })
-
-    # User login activity table (excluding Project Admins)
-    days_7_ago = pacific_now - timedelta(days=7)
-    days_30_ago = pacific_now - timedelta(days=30)
-    days_90_ago = pacific_now - timedelta(days=90)
-    days_180_ago = pacific_now - timedelta(days=180)
-    
-    # Get all non-Project Admin users who have logged in within 180 days
-    from django.db.models import Max
-    
-    user_login_activity = []
-    active_users = User.objects.exclude(
-        roles__name='Project Admin'
-    ).filter(
-        usage_sessions__login_at__gte=days_180_ago
-    ).distinct().prefetch_related('roles')
-    
-    for user in active_users:
-        user_sessions = UsageSession.objects.filter(user=user)
-        
-        last_login = user_sessions.aggregate(last=Max('login_at'))['last']
-        
-        count_7_days = user_sessions.filter(login_at__gte=days_7_ago).count()
-        count_7_to_30 = user_sessions.filter(login_at__gte=days_30_ago, login_at__lt=days_7_ago).count()
-        count_30_to_90 = user_sessions.filter(login_at__gte=days_90_ago, login_at__lt=days_30_ago).count()
-        count_90_to_180 = user_sessions.filter(login_at__gte=days_180_ago, login_at__lt=days_90_ago).count()
-        
-        user_login_activity.append({
-            'email': user.email,
-            'last_login': timezone.localtime(last_login, pacific_tz).strftime('%Y-%m-%d %H:%M') if last_login else '—',
-            'last_login_sort': last_login.isoformat() if last_login else '',
-            'count_7_days': count_7_days,
-            'count_7_to_30': count_7_to_30,
-            'count_30_to_90': count_30_to_90,
-            'count_90_to_180': count_90_to_180,
-        })
-    
-    # Sort by last login by default (most recent first)
-    user_login_activity.sort(key=lambda x: x['last_login_sort'], reverse=True)
 
     sessions_qs = UsageSession.objects.select_related('user').prefetch_related(
         'page_visits',
@@ -449,6 +274,7 @@ def usage_report(request):
     start_date = request.GET.get('start_date', '').strip()
     end_date = request.GET.get('end_date', '').strip()
 
+    pacific_now = timezone.localtime(now, pacific_tz)
     date_start_dt = None
     date_end_dt = None
 
@@ -522,16 +348,13 @@ def usage_report(request):
             'title_name': title_name,
         })
 
-    # Top page for filtered results (respecting user/date filters, excluding Project Admins)
+    # Most visited page summary (excluding landing '/')
+    from collections import defaultdict
     page_agg = defaultdict(lambda: {'total_seconds': 0, 'users': set()})
     for session in sessions:
-        # Skip Project Admins from analytics (check all user roles)
-        user_roles = [r.name for r in session['user'].roles.all()]
-        if 'Project Admin' in user_roles:
-            continue
         for visit in session['visits']:
             path = visit.get('path')
-            if not path or path == '/' or '/api/' in path:
+            if not path or path == '/':
                 continue
             duration_seconds = visit.get('duration_seconds') or 0
             page_agg[path]['total_seconds'] += duration_seconds
@@ -539,12 +362,12 @@ def usage_report(request):
 
     top_page = None
     if page_agg:
-        sorted_filtered_pages = sorted(
+        sorted_pages = sorted(
             page_agg.items(),
             key=lambda item: (len(item[1]['users']), item[1]['total_seconds']),
             reverse=True,
         )
-        top_path, stats = sorted_filtered_pages[0]
+        top_path, stats = sorted_pages[0]
         top_page = {
             'path': top_path,
             'user_count': len(stats['users']),
@@ -570,12 +393,6 @@ def usage_report(request):
     }
     query_params = {k: v for k, v in query_params.items() if v}
 
-    # Format school year label
-    if pacific_now.month >= 8:
-        school_year_label = f"{pacific_now.year}-{pacific_now.year + 1}"
-    else:
-        school_year_label = f"{pacific_now.year - 1}-{pacific_now.year}"
-
     context = {
         'sessions': sessions,
         'grouped_sessions': grouped_sessions,
@@ -589,20 +406,6 @@ def usage_report(request):
         'query_string': urlencode(query_params),
         'top_page': top_page,
         'timezone_label': 'America/Los_Angeles',
-        # New statistics
-        'unique_users_today': unique_users_today,
-        'users_today_list': users_today_list,
-        'unique_users_last_7_days': unique_users_last_7_days,
-        'users_last_7_days_list': users_last_7_days_list,
-        'unique_users_school_year': unique_users_school_year,
-        'users_school_year_list': users_school_year_list,
-        'school_year_label': school_year_label,
-        'avg_time_today_minutes': avg_time_today_minutes,
-        'avg_time_last_7_days_minutes': avg_time_last_7_days_minutes,
-        'avg_time_school_year_minutes': avg_time_school_year_minutes,
-        'top_role': top_role,
-        'top_pages': top_pages,
-        'user_login_activity': user_login_activity,
     }
 
     return render(request, 'users/usage.html', context)
@@ -674,15 +477,12 @@ def user_detail(request, user_id):
         # 2. Restrict visible/assignable schools
         schools_qs = schools_qs.filter(state_id__in=allowed_schools)
 
-    is_school_admin_only = is_school and not is_proj
-
     if request.method == 'POST':
-        # School admins cannot edit name, job title, or staff ID
-        if not is_school_admin_only:
-            user_obj.name = request.POST.get('name', '').strip()
-            user_obj.job_title = request.POST.get('job_title', '').strip()
-            user_obj.staff_id = request.POST.get('staff_id', '').strip() or None
-            user_obj.is_active = request.POST.get('is_active') == 'on'
+        # Update user information
+        user_obj.name = request.POST.get('name', '').strip()
+        user_obj.job_title = request.POST.get('job_title', '').strip()
+        user_obj.staff_id = request.POST.get('staff_id', '').strip() or None
+        user_obj.is_active = request.POST.get('is_active') == 'on'
         
         # Update roles
         role_ids = request.POST.getlist('roles')
@@ -737,12 +537,6 @@ def user_detail(request, user_id):
         grade_levels = request.POST.getlist('grade_levels')
         user_obj.grade_levels = grade_levels if grade_levels else []
 
-        # Update placement/export permissions (stored in preferences)
-        prefs = user_obj.preferences if isinstance(user_obj.preferences, dict) else {}
-        prefs['can_move_placement_cards'] = request.POST.get('can_move_placement_cards') == 'on'
-        prefs['can_export_classroom_csv'] = request.POST.get('can_export_classroom_csv') == 'on'
-        user_obj.preferences = prefs
-
         user_obj.save()
         
         messages.success(request, f'User {user_obj.email} updated successfully.')
@@ -750,10 +544,15 @@ def user_detail(request, user_id):
         # Check if this is a modal request
         is_modal = request.GET.get('modal') == '1'
         if is_modal:
-            # Let HTMX close the overlay and refresh the table in the parent page.
-            response = HttpResponse(status=204)
-            response['HX-Trigger'] = 'user-updated'
-            return response
+            # Return modal content with updated data
+            context = {
+                'user_obj': user_obj,
+                'roles': roles_qs,
+                'schools': schools_qs,
+                'available_grades': available_grades,
+                'is_modal': True,
+            }
+            return render(request, 'users/user_detail_modal.html', context)
         
         return redirect('users:user_detail', user_id=user_obj.id)
     
@@ -766,7 +565,6 @@ def user_detail(request, user_id):
         'schools': schools_qs,
         'available_grades': available_grades,
         'is_modal': is_modal,
-        'is_school_admin_only': is_school_admin_only,
     }
     
     if is_modal:
@@ -809,9 +607,7 @@ def switch_role(request):
                   else:
                        messages.error(request, "You do not have access to this school.")
     
-    # Redirect to home page instead of referer to prevent permission issues
-    return redirect('index')
-
+    return redirect(request.META.get('HTTP_REFERER', '/'))
 
 @login_required
 def bulk_update_users(request):

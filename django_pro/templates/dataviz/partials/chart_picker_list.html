@@ -1,0 +1,24 @@
+{# Rendered inside the chart picker panel - list of user's charts #}
+<div class="space-y-1.5">
+  {% for chart in charts %}
+  <div class="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-2 hover:bg-blue-50 hover:border-blue-200 transition group">
+    <div class="min-w-0 flex-1">
+      <p class="text-sm font-medium text-slate-700 truncate">{{ chart.name }}</p>
+      <p class="text-[10px] text-slate-400">{{ chart.chart_type }}</p>
+    </div>
+    <button type="button"
+            onclick="window._dbAddChart({{ chart.id }}, '{{ chart.name|escapejs }}')"
+            class="text-xs px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex-shrink-0 ml-2 opacity-0 group-hover:opacity-100">
+      + Add
+    </button>
+  </div>
+  {% empty %}
+  <div class="text-center py-10">
+    <svg class="w-8 h-8 text-slate-300 mx-auto mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+      <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/>
+    </svg>
+    <p class="text-sm text-slate-400">No charts found</p>
+    <a href="/dataviz/charts/new/" class="text-xs text-blue-600 hover:underline mt-1 inline-block">Create a chart first</a>
+  </div>
+  {% endfor %}
+</div>

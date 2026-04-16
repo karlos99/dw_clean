@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Import Details - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">Import Details</li>
+            </ol>
+        </nav>
+        <div class="flex justify-between items-start">
+            <div>
+                <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ import_log.name }}</h1>
+                <p class="mt-2 text-slate-600">{{ import_log.filename }}</p>
+            </div>
+            {% if import_log.status == 'COMPLETED' %}
+            <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-green-100 text-green-800">Completed</span>
+            {% elif import_log.status == 'FAILED' %}
+            <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-red-100 text-red-800">Failed</span>
+            {% elif import_log.status == 'PARTIAL' %}
+            <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-yellow-100 text-yellow-800">Partial</span>
+            {% else %}
+            <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-slate-100 text-slate-800">{{ import_log.get_status_display }}</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Total Rows</p>
+            <p class="text-2xl font-bold text-slate-900">{{ import_log.total_rows }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Processed</p>
+            <p class="text-2xl font-bold text-slate-900">{{ import_log.records_processed }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Students Matched</p>
+            <p class="text-2xl font-bold text-green-600">{{ import_log.students_matched }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border {% if import_log.students_unmatched > 0 %}border-yellow-300 bg-yellow-50{% else %}border-slate-200{% endif %} p-4">
+            <p class="text-sm text-slate-500">Unmatched Students</p>
+            {% if import_log.students_unmatched > 0 %}
+            <a href="#unmatched-detail" class="text-2xl font-bold text-yellow-600 hover:underline">{{ import_log.students_unmatched }}</a>
+            <p class="text-xs text-yellow-700 mt-1">↓ See details below</p>
+            {% else %}
+            <p class="text-2xl font-bold text-slate-900">0</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- More Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Records Created</p>
+            <p class="text-2xl font-bold text-blue-600">{{ import_log.records_created }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Records Updated</p>
+            <p class="text-2xl font-bold text-slate-900">{{ import_log.records_updated }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Questions Detected</p>
+            <p class="text-2xl font-bold text-slate-900">{{ import_log.questions_detected }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Errors</p>
+            <p class="text-2xl font-bold {% if import_log.error_count > 0 %}text-red-600{% else %}text-slate-900{% endif %}">{{ import_log.error_count }}</p>
+        </div>
+    </div>
+
+    <!-- Import Details -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Import Information</h2>
+        </div>
+        <div class="p-6">
+            <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <dt class="text-sm font-medium text-slate-500">School Year</dt>
+                    <dd class="mt-1 text-sm text-slate-900">{{ import_log.school_year }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-slate-500">Testing Window</dt>
+                    <dd class="mt-1 text-sm text-slate-900">{{ import_log.get_testing_window_display }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-slate-500">Uploaded By</dt>
+                    <dd class="mt-1 text-sm text-slate-900">{{ import_log.uploaded_by.name|default:import_log.uploaded_by.email }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-slate-500">Uploaded At</dt>
+                    <dd class="mt-1 text-sm text-slate-900">{{ import_log.uploaded_at|date:"M d, Y H:i" }}</dd>
+                </div>
+                {% if import_log.completed_at %}
+                <div>
+                    <dt class="text-sm font-medium text-slate-500">Completed At</dt>
+                    <dd class="mt-1 text-sm text-slate-900">{{ import_log.completed_at|date:"M d, Y H:i" }}</dd>
+                </div>
+                {% endif %}
+                {% if import_log.survey_definition %}
+                <div>
+                    <dt class="text-sm font-medium text-slate-500">Survey Definition</dt>
+                    <dd class="mt-1 text-sm">
+                        <a href="{% url 'dataLoader:survey_detail' import_log.survey_definition.pk %}" class="text-blue-600 hover:text-blue-800">
+                            {{ import_log.survey_definition.name }}
+                        </a>
+                    </dd>
+                </div>
+                {% endif %}
+            </dl>
+        </div>
+    </div>
+
+    <!-- Questions -->
+    {% if questions %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Questions ({{ questions|length }})</h2>
+        </div>
+        <div class="max-h-64 overflow-y-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50 sticky top-0">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">#</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Question</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Scale</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for question in questions %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">{{ question.order|add:1 }}</td>
+                        <td class="px-6 py-3 text-sm text-slate-900">{{ question.question_text|truncatechars:80 }}</td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">1-{{ question.response_scale_max }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Unmatched Students Detail -->
+    {% if import_log.warnings %}
+    <div id="unmatched-detail" class="bg-white rounded-xl shadow-sm border border-yellow-200 mb-6">
+        <div class="px-6 py-4 border-b border-yellow-200 bg-yellow-50 flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-semibold text-yellow-900">Unmatched Students ({{ import_log.students_unmatched }})</h2>
+                <p class="text-sm text-yellow-700 mt-0.5">
+                    These students from the CSV could not be matched to any record in the database.
+                    Their survey responses were <strong>not imported</strong>.
+                    Verify that the Student IDs in the CSV match the IDs in the student database for the
+                    <strong>{{ import_log.school_year }}</strong> school year.
+                </p>
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-yellow-100">
+                <thead class="bg-yellow-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-yellow-800 uppercase tracking-wider">Row</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-yellow-800 uppercase tracking-wider">Student ID (CSV)</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-yellow-800 uppercase tracking-wider">Name</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-yellow-800 uppercase tracking-wider">Grade</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-yellow-800 uppercase tracking-wider">School</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-yellow-800 uppercase tracking-wider">Reason</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-yellow-50">
+                    {% for entry in import_log.warnings %}
+                    <tr class="hover:bg-yellow-50">
+                        <td class="px-4 py-2 whitespace-nowrap text-sm text-slate-500">{{ entry.row }}</td>
+                        <td class="px-4 py-2 whitespace-nowrap text-sm font-mono text-slate-900">{{ entry.student_id }}</td>
+                        <td class="px-4 py-2 whitespace-nowrap text-sm text-slate-900">{{ entry.first_name }} {{ entry.last_name }}</td>
+                        <td class="px-4 py-2 whitespace-nowrap text-sm text-slate-500">{{ entry.grade|default:"—" }}</td>
+                        <td class="px-4 py-2 text-sm text-slate-500">{{ entry.school|default:"—" }}</td>
+                        <td class="px-4 py-2 text-sm text-red-600">{{ entry.reason }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if import_log.students_unmatched > import_log.warnings|length %}
+        <div class="px-6 py-3 border-t border-yellow-100 bg-yellow-50">
+            <p class="text-xs text-yellow-700">Showing first {{ import_log.warnings|length }} of {{ import_log.students_unmatched }} unmatched students.</p>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Errors -->
+    {% if import_log.error_log %}
+    <div class="bg-white rounded-xl shadow-sm border border-red-200 mb-6">
+        <div class="px-6 py-4 border-b border-red-200 bg-red-50 flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-semibold text-red-900">Processing Errors ({{ import_log.error_count }})</h2>
+                <p class="text-sm text-red-700 mt-0.5">These rows caused unexpected errors during processing and were skipped.</p>
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-red-50">
+                <thead class="bg-red-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-red-800 uppercase tracking-wider">Row</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-red-800 uppercase tracking-wider">Student ID</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-red-800 uppercase tracking-wider">Error</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-red-50">
+                    {% for error in import_log.error_log %}
+                    <tr class="hover:bg-red-50">
+                        <td class="px-4 py-2 whitespace-nowrap text-sm text-slate-500">{{ error.row }}</td>
+                        <td class="px-4 py-2 whitespace-nowrap text-sm font-mono text-slate-900">{{ error.student_id|default:"—" }}</td>
+                        <td class="px-4 py-2 text-sm text-red-700">{{ error.error }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if import_log.error_count > import_log.error_log|length %}
+        <div class="px-6 py-3 border-t border-red-100 bg-red-50">
+            <p class="text-xs text-red-700">Showing first {{ import_log.error_log|length }} of {{ import_log.error_count }} errors.</p>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Sample Responses -->
+    {% if sample_responses %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Sample Responses</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Student ID</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Question</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Value</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Label</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for response in sample_responses %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-900">{{ response.student_id }}</td>
+                        <td class="px-6 py-3 text-sm text-slate-500">{{ response.question.question_text|truncatechars:50 }}</td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-900">{{ response.value|default:"-" }}</td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">{{ response.text_label|default:"-" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Actions -->
+    <div class="flex justify-between items-center">
+        <a href="{% url 'dataLoader:dashboard' %}" 
+           class="px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition duration-200">
+            ← Back to Dashboard
+        </a>
+        <div class="flex gap-3">
+            <a href="{% url 'dataLoader:delete_import' import_log.pk %}" 
+               class="px-4 py-2 border border-red-300 text-red-600 rounded-md hover:bg-red-50 transition duration-200">
+                Delete Import
+            </a>
+            <a href="{% url 'dataLoader:upload' %}" 
+               class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200">
+                Upload Another File
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

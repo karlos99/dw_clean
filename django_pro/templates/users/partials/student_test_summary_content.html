@@ -6,6 +6,8 @@
             <p class="mt-1 text-sm text-slate-600">{{ student_info.full_name }} (SSID: {{ ssid }})</p>
             {% endif %}
         </div>
+        <button type="button" data-action="close-student-summary"
+            class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Close</button>
     </div>
 
     {% if student_info %}

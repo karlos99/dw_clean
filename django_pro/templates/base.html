@@ -43,7 +43,8 @@
     {% block extra_head %}{% endblock %}
 </head>
 
-<body class="min-h-screen bg-slate-50 text-slate-900 antialiased font-sans flex flex-col">
+<body class="min-h-screen bg-slate-50 text-slate-900 antialiased font-sans flex flex-col"
+      hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
 
     {% if user.is_impersonated %}
     <div class="bg-red-600 text-white px-4 py-3 text-center text-sm font-medium shadow-md">
@@ -139,6 +140,7 @@
                                     <a href="{% url 'users:manage_users' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Users</a>
                                     {% if user.is_superuser or user.active_role and user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
                                     <a href="{% url 'users:manage_pages' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Pages</a>
+                                    <a href="{% url 'dataLoader:dashboard' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Data Loader</a>
                                     {% endif %}
                                     {% if usage_page_access %}
                                     <a href="{{ usage_page_url }}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Usage</a>

@@ -4,258 +4,58 @@
 
 {% block content %}
 <div class="max-w-7xl mx-auto px-6 py-8">
-    <div class="mb-6">
-        <h1 class="text-2xl font-semibold text-slate-900">Usage</h1>
-        <p class="text-sm text-slate-600 mt-1">Monitor user activity and time spent by section.</p>
-    </div>
-
-    <!-- Statistics Dashboard -->
-    <div class="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <!-- Unique Users Today -->
-        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Unique Users Today</h2>
-            <details class="mt-2">
-                <summary class="text-3xl font-bold text-slate-900 cursor-pointer hover:text-blue-700">{{ unique_users_today }}</summary>
-                <div class="mt-2 max-h-48 overflow-y-auto text-xs text-slate-600 space-y-1">
-                    {% for email in users_today_list %}
-                        <div class="py-0.5">{{ email }}</div>
-                    {% empty %}
-                        <div class="text-slate-400">No users</div>
-                    {% endfor %}
-                </div>
-            </details>
+    <div class="flex items-start justify-between flex-wrap gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold text-slate-900">Usage</h1>
+            <p class="text-sm text-slate-600 mt-1">Monitor user activity and time spent by section.</p>
         </div>
-        
-        <!-- Unique Users Last 7 Days -->
-        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Unique Users (Last 7 Days)</h2>
-            <details class="mt-2">
-                <summary class="text-3xl font-bold text-slate-900 cursor-pointer hover:text-blue-700">{{ unique_users_last_7_days }}</summary>
-                <div class="mt-2 max-h-48 overflow-y-auto text-xs text-slate-600 space-y-1">
-                    {% for email in users_last_7_days_list %}
-                        <div class="py-0.5">{{ email }}</div>
-                    {% empty %}
-                        <div class="text-slate-400">No users</div>
-                    {% endfor %}
-                </div>
-            </details>
-        </div>
-        
-        <!-- Unique Users School Year -->
-        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">School Year {{ school_year_label }}</h2>
-            <details class="mt-2">
-                <summary class="text-3xl font-bold text-slate-900 cursor-pointer hover:text-blue-700">{{ unique_users_school_year }}</summary>
-                <div class="mt-2 max-h-48 overflow-y-auto text-xs text-slate-600 space-y-1">
-                    {% for email in users_school_year_list %}
-                        <div class="py-0.5">{{ email }}</div>
-                    {% empty %}
-                        <div class="text-slate-400">No users</div>
-                    {% endfor %}
-                </div>
-            </details>
-            <div class="text-xs text-slate-500 mt-1">unique users</div>
-        </div>
-        
-        <!-- Top Role -->
-        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Most Active Role</h2>
-            {% if top_role %}
-            <div class="mt-2 text-xl font-bold text-slate-900">{{ top_role.name }}</div>
-            <div class="text-xs text-slate-500 mt-1">{{ top_role.session_count }} sessions</div>
-            {% else %}
-            <div class="mt-2 text-sm text-slate-500">No data</div>
-            {% endif %}
-        </div>
-    </div>
-
-    <!-- Average Session Time -->
-    <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Session Time (Today)</h2>
-            <div class="mt-2 text-2xl font-bold text-slate-900">{{ avg_time_today_minutes }} min</div>
-        </div>
-        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Session Time (Last 7 Days)</h2>
-            <div class="mt-2 text-2xl font-bold text-slate-900">{{ avg_time_last_7_days_minutes }} min</div>
-        </div>
-        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500">Avg Session Time (School Year)</h2>
-            <div class="mt-2 text-2xl font-bold text-slate-900">{{ avg_time_school_year_minutes }} min</div>
-        </div>
-    </div>
-
-    <!-- User Login Activity Table -->
-    {% if user_login_activity %}
-    <div class="mt-6 bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
-        <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
-            <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">User Login Activity</h2>
-        </div>
-        <div class="overflow-x-auto" style="max-height: 600px; overflow-y: auto;">
-            <table id="login-activity-table" class="min-w-full text-sm">
-                <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider sticky top-0">
-                    <tr>
-                        <th class="px-4 py-2 text-left cursor-pointer hover:bg-slate-200 bg-slate-100" data-sort="string" onclick="sortTable(0, 'string')">
-                            User <span class="sort-indicator ml-1">↕</span>
-                        </th>
-                        <th class="px-4 py-2 text-left cursor-pointer hover:bg-slate-200 bg-slate-100" data-sort="date" onclick="sortTable(1, 'date')">
-                            Last Login <span class="sort-indicator ml-1">↕</span>
-                        </th>
-                        <th class="px-4 py-2 text-center cursor-pointer hover:bg-slate-200 bg-slate-100" data-sort="number" onclick="sortTable(2, 'number')">
-                            Last 7 Days <span class="sort-indicator ml-1">↕</span>
-                        </th>
-                        <th class="px-4 py-2 text-center cursor-pointer hover:bg-slate-200 bg-slate-100" data-sort="number" onclick="sortTable(3, 'number')">
-                            7-30 Days <span class="sort-indicator ml-1">↕</span>
-                        </th>
-                        <th class="px-4 py-2 text-center cursor-pointer hover:bg-slate-200 bg-slate-100" data-sort="number" onclick="sortTable(4, 'number')">
-                            30-90 Days <span class="sort-indicator ml-1">↕</span>
-                        </th>
-                        <th class="px-4 py-2 text-center cursor-pointer hover:bg-slate-200 bg-slate-100" data-sort="number" onclick="sortTable(5, 'number')">
-                            90-180 Days <span class="sort-indicator ml-1">↕</span>
-                        </th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                    {% for activity in user_login_activity %}
-                    <tr class="bg-white hover:bg-slate-50">
-                        <td class="px-4 py-2 text-slate-700 font-medium">{{ activity.email }}</td>
-                        <td class="px-4 py-2 text-slate-700" data-sort-value="{{ activity.last_login_sort }}">{{ activity.last_login }}</td>
-                        <td class="px-4 py-2 text-center text-slate-700">{{ activity.count_7_days }}</td>
-                        <td class="px-4 py-2 text-center text-slate-700">{{ activity.count_7_to_30 }}</td>
-                        <td class="px-4 py-2 text-center text-slate-700">{{ activity.count_30_to_90 }}</td>
-                        <td class="px-4 py-2 text-center text-slate-700">{{ activity.count_90_to_180 }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    
-    <script>
-    (function() {
-        let sortDirections = {};
-        
-        window.sortTable = function(columnIndex, sortType) {
-            const table = document.getElementById('login-activity-table');
-            const tbody = table.querySelector('tbody');
-            const rows = Array.from(tbody.querySelectorAll('tr'));
-            const headers = table.querySelectorAll('thead th');
-            
-            // Toggle sort direction
-            sortDirections[columnIndex] = !sortDirections[columnIndex];
-            const ascending = sortDirections[columnIndex];
-            
-            // Update sort indicators
-            headers.forEach((th, i) => {
-                const indicator = th.querySelector('.sort-indicator');
-                if (indicator) {
-                    if (i === columnIndex) {
-                        indicator.textContent = ascending ? '↑' : '↓';
-                    } else {
-                        indicator.textContent = '↕';
-                    }
-                }
-            });
-            
-            rows.sort((a, b) => {
-                let aVal = a.cells[columnIndex].getAttribute('data-sort-value') || a.cells[columnIndex].textContent.trim();
-                let bVal = b.cells[columnIndex].getAttribute('data-sort-value') || b.cells[columnIndex].textContent.trim();
-                
-                if (sortType === 'number') {
-                    aVal = parseInt(aVal) || 0;
-                    bVal = parseInt(bVal) || 0;
-                    return ascending ? aVal - bVal : bVal - aVal;
-                } else if (sortType === 'date') {
-                    aVal = aVal || '';
-                    bVal = bVal || '';
-                    return ascending ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-                } else {
-                    return ascending ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-                }
-            });
-            
-            rows.forEach(row => tbody.appendChild(row));
-        };
-    })();
-    </script>
-    {% endif %}
-
-    <!-- Top Pages Table -->
-    {% if top_pages %}
-    <div class="mt-6 bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
-        <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
-            <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Top Pages</h2>
-        </div>
-        <table class="min-w-full text-sm">
-            <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider">
-                <tr>
-                    <th class="px-4 py-2 text-left">Page</th>
-                    <th class="px-4 py-2 text-left">Visits</th>
-                    <th class="px-4 py-2 text-left">Unique Users</th>
-                    <th class="px-4 py-2 text-left">Total Time</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-                {% for page in top_pages %}
-                <tr class="bg-white">
-                    <td class="px-4 py-2 text-slate-700 font-medium">{{ page.path }}</td>
-                    <td class="px-4 py-2 text-slate-700">{{ page.visits }}</td>
-                    <td class="px-4 py-2 text-slate-700">{{ page.unique_users }}</td>
-                    <td class="px-4 py-2 text-slate-700">{{ page.total_minutes }} min</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    <!-- Filter Section -->
-    <div class="mt-6">
-        <form method="get" class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                <div>
-                    <label for="user" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">User</label>
-                    <select id="user" name="user" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
-                        <option value="">All users</option>
-                        {% for u in users %}
-                            <option value="{{ u.id }}" {% if selected_user|default:'' == u.id|stringformat:'s' %}selected{% endif %}>{{ u.email }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div>
-                    <label for="group_by" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Group results by</label>
-                    <select id="group_by" name="group_by" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
-                        <option value="" {% if not group_by %}selected{% endif %}>None</option>
-                        <option value="role" {% if group_by == 'role' %}selected{% endif %}>Role</option>
-                        <option value="title" {% if group_by == 'title' %}selected{% endif %}>Title</option>
-                    </select>
-                </div>
-                <div>
-                    <label for="quick" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Quick range</label>
-                    <select id="quick" name="quick" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
-                        <option value="" {% if not quick_filter %}selected{% endif %}>All time</option>
-                        <option value="week" {% if quick_filter == 'week' %}selected{% endif %}>This week</option>
-                        <option value="year" {% if quick_filter == 'year' %}selected{% endif %}>This year</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Custom range</label>
-                    <div class="grid grid-cols-2 gap-2">
-                        <input id="start_date" name="start_date" type="date" value="{{ start_date }}" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white" />
-                        <input id="end_date" name="end_date" type="date" value="{{ end_date }}" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white" />
+        <div class="w-full lg:w-auto">
+            <form method="get" class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div>
+                        <label for="user" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">User</label>
+                        <select id="user" name="user" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
+                            <option value="">All users</option>
+                            {% for u in users %}
+                                <option value="{{ u.id }}" {% if selected_user|default:'' == u.id|stringformat:'s' %}selected{% endif %}>{{ u.email }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="group_by" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Group results by</label>
+                        <select id="group_by" name="group_by" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
+                            <option value="" {% if not group_by %}selected{% endif %}>None</option>
+                            <option value="role" {% if group_by == 'role' %}selected{% endif %}>Role</option>
+                            <option value="title" {% if group_by == 'title' %}selected{% endif %}>Title</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="quick" class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Quick range</label>
+                        <select id="quick" name="quick" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white">
+                            <option value="" {% if not quick_filter %}selected{% endif %}>All time</option>
+                            <option value="week" {% if quick_filter == 'week' %}selected{% endif %}>This week</option>
+                            <option value="year" {% if quick_filter == 'year' %}selected{% endif %}>This year</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Custom range</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input id="start_date" name="start_date" type="date" value="{{ start_date }}" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white" />
+                            <input id="end_date" name="end_date" type="date" value="{{ end_date }}" class="w-full px-3 py-2 text-sm border border-slate-300 rounded bg-white" />
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="mt-4 flex items-center justify-end gap-2">
-                <a href="{% url 'users:usage_report' %}" class="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-100 border border-slate-200 rounded hover:bg-slate-200">Reset</a>
-                <button type="submit" class="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100">Apply filters</button>
-            </div>
-        </form>
+                <div class="mt-4 flex items-center justify-end gap-2">
+                    <a href="{% url 'users:usage_report' %}" class="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-100 border border-slate-200 rounded hover:bg-slate-200">Reset</a>
+                    <button type="submit" class="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100">Apply filters</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     {% if top_page %}
     <div class="mt-6 bg-white border border-slate-200 rounded-lg shadow-sm p-4">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Most Visited Page (Filtered Results)</h2>
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Most visited page (excluding /)</h2>
         <div class="mt-2 text-sm text-slate-700">
             <div><span class="font-semibold">Page:</span> {{ top_page.path }}</div>
             <div><span class="font-semibold">Users:</span> {{ top_page.user_count }}</div>
