@@ -160,7 +160,7 @@
                  class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-2 focus:ring-1 focus:ring-blue-200 bg-slate-50">
 
           {# ── Static categories (Student Info, Demographics, etc.) ── #}
-          <template x-for="(cat, catKey) in (explorerStructure.categories || {})" :key="'cat_'+catKey">
+          <template x-for="(cat, catKey) in (explorerStructure?.categories || {})" :key="'cat_'+catKey">
             <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
               <button type="button" @click="explorerOpenNode = explorerOpenNode === catKey ? '' : catKey"
                       class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
@@ -181,7 +181,7 @@
                            :checked="explorerSelected.includes(col)"
                            @change="toggleExplorerCol(col)"
                            class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
-                    <span class="truncate" x-text="explorerStructure.definitions[col] || col"></span>
+                    <span class="truncate" x-text="explorerStructure?.definitions?.[col] || col"></span>
                   </label>
                 </template>
               </div>
@@ -189,7 +189,7 @@
           </template>
 
           {# ── Test columns tree ── #}
-          <template x-for="(yearObj, year) in (explorerStructure.test_structure || {})" :key="'ty_'+year">
+          <template x-for="(yearObj, year) in (explorerStructure?.test_structure || {})" :key="'ty_'+year">
             <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
               <button type="button" @click="explorerOpenNode = explorerOpenNode === 'test_'+year ? '' : 'test_'+year"
                       class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
@@ -237,7 +237,7 @@
           </template>
 
           {# ── Mark columns tree ── #}
-          <template x-for="(yearObj, year) in (explorerStructure.mark_structure || {})" :key="'my_'+year">
+          <template x-for="(yearObj, year) in (explorerStructure?.mark_structure || {})" :key="'my_'+year">
             <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
               <button type="button" @click="explorerOpenNode = explorerOpenNode === 'mark_'+year ? '' : 'mark_'+year"
                       class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
@@ -1283,7 +1283,7 @@ function chartBuilder() {
     filterSearch:   {},               // per-column search text
 
     /* ─── Explorer (Column Picker) state ─────────────────── */
-    explorerStructure: null,          // { categories, definitions, test_structure, mark_structure }
+    explorerStructure: { categories: {}, definitions: {}, test_structure: {}, mark_structure: {} },
     explorerSelected:  existing?.source_type === 'columns' ? (existing?.config?.selected_columns ?? []) : [],
     explorerCols:      [],            // flat column list used as activeCols for columns source
     explorerLoading:   false,
@@ -1372,7 +1372,7 @@ function chartBuilder() {
       this.sourceType = type;
       this.columns = []; this.rawSqlColumns = []; this.explorerCols = []; this.colSearch = '';
       this.filterOptions = {}; this.filterLabels = {}; this.chartFilters = {}; this.openFilter = '';
-      if (type === 'columns' && !this.explorerStructure) this.loadExplorerStructure();
+      if (type === 'columns' && !Object.keys(this.explorerStructure?.definitions || {}).length) this.loadExplorerStructure();
     },
 
     /* ─── Filter helpers ─────────────────────────────────── */
@@ -1528,8 +1528,17 @@ function chartBuilder() {
       try {
         const r = await fetch('/dataviz/api/columns/structures/',
                               { headers: { 'X-CSRFToken': csrfToken } });
-        this.explorerStructure = await r.json();
-      } catch (e) { console.error('Explorer structure:', e); this.explorerStructure = null; }
+        const data = await r.json();
+        this.explorerStructure = {
+          categories: data?.categories || {},
+          definitions: data?.definitions || {},
+          test_structure: data?.test_structure || {},
+          mark_structure: data?.mark_structure || {},
+        };
+      } catch (e) {
+        console.error('Explorer structure:', e);
+        this.explorerStructure = { categories: {}, definitions: {}, test_structure: {}, mark_structure: {} };
+      }
       this.explorerLoading = false;
       // If editing an existing columns-source chart, rebuild explorerCols
       if (this.explorerSelected.length > 0) this._syncExplorerCols();
