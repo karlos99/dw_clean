@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Import Progress - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">Import Progress</li>
+            </ol>
+        </nav>
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ import_log.name }}</h1>
+        <p class="mt-2 text-slate-600">{{ import_log.filename }}</p>
+    </div>
+
+    <!-- Status Badge -->
+    <div class="flex items-center gap-3 mb-6">
+        <span id="status-badge" class="inline-flex px-3 py-1 text-sm font-semibold rounded-full 
+            {% if import_log.status == 'COMPLETED' %}bg-green-100 text-green-800
+            {% elif import_log.status == 'FAILED' %}bg-red-100 text-red-800
+            {% elif import_log.status == 'PROCESSING' %}bg-blue-100 text-blue-800
+            {% else %}bg-slate-100 text-slate-800{% endif %}">
+            <span id="status-text">{{ import_log.get_status_display }}</span>
+        </span>
+        <span id="loading-spinner" class="{% if import_log.status == 'COMPLETED' or import_log.status == 'FAILED' %}hidden{% endif %}">
+            <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </span>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-6">
+        <div class="flex justify-between mb-2">
+            <span class="text-sm font-medium text-slate-700">Processing Records</span>
+            <span id="progress-text" class="text-sm font-medium text-slate-700">
+                <span id="processed-count">{{ import_log.records_processed }}</span> / <span id="total-count">{{ import_log.total_rows }}</span>
+            </span>
+        </div>
+        <div class="w-full bg-slate-200 rounded-full h-4 overflow-hidden">
+            <div id="progress-bar" 
+                 class="bg-blue-600 h-4 rounded-full transition-all duration-300 ease-out"
+                 style="width: {% if import_log.total_rows > 0 %}{{ import_log.records_processed|floatformat:0 }}%{% else %}0%{% endif %}">
+            </div>
+        </div>
+        <div class="mt-2 flex justify-between text-xs text-slate-500">
+            <span id="percent-text">
+                {% if import_log.total_rows > 0 %}
+                    {% widthratio import_log.records_processed import_log.total_rows 100 %}%
+                {% else %}
+                    0%
+                {% endif %}
+            </span>
+            <span id="eta-text"></span>
+        </div>
+    </div>
+
+    <!-- Statistics Grid -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Records Created</p>
+            <p id="created-count" class="text-2xl font-bold text-blue-600">{{ import_log.records_created }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Students Matched</p>
+            <p id="matched-count" class="text-2xl font-bold text-green-600">{{ import_log.students_matched }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Unmatched</p>
+            <p id="unmatched-count" class="text-2xl font-bold {% if import_log.students_unmatched > 0 %}text-yellow-600{% else %}text-slate-900{% endif %}">{{ import_log.students_unmatched }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Errors</p>
+            <p id="error-count" class="text-2xl font-bold {% if import_log.error_count > 0 %}text-red-600{% else %}text-slate-900{% endif %}">{{ import_log.error_count }}</p>
+        </div>
+    </div>
+
+    <!-- Questions Detected -->
+    <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4 mb-6">
+        <p class="text-sm text-slate-500">Questions Detected</p>
+        <p id="questions-count" class="text-2xl font-bold text-slate-900">{{ import_log.questions_detected }}</p>
+    </div>
+
+    <!-- Action Buttons (shown when complete) -->
+    <div id="complete-actions" class="{% if import_log.status == 'PROCESSING' or import_log.status == 'PENDING' %}hidden{% endif %} flex gap-4">
+        <a href="{% url 'dataLoader:import_detail' import_log.pk %}" 
+           class="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200 font-medium">
+            View Import Details
+        </a>
+        <a href="{% url 'dataLoader:dashboard' %}" 
+           class="px-6 py-3 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition duration-200">
+            Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<script>
+(function() {
+    const importId = {{ import_log.pk }};
+    const statusUrl = '{% url "dataLoader:import_status" import_log.pk %}';
+    let pollInterval = null;
+    let startTime = Date.now();
+    let lastProcessed = {{ import_log.records_processed }};
+    
+    function updateProgress(data) {
+        // Update counts
+        document.getElementById('processed-count').textContent = data.records_processed.toLocaleString();
+        document.getElementById('total-count').textContent = data.total_rows.toLocaleString();
+        document.getElementById('created-count').textContent = data.records_created.toLocaleString();
+        document.getElementById('matched-count').textContent = data.students_matched.toLocaleString();
+        document.getElementById('unmatched-count').textContent = data.students_unmatched.toLocaleString();
+        document.getElementById('error-count').textContent = data.error_count.toLocaleString();
+        document.getElementById('questions-count').textContent = data.questions_detected.toLocaleString();
+        
+        // Update progress bar
+        const progressBar = document.getElementById('progress-bar');
+        const percentText = document.getElementById('percent-text');
+        const progress = data.total_rows > 0 ? Math.round((data.records_processed / data.total_rows) * 100) : 0;
+        progressBar.style.width = progress + '%';
+        percentText.textContent = progress + '%';
+        
+        // Calculate ETA
+        if (data.records_processed > lastProcessed && data.total_rows > 0) {
+            const elapsed = (Date.now() - startTime) / 1000;
+            const rate = data.records_processed / elapsed;
+            const remaining = data.total_rows - data.records_processed;
+            const etaSeconds = Math.round(remaining / rate);
+            
+            if (etaSeconds > 0 && etaSeconds < 3600) {
+                const minutes = Math.floor(etaSeconds / 60);
+                const seconds = etaSeconds % 60;
+                document.getElementById('eta-text').textContent = 
+                    `Est. ${minutes > 0 ? minutes + 'm ' : ''}${seconds}s remaining`;
+            }
+        }
+        
+        // Update status badge
+        const statusBadge = document.getElementById('status-badge');
+        const statusText = document.getElementById('status-text');
+        statusText.textContent = data.status_display;
+        
+        // Update styling based on status
+        statusBadge.className = 'inline-flex px-3 py-1 text-sm font-semibold rounded-full ';
+        if (data.status === 'COMPLETED') {
+            statusBadge.className += 'bg-green-100 text-green-800';
+        } else if (data.status === 'FAILED') {
+            statusBadge.className += 'bg-red-100 text-red-800';
+        } else if (data.status === 'PARTIAL') {
+            statusBadge.className += 'bg-yellow-100 text-yellow-800';
+        } else if (data.status === 'PROCESSING') {
+            statusBadge.className += 'bg-blue-100 text-blue-800';
+        } else {
+            statusBadge.className += 'bg-slate-100 text-slate-800';
+        }
+        
+        // Update color classes for counts based on values
+        const unmatchedEl = document.getElementById('unmatched-count');
+        unmatchedEl.className = 'text-2xl font-bold ' + (data.students_unmatched > 0 ? 'text-yellow-600' : 'text-slate-900');
+        
+        const errorEl = document.getElementById('error-count');
+        errorEl.className = 'text-2xl font-bold ' + (data.error_count > 0 ? 'text-red-600' : 'text-slate-900');
+        
+        // Update progress bar color on complete
+        if (data.is_complete) {
+            if (data.status === 'COMPLETED') {
+                progressBar.className = progressBar.className.replace('bg-blue-600', 'bg-green-600');
+            } else if (data.status === 'FAILED') {
+                progressBar.className = progressBar.className.replace('bg-blue-600', 'bg-red-600');
+            } else if (data.status === 'PARTIAL') {
+                progressBar.className = progressBar.className.replace('bg-blue-600', 'bg-yellow-600');
+            }
+            
+            // Hide spinner, show actions
+            document.getElementById('loading-spinner').classList.add('hidden');
+            document.getElementById('complete-actions').classList.remove('hidden');
+            document.getElementById('eta-text').textContent = '';
+            
+            // Stop polling
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+        
+        lastProcessed = data.records_processed;
+    }
+    
+    function pollStatus() {
+        fetch(statusUrl)
+            .then(response => response.json())
+            .then(data => {
+                updateProgress(data);
+            })
+            .catch(error => {
+                console.error('Error polling status:', error);
+            });
+    }
+    
+    // Start polling if not complete
+    {% if import_log.status == 'PROCESSING' or import_log.status == 'PENDING' %}
+    pollInterval = setInterval(pollStatus, 500);  // Poll every 500ms
+    {% endif %}
+})();
+</script>
+{% endblock %}

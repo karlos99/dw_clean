@@ -1,0 +1,1714 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Chart Builder – DataViz{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+<style>
+  [x-cloak] { display: none !important; }
+
+  /* Drag & Drop */
+  .col-chip { cursor: grab; user-select: none; transition: all 120ms; -webkit-user-drag: element; }
+  .col-chip:active { cursor: grabbing; }
+  .col-chip.dragging { opacity: .35; transform: scale(.95); }
+  .col-chip.assigned { opacity: .35; border-style: dashed; }
+  .drop-well { min-height: 42px; transition: all 150ms; position: relative; }
+  .drop-well.accept { background: #dbeafe !important; border-color: #3b82f6 !important; box-shadow: inset 0 0 0 1px #3b82f6; }
+
+  /* Chart type grid */
+  .ct-btn { transition: all 100ms; }
+  .ct-btn.active { background: #f8fafc; border-color: #0f172a; box-shadow: 0 0 0 2px #cbd5e1; }
+  .ct-btn:hover:not(.active) { background: #f8fafc; border-color: #94a3b8; }
+
+  /* Steps bar */
+  .step-dot { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+  .step-dot.done { background: #22c55e; color: #fff; }
+  .step-dot.current { background: #0f172a; color: #fff; }
+  .step-dot.pending { background: #e2e8f0; color: #94a3b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="chartBuilder()" x-cloak class="h-[calc(100vh-5rem)] flex flex-col bg-slate-50">
+
+  {# ── Top bar ─────────────────────────────────────────────── #}
+  <header class="flex items-center justify-between bg-white border-b border-slate-200 px-5 py-2 flex-shrink-0 shadow-sm">
+    <div class="flex items-center gap-3">
+      <a href="{% url 'dataviz:index' %}" class="text-slate-400 hover:text-slate-900 transition" title="Back to charts">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M15 19l-7-7 7-7"/></svg>
+      </a>
+      <input type="text" x-model="name" placeholder="Untitled Chart"
+             class="text-sm font-semibold text-slate-800 bg-transparent border-0 border-b border-transparent
+                    hover:border-slate-300 focus:border-slate-500 focus:ring-0 px-1 py-0.5 w-64 transition uppercase tracking-wide"
+             :class="!name && 'text-slate-400 italic'">
+    </div>
+    {# Step indicators #}
+    <div class="hidden md:flex items-center gap-1.5 text-[10px]">
+      <template x-for="(s, i) in steps" :key="i">
+        <div class="flex items-center gap-1">
+          <span class="step-dot" :class="s.done ? 'done' : (s.current ? 'current' : 'pending')"
+                x-text="s.done ? '✓' : (i+1)"></span>
+          <span class="text-slate-500 font-medium" x-text="s.label"></span>
+          <span x-show="i < steps.length - 1" class="text-slate-300 mx-1">→</span>
+        </div>
+      </template>
+    </div>
+    <div class="flex items-center gap-2">
+      <span x-show="statusMsg" x-text="statusMsg" x-transition
+            class="text-xs px-2.5 py-1 rounded-md"
+            :class="statusError ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'"></span>
+      <button @click="doPreview()" :disabled="previewLoading || !canPreview"
+              class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span x-text="previewLoading ? 'Loading…' : 'Preview'"></span>
+      </button>
+      <button @click="doSave()" :disabled="saving"
+              class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white bg-slate-900 border border-slate-800 rounded shadow-sm hover:bg-slate-800 transition-all disabled:opacity-40">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M5 13l4 4L19 7"/></svg>
+        <span x-text="saving ? 'Saving…' : 'Save Chart'"></span>
+      </button>
+    </div>
+  </header>
+
+  {# ── Main workspace ────────────────────────────────────────── #}
+  <div class="flex flex-1 overflow-hidden">
+
+    {# ══════════ LEFT: Data Source + Columns ══════════ #}
+    <div x-data="{ colsOpen: true }" class="flex flex-row flex-shrink-0 relative">
+      {# ── Collapse toggle tab ── #}
+      <button type="button" @click="colsOpen = !colsOpen"
+              class="absolute -right-3 top-6 z-10 w-6 h-12 bg-white border border-slate-200
+                     rounded-r-lg shadow-sm flex items-center justify-center
+                     text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition"
+              :title="colsOpen ? 'Hide columns panel' : 'Show columns panel'">
+        <svg class="w-3 h-3 transition-transform" :class="colsOpen ? '' : 'rotate-180'"
+             fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" d="M15 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <aside class="border-r border-slate-200 bg-white flex flex-col flex-shrink-0 overflow-hidden transition-all duration-200"
+             :class="colsOpen ? 'w-72' : 'w-0'"
+             :style="colsOpen ? '' : 'border:none'"
+             x-show="colsOpen || true"
+             style="overflow:hidden">
+      {# ── Data Source (collapsible) ── #}
+      <div x-data="{ srcOpen: true }" class="border-b border-slate-100 flex-shrink-0">
+        <button type="button" @click="srcOpen = !srcOpen"
+                class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Data Source</p>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span x-show="!srcOpen" class="text-[9px] font-semibold text-blue-600 uppercase tracking-wide" x-text="sourceType === 'query' ? 'Saved Query' : sourceType === 'sql' ? 'SQL' : 'Explorer'"></span>
+            <svg class="w-3 h-3 text-slate-400 transition-transform" :class="srcOpen && 'rotate-180'"
+                 fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+        </button>
+        <div x-show="srcOpen" x-collapse>
+          <div class="px-4 pb-3 border-t border-slate-100">
+            <div class="flex rounded overflow-hidden border border-slate-200 bg-slate-50 mt-3">
+              <button type="button" @click="setSource('query')"
+                      :class="sourceType==='query' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'"
+                      class="flex-1 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all">Query</button>
+              <button type="button" @click="setSource('sql')"
+                      :class="sourceType==='sql' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'"
+                      class="flex-1 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all">SQL</button>
+              <button type="button" @click="setSource('columns')"
+                      :class="sourceType==='columns' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'"
+                      class="flex-1 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all">Explorer</button>
+            </div>
+          </div>
+      {# Saved query picker #}
+      <div x-show="sourceType==='query'" class="px-4 py-3 border-t border-slate-100">
+        <select x-model="savedQueryId" @change="loadColumns()"
+                class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white
+                       focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">— choose a saved query —</option>
+          {% for q in saved_queries %}
+          <option value="{{ q.id }}">{{ q.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {# SQL Lab input #}
+      <div x-show="sourceType==='sql'" class="px-4 py-3 border-t border-slate-100 space-y-2">
+        <textarea x-model="rawSql" rows="5"
+                  class="w-full text-xs font-mono border border-slate-300 rounded px-3 py-2
+                         bg-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="SELECT grade, COUNT(*) as cnt&#10;FROM current_student&#10;WHERE school_year='2025-2026'&#10;GROUP BY grade"></textarea>
+        <button @click="runSql()" :disabled="columnsLoading"
+                class="w-full text-xs py-2 bg-slate-900 text-white rounded hover:bg-slate-800
+                       disabled:opacity-50 font-semibold uppercase tracking-wider transition">
+          <span x-text="columnsLoading ? 'Running…' : 'Run Query'"></span>
+        </button>
+      </div>
+
+      {# Explorer column picker #}
+      <div x-show="sourceType==='columns'" class="px-3 py-3 border-t border-slate-100 max-h-[50%] overflow-y-auto">
+        {# Loading state #}
+        <div x-show="explorerLoading" class="flex items-center gap-2 py-6 justify-center text-slate-400">
+          <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+          <span class="text-xs">Loading columns…</span>
+        </div>
+
+        <div x-show="!explorerLoading && explorerStructure" class="space-y-1">
+          {# Search within column picker #}
+          <input type="text" x-model="explorerSearch" placeholder="Search columns…"
+                 class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-2 focus:ring-1 focus:ring-blue-200 bg-slate-50">
+
+          {# ── Static categories (Student Info, Demographics, etc.) ── #}
+          <template x-for="(cat, catKey) in (explorerStructure?.categories || {})" :key="'cat_'+catKey">
+            <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
+              <button type="button" @click="explorerOpenNode = explorerOpenNode === catKey ? '' : catKey"
+                      class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
+                <span class="font-medium text-slate-700 truncate" x-text="cat.title"></span>
+                <div class="flex items-center gap-1">
+                  <span class="text-[9px] text-slate-400" x-text="explorerCatSelectedCount(catKey)"></span>
+                  <svg class="w-3 h-3 text-slate-400 transition-transform"
+                       :class="explorerOpenNode === catKey && 'rotate-180'"
+                       fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </div>
+              </button>
+              <div x-show="explorerOpenNode === catKey" x-collapse class="border-t border-slate-100 px-2 py-1.5 space-y-0.5">
+                <template x-for="col in explorerFilteredCatCols(catKey)" :key="'sc_'+col">
+                  <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                    <input type="checkbox"
+                           :checked="explorerSelected.includes(col)"
+                           @change="toggleExplorerCol(col)"
+                           class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                    <span class="truncate" x-text="explorerStructure?.definitions?.[col] || col"></span>
+                  </label>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          {# ── Test columns tree ── #}
+          <template x-for="(yearObj, year) in (explorerStructure?.test_structure || {})" :key="'ty_'+year">
+            <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
+              <button type="button" @click="explorerOpenNode = explorerOpenNode === 'test_'+year ? '' : 'test_'+year"
+                      class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
+                <span class="font-medium text-slate-700"><span class="text-[9px] text-blue-500 font-bold mr-1">TEST</span><span x-text="year"></span></span>
+                <svg class="w-3 h-3 text-slate-400 transition-transform"
+                     :class="explorerOpenNode === 'test_'+year && 'rotate-180'"
+                     fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </button>
+              <div x-show="explorerOpenNode === 'test_'+year" x-collapse class="border-t border-slate-100">
+                <template x-for="(assessObj, assessName) in yearObj" :key="'ta_'+year+'_'+assessName">
+                  <div class="px-2 py-1">
+                    <button type="button" @click="explorerOpenSub = explorerOpenSub === 'ta_'+year+'_'+assessName ? '' : 'ta_'+year+'_'+assessName"
+                            class="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-blue-600 w-full">
+                      <svg class="w-2.5 h-2.5 transition-transform" :class="explorerOpenSub === 'ta_'+year+'_'+assessName && 'rotate-90'"
+                           fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+                      <span class="truncate" x-text="assessName"></span>
+                    </button>
+                    <div x-show="explorerOpenSub === 'ta_'+year+'_'+assessName" x-collapse class="pl-3 mt-1 space-y-0.5">
+                      <template x-for="(winObj, winName) in (assessObj.windows || {})" :key="'tw_'+year+'_'+assessName+'_'+winName">
+                        <div>
+                          <p x-show="winName" class="text-[9px] font-bold text-slate-400 uppercase mt-1 mb-0.5" x-text="winName"></p>
+                          <template x-for="(metrics, testingName) in winObj" :key="'tt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
+                            <div class="space-y-0.5">
+                              <p class="text-[10px] text-slate-500 font-medium" x-text="testingName"></p>
+                              <template x-for="mKey in ['SS','PL']" :key="'tm_'+metrics[mKey]">
+                                <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                                  <input type="checkbox"
+                                         :checked="explorerSelected.includes(metrics[mKey])"
+                                         @change="toggleExplorerCol(metrics[mKey])"
+                                         class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                                  <span x-text="mKey" class="font-mono text-[10px]"></span>
+                                </label>
+                              </template>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          {# ── Mark columns tree ── #}
+          <template x-for="(yearObj, year) in (explorerStructure?.mark_structure || {})" :key="'my_'+year">
+            <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
+              <button type="button" @click="explorerOpenNode = explorerOpenNode === 'mark_'+year ? '' : 'mark_'+year"
+                      class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
+                <span class="font-medium text-slate-700"><span class="text-[9px] text-emerald-500 font-bold mr-1">MARK</span><span x-text="year"></span></span>
+                <svg class="w-3 h-3 text-slate-400 transition-transform"
+                     :class="explorerOpenNode === 'mark_'+year && 'rotate-180'"
+                     fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </button>
+              <div x-show="explorerOpenNode === 'mark_'+year" x-collapse class="border-t border-slate-100">
+                <template x-for="(subjObj, subjName) in yearObj" :key="'ms_'+year+'_'+subjName">
+                  <div class="px-2 py-1">
+                    <button type="button" @click="explorerOpenSub = explorerOpenSub === 'ms_'+year+'_'+subjName ? '' : 'ms_'+year+'_'+subjName"
+                            class="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-blue-600 w-full">
+                      <svg class="w-2.5 h-2.5 transition-transform" :class="explorerOpenSub === 'ms_'+year+'_'+subjName && 'rotate-90'"
+                           fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+                      <span class="truncate" x-text="subjName"></span>
+                    </button>
+                    <div x-show="explorerOpenSub === 'ms_'+year+'_'+subjName" x-collapse class="pl-3 mt-1 space-y-0.5">
+                      <template x-for="(courseObj, courseName) in subjObj" :key="'mc_'+year+'_'+subjName+'_'+courseName">
+                        <div>
+                          <p class="text-[10px] text-slate-500 font-medium" x-text="courseName"></p>
+                          <template x-for="(colKey, period) in courseObj" :key="'mp_'+colKey">
+                            <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                              <input type="checkbox"
+                                     :checked="explorerSelected.includes(colKey)"
+                                     @change="toggleExplorerCol(colKey)"
+                                     class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                              <span class="truncate" x-text="period"></span>
+                            </label>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+
+          {# Selected columns count #}
+          <div x-show="explorerSelected.length > 0" class="mt-2 pt-2 border-t border-slate-100">
+            <div class="flex items-center justify-between">
+              <p class="text-[10px] text-slate-500"><span class="font-bold" x-text="explorerSelected.length"></span> columns selected</p>
+              <button @click="explorerSelected = []; explorerCols = []; filterOptions = {}; filterLabels = {}; chartFilters = {};"
+                      class="text-[9px] text-red-500 hover:text-red-700 font-semibold">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+        </div>{# /srcOpen collapse #}
+      </div>{# /x-data srcOpen #}
+
+      {# Column list #}
+      <div class="flex-1 overflow-y-auto px-3 py-3">
+        {# Loading spinner #}
+        <div x-show="columnsLoading" class="flex items-center gap-2 py-6 justify-center text-slate-400">
+          <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+          <span class="text-xs">Loading…</span>
+        </div>
+        {# Empty state #}
+        <div x-show="!columnsLoading && activeCols.length === 0" class="text-center py-10 text-slate-400">
+          <svg class="w-10 h-10 mx-auto mb-2 opacity-40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6z"/></svg>
+          <p class="text-xs leading-relaxed">Select a data source<br>to see columns</p>
+        </div>
+        {# Column chips #}
+        <div x-show="!columnsLoading && activeCols.length > 0">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+              Columns <span class="text-slate-400 font-normal" x-text="'(' + activeCols.length + ')'"></span>
+            </p>
+            <input type="text" x-model="colSearch" placeholder="filter…"
+                   class="text-[10px] border border-slate-300 rounded px-2 py-0.5 w-24 focus:ring-1 focus:ring-blue-500 bg-slate-50">
+          </div>
+          <div class="space-y-0.5">
+            <template x-for="col in filteredCols" :key="col">
+              <div class="col-chip group flex items-center gap-1.5 text-xs rounded-md border px-2 py-1.5
+                          bg-white border-slate-200 hover:border-blue-300 hover:bg-blue-50 relative"
+                   :class="assignedTo(col) && 'assigned'"
+                   draggable="true"
+                   @dragstart="onDragStart($event, col)"
+                   @dragend="onDragEnd()">
+                {# Grip icon #}
+                <svg class="w-3 h-3 text-slate-300 group-hover:text-blue-400 shrink-0" fill="currentColor" viewBox="0 0 20 20"><circle cx="7" cy="5" r="1.5"/><circle cx="13" cy="5" r="1.5"/><circle cx="7" cy="10" r="1.5"/><circle cx="13" cy="10" r="1.5"/><circle cx="7" cy="15" r="1.5"/><circle cx="13" cy="15" r="1.5"/></svg>
+                <span class="truncate flex-1" :title="col" x-text="col"></span>
+                {# Assignment badge #}
+                <span x-show="assignedTo(col)" class="text-[9px] font-bold rounded px-1" x-text="assignedTo(col)"
+                      :class="{
+                        'bg-blue-100 text-blue-700':       assignedTo(col)==='X',
+                        'bg-emerald-100 text-emerald-700': assignedTo(col)==='Y',
+                        'bg-purple-100 text-purple-700':   assignedTo(col)==='S'
+                      }"></span>
+                {# Quick-assign buttons (shown on hover, respects per-chart-type meta) #}
+                <div x-show="!assignedTo(col)"
+                     class="hidden group-hover:flex items-center gap-0.5 absolute right-1">
+                  <button x-show="!meta.x?.hide" @click.stop="xCol=col" title="Set as X-axis"
+                          class="w-5 h-5 rounded text-[9px] font-bold bg-blue-100 text-blue-700 hover:bg-blue-200 flex items-center justify-center">X</button>
+                  <button x-show="!meta.y?.hide" @click.stop="yCol=col" title="Set as Y-axis"
+                          class="w-5 h-5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 flex items-center justify-center">Y</button>
+                  <button x-show="!meta.s?.hide" @click.stop="seriesCol=col" title="Set as Series"
+                          class="w-5 h-5 rounded text-[9px] font-bold bg-purple-100 text-purple-700 hover:bg-purple-200 flex items-center justify-center">S</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        {# ── Data Filters ──────────────────────────────────────── #}
+        <div x-show="filterCols.length > 0" class="mt-4 pt-3 border-t border-slate-100">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 flex items-center gap-1">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
+              Data Filters
+            </p>
+            <button x-show="activeFilterCount > 0" @click="clearAllFilters()" title="Clear all filters"
+                    class="text-[9px] text-red-500 hover:text-red-700 font-semibold">Clear all</button>
+          </div>
+          <p x-show="filtersLoading" class="text-[10px] text-slate-400 py-2">Loading options…</p>
+          <div class="space-y-1">
+            <template x-for="col in filterCols" :key="'fc_'+col">
+              <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
+                {# Filter header — click to expand #}
+                <button type="button" @click="toggleFilter(col)"
+                        class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
+                  <span class="font-medium text-slate-700 truncate" x-text="filterLabels[col] || col"></span>
+                  <div class="flex items-center gap-1 shrink-0">
+                    <span x-show="(chartFilters[col] || []).length > 0"
+                          class="text-[9px] font-bold bg-blue-100 text-blue-700 rounded-full px-1.5"
+                          x-text="(chartFilters[col] || []).length"></span>
+                    <svg class="w-3 h-3 text-slate-400 transition-transform"
+                         :class="openFilter === col && 'rotate-180'"
+                         fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                  </div>
+                </button>
+                {# Filter dropdown body #}
+                <div x-show="openFilter === col" x-collapse class="border-t border-slate-100">
+                  <div class="px-2 py-1.5">
+                    <input type="text" :placeholder="'Search ' + (filterLabels[col] || col) + '…'" x-model="filterSearch[col]"
+                           class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-1 focus:ring-1 focus:ring-blue-200 bg-slate-50">
+                    <div class="max-h-32 overflow-y-auto space-y-0.5">
+                      <template x-for="val in filteredFilterValues(col)" :key="'fv_'+col+'_'+val">
+                        <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                          <input type="checkbox" :value="val"
+                                 :checked="(chartFilters[col] || []).includes(val)"
+                                 @change="toggleFilterValue(col, val)"
+                                 class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                          <span class="truncate" x-text="val || '(blank)'"></span>
+                        </label>
+                      </template>
+                      <p x-show="filteredFilterValues(col).length === 0" class="text-[10px] text-slate-400 py-1 px-1">No matches</p>
+                    </div>
+                  </div>
+                  {# Selected filter chips #}
+                  <div x-show="(chartFilters[col] || []).length > 0"
+                       class="flex flex-wrap gap-1 px-2 pb-1.5 border-t border-slate-50 pt-1">
+                    <template x-for="sv in (chartFilters[col] || [])" :key="'sv_'+col+'_'+sv">
+                      <span class="inline-flex items-center gap-0.5 text-[9px] bg-blue-50 text-blue-700 rounded-full px-2 py-0.5">
+                        <span class="truncate max-w-[80px]" x-text="sv"></span>
+                        <button @click="removeFilterValue(col, sv)" class="hover:text-red-500 font-bold">&times;</button>
+                      </span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+      </aside>
+    </div>{# /colsOpen wrapper #}
+
+    {# ══════════ CENTER: Configuration ══════════ #}
+    <div class="w-[340px] border-r border-slate-200 bg-white overflow-y-auto flex-shrink-0">
+      {# Chart Type #}
+      <section x-data="{ open: true }" class="border-b border-slate-100">
+        <button type="button" @click="open=!open"
+                class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Chart Type</p>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span x-show="!open" class="text-[9px] font-medium text-slate-400 capitalize"
+                  x-text="chartType?.replace(/_/g,' ')"></span>
+            <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
+                 fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+        </button>
+        <div x-show="open" x-collapse class="px-4 pb-3 border-t border-slate-50">
+        <div class="grid grid-cols-5 gap-1.5 mt-3">
+          {% for key, label, icon, group in chart_types_flat %}
+          <button type="button" @click="chartType='{{ key }}'"
+                  :class="chartType==='{{ key }}' && 'active'"
+                  class="ct-btn flex flex-col items-center text-[10px] border border-slate-200 rounded-lg p-1.5 cursor-pointer"
+                  title="{{ label }} ({{ group }})">
+            <span class="text-lg leading-none mb-0.5">{{ icon }}</span>
+            <span class="text-slate-500 truncate w-full text-center leading-tight">{{ label }}</span>
+          </button>
+          {% endfor %}
+        </div>
+        <p x-show="meta.hint" x-text="meta.hint" x-transition
+           class="mt-2 text-[10px] text-blue-600 bg-blue-50 rounded px-2 py-1 leading-snug"></p>
+        </div>{# /chart type collapse #}
+      </section>
+
+      {# Column Mapping (drop zones) #}
+      <section x-data="{ open: true }" class="border-b border-slate-100">
+        <button type="button" @click="open=!open"
+                class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Map Columns</p>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span x-show="!open && (xCol || yCol)" class="text-[9px] font-medium text-slate-400 truncate max-w-[80px]"
+                  x-text="[xCol,yCol].filter(Boolean).join(' / ')"></span>
+            <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
+                 fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+        </button>
+        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-3 border-t border-slate-50">
+        <p class="text-[10px] text-slate-400 leading-snug">
+          Drag from left, or hover a column and click
+          <span class="font-bold text-slate-700">X</span> /
+          <span class="font-bold text-emerald-600">Y</span> /
+          <span class="font-bold text-purple-600">S</span>
+        </p>
+
+        {# X-Axis drop well #}
+        <div x-show="!meta.x?.hide" x-transition>
+          <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
+            <span class="w-4 h-4 rounded bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center justify-center">X</span>
+            <span x-text="meta.x?.lbl || 'X-Axis / Category'"></span>
+            <span x-show="meta.x?.req" class="text-red-400 text-[9px] font-bold">*</span>
+          </label>
+          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 flex items-center"
+               :class="dragTarget==='xCol' && 'accept'"
+               @dragover.prevent="dragTarget='xCol'"
+               @dragleave.self="dragTarget=''"
+               @drop.prevent="doDrop('xCol')">
+            <div x-show="!xCol" class="flex items-center justify-between w-full">
+              <span class="text-xs text-slate-400 italic">Drag a column here</span>
+              <select @change="xCol=$event.target.value; $event.target.selectedIndex=0"
+                      class="text-[11px] border-0 bg-transparent text-blue-600 cursor-pointer p-0 focus:ring-0">
+                <option value="">or pick…</option>
+                <template x-for="c in activeCols" :key="'xp_'+c"><option :value="c" x-text="c"></option></template>
+              </select>
+            </div>
+            <div x-show="xCol" class="flex items-center gap-2 w-full">
+              <span class="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
+                <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M3 3h14v2H3V3zm0 4h10v2H3V7zm0 4h14v2H3v-2zm0 4h10v2H3v-2z"/></svg>
+                <span x-text="xCol" class="truncate"></span>
+              </span>
+              <button @click="xCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
+            </div>
+          </div>
+        </div>
+
+        {# Y-Axis drop well #}
+        <div x-show="!meta.y?.hide" x-transition>
+          <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+            <span class="w-4 h-4 rounded bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center">Y</span>
+            <span x-text="meta.y?.lbl || 'Y-Axis / Value'"></span>
+            <span x-show="meta.y?.req" class="text-red-400 text-[9px] font-bold">*</span>
+          </label>
+          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 flex items-center"
+               :class="dragTarget==='yCol' && 'accept'"
+               @dragover.prevent="dragTarget='yCol'"
+               @dragleave.self="dragTarget=''"
+               @drop.prevent="doDrop('yCol')">
+            <div x-show="!yCol" class="flex items-center justify-between w-full">
+              <span class="text-xs text-slate-400 italic">Drag a column here</span>
+              <select @change="yCol=$event.target.value; $event.target.selectedIndex=0"
+                      class="text-[11px] border-0 bg-transparent text-emerald-600 cursor-pointer p-0 focus:ring-0">
+                <option value="">or pick…</option>
+                <template x-for="c in activeCols" :key="'yp_'+c"><option :value="c" x-text="c"></option></template>
+              </select>
+            </div>
+            <div x-show="yCol" class="flex items-center gap-2 w-full">
+              <span class="inline-flex items-center gap-1 text-xs bg-emerald-100 text-emerald-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
+                <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M3 17V3h2v14H3zm4-4v4h2v-4H7zm4-6v10h2V7h-2zm4-4v14h2V3h-2z"/></svg>
+                <span x-text="yCol" class="truncate"></span>
+              </span>
+              <button @click="yCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
+            </div>
+          </div>
+        </div>
+
+        {# Series drop well #}
+        <div x-show="!meta.s?.hide" x-transition>
+          <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+            <span class="w-4 h-4 rounded bg-purple-100 text-purple-700 text-[10px] font-bold flex items-center justify-center">S</span>
+            <span x-text="meta.s?.lbl || 'Series / Group-by'"></span>
+            <span class="font-normal text-slate-400 text-[10px] ml-0.5">optional</span>
+          </label>
+          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 flex items-center"
+               :class="dragTarget==='seriesCol' && 'accept'"
+               @dragover.prevent="dragTarget='seriesCol'"
+               @dragleave.self="dragTarget=''"
+               @drop.prevent="doDrop('seriesCol')">
+            <div x-show="!seriesCol" class="flex items-center justify-between w-full">
+              <span class="text-xs text-slate-400 italic">Drag a column here</span>
+              <select @change="seriesCol=$event.target.value; $event.target.selectedIndex=0"
+                      class="text-[11px] border-0 bg-transparent text-purple-600 cursor-pointer p-0 focus:ring-0">
+                <option value="">or pick…</option>
+                <template x-for="c in activeCols" :key="'sp_'+c"><option :value="c" x-text="c"></option></template>
+              </select>
+            </div>
+            <div x-show="seriesCol" class="flex items-center gap-2 w-full">
+              <span class="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
+                <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zM18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9z"/></svg>
+                <span x-text="seriesCol" class="truncate"></span>
+              </span>
+              <button @click="seriesCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
+            </div>
+          </div>
+
+          {# ── Stack / Series Order (drag-to-reorder) ── #}
+          <div x-show="(seriesCol || chartType === 'assessment_compare') && stackOrder.length > 1" x-collapse class="mt-2">
+            <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Stack Order (drag to reorder)</p>
+            <div class="space-y-0.5">
+              <template x-for="(item, idx) in stackOrder" :key="'so_'+item">
+                <div draggable="true"
+                     @dragstart="_dragStackIdx = idx"
+                     @dragend="_dragStackIdx = null"
+                     @dragover.prevent
+                     @drop.prevent="
+                       if (_dragStackIdx !== null && _dragStackIdx !== idx) {
+                         const moved = stackOrder.splice(_dragStackIdx, 1)[0];
+                         stackOrder.splice(idx, 0, moved);
+                         stackOrder = [...stackOrder];
+                         _dragStackIdx = null;
+                         _schedulePreview();
+                       }"
+                     class="flex items-center gap-1.5 bg-white border border-slate-200 rounded px-2 py-1 cursor-grab active:cursor-grabbing hover:border-blue-300 transition select-none">
+                  <svg class="w-3 h-3 text-slate-300 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
+                  </svg>
+                  <span class="text-[11px] text-slate-700 truncate" x-text="item"></span>
+                  <span class="ml-auto text-[9px] text-slate-400 font-mono" x-text="idx + 1"></span>
+                </div>
+              </template>
+            </div>
+            <button type="button" x-show="stackOrderAvail.length > 0"
+                    @click="stackOrder = [...stackOrderAvail]; _schedulePreview();"
+                    class="text-[9px] text-blue-500 hover:text-blue-700 font-semibold mt-1">Reset to default order</button>
+          </div>
+
+        </div>
+
+        {# PL Column Picker — visible only for assessment_compare type #}
+        <div x-show="chartType==='assessment_compare'" x-transition>
+          <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+            <span class="w-4 h-4 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex items-center justify-center">PL</span>
+            <span>PL Columns to Compare</span>
+            <span class="text-red-400 text-[9px] font-bold">* min 2</span>
+          </label>
+          <div class="rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 max-h-56 overflow-y-auto space-y-1"
+               :class="comparePlCols.length >= 2 ? 'border-amber-300 bg-amber-50/30' : ''">
+            <template x-if="plCols.length === 0">
+              <p class="text-xs text-slate-400 italic py-1">No PL columns found. Load a query with assessment PL data.</p>
+            </template>
+            <template x-for="col in plCols" :key="'plc_'+col">
+              <label class="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-amber-50 cursor-pointer transition text-xs"
+                     :class="comparePlCols.includes(col) ? 'bg-amber-100 text-amber-900 font-medium' : 'text-slate-600'">
+                <input type="checkbox"
+                       :value="col"
+                       :checked="comparePlCols.includes(col)"
+                       @change="togglePlCol(col)"
+                       class="rounded border-slate-300 text-amber-600 focus:ring-amber-300 w-3.5 h-3.5">
+                <span class="truncate" x-text="plColLabel(col)"></span>
+              </label>
+            </template>
+          </div>
+          <div x-show="comparePlCols.length > 0" class="flex flex-wrap gap-1 mt-1.5">
+            <template x-for="col in comparePlCols" :key="'plsel_'+col">
+              <span class="inline-flex items-center gap-1 text-[11px] bg-amber-100 text-amber-800 rounded-md px-2 py-0.5 font-medium">
+                <span class="truncate max-w-[160px]" x-text="plColLabel(col)"></span>
+                <button @click="togglePlCol(col)" class="text-amber-500 hover:text-red-500 ml-0.5">&times;</button>
+              </span>
+            </template>
+          </div>
+          <p class="text-[9px] text-slate-400 mt-1 leading-snug">
+            Select 2+ PL columns from the same assessment (e.g. DIBELS BOY PL &amp; MOY PL). Window/year is auto-detected.
+          </p>
+        </div>
+
+        {# ── Summary Table config — visible only for summary_table type ── #}
+        <div x-show="chartType==='summary_table'" x-transition class="space-y-3">
+          {# Row column #}
+          <div>
+            <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+              <span class="w-5 h-5 rounded bg-violet-100 text-violet-700 text-[10px] font-bold flex items-center justify-center">R</span>
+              Row Column
+              <span class="text-red-400 text-[9px] font-bold">*</span>
+            </label>
+            <select x-model="stRowCol" @change="_schedulePreview()"
+                    class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400">
+              <option value="">— choose column —</option>
+              <template x-for="c in activeCols" :key="'str_'+c"><option :value="c" x-text="c"></option></template>
+            </select>
+          </div>
+          {# Column column #}
+          <div>
+            <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+              <span class="w-5 h-5 rounded bg-teal-100 text-teal-700 text-[10px] font-bold flex items-center justify-center">C</span>
+              Column Header
+              <span class="text-red-400 text-[9px] font-bold">*</span>
+            </label>
+            <select x-model="stColCol" @change="_schedulePreview()"
+                    class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400">
+              <option value="">— choose column —</option>
+              <template x-for="c in activeCols" :key="'stc_'+c"><option :value="c" x-text="c"></option></template>
+            </select>
+          </div>
+          <p class="text-[9px] text-slate-400 leading-snug">
+            Each unique value in the Row column becomes a row; each unique value in the Column Header column becomes a column. Cells show counts. Click any non-zero cell to drill into the underlying records.
+          </p>
+        </div>
+
+        {# ── Progress Growth config — visible only for progress_growth type ── #}
+        <div x-show="chartType==='progress_growth'" x-transition class="space-y-3">
+          {# Before PL #}
+          <div>
+            <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+              <span class="w-5 h-5 rounded bg-sky-100 text-sky-700 text-[10px] font-bold flex items-center justify-center">B</span>
+              Before PL Column
+              <span class="text-red-400 text-[9px] font-bold">*</span>
+            </label>
+            <select x-model="pgBeforeCol" @change="_pgAutoScale(); _schedulePreview()"
+                    class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400">
+              <option value="">— choose column —</option>
+              <template x-for="c in activeCols" :key="'pgb_'+c"><option :value="c" x-text="c"></option></template>
+            </select>
+          </div>
+          {# After PL #}
+          <div>
+            <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+              <span class="w-5 h-5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center">A</span>
+              After PL Column
+              <span class="text-red-400 text-[9px] font-bold">*</span>
+            </label>
+            <select x-model="pgAfterCol" @change="_pgAutoScale(); _schedulePreview()"
+                    class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400">
+              <option value="">— choose column —</option>
+              <template x-for="c in activeCols" :key="'pga_'+c"><option :value="c" x-text="c"></option></template>
+            </select>
+          </div>
+          {# PL Scale — drag-to-reorder list #}
+          <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
+              PL Scale (low → high)
+              <span x-show="pgScaleText && pgScaleText === _pgLastAutoScale"
+                    class="ml-auto text-[9px] bg-emerald-100 text-emerald-700 rounded-full px-1.5 py-0.5 font-medium">
+                ✓ auto-detected
+              </span>
+            </label>
+
+            {# Drag list #}
+            <div class="rounded-lg border border-slate-200 overflow-hidden mb-1.5"
+                 x-show="pgScaleParsed.length > 0">
+              <template x-for="(pl, i) in pgScaleParsed" :key="'pgsc_' + pl">
+                <div draggable="true"
+                     @dragstart="_pgDragIdx = i"
+                     @dragenter.prevent="_pgDragOverIdx = i"
+                     @dragover.prevent
+                     @drop.prevent="_pgScaleDrop(i)"
+                     @dragend="_pgDragIdx = null; _pgDragOverIdx = null"
+                     :class="{
+                       'opacity-30': _pgDragIdx === i,
+                       'border-t-2 border-blue-400 bg-blue-50': _pgDragOverIdx === i && _pgDragIdx !== i,
+                       'bg-white': _pgDragOverIdx !== i || _pgDragIdx === i
+                     }"
+                     class="flex items-center gap-2 px-2 py-1.5 cursor-grab select-none border-b border-slate-100 last:border-0 transition-colors">
+                  <span class="text-slate-300 text-base leading-none shrink-0 cursor-grab">&#8942;&#8942;</span>
+                  <span class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-bold shrink-0"
+                        :style="`background:${i===0?'#fee2e2':i===pgScaleParsed.length-1?'#dcfce7':'#f1f5f9'}; color:${i===0?'#b91c1c':i===pgScaleParsed.length-1?'#15803d':'#475569'}`"
+                        x-text="i + 1"></span>
+                  <span class="flex-1 text-xs text-slate-700 font-medium truncate" x-text="pl"></span>
+                  <button type="button" @click.stop="_pgScaleRemove(i)"
+                          class="text-slate-300 hover:text-red-400 transition leading-none px-0.5">&times;</button>
+                </div>
+              </template>
+            </div>
+
+            {# Empty state #}
+            <div x-show="pgScaleParsed.length === 0"
+                 class="rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 py-4 mb-1.5 text-center text-[10px] text-slate-400">
+              Select PL columns above to auto-detect, or pick a preset
+            </div>
+
+            {# Presets + clear #}
+            <div class="flex flex-wrap gap-1">
+              <span class="text-[9px] text-slate-400 italic w-full">Presets:</span>
+              <button type="button"
+                      @click="pgScaleText='Well Below Benchmark, Below Benchmark, At Benchmark, Above Benchmark'; _pgLastAutoScale=''; _schedulePreview();"
+                      class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">DIBELS</button>
+              <button type="button"
+                      @click="pgScaleText='Not Met, Nearly Met, Met, Exceeded'; _pgLastAutoScale=''; _schedulePreview();"
+                      class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">CAASPP</button>
+              <button type="button"
+                      @click="pgScaleText='Far Below Basic, Below Basic, Basic, Proficient, Advanced'; _pgLastAutoScale=''; _schedulePreview();"
+                      class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">Levels</button>
+              <button type="button"
+                      @click="pgScaleText='1, 2, 3, 4'; _pgLastAutoScale=''; _schedulePreview();"
+                      class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">1–4</button>
+              <button type="button" x-show="pgScaleText"
+                      @click="pgScaleText=''; _pgLastAutoScale=''; _schedulePreview();"
+                      class="text-[9px] bg-rose-50 hover:bg-rose-100 text-rose-500 hover:text-rose-700 rounded px-1.5 py-0.5 transition">✕ clear</button>
+            </div>
+          </div>
+          {# Display type #}
+          <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Chart Style</label>
+            <div class="grid grid-cols-2 gap-1.5">
+              <template x-for="[val, lbl, icon] in [['stacked_bar','Stacked Bar','📊'],['grouped_bar','Grouped Bar','📊'],['donut','Donut','🍩'],['pie','Pie','🥧'],['matrix','Matrix','📋']]" :key="'pgd_'+val">
+                <button type="button" @click="pgDisplay = val; _schedulePreview();"
+                        :class="pgDisplay === val ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'"
+                        class="flex items-center gap-1 text-[11px] border rounded px-2 py-1.5 font-medium transition">
+                  <span x-text="icon"></span>
+                  <span x-text="lbl"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        </div>{# /map cols collapse #}
+      </section>
+
+      {# Aggregation & Sort #}
+      <section x-data="{ open: false }" class="border-b border-slate-100">
+        <button type="button" @click="open=!open"
+                class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h8m-8 6h16"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Aggregation &amp; Sort</p>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span x-show="!open" class="text-[9px] font-medium text-slate-400 font-mono uppercase"
+                  x-text="aggFunc"></span>
+            <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
+                 fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+        </button>
+        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-3 border-t border-slate-50">
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Function</label>
+          <select x-model="aggFunc" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            {% for val, label in agg_choices %}
+            <option value="{{ val }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="flex gap-2">
+          <div class="flex-1">
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Sort By</label>
+            <select x-model="sortCol" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">Auto</option>
+              <template x-for="c in activeCols" :key="'so_'+c"><option :value="c" x-text="c"></option></template>
+              <option value="_value">Aggregated value</option>
+            </select>
+          </div>
+          <div class="w-24">
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Direction</label>
+            <select x-model="sortDir" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="asc">ASC ↑</option>
+              <option value="desc">DESC ↓</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Row Limit</label>
+          <input type="number" x-model.number="limit" min="1" max="5000"
+                 class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        </div>{# /agg collapse #}
+      </section>
+
+      {# Visual options (collapsible) #}
+      <section x-data="{ open: false }" class="border-b border-slate-100">
+        <button type="button" @click="open=!open"
+                class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Visual Options</p>
+          </div>
+          <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
+               fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-3 border-t border-slate-50">
+
+          {# ── Colour Palette ── #}
+          <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Colour Palette</label>
+            <select x-model="palette" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">Default</option>
+              {% for p in palettes %}<option value="{{ p }}">{{ p|title }}</option>{% endfor %}
+            </select>
+          </div>
+
+          {# ── Background ── #}
+          <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Background</label>
+            <div class="flex gap-2">
+              <template x-for="bg in ['white','light','dark']">
+                <button type="button" @click="background = bg"
+                        :class="background === bg ? 'ring-2 ring-blue-400 border-blue-400' : 'border-slate-300'"
+                        class="flex-1 text-[10px] font-medium border rounded-lg py-1.5 transition"
+                        :style="{ background: bg === 'dark' ? '#1e2432' : (bg === 'light' ? '#f8fafc' : '#fff'),
+                                  color: bg === 'dark' ? '#e5e7eb' : '#374151' }"
+                        x-text="bg.charAt(0).toUpperCase() + bg.slice(1)">
+                </button>
+              </template>
+            </div>
+          </div>
+
+          {# ── Opacity slider ── #}
+          <div>
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex justify-between">
+              <span>Opacity</span>
+              <span class="text-slate-400 font-normal" x-text="parseFloat(opacity).toFixed(1)"></span>
+            </label>
+            <input type="range" min="0.1" max="1" step="0.1" x-model.number="opacity"
+                   class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500">
+          </div>
+
+          {# ── Legend ── #}
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="showLegend" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+            <span class="text-xs text-slate-600">Show legend</span>
+          </label>
+          <div x-show="showLegend" class="pl-5">
+            <select x-model="legendPos" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-200">
+              <option value="bottom">Bottom</option>
+              <option value="top">Top</option>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+            </select>
+          </div>
+
+          {# ── Data Labels ── #}
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="showLabels" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+            <span class="text-xs text-slate-600">Show data labels</span>
+          </label>
+          <div x-show="showLabels" class="pl-5">
+            <select x-model="labelPosition" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-200">
+              <option value="top">Top</option>
+              <option value="inside">Inside</option>
+              <option value="insideTop">Inside Top</option>
+              <option value="insideBottom">Inside Bottom</option>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+            </select>
+          </div>
+
+          {# ── Bar-specific options ── #}
+          <template x-if="['bar','column','grouped_bar','stacked_bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
+            <div class="space-y-3 pt-1 border-t border-slate-100">
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Bar Options</p>
+              <div>
+                <label class="text-xs font-medium text-slate-600 mb-1 flex justify-between">
+                  <span>Corner Radius</span>
+                  <span class="text-slate-400 font-normal" x-text="barBorderRadius + 'px'"></span>
+                </label>
+                <input type="range" min="0" max="12" step="1" x-model.number="barBorderRadius"
+                       class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500">
+              </div>
+              <template x-if="['stacked_bar','assessment_compare','progress_growth'].includes(chartType)">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+                  <span class="text-xs text-slate-600">Show as percentage (100% stacked)</span>
+                </label>
+              </template>
+              <template x-if="chartType === 'assessment_compare'">
+                <div class="space-y-2 pt-1 border-t border-slate-100">
+                  <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Compare Layout</p>
+                  <div>
+                    <label class="text-xs font-medium text-slate-600 mb-1 flex justify-between">
+                      <span>Category Gap</span>
+                      <span class="text-slate-400 font-normal" x-text="compareGap + '%'"></span>
+                    </label>
+                    <input type="range" min="0" max="150" step="5" x-model.number="compareGap"
+                           class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                  </div>
+                  <div>
+                    <label class="text-xs font-medium text-slate-600 mb-1 flex justify-between">
+                      <span>Category Font Size</span>
+                      <span class="text-slate-400 font-normal" x-text="compareCatFontSize + 'px'"></span>
+                    </label>
+                    <input type="range" min="8" max="18" step="1" x-model.number="compareCatFontSize"
+                           class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                  </div>
+                  <div>
+                    <label class="text-xs font-medium text-slate-600 mb-1 flex justify-between">
+                      <span>Category Rotation</span>
+                      <span class="text-slate-400 font-normal" x-text="compareCatRotation + '°'"></span>
+                    </label>
+                    <input type="range" min="0" max="90" step="5" x-model.number="compareCatRotation"
+                           class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          {# ── Line/Area-specific options ── #}
+          <template x-if="['line','spline','area','areaspline','stacked_area'].includes(chartType)">
+            <div class="space-y-2 pt-1 border-t border-slate-100">
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Line Options</p>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" x-model="smooth" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+                <span class="text-xs text-slate-600">Smooth curves</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" x-model="showPoints" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+                <span class="text-xs text-slate-600">Show data points</span>
+              </label>
+            </div>
+          </template>
+
+          {# ── Colour Mapping ── #}
+          <div class="pt-1 border-t border-slate-100">
+            <button type="button" @click="colorMapOpen = !colorMapOpen"
+                    class="flex items-center gap-1.5 w-full text-[10px] font-semibold text-slate-500 hover:text-slate-700 uppercase tracking-widest transition mb-1">
+              <svg class="w-2.5 h-2.5 transition-transform" :class="colorMapOpen && 'rotate-90'" fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+              Colour Mapping
+              <span x-show="Object.keys(colorMap).length > 0"
+                    class="text-[8px] bg-blue-100 text-blue-700 rounded-full px-1.5 font-bold"
+                    x-text="Object.keys(colorMap).length"></span>
+            </button>
+            <div x-show="colorMapOpen" x-collapse class="space-y-2">
+              <p class="text-[10px] text-slate-400 leading-snug">
+                Assign fixed colours to specific data values (e.g. "Above Benchmark" → green).
+                Overrides palette. Semantic defaults are applied automatically for common values.
+              </p>
+
+              {# Existing mappings #}
+              <template x-for="(color, key) in colorMap" :key="'cm_'+key">
+                <div class="flex items-center gap-1.5">
+                  <input type="color" :value="color"
+                         @input="colorMap[key] = $event.target.value; colorMap = {...colorMap}; _schedulePreview();"
+                         class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
+                  <span class="text-[11px] text-slate-700 truncate flex-1" x-text="key"></span>
+                  <button type="button" @click="delete colorMap[key]; colorMap = {...colorMap}; _schedulePreview();"
+                          class="text-red-400 hover:text-red-600 text-xs font-bold px-1" title="Remove">&times;</button>
+                </div>
+              </template>
+
+              {# Add new mapping #}
+              <div class="flex items-center gap-1">
+                <input type="color" x-model="colorMapNewColor"
+                       class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
+                <input type="text" x-model="colorMapNewKey" placeholder="Value (e.g. Above Benchmark)"
+                       class="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-200">
+                <button type="button"
+                        @click="if (colorMapNewKey.trim()) {
+                          colorMap[colorMapNewKey.trim()] = colorMapNewColor;
+                          colorMap = {...colorMap};
+                          colorMapNewKey = '';
+                          _schedulePreview();
+                        }"
+                        :disabled="!colorMapNewKey.trim()"
+                        class="text-[10px] bg-slate-900 text-white rounded px-2 py-1 hover:bg-slate-800 disabled:opacity-40 font-semibold uppercase tracking-wide">Add</button>
+              </div>
+
+              {# Quick-clear #}
+              <button type="button" x-show="Object.keys(colorMap).length > 0"
+                      @click="colorMap = {}; _schedulePreview();"
+                      class="text-[9px] text-red-500 hover:text-red-700 font-semibold">Clear all mappings</button>
+            </div>
+          </div>
+
+          {# ── Chart Elements (toggles) ── #}
+          <div class="pt-1 border-t border-slate-100 space-y-2">
+            <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Chart Elements</p>
+
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="showTooltip" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+              <span class="text-xs text-slate-600">Tooltip on hover</span>
+            </label>
+
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="enableAnimation" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+              <span class="text-xs text-slate-600">Animation</span>
+            </label>
+
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="showToolbox" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+              <span class="text-xs text-slate-600">Toolbox (save image, data view, restore)</span>
+            </label>
+
+            {# Axis-specific toggles #}
+            <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
+              <div class="space-y-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" x-model="showZoom" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+                  <span class="text-xs text-slate-600">Zoom slider</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" x-model="showGrid" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+                  <span class="text-xs text-slate-600">Grid lines</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" x-model="showAxisLabels" class="rounded border-slate-300 text-blue-600 focus:ring-blue-200">
+                  <span class="text-xs text-slate-600">Axis labels</span>
+                </label>
+              </div>
+            </template>
+          </div>
+
+        </div>
+      </section>
+
+      {# Drill-through (collapsible) #}
+      <section x-data="{ open: false }" class="border-b border-slate-100">
+        <button type="button" @click="open=!open"
+                class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Drill-Through</p>
+          </div>
+          <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
+               fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div x-show="open" x-collapse class="px-4 pb-3 pt-2 space-y-2 border-t border-slate-50">
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">Columns (comma-separated)</label>
+          <input type="text" x-model="drillColumns"
+                 class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                 placeholder="student_id, student_name, grade">
+          <p class="text-[10px] text-slate-400 leading-snug">Leave blank to include all columns in drill-through</p>
+        </div>
+      </section>
+    </div>
+
+    {# ══════════ RIGHT: Preview ══════════ #}
+    <div class="flex-1 bg-slate-50 overflow-auto flex flex-col">
+      {# Empty state #}
+      <div x-show="!previewHtml && !previewLoading" class="flex-1 flex items-center justify-center p-5">
+        <div class="text-center text-slate-400 max-w-xs">
+          <svg class="w-16 h-16 mx-auto mb-4 opacity-20" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 3v18h18"/><path stroke-linecap="round" stroke-width="1.5" d="M7 16l4-4 3 3 4-6"/></svg>
+          <p class="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-1">Chart Preview</p>
+          <p class="text-xs leading-relaxed text-slate-400" x-text="canPreview
+              ? 'Click Preview to generate your chart'
+              : (meta.x?.hide ? 'Choose data → pick chart type → map Y column'
+                : meta.y?.req ? 'Choose data → pick chart type → map X & Y columns'
+                : 'Choose data → pick chart type → map X column, then Preview')"></p>
+        </div>
+      </div>
+      {# Loading #}
+      <div x-show="previewLoading" class="flex-1 flex items-center justify-center">
+        <div class="text-center text-slate-400">
+          <svg class="animate-spin w-8 h-8 mx-auto mb-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+          <p class="text-sm">Building chart…</p>
+        </div>
+      </div>
+      {# Rendered chart #}
+      <div x-show="previewHtml && !previewLoading"
+           x-ref="previewContainer"
+           class="flex-1 p-5 min-h-[400px]"></div>
+    </div>
+
+  </div>{# /main workspace #}
+
+  {# ── Hidden form for API submissions (MUST stay inside x-data scope) ── #}
+  <form id="chart-form" class="hidden">
+    {% csrf_token %}
+    <input type="hidden" name="chart_id"       x-bind:value="chartId">
+    <input type="hidden" name="name"           x-bind:value="name">
+    <input type="hidden" name="source_type"    x-bind:value="sourceType">
+    <input type="hidden" name="saved_query_id" x-bind:value="savedQueryId">
+    <input type="hidden" name="raw_sql"        x-bind:value="rawSql">
+    <input type="hidden" name="selected_columns" x-bind:value="JSON.stringify(explorerSelected)">
+    <input type="hidden" name="chart_type"     x-bind:value="chartType">
+    <input type="hidden" name="x_col"          x-bind:value="xCol">
+    <input type="hidden" name="y_col"          x-bind:value="yCol">
+    <input type="hidden" name="series_col"     x-bind:value="seriesCol">
+    <input type="hidden" name="compare_pl_cols" x-bind:value="JSON.stringify(comparePlCols)">
+    <input type="hidden" name="agg_func"       x-bind:value="aggFunc">
+    <input type="hidden" name="sort_col"       x-bind:value="sortCol">
+    <input type="hidden" name="sort_dir"       x-bind:value="sortDir">
+    <input type="hidden" name="limit"          x-bind:value="limit">
+    <input type="hidden" name="palette"        x-bind:value="palette">
+    <input type="hidden" name="show_legend"    x-bind:value="showLegend ? '1' : ''">
+    <input type="hidden" name="legend_pos"     x-bind:value="showLegend ? legendPos : 'hidden'">
+    <input type="hidden" name="show_labels"    x-bind:value="showLabels ? '1' : ''">
+    <input type="hidden" name="label_position" x-bind:value="labelPosition">
+    <input type="hidden" name="background"     x-bind:value="background">
+    <input type="hidden" name="opacity"        x-bind:value="opacity">
+    <input type="hidden" name="bar_border_radius" x-bind:value="barBorderRadius">
+    <input type="hidden" name="show_points"    x-bind:value="showPoints ? '1' : ''">
+    <input type="hidden" name="smooth"         x-bind:value="smooth ? '1' : ''">
+    <input type="hidden" name="color_map"      x-bind:value="JSON.stringify(colorMap)">
+    <input type="hidden" name="show_zoom"       x-bind:value="showZoom ? '1' : ''">
+    <input type="hidden" name="show_toolbox"    x-bind:value="showToolbox ? '1' : ''">
+    <input type="hidden" name="show_grid"       x-bind:value="showGrid ? '1' : ''">
+    <input type="hidden" name="show_axis_labels" x-bind:value="showAxisLabels ? '1' : ''">
+    <input type="hidden" name="animation"       x-bind:value="enableAnimation ? '1' : ''">
+    <input type="hidden" name="show_tooltip"    x-bind:value="showTooltip ? '1' : ''">
+    <input type="hidden" name="show_percent"    x-bind:value="showPercent ? '1' : ''">
+    <input type="hidden" name="compare_gap"     x-bind:value="compareGap">
+    <input type="hidden" name="compare_cat_font_size" x-bind:value="compareCatFontSize">
+    <input type="hidden" name="compare_cat_rotation" x-bind:value="compareCatRotation">
+    <input type="hidden" name="pg_before_col"  x-bind:value="pgBeforeCol">
+    <input type="hidden" name="pg_after_col"   x-bind:value="pgAfterCol">
+    <input type="hidden" name="pl_scale"       x-bind:value="JSON.stringify(pgScaleParsed)">
+    <input type="hidden" name="pg_display"     x-bind:value="pgDisplay">
+    <input type="hidden" name="st_row_col"     x-bind:value="stRowCol">
+    <input type="hidden" name="st_col_col"     x-bind:value="stColCol">
+    <input type="hidden" name="stack_order"     x-bind:value="JSON.stringify(stackOrder)">
+    <input type="hidden" name="drill_through_columns_str" x-bind:value="drillColumns">
+    <input type="hidden" name="source_filters" x-bind:value="JSON.stringify(chartFilters)">
+  </form>
+</div>
+
+<script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
+<script>
+function chartBuilder() {
+  const existing = JSON.parse('{{ existing_chart_json|escapejs }}' || 'null');
+  const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+  /* Per-chart-type metadata: req = required, hide = hidden well, lbl = label. */
+  const CHART_META = {
+    bar:          { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Vertical bars comparing categories' },
+    column:       { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Vertical bars comparing categories' },
+    grouped_bar:  { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Side-by-side bars \u2014 use Series to group' },
+    stacked_bar:  { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Stack / Group-by'},   hint:'Stacked bars \u2014 use Series to split' },
+    assessment_compare: { x:{req:0,lbl:'X-Axis / Category (School, Grade…)'},  y:{hide:1},  s:{hide:1}, hint:'Pick 2+ PL columns to compare across windows or years — grouped + stacked by performance level' },
+    progress_growth:    { x:{req:0,lbl:'Group By (School, Grade…)'},           y:{hide:1},  s:{hide:1}, hint:'Compare two PL columns per student — classifies each as Growth 🌱, Sliders 📉, or Stickers 📌. Define the PL scale order.' },
+    summary_table:      { x:{hide:1}, y:{hide:1}, s:{hide:1}, hint:'Count cross-tab — pick a Row column and a Column column to build a frequency table with drill-through.' },
+    waterfall:    { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{hide:1},                          hint:'Cumulative value changes per category' },
+    line:         { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Line trend over categories' },
+    spline:       { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Smooth curved line trend' },
+    area:         { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Filled area under line' },
+    areaspline:   { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Smooth filled area' },
+    stacked_area: { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Stack / Group-by'},   hint:'Stacked filled areas' },
+    pie:          { x:{req:1,lbl:'Category / Slices'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Proportions of a whole (top 30)' },
+    donut:        { x:{req:1,lbl:'Category / Slices'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Ring chart showing proportions' },
+    funnel:       { x:{req:1,lbl:'Category / Stages'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Progressive stages, descending' },
+    treemap:      { x:{req:1,lbl:'Category / Groups'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Rectangles sized by value' },
+    scatter:      { x:{req:1,lbl:'X-Axis (numeric)'},    y:{req:1,lbl:'Y-Axis (numeric)'},   s:{req:0,lbl:'Color / Group'},      hint:'Both X and Y should be numeric columns' },
+    bubble:       { x:{req:1,lbl:'X-Axis (numeric)'},    y:{req:1,lbl:'Y-Axis (numeric)'},   s:{req:0,lbl:'Color / Group'},      hint:'Scatter with variable point size' },
+    heatmap:      { x:{req:1,lbl:'X-Axis / Category'},   y:{req:1,lbl:'Y-Axis / Category'},  s:{hide:1},                          hint:'Color intensity grid \u2014 both axes required' },
+    histogram:    { x:{req:1,lbl:'Column to distribute'}, y:{hide:1},                          s:{req:0,lbl:'Split / Group-by'},   hint:'Frequency distribution of X values' },
+    box:          { x:{req:0,lbl:'Group-by (optional)'},  y:{req:1,lbl:'Value (numeric)'},     s:{hide:1},                          hint:'Y must be numeric \u2014 X groups the boxes' },
+    radar:        { x:{req:1,lbl:'Axes / Categories'},    y:{req:0,lbl:'Value'},               s:{hide:1},                          hint:'Spider-web chart across categories' },
+    gauge:        { x:{hide:1},                            y:{req:1,lbl:'Value (numeric)'},     s:{hide:1},                          hint:'Single aggregated metric \u2014 pick a numeric Y column' },
+  };
+  const _defaultMeta = CHART_META.bar;
+
+  return {
+    /* ─── State ──────────────────────────────────────────── */
+    chartId:      existing?.id ?? {{ chart_id|default:"null" }},
+    name:         existing?.name ?? '',
+    sourceType:   existing ? (existing.source_type === 'sql' ? 'sql' : existing.source_type === 'columns' ? 'columns' : 'query') : 'query',
+    savedQueryId: existing ? String(existing.source_id ?? '') : '',
+    rawSql:       existing?.source_sql ?? '',
+    chartType:    existing?.chart_type ?? 'bar',
+    xCol:         existing?.config?.x_col ?? '',
+    yCol:         existing?.config?.y_col ?? '',
+    seriesCol:    existing?.config?.stack_col ?? existing?.config?.series_col ?? '',
+    comparePlCols: existing?.config?.compare_pl_cols ?? [],
+    /* Progress Growth */
+    pgBeforeCol:      existing?.config?.pg_before_col ?? '',
+    pgAfterCol:       existing?.config?.pg_after_col  ?? '',
+    pgScaleText:      existing?.config?.pl_scale ? (Array.isArray(existing.config.pl_scale) ? existing.config.pl_scale.join(', ') : existing.config.pl_scale) : '',
+    _pgLastAutoScale:  '',   // tracks last auto-detected scale so we don't clobber manual edits
+    _pgDragIdx:       null,
+    _pgDragOverIdx:   null,
+    pgDisplay:        existing?.config?.pg_display ?? 'stacked_bar',
+    /* Summary Table columns */
+    stRowCol:         existing?.config?.st_row_col ?? '',
+    stColCol:         existing?.config?.st_col_col ?? '',
+    aggFunc:      existing?.config?.agg ?? existing?.config?.agg_func ?? 'count',
+    sortCol:      existing?.config?.sort_col ?? '',
+    sortDir:      existing?.config?.sort_dir ?? 'asc',
+    limit:        existing?.config?.limit ?? 500,
+    /* Visual options */
+    palette:          existing?.config?.palette ?? '',
+    showLegend:       existing ? (existing.config?.legend_pos !== 'hidden') : true,
+    legendPos:        existing?.config?.legend_pos ?? 'bottom',
+    showLabels:       existing ? !!existing.config?.data_labels : false,
+    labelPosition:    existing?.config?.label_position ?? 'top',
+    background:       existing?.config?.background ?? 'white',
+    opacity:          existing?.config?.opacity ?? 0.9,
+    barBorderRadius:  existing?.config?.bar_border_radius ?? 0,
+    showPoints:       existing ? !!existing.config?.show_points : false,
+    smooth:           existing ? !!existing.config?.smooth : false,
+    colorMap:         existing?.config?.color_map ?? {},
+    colorMapOpen:     false,
+    colorMapNewKey:   '',
+    colorMapNewColor: '#636EFA',
+    /* Element toggles */
+    showZoom:         existing ? (existing.config?.show_zoom !== false) : true,
+    showToolbox:      existing ? (existing.config?.show_toolbox !== false) : true,
+    showGrid:         existing ? (existing.config?.show_grid !== false) : true,
+    showAxisLabels:   existing ? (existing.config?.show_axis_labels !== false) : true,
+    enableAnimation:  existing ? (existing.config?.animation !== false) : true,
+    showTooltip:      existing ? (existing.config?.show_tooltip !== false) : true,
+    showPercent:      existing ? !!existing.config?.show_percent : false,
+    compareGap:       existing?.config?.compare_gap ?? 30,
+    compareCatFontSize: existing?.config?.compare_cat_font_size ?? 12,
+    compareCatRotation: existing?.config?.compare_cat_rotation ?? 0,
+    /* Stack order */
+    stackOrder:       existing?.config?.stack_order ?? [],
+    stackOrderAvail:  [],   // populated from preview response
+    _dragStackIdx:    null,
+
+    drillColumns: existing ? (existing.drill_through_columns || []).join(', ') : '',
+
+    columns:        [],
+    rawSqlColumns:  [],
+    colSearch:      '',
+    columnsLoading: false,
+    previewHtml:    '',
+    previewLoading: false,
+    saving:         false,
+    statusMsg:      '',
+    statusError:    false,
+    draggedCol:     '',
+    dragTarget:     '',
+
+    /* ─── Filter state ───────────────────────────────────── */
+    filterOptions:  {},               // { grade: ['K','1',...], school: [...] }
+    filterLabels:   {},               // { grade: 'Grade', test_..._PL: 'Dibbles BOY PL', ... }
+    chartFilters:   existing?.source_filters ?? {},  // { grade: ['K','1'], school: ['Lincoln'] }
+    filtersLoading: false,
+    openFilter:     '',               // which filter dropdown is expanded
+    filterSearch:   {},               // per-column search text
+
+    /* ─── Explorer (Column Picker) state ─────────────────── */
+    explorerStructure: { categories: {}, definitions: {}, test_structure: {}, mark_structure: {} },
+    explorerSelected:  existing?.source_type === 'columns' ? (existing?.config?.selected_columns ?? []) : [],
+    explorerCols:      [],            // flat column list used as activeCols for columns source
+    explorerLoading:   false,
+    explorerSearch:    '',
+    explorerOpenNode:  '',            // currently expanded top-level tree node
+    explorerOpenSub:   '',            // currently expanded sub-level tree node
+
+    /* ─── Computed ───────────────────────────────────────── */
+    get activeCols()   {
+      if (this.sourceType === 'sql') return this.rawSqlColumns;
+      if (this.sourceType === 'columns') return this.explorerCols;
+      return this.columns;
+    },
+    get filteredCols() {
+      if (!this.colSearch) return this.activeCols;
+      const q = this.colSearch.toLowerCase();
+      return this.activeCols.filter(c => c.toLowerCase().includes(q));
+    },
+    get hasData()      { return this.activeCols.length > 0; },
+    get plCols()       { return this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_PL')); },
+    get filterCols()   { return Object.keys(this.filterOptions).sort(); },
+    get activeFilterCount() {
+      return Object.values(this.chartFilters).reduce((n, arr) => n + (arr?.length || 0), 0);
+    },
+    get meta()         { return CHART_META[this.chartType] || _defaultMeta; },
+    get pgScaleParsed() {
+      return this.pgScaleText.split(',').map(v => v.trim()).filter(Boolean);
+    },
+    get canPreview() {
+      if (!this.hasData || !this.chartType) return false;
+      if (this.chartType === 'assessment_compare' && this.comparePlCols.length < 2) return false;
+      if (this.chartType === 'progress_growth') return !!this.pgBeforeCol && !!this.pgAfterCol;
+      if (this.chartType === 'summary_table') return !!this.stRowCol && !!this.stColCol;
+      const m = this.meta;
+      if (m.x?.req && !this.xCol) return false;
+      if (m.y?.req && !this.yCol) return false;
+      return !!(this.xCol || this.yCol);
+    },
+    get steps() {
+      const hasSource = (this.sourceType === 'query' && this.savedQueryId) ||
+                        (this.sourceType === 'sql' && this.rawSqlColumns.length > 0) ||
+                        (this.sourceType === 'columns' && this.explorerCols.length > 0);
+      const m = this.meta;
+      // "Columns done" depends on chart type
+      let colsDone;
+      if (this.chartType === 'progress_growth') {
+        colsDone = !!this.pgBeforeCol && !!this.pgAfterCol;
+      } else if (this.chartType === 'summary_table') {
+        colsDone = !!this.stRowCol && !!this.stColCol;
+      } else {
+        colsDone = (!m.x?.req || !!this.xCol) && (!m.y?.req || !!this.yCol) && !!(this.xCol || this.yCol);
+      }
+      return [
+        { label: 'Data',    done: hasSource,          current: !hasSource },
+        { label: 'Type',    done: !!this.chartType,   current: hasSource && !this.chartType },
+        { label: 'Columns', done: colsDone,           current: !!this.chartType && !colsDone },
+        { label: 'Preview', done: !!this.previewHtml, current: colsDone && !this.previewHtml },
+      ];
+    },
+
+    /* ─── Helpers ────────────────────────────────────────── */
+    assignedTo(col) {
+      if (col === this.xCol) return 'X';
+      if (col === this.yCol) return 'Y';
+      if (col === this.seriesCol) return 'S';
+      return '';
+    },
+    togglePlCol(col) {
+      const idx = this.comparePlCols.indexOf(col);
+      if (idx >= 0) {
+        this.comparePlCols.splice(idx, 1);
+      } else {
+        this.comparePlCols.push(col);
+      }
+      this.comparePlCols = [...this.comparePlCols];
+      this._schedulePreview();
+    },
+    plColLabel(col) {
+      // Use filterLabels if available (populated from query), else clean column key
+      if (this.filterLabels[col]) return this.filterLabels[col];
+      // Fallback: strip prefix/suffix → readable label
+      let lbl = col.replace(/^test_/, '').replace(/_PL$/, '').replace(/_/g, ' ');
+      return lbl.charAt(0).toUpperCase() + lbl.slice(1);
+    },
+    setSource(type) {
+      this.sourceType = type;
+      this.columns = []; this.rawSqlColumns = []; this.explorerCols = []; this.colSearch = '';
+      this.filterOptions = {}; this.filterLabels = {}; this.chartFilters = {}; this.openFilter = '';
+      if (type === 'columns' && !Object.keys(this.explorerStructure?.definitions || {}).length) this.loadExplorerStructure();
+    },
+
+    /* ─── Filter helpers ─────────────────────────────────── */
+    toggleFilter(col) { this.openFilter = this.openFilter === col ? '' : col; },
+    filteredFilterValues(col) {
+      const vals = this.filterOptions[col] || [];
+      const q = (this.filterSearch[col] || '').toLowerCase().trim();
+      return q ? vals.filter(v => (v || '').toLowerCase().includes(q)) : vals;
+    },
+    toggleFilterValue(col, val) {
+      const cur = this.chartFilters[col] || [];
+      if (cur.includes(val)) {
+        this.chartFilters[col] = cur.filter(v => v !== val);
+      } else {
+        this.chartFilters[col] = [...cur, val];
+      }
+      // Clean up empty arrays
+      if (this.chartFilters[col].length === 0) delete this.chartFilters[col];
+      // Trigger a shallow re-assign so Alpine detects the change
+      this.chartFilters = { ...this.chartFilters };
+      this._schedulePreview();
+    },
+    removeFilterValue(col, val) {
+      this.chartFilters[col] = (this.chartFilters[col] || []).filter(v => v !== val);
+      if (this.chartFilters[col].length === 0) delete this.chartFilters[col];
+      this.chartFilters = { ...this.chartFilters };
+      this._schedulePreview();
+    },
+    clearAllFilters() {
+      this.chartFilters = {};
+      this._schedulePreview();
+    },
+
+    /* ─── Init ───────────────────────────────────────────── */
+    _autoTimer: null,
+    init() {
+      if (this.savedQueryId) this.loadColumns();
+      if (this.sourceType === 'columns') this.loadExplorerStructure();
+
+      // Auto-preview: watch every setting that affects the chart and
+      // debounce so rapid changes don't flood the server.
+      const watched = ['chartType','xCol','yCol','seriesCol','comparePlCols','aggFunc',
+                       'sortCol','sortDir','limit','palette','showLegend','showLabels',
+                       'legendPos','labelPosition','background','opacity',
+                       'barBorderRadius','showPoints','smooth','colorMap',
+                       'showZoom','showToolbox','showGrid','showAxisLabels','enableAnimation','showTooltip',
+                       'showPercent','compareGap','compareCatFontSize','compareCatRotation','stackOrder',
+                       'stRowCol','stColCol',
+                       'explorerSelected'];
+      watched.forEach(prop => {
+        this.$watch(prop, () => this._schedulePreview());
+      });
+    },
+    _schedulePreview() {
+      clearTimeout(this._autoTimer);
+      this._autoTimer = setTimeout(() => {
+        if (this.canPreview && !this.previewLoading) this.doPreview();
+      }, 400);          // 400 ms debounce
+    },
+
+    /* Auto-populate PL Scale from filterOptions when a PG column is selected */
+    _pgAutoScale() {
+      const _KNOWN_PL_SCALES = [
+        ['Well Below Benchmark', 'Below Benchmark', 'At Benchmark', 'Above Benchmark'],
+        ['Not Met', 'Nearly Met', 'Met', 'Exceeded'],
+        ['Far Below Basic', 'Below Basic', 'Basic', 'Proficient', 'Advanced'],
+        ['Below Basic', 'Basic', 'Proficient', 'Advanced'],
+        ['1', '2', '3', '4'],
+      ];
+      const _BLANK = new Set(['', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL']);
+      // Gather distinct values from both columns via already-loaded filterOptions
+      const valsB = (this.filterOptions[this.pgBeforeCol] || []).map(v => String(v).trim()).filter(v => !_BLANK.has(v));
+      const valsA = (this.filterOptions[this.pgAfterCol]  || []).map(v => String(v).trim()).filter(v => !_BLANK.has(v));
+      const valSet = new Set([...valsB, ...valsA]);
+      if (!valSet.size) return;   // nothing to detect yet
+      // Match against known ordered scales
+      let ordered = null;
+      for (const scale of _KNOWN_PL_SCALES) {
+        if ([...valSet].every(v => scale.includes(v))) {
+          ordered = scale.filter(s => valSet.has(s));
+          break;
+        }
+      }
+      if (!ordered) ordered = [...valSet].sort();
+      const detected = ordered.join(', ');
+      // Only overwrite if scale is blank or was previously auto-filled (not manually edited)
+      if (!this.pgScaleText || this.pgScaleText === this._pgLastAutoScale) {
+        this.pgScaleText = detected;
+        this._pgLastAutoScale = detected;
+      }
+    },
+
+    _pgScaleDrop(toIdx) {
+      const from = this._pgDragIdx;
+      if (from === null || from === toIdx) {
+        this._pgDragIdx = null; this._pgDragOverIdx = null;
+        return;
+      }
+      const items = [...this.pgScaleParsed];
+      const [moved] = items.splice(from, 1);
+      items.splice(toIdx, 0, moved);
+      this.pgScaleText = items.join(', ');
+      this._pgLastAutoScale = '';
+      this._pgDragIdx = null; this._pgDragOverIdx = null;
+      this._schedulePreview();
+    },
+
+    _pgScaleRemove(i) {
+      const items = [...this.pgScaleParsed];
+      items.splice(i, 1);
+      this.pgScaleText = items.join(', ');
+      this._pgLastAutoScale = '';
+      this._schedulePreview();
+    },
+
+    /* ─── Column loading ─────────────────────────────────── */
+    async loadColumns() {
+      if (!this.savedQueryId) { this.columns = []; this.filterOptions = {}; this.filterLabels = {}; return; }
+      this.columnsLoading = true;
+      try {
+        const r = await fetch(`/dataviz/api/query/${this.savedQueryId}/columns/`,
+                              { headers: { 'X-CSRFToken': csrfToken } });
+        const d = await r.json();
+        this.columns = d.columns || [];
+      } catch (e) { console.error('Column load:', e); this.columns = []; }
+      this.columnsLoading = false;
+
+      // Load filter options in parallel (non-blocking)
+      this.loadFilterOptions();
+    },
+
+    async loadFilterOptions() {
+      if (!this.savedQueryId) { this.filterOptions = {}; this.filterLabels = {}; return; }
+      this.filtersLoading = true;
+      try {
+        const r = await fetch(`/dataviz/api/query/${this.savedQueryId}/filter-options/`,
+                              { headers: { 'X-CSRFToken': csrfToken } });
+        const d = await r.json();
+        this.filterOptions = d.filter_options || {};
+        this.filterLabels  = d.filter_labels  || {};
+      } catch (e) { console.error('Filter options:', e); this.filterOptions = {}; this.filterLabels = {}; }
+      this.filtersLoading = false;
+      // If editing a progress_growth chart, auto-populate scale now that
+      // filterOptions is loaded (pgBeforeCol/pgAfterCol already set from config).
+      if (this.chartType === 'progress_growth' && this.pgBeforeCol && this.pgAfterCol) {
+        this._pgAutoScale();
+      }
+    },
+
+    /* ─── Explorer (Column Picker) ───────────────────────── */
+    async loadExplorerStructure() {
+      this.explorerLoading = true;
+      try {
+        const r = await fetch('/dataviz/api/columns/structures/',
+                              { headers: { 'X-CSRFToken': csrfToken } });
+        const data = await r.json();
+        this.explorerStructure = {
+          categories: data?.categories || {},
+          definitions: data?.definitions || {},
+          test_structure: data?.test_structure || {},
+          mark_structure: data?.mark_structure || {},
+        };
+      } catch (e) {
+        console.error('Explorer structure:', e);
+        this.explorerStructure = { categories: {}, definitions: {}, test_structure: {}, mark_structure: {} };
+      }
+      this.explorerLoading = false;
+      // If editing an existing columns-source chart, rebuild explorerCols
+      if (this.explorerSelected.length > 0) this._syncExplorerCols();
+    },
+
+    toggleExplorerCol(col) {
+      const idx = this.explorerSelected.indexOf(col);
+      if (idx >= 0) this.explorerSelected.splice(idx, 1);
+      else this.explorerSelected.push(col);
+      this.explorerSelected = [...this.explorerSelected];
+      this._syncExplorerCols();
+    },
+
+    _syncExplorerCols() {
+      // Build the flat columns array from selected keys.
+      // This serves as activeCols for the column chips / mapping area.
+      const defs = this.explorerStructure?.definitions || {};
+      this.explorerCols = this.explorerSelected.map(c => c);
+      // Load filter options for the selected columns
+      this._loadExplorerFilterOptions();
+    },
+
+    async _loadExplorerFilterOptions() {
+      if (this.explorerSelected.length === 0) {
+        this.filterOptions = {}; this.filterLabels = {};
+        return;
+      }
+      this.filtersLoading = true;
+      try {
+        const r = await fetch('/dataviz/api/columns/filter-options/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+          body: JSON.stringify({ columns: this.explorerSelected }),
+        });
+        const d = await r.json();
+        this.filterOptions = d.filter_options || {};
+        this.filterLabels  = d.filter_labels  || {};
+      } catch (e) { console.error('Explorer filters:', e); this.filterOptions = {}; this.filterLabels = {}; }
+      this.filtersLoading = false;
+    },
+
+    explorerCatSelectedCount(catKey) {
+      const cat = this.explorerStructure?.categories?.[catKey];
+      if (!cat) return '';
+      const n = (cat.columns || []).filter(c => this.explorerSelected.includes(c)).length;
+      return n > 0 ? `${n}/${cat.columns.length}` : '';
+    },
+
+    explorerFilteredCatCols(catKey) {
+      const cat = this.explorerStructure?.categories?.[catKey];
+      if (!cat) return [];
+      const cols = cat.columns || [];
+      if (!this.explorerSearch) return cols;
+      const q = this.explorerSearch.toLowerCase();
+      const defs = this.explorerStructure?.definitions || {};
+      return cols.filter(c => (defs[c] || c).toLowerCase().includes(q));
+    },
+
+    async runSql() {
+      if (!this.rawSql.trim()) return;
+      this.columnsLoading = true;
+      try {
+        const r = await fetch('/dataviz/api/query/sql/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+          body: JSON.stringify({ sql: this.rawSql }),
+        });
+        const d = await r.json();
+        if (d.error) { this._flash(d.error, true); this.rawSqlColumns = []; }
+        else { this.rawSqlColumns = d.columns || []; }
+      } catch (e) { console.error('SQL:', e); this.rawSqlColumns = []; }
+      this.columnsLoading = false;
+    },
+
+    /* ─── Drag & Drop ────────────────────────────────────── */
+    onDragStart(ev, col) {
+      this.draggedCol = col;
+      ev.dataTransfer.setData('text/plain', col);
+      ev.dataTransfer.effectAllowed = 'copy';
+      requestAnimationFrame(() => ev.target.classList.add('dragging'));
+    },
+    onDragEnd() {
+      this.draggedCol = '';
+      this.dragTarget = '';
+      document.querySelectorAll('.col-chip.dragging').forEach(el => el.classList.remove('dragging'));
+    },
+    doDrop(target) {
+      if (this.draggedCol) this[target] = this.draggedCol;
+      this.draggedCol = '';
+      this.dragTarget = '';
+    },
+
+    /* ─── Preview ────────────────────────────────────────── */
+    async doPreview() {
+      if (!this.canPreview) return;
+      this.previewLoading = true;
+      this.previewHtml = '';
+      try {
+        const fd = new FormData(document.getElementById('chart-form'));
+        const r = await fetch('{% url "dataviz:chart_preview" %}', {
+          method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: fd,
+        });
+        const html = await r.text();
+        this.previewHtml = html;
+        this.previewLoading = false;  // set before $nextTick so x-show renders the container
+        this.$nextTick(() => {
+          const c = this.$refs.previewContainer;
+          if (c) {
+            c.innerHTML = html;
+            if (window.initAllCharts) window.initAllCharts();
+            // Extract series names for stack order UI
+            const el = c.querySelector('[data-series-names]');
+            if (el) {
+              try {
+                const names = JSON.parse(el.dataset.seriesNames || '[]');
+                this.stackOrderAvail = names;
+                // If the user has no custom order yet, or if series changed, reset
+                if (this.stackOrder.length !== names.length || !names.every(n => this.stackOrder.includes(n))) {
+                  this.stackOrder = [...names];
+                }
+              } catch (_) {}
+            }
+          }
+        });
+        return;
+      } catch (e) {
+        const msg = `<div class="text-red-600 text-sm p-4">Preview failed: ${e.message}</div>`;
+        this.previewHtml = msg;
+        if (this.$refs.previewContainer) this.$refs.previewContainer.innerHTML = msg;
+      }
+      this.previewLoading = false;
+    },
+
+    /* ─── Save ───────────────────────────────────────────── */
+    async doSave() {
+      if (!this.name.trim()) { this._flash('Enter a chart name first', true); return; }
+      this.saving = true; this.statusMsg = '';
+      try {
+        const fd = new FormData(document.getElementById('chart-form'));
+        const r = await fetch('{% url "dataviz:chart_save" %}', {
+          method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: fd,
+        });
+        if (r.ok) {
+          this._flash('Saved!', false);
+          const text = await r.text();
+          try {
+            const data = JSON.parse(text);
+            if (data.chart?.id && !this.chartId) {
+              this.chartId = data.chart.id;
+              history.replaceState(null, '', `/dataviz/charts/${data.chart.id}/edit/`);
+            }
+          } catch (_) {
+            const m = text.match(/charts\/(\d+)\/edit/);
+            if (m && !this.chartId) {
+              this.chartId = parseInt(m[1]);
+              history.replaceState(null, '', `/dataviz/charts/${m[1]}/edit/`);
+            }
+          }
+        } else {
+          this._flash(await r.text() || 'Save failed', true);
+        }
+      } catch (e) { this._flash('Error: ' + e.message, true); }
+      this.saving = false;
+    },
+
+    _flash(msg, isError) {
+      this.statusMsg = msg; this.statusError = isError;
+      setTimeout(() => { this.statusMsg = ''; }, 4000);
+    },
+  };
+}
+</script>
+{% endblock %}

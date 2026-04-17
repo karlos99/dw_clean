@@ -112,16 +112,6 @@
         document.getElementById('modal-content').innerHTML = '<div class=\'flex items-center justify-center p-12\'><div class=\'animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600\'></div></div>';
      "
      @close-modal.window="open = false; userId = null;"
-         @user-updated.window="
-                const params = new URLSearchParams(window.location.search);
-                const url = new URL('{% url 'users:manage_users' %}', window.location.origin);
-                ['q', 'role', 'school', 'job_title', 'sort', 'order', 'page_size', 'page'].forEach(key => {
-                    if (params.get(key)) url.searchParams.set(key, params.get(key));
-                });
-                htmx.ajax('GET', url.toString(), {target: '#user-content', swap: 'innerHTML'});
-                open = false;
-                userId = null;
-         "
      @keydown.escape.window="open = false"
      x-show="open"
      style="display: none;"

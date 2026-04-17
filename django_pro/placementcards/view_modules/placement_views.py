@@ -15,11 +15,8 @@ from dataexploration.view_modules.student_data_utils import get_student_summary_
 from placementcards.models import NextYearClassroom, PlacementCard, PlacementTag, QuestionTemplate, StudentPlacement
 from placementcards.view_modules.card_data_utils import (
     can_user_place_students,
-    can_user_view_classrooms,
-    can_user_export_classrooms,
     get_accessible_students,
     get_request_school,
-    get_user_grade_filter,
     placement_card_map,
 )
 from studata.models import CurrentStudent, Result, StudentEnroll, Test
@@ -231,7 +228,6 @@ def _build_placement_context(request: HttpRequest, school, data):
         .annotate(assignment_count=Count('placements'))
         .order_by('grade', 'classroom_name')
     )
-    # Note: We intentionally list all classrooms regardless of current user's grade access.
 
     placement_rows = list(
         StudentPlacement.objects.filter(classroom__in=classrooms, school_year=placement_year)
@@ -343,7 +339,6 @@ def _build_placement_context(request: HttpRequest, school, data):
         'status_options': status_options,
         'homeroom_teacher_options': homeroom_teacher_options,
         'assessment_groups': assessment_groups,
-        'can_export_csv': can_user_export_classrooms(request.user, school),
     }
 
 
@@ -351,7 +346,7 @@ def _build_placement_context(request: HttpRequest, school, data):
 @page_access_required('placement-cards-place-students')
 def placement_page(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_view_classrooms(request.user, school):
+    if not can_user_place_students(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     context = _build_placement_context(request, school, request.GET)
@@ -363,7 +358,7 @@ def placement_page(request: HttpRequest):
 @login_required
 def export_classrooms_csv(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_export_classrooms(request.user, school):
+    if not can_user_place_students(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     students_base = get_accessible_students(request)
@@ -379,7 +374,6 @@ def export_classrooms_csv(request: HttpRequest):
     scope = request.GET.get('scope', 'all').strip().lower()
 
     classrooms_qs = NextYearClassroom.objects.filter(school=school, school_year=placement_year).order_by('grade', 'classroom_name')
-    # Note: School Gr View can export all classrooms if they have the permission
     if selected_classroom_ids:
         classrooms_qs = classrooms_qs.filter(id__in=selected_classroom_ids)
     elif scope == 'selected':
@@ -472,12 +466,6 @@ def assign_student_to_classroom(request: HttpRequest):
     if not can_user_place_students(request.user, classroom.school):
         return HttpResponse('Forbidden', status=403)
 
-    # Verify that all students being placed are accessible to the user
-    # This enforces that School Gr View users can only move students within their allowed grade levels
-    accessible_ssids = set(get_accessible_students(request).filter(ssid__in=student_ssids).values_list('ssid', flat=True))
-    if len(accessible_ssids) != len(student_ssids):
-        return HttpResponse('You do not have permission to move one or more of these students.', status=403)
-
     for student_ssid in student_ssids:
         StudentPlacement.objects.update_or_create(
             student_ssid=student_ssid,
@@ -505,11 +493,6 @@ def unassign_student_from_classroom(request: HttpRequest):
     placement = get_object_or_404(StudentPlacement, student_ssid=student_ssid, school_year=placement_year)
     if not can_user_place_students(request.user, placement.classroom.school):
         return HttpResponse('Forbidden', status=403)
-
-    # Verify that the student is accessible to the user
-    # This enforces that School Gr View users can only modify placements for their allowed grade levels
-    if not get_accessible_students(request).filter(ssid=student_ssid).exists():
-        return HttpResponse('You do not have permission to modify this student placement.', status=403)
 
     classroom_id = placement.classroom_id
     placement.delete()

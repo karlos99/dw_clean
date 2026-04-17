@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Dashboards – DataViz{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-800">Dashboards</h1>
+      <p class="text-sm text-slate-500 mt-1">Compose charts into dashboards</p>
+    </div>
+    <div class="flex gap-3">
+      <a href="{% url 'dataviz:index' %}"
+         class="px-4 py-2 text-sm text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+        Charts
+      </a>
+      <a href="{% url 'dataviz:page_index' %}"
+         class="px-4 py-2 text-sm text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+        Pages
+      </a>
+      <a href="{% url 'dataviz:dashboard_new' %}"
+         class="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">
+        + New Dashboard
+      </a>
+    </div>
+  </div>
+
+  {% if dashboards %}
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for db in dashboards %}
+    <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition flex flex-col">
+      <h2 class="font-semibold text-slate-800 mb-1">{{ db.name }}</h2>
+      <p class="text-sm text-slate-500 flex-1 line-clamp-2">{{ db.description|default:'No description' }}</p>
+      <p class="text-xs text-slate-400 mt-2">{{ db.chart_count }} chart{{ db.chart_count|pluralize }}</p>
+      <div class="mt-4 flex gap-2">
+        <a href="{% url 'dataviz:dashboard_edit' db.id %}"
+           class="flex-1 text-center text-sm px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition">
+          Edit
+        </a>
+        <button hx-delete="{% url 'dataviz:dashboard_detail' db.id %}"
+                hx-confirm="Delete '{{ db.name }}'?"
+                hx-target="closest div.bg-white"
+                hx-swap="outerHTML swap:300ms"
+                class="text-sm px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition">
+          Delete
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-center py-24 bg-white border border-dashed border-slate-300 rounded-xl">
+    <p class="text-slate-400 text-lg mb-4">No dashboards yet</p>
+    <a href="{% url 'dataviz:dashboard_new' %}"
+       class="px-5 py-2.5 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition">
+      Create your first dashboard
+    </a>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

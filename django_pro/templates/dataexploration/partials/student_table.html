@@ -6,7 +6,7 @@
                 <tr>
                     {% for col in selected_columns %}
                     <th draggable="true" data-column="{{ col }}"
-                        class="px-6 py-4 cursor-move whitespace-nowrap">
+                        class="px-4 py-4 cursor-move {% if 'survey_' in col %}whitespace-normal min-w-[160px] max-w-[220px] align-top leading-snug{% else %}whitespace-nowrap{% endif %}">
                         {{ column_definitions|get_item:col }}</th>
                     {% endfor %}
                 </tr>
@@ -15,7 +15,8 @@
                 {% for student in students %}
                 <tr class="bg-white even:bg-slate-50 hover:bg-slate-100 transition-colors duration-150">
                     {% for col in selected_columns %}
-                    <td class="px-6 py-3 whitespace-nowrap">{{ student|get_item:col|default:"—" }}</td>
+                    {% get_survey_cell_color col student|get_item:col survey_colors as cell_style %}
+                    <td class="px-6 py-3 whitespace-nowrap" {% if cell_style %}style="{{ cell_style }}"{% endif %}>{{ student|get_item:col|default:"—" }}</td>
                     {% endfor %}
                 </tr>
                 {% empty %}

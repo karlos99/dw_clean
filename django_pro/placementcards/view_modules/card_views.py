@@ -15,7 +15,6 @@ from dataexploration.view_modules.student_data_utils import (
 from placementcards.models import PlacementCard, PlacementTag, QuestionTemplate
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
-    can_user_place_students,
     get_accessible_students,
     get_request_school,
     invalidate_school_caches,
@@ -36,7 +35,7 @@ DEFAULT_QUESTIONS = [
     ('physical', 'Allergies', 'checkbox', {}, True),
     ('physical', 'Medication', 'checkbox', {}, False),
     ('physical', 'Counseling', 'checkbox', {}, True),
-    ('behavior', 'Playground Habits', 'textarea', {}, False),
+    ('attendance', 'Playground Habits', 'textarea', {}, False),
     ('attendance', 'Tardiness', 'textarea', {}, False),
     ('attendance', 'SARB', 'textarea', {}, False),
     ('parent', 'Parent Teacher Conference', 'checkbox', {}, False),
@@ -112,16 +111,6 @@ def _get_school_tags(school_id: int):
 
 
 def _ensure_default_questions(school_id: int, user):
-    # Normalize legacy default placement so Playground Habits lives under behavior.
-    moved_count = QuestionTemplate.objects.filter(
-        school_id=school_id,
-        question_category='attendance',
-        question_text__iexact='Playground Habits',
-    ).update(question_category='behavior')
-    if moved_count:
-        cache.delete(f'placement_questions:{school_id}')
-        invalidate_school_caches(school_id)
-
     if QuestionTemplate.objects.filter(school_id=school_id).exists():
         return
     items = []
@@ -163,14 +152,13 @@ def teacher_notes_page(request: HttpRequest):
         return HttpResponse('Forbidden', status=403)
 
     is_school_admin = _is_school_admin(request.user)
-    can_place = can_user_place_students(request.user, school)
     students_base = get_accessible_students(request)
     school_year = request.GET.get('school_year') or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
     students = get_accessible_students(request, school_year=school_year)
 
     selected_homeroom_teachers = [value.strip() for value in request.GET.getlist('homeroom_teacher') if value.strip()]
     homeroom_teachers: list[str] = []
-    if can_place and school_year:
+    if is_school_admin and school_year:
         homeroom_teachers = list(
             Schedule.objects.filter(
                 ssid__in=students.values('ssid'),
@@ -209,7 +197,6 @@ def teacher_notes_page(request: HttpRequest):
         'tags': tags,
         'selected_tag_ids': selected_tag_ids,
         'is_school_admin': is_school_admin,
-        'can_place_students': can_place,
         'homeroom_teachers': homeroom_teachers,
         'selected_homeroom_teachers': selected_homeroom_teachers,
     }
@@ -242,37 +229,14 @@ def edit_placement_card_modal(request: HttpRequest, ssid: str):
     for question in questions:
         grouped_questions[question.question_category].append(question)
 
-    category_order = ['academic', 'behavior', 'physical', 'attendance', 'parent', 'additional']
-    category_labels = {
-        'academic': 'Academic',
-        'behavior': 'Behavior & Study Habits',
-        'physical': 'Physical & Health',
-        'attendance': 'Attendance',
-        'parent': 'Parent Involment',
-        'additional': 'Additional Information',
-    }
-    ordered_grouped_questions = [
-        {
-            'key': category,
-            'label': category_labels.get(category, category.title()),
-            'questions': grouped_questions.get(category, []),
-        }
-        for category in category_order
-        if grouped_questions.get(category)
-    ]
-
-    from placementcards.view_modules.card_data_utils import FIFTH_GRADES
-    is_fifth_grade = student.grade in FIFTH_GRADES
-
     context = {
         'student': student,
         'school_year': school_year,
-        'grouped_questions': ordered_grouped_questions,
+        'grouped_questions': dict(grouped_questions),
         'card': card,
         'tags': tags,
         'selected_tag_ids': selected_tag_ids,
         'student_summary_html': get_student_summary_partial_html_cached(request, ssid, embedded=True),
-        'is_fifth_grade': is_fifth_grade,
     }
     return render(request, 'placementcards/partials/placement_card_form.html', context)
 
@@ -285,10 +249,6 @@ def save_placement_card(request: HttpRequest):
     student = get_accessible_students(request, school_year=school_year).filter(ssid=ssid).first()
     if not student:
         return HttpResponse('Student unavailable', status=403)
-
-    from placementcards.view_modules.card_data_utils import FIFTH_GRADES
-    if student.grade in FIFTH_GRADES:
-        return HttpResponse('Teacher notes are not required for 5th grade students', status=403)
 
     school = get_request_school(request)
     if not school:
@@ -341,10 +301,6 @@ def update_card_status(request: HttpRequest):
     student = get_accessible_students(request, school_year=school_year).filter(ssid=ssid).first()
     if not student:
         return HttpResponse('Student unavailable', status=403)
-
-    from placementcards.view_modules.card_data_utils import FIFTH_GRADES
-    if student.grade in FIFTH_GRADES:
-        return HttpResponse('Teacher notes are not required for 5th grade students', status=403)
 
     is_complete = request.POST.get('is_complete') == 'on'
     card, _ = PlacementCard.objects.get_or_create(

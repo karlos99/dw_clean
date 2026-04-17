@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Survey Topics - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <!-- Header -->
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">Topics</li>
+            </ol>
+        </nav>
+        <div class="flex items-center justify-between">
+            <div>
+                <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Survey Topics</h1>
+                <p class="mt-1 text-slate-600">Global topics shared across all survey definitions. Assign them to questions in each survey.</p>
+            </div>
+            <button id="showAddBtn"
+                class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 transition">
+                + New Topic
+            </button>
+        </div>
+    </div>
+
+    <!-- Add topic form (hidden initially) -->
+    <div id="addTopicForm" class="hidden bg-white rounded-xl shadow-sm ring-1 ring-indigo-200 p-5 mb-6">
+        <h2 class="text-sm font-semibold text-slate-700 mb-3">Create New Topic</h2>
+        <div class="flex items-end gap-3">
+            <div class="flex-1">
+                <label class="block text-xs font-medium text-slate-600 mb-1">Name</label>
+                <input id="newName" type="text" placeholder="e.g. Social Awareness"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-slate-600 mb-1">Color</label>
+                <input id="newColor" type="color" value="#6366f1"
+                    class="w-10 h-9 rounded border border-slate-300 cursor-pointer">
+            </div>
+            <button id="saveNewBtn"
+                class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 transition">
+                Save
+            </button>
+            <button id="cancelNewBtn"
+                class="px-4 py-2 border border-slate-300 text-slate-600 text-sm rounded-md hover:bg-slate-100 transition">
+                Cancel
+            </button>
+        </div>
+        <p id="addError" class="hidden mt-2 text-red-600 text-sm"></p>
+    </div>
+
+    <!-- Topics table -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200">
+        {% if topics %}
+        <table class="min-w-full divide-y divide-slate-200" id="topicsTable">
+            <thead class="bg-slate-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Topic</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Questions assigned</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200">
+                {% for topic in topics %}
+                <tr id="row-{{ topic.pk }}" class="hover:bg-slate-50">
+                    <td class="px-6 py-3">
+                        <!-- View mode -->
+                        <div class="view-mode flex items-center gap-2">
+                            <span class="inline-block w-3 h-3 rounded-full flex-shrink-0"
+                                  style="background-color: {{ topic.color }}"></span>
+                            <span class="text-sm font-medium text-slate-900">{{ topic.name }}</span>
+                        </div>
+                        <!-- Edit mode (hidden) -->
+                        <div class="edit-mode hidden flex items-center gap-2">
+                            <input type="color" class="edit-color w-8 h-8 rounded border border-slate-300 cursor-pointer" value="{{ topic.color }}">
+                            <input type="text" class="edit-name px-2 py-1 border border-slate-300 rounded text-sm w-40 focus:outline-none focus:ring-1 focus:ring-indigo-400" value="{{ topic.name }}">
+                            <p class="edit-error hidden text-xs text-red-600 ml-1"></p>
+                        </div>
+                    </td>
+                    <td class="px-6 py-3 text-sm text-slate-500">
+                        {{ topic.questions.count }}
+                    </td>
+                    <td class="px-6 py-3 text-right text-sm space-x-3">
+                        <!-- View mode actions -->
+                        <span class="view-mode">
+                            <button class="edit-btn text-blue-600 hover:text-blue-900" data-pk="{{ topic.pk }}">Edit</button>
+                            <button class="delete-btn text-red-600 hover:text-red-900 ml-3" data-pk="{{ topic.pk }}" data-name="{{ topic.name }}">Delete</button>
+                        </span>
+                        <!-- Edit mode actions -->
+                        <span class="edit-mode hidden">
+                            <button class="save-edit-btn text-green-600 hover:text-green-900 font-medium" data-pk="{{ topic.pk }}">Save</button>
+                            <button class="cancel-edit-btn text-slate-500 hover:text-slate-700 ml-3" data-pk="{{ topic.pk }}">Cancel</button>
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div id="emptyState" class="px-6 py-12 text-center">
+            <svg class="mx-auto h-10 w-10 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+            </svg>
+            <p class="mt-3 text-sm text-slate-500">No topics yet. Create your first topic above.</p>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const CSRF = '{{ csrf_token }}';
+
+    // ── Add form ──────────────────────────────────────────────────────────
+    const showAddBtn   = document.getElementById('showAddBtn');
+    const addTopicForm = document.getElementById('addTopicForm');
+    const newName      = document.getElementById('newName');
+    const newColor     = document.getElementById('newColor');
+    const saveNewBtn   = document.getElementById('saveNewBtn');
+    const cancelNewBtn = document.getElementById('cancelNewBtn');
+    const addError     = document.getElementById('addError');
+
+    showAddBtn.addEventListener('click', () => {
+        addTopicForm.classList.remove('hidden');
+        newName.focus();
+    });
+
+    cancelNewBtn.addEventListener('click', () => {
+        addTopicForm.classList.add('hidden');
+        newName.value = '';
+        newColor.value = '#6366f1';
+        addError.classList.add('hidden');
+    });
+
+    saveNewBtn.addEventListener('click', async () => {
+        const name = newName.value.trim();
+        const color = newColor.value;
+        if (!name) { showAddError('Name is required.'); return; }
+        addError.classList.add('hidden');
+        saveNewBtn.disabled = true;
+
+        try {
+            const res = await fetch('{% url "dataLoader:topic_list" %}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ name, color }),
+            });
+            const data = await res.json();
+            if (!res.ok) { showAddError(data.error || 'Error creating topic.'); return; }
+            appendRow(data.topic);
+            cancelNewBtn.click();
+            const emptyState = document.getElementById('emptyState');
+            if (emptyState) emptyState.remove();
+        } catch (e) {
+            showAddError('Network error.');
+        } finally {
+            saveNewBtn.disabled = false;
+        }
+    });
+
+    function showAddError(msg) {
+        addError.textContent = msg;
+        addError.classList.remove('hidden');
+    }
+
+    // ── Build a new table row ─────────────────────────────────────────────
+    function appendRow(topic) {
+        let tbody = document.querySelector('#topicsTable tbody');
+        if (!tbody) {
+            // Table didn't exist (was empty state); rebuild it
+            document.querySelector('.bg-white.rounded-xl').innerHTML = `
+                <table class="min-w-full divide-y divide-slate-200" id="topicsTable">
+                    <thead class="bg-slate-50"><tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Topic</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Questions assigned</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                    </tr></thead>
+                    <tbody class="divide-y divide-slate-200"></tbody>
+                </table>`;
+            tbody = document.querySelector('#topicsTable tbody');
+        }
+        const tr = document.createElement('tr');
+        tr.id = `row-${topic.id}`;
+        tr.className = 'hover:bg-slate-50';
+        tr.innerHTML = rowHTML(topic, 0);
+        tbody.appendChild(tr);
+        wireRow(tr, topic.id);
+    }
+
+    function rowHTML(topic, qCount) {
+        return `
+            <td class="px-6 py-3">
+                <div class="view-mode flex items-center gap-2">
+                    <span class="inline-block w-3 h-3 rounded-full flex-shrink-0" style="background-color: ${topic.color}"></span>
+                    <span class="text-sm font-medium text-slate-900">${topic.name}</span>
+                </div>
+                <div class="edit-mode hidden flex items-center gap-2">
+                    <input type="color" class="edit-color w-8 h-8 rounded border border-slate-300 cursor-pointer" value="${topic.color}">
+                    <input type="text" class="edit-name px-2 py-1 border border-slate-300 rounded text-sm w-40 focus:outline-none focus:ring-1 focus:ring-indigo-400" value="${topic.name}">
+                    <p class="edit-error hidden text-xs text-red-600 ml-1"></p>
+                </div>
+            </td>
+            <td class="px-6 py-3 text-sm text-slate-500">${qCount}</td>
+            <td class="px-6 py-3 text-right text-sm space-x-3">
+                <span class="view-mode">
+                    <button class="edit-btn text-blue-600 hover:text-blue-900" data-pk="${topic.id}">Edit</button>
+                    <button class="delete-btn text-red-600 hover:text-red-900 ml-3" data-pk="${topic.id}" data-name="${topic.name}">Delete</button>
+                </span>
+                <span class="edit-mode hidden">
+                    <button class="save-edit-btn text-green-600 hover:text-green-900 font-medium" data-pk="${topic.id}">Save</button>
+                    <button class="cancel-edit-btn text-slate-500 hover:text-slate-700 ml-3" data-pk="${topic.id}">Cancel</button>
+                </span>
+            </td>`;
+    }
+
+    // ── Wire up existing rows on load ─────────────────────────────────────
+    document.querySelectorAll('tbody tr').forEach(tr => {
+        const pk = tr.querySelector('.edit-btn')?.dataset.pk;
+        if (pk) wireRow(tr, pk);
+    });
+
+    function wireRow(tr, pk) {
+        tr.querySelector('.edit-btn')?.addEventListener('click', () => enterEdit(tr));
+        tr.querySelector('.cancel-edit-btn')?.addEventListener('click', () => exitEdit(tr));
+        tr.querySelector('.save-edit-btn')?.addEventListener('click', () => saveEdit(tr, pk));
+        tr.querySelector('.delete-btn')?.addEventListener('click', () => deleteTopic(tr, pk));
+    }
+
+    function enterEdit(tr) {
+        tr.querySelectorAll('.view-mode').forEach(el => el.classList.add('hidden'));
+        tr.querySelectorAll('.edit-mode').forEach(el => el.classList.remove('hidden'));
+        tr.querySelector('.edit-name').focus();
+    }
+
+    function exitEdit(tr) {
+        tr.querySelectorAll('.view-mode').forEach(el => el.classList.remove('hidden'));
+        tr.querySelectorAll('.edit-mode').forEach(el => el.classList.add('hidden'));
+        tr.querySelector('.edit-error')?.classList.add('hidden');
+    }
+
+    async function saveEdit(tr, pk) {
+        const name  = tr.querySelector('.edit-name').value.trim();
+        const color = tr.querySelector('.edit-color').value;
+        const errEl = tr.querySelector('.edit-error');
+        if (!name) { errEl.textContent = 'Required'; errEl.classList.remove('hidden'); return; }
+
+        try {
+            const res = await fetch(`/dataloader/topics/${pk}/update/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ name, color }),
+            });
+            const data = await res.json();
+            if (!res.ok) { errEl.textContent = data.error || 'Error'; errEl.classList.remove('hidden'); return; }
+
+            // Update view mode
+            const t = data.topic;
+            tr.querySelector('.view-mode span:first-child').style.backgroundColor = t.color;
+            tr.querySelector('.view-mode span:last-child').textContent = t.name;
+            tr.querySelector('.delete-btn').dataset.name = t.name;
+            exitEdit(tr);
+        } catch (e) {
+            errEl.textContent = 'Network error'; errEl.classList.remove('hidden');
+        }
+    }
+
+    async function deleteTopic(tr, pk) {
+        const name = tr.querySelector('.delete-btn').dataset.name;
+        if (!confirm(`Delete topic "${name}"? Questions using it will be unassigned.`)) return;
+
+        try {
+            const res = await fetch(`/dataloader/topics/${pk}/delete/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            if (!res.ok) { alert('Error deleting topic.'); return; }
+            tr.remove();
+            if (!document.querySelector('#topicsTable tbody tr')) {
+                document.querySelector('.bg-white.rounded-xl').innerHTML = `
+                    <div id="emptyState" class="px-6 py-12 text-center">
+                        <p class="text-sm text-slate-500">No topics yet. Create your first topic above.</p>
+                    </div>`;
+            }
+        } catch (e) {
+            alert('Network error.');
+        }
+    }
+});
+</script>
+{% endblock %}

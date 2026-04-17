@@ -6,7 +6,6 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, render
 
 from placementcards.models import QuestionTemplate
-from placementcards.view_modules.card_views import DEFAULT_QUESTIONS
 from placementcards.view_modules.card_data_utils import (
     can_user_manage_tags,
     get_request_school,
@@ -14,24 +13,7 @@ from placementcards.view_modules.card_data_utils import (
 )
 
 
-def _is_school_admin(user) -> bool:
-    if user.is_superuser:
-        return True
-
-    role_names: set[str] = set()
-    if hasattr(user, 'active_role') and user.active_role:
-        role_names.add(user.active_role.name)
-    if hasattr(user, 'roles'):
-        role_names.update(user.roles.values_list('name', flat=True))
-    return 'School Admin' in role_names
-
-
-def _is_default_question(question: QuestionTemplate) -> bool:
-    # Defaults are created first using sequential display_order from DEFAULT_QUESTIONS.
-    return question.display_order < len(DEFAULT_QUESTIONS)
-
-
-def _question_panel_context(school, user):
+def _question_panel_context(school):
     questions = (
         QuestionTemplate.objects.filter(school=school, is_active=True)
         .only('id', 'question_category', 'question_text', 'question_type', 'field_options', 'requires_detail', 'display_order', 'created_by')
@@ -42,7 +24,6 @@ def _question_panel_context(school, user):
         .only('id', 'question_category', 'question_text', 'question_type', 'display_order', 'created_by')
         .order_by('question_category', 'display_order', 'id')
     )
-    non_deletable_default_ids = {question.id for question in questions if _is_default_question(question)}
     return {
         'school': school,
         'questions': questions,
@@ -50,8 +31,6 @@ def _question_panel_context(school, user):
         'mode': 'create',
         'question': None,
         'options_value': '',
-        'is_school_admin': _is_school_admin(user),
-        'non_deletable_default_ids': non_deletable_default_ids,
     }
 
 
@@ -61,7 +40,7 @@ def manage_questions(request: HttpRequest):
     if not can_user_manage_tags(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
-    context = _question_panel_context(school, request.user)
+    context = _question_panel_context(school)
     if request.headers.get('HX-Request') == 'true':
         return render(request, 'placementcards/partials/questions_panel.html', context)
     return render(request, 'placementcards/manage_questions.html', context)
@@ -132,7 +111,7 @@ def save_question(request: HttpRequest):
         )
 
     invalidate_school_caches(school.pk)
-    return render(request, 'placementcards/partials/questions_panel.html', _question_panel_context(school, request.user))
+    return render(request, 'placementcards/partials/questions_panel.html', _question_panel_context(school))
 
 
 @login_required
@@ -143,14 +122,12 @@ def delete_question(request: HttpRequest, question_id: int):
         return HttpResponse('Forbidden', status=403)
 
     question = get_object_or_404(QuestionTemplate, id=question_id, school=school)
-    if _is_school_admin(request.user) and _is_default_question(question):
-        return HttpResponse('Default questions can only be hidden by School Admin users', status=403)
     if question.created_by_id != request.user.id:
         return HttpResponse('Only the creator can delete this question', status=403)
 
     question.delete()
     invalidate_school_caches(school.pk)
-    return render(request, 'placementcards/partials/questions_panel.html', _question_panel_context(school, request.user))
+    return render(request, 'placementcards/partials/questions_panel.html', _question_panel_context(school))
 
 
 @login_required
@@ -164,7 +141,7 @@ def hide_question(request: HttpRequest, question_id: int):
     question.is_active = False
     question.save(update_fields=['is_active', 'updated_at'])
     invalidate_school_caches(school.pk)
-    return render(request, 'placementcards/partials/questions_panel.html', _question_panel_context(school, request.user))
+    return render(request, 'placementcards/partials/questions_panel.html', _question_panel_context(school))
 
 
 @login_required
@@ -178,4 +155,4 @@ def unhide_question(request: HttpRequest, question_id: int):
     question.is_active = True
     question.save(update_fields=['is_active', 'updated_at'])
     invalidate_school_caches(school.pk)
-    return render(request, 'placementcards/partials/questions_panel.html', _question_panel_context(school, request.user))
+    return render(request, 'placementcards/partials/questions_panel.html', _question_panel_context(school))

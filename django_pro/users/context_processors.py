@@ -1,12 +1,6 @@
 from .models_pages import Page
 from mathr.view_modules.access_utils import can_user_access_mathr
-from placementcards.view_modules.card_data_utils import (
-    can_user_access_placement_cards,
-    can_user_place_students,
-    can_user_configure_placements,
-    can_user_view_classrooms,
-    get_request_school,
-)
+from placementcards.view_modules.card_data_utils import can_user_access_placement_cards, get_request_school
 
 
 def _is_project_admin_user(user):
@@ -89,15 +83,13 @@ def _can_show_page_in_navigation(request, page, force_preview: bool = False) -> 
     # If the user was explicitly added for preview/testing, skip business-logic gates
     if force_preview:
         return True
-    if page.slug == 'placement-cards-teacher-notes':
+    if page.slug in {
+        'placement-cards-teacher-notes',
+        'placement-cards-place-students',
+        'placement-cards-configuration',
+    }:
         school = get_request_school(request)
         return can_user_access_placement_cards(request.user, school)
-    if page.slug == 'placement-cards-place-students':
-        school = get_request_school(request)
-        return can_user_view_classrooms(request.user, school)
-    if page.slug == 'placement-cards-configuration':
-        school = get_request_school(request)
-        return can_user_configure_placements(request.user, school)
     if page.slug == 'mathr':
         return can_user_access_mathr(request)
     return True

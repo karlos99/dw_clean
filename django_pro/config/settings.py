@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'mathr.apps.MathrConfig',
     'assesments',
     'dataviz.apps.DatavizConfig',
+    'dataLoader.apps.DataloaderConfig',
     # Allauth
     'allauth',
     'allauth.account',
