@@ -200,6 +200,19 @@ def load_students(request):
         # Single value
         return val_str if val_str else fallback
 
+    # Pasted ID list search (overrides regular search when present)
+    search_ids = None
+    search_ids_param = request.GET.get('search_ids', '')
+    if search_ids_param:
+        try:
+            parsed_ids = json.loads(search_ids_param)
+            if isinstance(parsed_ids, list):
+                search_ids = [str(s).strip() for s in parsed_ids if str(s).strip()]
+                if not search_ids:
+                    search_ids = None
+        except Exception:
+            pass
+
     # Get filters - URL params take precedence over saved config
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
     
@@ -734,11 +747,15 @@ def load_students(request):
                     filters = {}
 
         # Apply filters
-        if search:
+        if search_ids:
+            # Exact ID list match against ssid or student_id
+            base_where_clauses.append("(cs.ssid = ANY(%s) OR cs.student_id = ANY(%s))")
+            base_params.extend([search_ids, search_ids])
+        elif search:
             # Handle search if it comes in as a list
             if isinstance(search, list):
                 search = search[0] if search else ''
-            
+
             if search:
                 base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
                 search_param = f'%{search}%'

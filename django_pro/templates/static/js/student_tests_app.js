@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let columnWidths = {};
     let draggedColumn = null;
     let resizeState = null;
+    let pastedIdList = null; // array when in list-search mode, null otherwise
 
     const stateStorageKey = 'dataexp:student_list_state';
     let stateRestored = false;
@@ -1010,10 +1011,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusInput = document.getElementById('status');
 
         if (!isInitialSavedQueryLoad) {
-            if (searchInput && searchInput.value) url.searchParams.set('search', searchInput.value);
+            if (pastedIdList && pastedIdList.length) {
+                url.searchParams.set('search_ids', JSON.stringify(pastedIdList));
+            } else if (searchInput && searchInput.value) {
+                url.searchParams.set('search', searchInput.value);
+            }
             if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
             if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
-            if (statusInput && statusInput.value) url.searchParams.set('status', statusInput.value);
+            if (statusInput) url.searchParams.set('status', statusInput.value);
         }
 
         fetch(url.toString(), { credentials: 'same-origin' })
@@ -1219,11 +1224,61 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const searchInput = document.getElementById('search');
+    const searchIdListBadge = document.getElementById('search-id-list-badge');
+    const searchIdListCount = document.getElementById('search-id-list-count');
+    const searchIdListClear = document.getElementById('search-id-list-clear');
+
+    const updateIdListBadge = () => {
+        if (!searchIdListBadge) return;
+        if (pastedIdList && pastedIdList.length) {
+            searchIdListCount.textContent = `${pastedIdList.length} ID${pastedIdList.length === 1 ? '' : 's'} pasted`;
+            searchIdListBadge.classList.remove('hidden');
+        } else {
+            searchIdListBadge.classList.add('hidden');
+        }
+    };
+
+    const clearIdList = () => {
+        pastedIdList = null;
+        updateIdListBadge();
+    };
+
     if (searchInput) {
+        searchInput.addEventListener('paste', (e) => {
+            const text = (e.clipboardData || window.clipboardData).getData('text');
+            const tokens = text.split(/[\s,\t\r\n]+/).map(t => t.trim()).filter(Boolean);
+            if (tokens.length < 2) return; // single term — let normal search handle it
+            e.preventDefault();
+            const MAX_IDS = 900;
+            if (tokens.length > MAX_IDS) {
+                alert(`Pasted list has ${tokens.length} IDs — only the first ${MAX_IDS} will be used (URL size limit).`);
+                tokens.splice(MAX_IDS);
+            }
+            pastedIdList = tokens;
+            searchInput.value = '';
+            searchInput.placeholder = 'Clear list to search by name';
+            updateIdListBadge();
+            page = 1;
+            loadData();
+        });
+
         searchInput.addEventListener('input', debounce(() => {
+            if (pastedIdList) clearIdList();
             page = 1;
             loadData();
         }, 400));
+    }
+
+    if (searchIdListClear) {
+        searchIdListClear.addEventListener('click', () => {
+            clearIdList();
+            if (searchInput) {
+                searchInput.value = '';
+                searchInput.placeholder = 'Name, SSID, ID — or paste a list';
+            }
+            page = 1;
+            loadData();
+        });
     }
 
     const schoolYearSelect = document.getElementById('school_year');
@@ -1456,9 +1511,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const schoolYearSelect = document.getElementById('school_year');
             const statusInput = document.getElementById('status');
 
-            if (searchInput && searchInput.value) url.searchParams.set('search', searchInput.value);
+            if (pastedIdList && pastedIdList.length) {
+                url.searchParams.set('search_ids', JSON.stringify(pastedIdList));
+            } else if (searchInput && searchInput.value) {
+                url.searchParams.set('search', searchInput.value);
+            }
             if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
-            if (statusInput && statusInput.value) url.searchParams.set('status', statusInput.value);
+            if (statusInput) url.searchParams.set('status', statusInput.value);
 
             window.location.href = url.toString();
             
