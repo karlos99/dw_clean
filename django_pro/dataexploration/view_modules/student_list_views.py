@@ -75,24 +75,18 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
                 else:
                     grade_filter_clauses.append("1=0")
 
-        # Apply grade level restrictions for specific roles
-        if not is_unrestricted and hasattr(self.request.user, 'grade_levels'):
-            user_grade_levels = self.request.user.grade_levels
-            if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
-                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
-                current_role = None
-                if hasattr(self.request.user, 'active_role') and self.request.user.active_role:
-                    current_role = self.request.user.active_role.name
-                elif self.request.user.roles.count() == 1:
-                    current_role = self.request.user.roles.first().name
-                if current_role in grade_restricted_roles:
-                    grade_filter_clauses.append("grade = ANY(%s)")
-                    grade_filter_params.append(user_grade_levels)
+        active_role_name = getattr(getattr(self.request.user, 'active_role', None), 'name', None)
+        if active_role_name == 'School Gr View':
+            delegated_grades = getattr(self.request.user, 'grade_levels', None)
+            if isinstance(delegated_grades, list) and delegated_grades:
+                grade_filter_clauses.append("grade = ANY(%s)")
+                grade_filter_params.append(delegated_grades)
 
         active_school_id = getattr(getattr(self.request.user, 'active_school', None), 'state_id', None)
-        grade_levels_key = json.dumps(self.request.user.grade_levels or [], sort_keys=True)
         schools_key = json.dumps(self.request.user.schools or [], sort_keys=True)
-        grades_key = f"dataexp:grades:{self.request.user.id}:{active_school_id}:{hashlib.md5(grade_levels_key.encode()).hexdigest()}:{hashlib.md5(schools_key.encode()).hexdigest()}"
+        role_key = active_role_name or ''
+        grade_levels_key = json.dumps(getattr(self.request.user, 'grade_levels', None) or [], sort_keys=True)
+        grades_key = f"dataexp:grades:{self.request.user.id}:{active_school_id}:{role_key}:{hashlib.md5(schools_key.encode()).hexdigest()}:{hashlib.md5(grade_levels_key.encode()).hexdigest()}"
         grades = cache.get(grades_key)
         if not grades:
             with connections['default'].cursor() as cursor:
@@ -821,28 +815,12 @@ def load_students(request):
                       # Non-admin user with no assigned schools sees nothing
                       base_where_clauses.append("1=0")
 
-        # Apply grade level restrictions for specific roles
-        # Only apply if user has explicitly assigned grade levels
-        if not is_unrestricted and hasattr(request.user, 'grade_levels'):
-            user_grade_levels = request.user.grade_levels
-            # Only apply grade restriction if explicitly configured (non-empty list)
-            if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
-                # Check if current active role should be grade-restricted
-                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
-                current_role = None
-                
-                # Get the current role (from active_role or if user has only one role)
-                if hasattr(request.user, 'active_role') and request.user.active_role:
-                    current_role = request.user.active_role.name
-                elif request.user.roles.count() == 1:
-                    # If user has only one role, use that
-                    current_role = request.user.roles.first().name
-                
-                # Only apply grade filter for School Gr View and School View roles
-                # Teachers are handled by row-level permissions (get_accessible_student_keys)
-                if current_role in grade_restricted_roles:
-                    base_where_clauses.append("cs.grade = ANY(%s)")
-                    base_params.append(user_grade_levels)
+        active_role_name = getattr(getattr(request.user, 'active_role', None), 'name', None)
+        if active_role_name == 'School Gr View':
+            delegated_grades = getattr(request.user, 'grade_levels', None)
+            if isinstance(delegated_grades, list) and delegated_grades:
+                base_where_clauses.append("cs.grade = ANY(%s)")
+                base_params.append(delegated_grades)
 
         # Apply specific row-level permissions (e.g. Teacher seeing only their students)
         if hasattr(request.user, 'get_accessible_student_keys'):

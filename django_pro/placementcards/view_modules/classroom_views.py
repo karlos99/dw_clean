@@ -12,6 +12,8 @@ from django.shortcuts import get_object_or_404, render
 from dataexploration.models import ElementaryHomeroomTeacher
 from placementcards.models import NextYearClassroom, PlacementCard, PlacementTag, QuestionTemplate, StudentPlacement
 from placementcards.view_modules.card_data_utils import (
+    can_user_access_classroom_grade,
+    can_user_configure_placements,
     can_user_place_students,
     can_user_manage_tags,
     get_request_school,
@@ -61,7 +63,7 @@ def manage_classrooms(request: HttpRequest):
 @login_required
 def placement_configuration(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     school_year = request.GET.get('school_year')
@@ -102,7 +104,7 @@ def placement_configuration(request: HttpRequest):
 @login_required
 def create_classroom_modal(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     if request.method == 'GET':
@@ -149,7 +151,7 @@ def create_classroom_modal(request: HttpRequest):
 @transaction.atomic
 def edit_classroom_modal(request: HttpRequest, classroom_id: int):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id, school=school)
@@ -191,7 +193,7 @@ def edit_classroom_modal(request: HttpRequest, classroom_id: int):
 @transaction.atomic
 def delete_classroom(request: HttpRequest, classroom_id: int):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id, school=school)
@@ -204,6 +206,8 @@ def delete_classroom(request: HttpRequest, classroom_id: int):
 def classroom_statistics(request: HttpRequest, classroom_id: int):
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id)
     if not can_user_place_students(request.user, classroom.school):
+        return HttpResponse('Forbidden', status=403)
+    if not can_user_access_classroom_grade(request.user, classroom.grade):
         return HttpResponse('Forbidden', status=403)
 
     selected_metrics = [

@@ -1044,26 +1044,21 @@ class DataVizBuilderView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
             else:
                 grade_filter_clauses.append("1=0")
 
-        if not is_unrestricted and hasattr(user, 'grade_levels'):
-            user_grade_levels = user.grade_levels
-            if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
-                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
-                current_role = None
-                if hasattr(user, 'active_role') and user.active_role:
-                    current_role = user.active_role.name
-                elif user.roles.count() == 1:
-                    current_role = user.roles.first().name
-                if current_role in grade_restricted_roles:
-                    grade_filter_clauses.append("grade = ANY(%s)")
-                    grade_filter_params.append(user_grade_levels)
+        active_role_name = getattr(getattr(user, 'active_role', None), 'name', None)
+        if active_role_name == 'School Gr View':
+            delegated_grades = getattr(user, 'grade_levels', None)
+            if isinstance(delegated_grades, list) and delegated_grades:
+                grade_filter_clauses.append("grade = ANY(%s)")
+                grade_filter_params.append(delegated_grades)
 
         active_school_id = getattr(getattr(user, 'active_school', None), 'state_id', None)
-        grade_levels_key = json.dumps(getattr(user, 'grade_levels', None) or [], sort_keys=True)
         schools_key = json.dumps(getattr(user, 'schools', None) or [], sort_keys=True)
+        grade_levels_key = json.dumps(getattr(user, 'grade_levels', None) or [], sort_keys=True)
+        role_key = active_role_name or ''
         grades_key = (
-            f"dataviz:grades:{user.id}:{active_school_id}:"
-            f"{hashlib.md5(grade_levels_key.encode()).hexdigest()}:"
-            f"{hashlib.md5(schools_key.encode()).hexdigest()}"
+            f"dataviz:grades:{user.id}:{active_school_id}:{role_key}:"
+            f"{hashlib.md5(schools_key.encode()).hexdigest()}:"
+            f"{hashlib.md5(grade_levels_key.encode()).hexdigest()}"
         )
         grades = cache.get(grades_key)
         if not grades:

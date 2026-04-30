@@ -15,6 +15,7 @@ from dataexploration.view_modules.student_data_utils import (
 from placementcards.models import PlacementCard, PlacementTag, QuestionTemplate
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
+    can_user_access_teacher_notes,
     get_accessible_students,
     get_request_school,
     invalidate_school_caches,
@@ -148,7 +149,7 @@ def _get_questions(school_id: int):
 @page_access_required('placement-cards-teacher-notes')
 def teacher_notes_page(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_access_placement_cards(request.user, school):
+    if not can_user_access_teacher_notes(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     is_school_admin = _is_school_admin(request.user)
