@@ -57,4 +57,9 @@
     {% if 'tags' in selected_metrics %}
     <div>Tags: {% for key, value in tag_counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% empty %}None{% endfor %}</div>
     {% endif %}
+    {% if teacher_note_metrics %}
+        {% for metric in teacher_note_metrics %}
+        <div>{{ metric.question_text }}: {% for key, value in metric.counts.items %}<span class="mr-2">{{ key }}: {{ value }}</span>{% empty %}<span class="mr-2">NONE: 0</span>{% endfor %}</div>
+        {% endfor %}
+    {% endif %}
 </div>

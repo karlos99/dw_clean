@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load placementcards_tags %}
 
 {% block title %}Place Students{% endblock %}
 
@@ -9,7 +10,7 @@
         <a href="{% url 'placementcards:teacher_notes' %}" class="text-sm text-blue-600 hover:text-blue-800">Teacher Notes</a>
     </div>
 
-    <form method="get" action="{% url 'placementcards:place_students' %}" class="bg-white border border-slate-200 p-4 grid md:grid-cols-6 gap-3">
+    <form id="placement-filter-form" method="get" action="{% url 'placementcards:place_students' %}" class="bg-white border border-slate-200 p-4 grid md:grid-cols-6 gap-3">
         <input id="placement-filter-overlay" type="checkbox" class="peer sr-only">
         <div>
             <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Student Year</label>
@@ -207,12 +208,12 @@
         <div class="md:col-span-6 flex items-center gap-3">
             <button type="submit" class="px-4 py-2 text-sm bg-slate-900 text-white">Apply Filters</button>
             <label for="placement-filter-overlay" class="px-4 py-2 text-sm border border-slate-300 text-slate-700 bg-white cursor-pointer">Filter Menu</label>
-            <a href="{% url 'placementcards:place_students' %}?student_year={{ student_year }}&placement_year={{ placement_year }}" class="px-4 py-2 text-sm border border-slate-300 text-slate-700 bg-white">Clear</a>
+            <a href="{% url 'placementcards:place_students' %}?student_year={{ student_year }}&placement_year={{ placement_year }}" data-placement-filters-clear class="px-4 py-2 text-sm border border-slate-300 text-slate-700 bg-white">Clear</a>
         </div>
 
         <div class="hidden peer-checked:flex fixed inset-0 bg-black/30 z-50 items-center justify-center">
             <label for="placement-filter-overlay" class="absolute inset-0"></label>
-            <div class="relative bg-white border border-slate-300 w-full max-w-2xl p-5 space-y-4">
+            <div class="relative bg-white border border-slate-300 w-full max-w-4xl max-h-[85vh] overflow-y-auto p-5 space-y-4">
                 <div class="flex items-center justify-between">
                     <h3 class="text-base font-semibold text-slate-900">Placement Filter Menu</h3>
                     <label for="placement-filter-overlay" class="text-sm text-slate-500 cursor-pointer">Close</label>
@@ -268,6 +269,41 @@
                                 <label class="block"><input type="checkbox" name="metrics" value="tags" {% if 'tags' in selected_metrics %}checked{% endif %}> Tags</label>
                             </div>
                         </details>
+
+                        {% if teacher_note_questions %}
+                        <details class="border border-slate-200 bg-slate-50">
+                            <summary class="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-700">Teacher Notes Filters</summary>
+                            <div class="space-y-3 text-sm px-3 pb-3 pt-1 max-h-64 overflow-y-auto">
+                                {% for note_question in teacher_note_questions %}
+                                {% with selected_values=selected_teacher_note_filters|get_item:note_question.id %}
+                                <div class="border border-slate-200 bg-white px-2 py-2">
+                                    <div class="text-xs font-semibold text-slate-700 mb-1">{{ note_question.question_text }}</div>
+                                    <div class="space-y-1">
+                                        {% for option in note_question.choices %}
+                                        <label class="block text-xs text-slate-700">
+                                            <input type="checkbox" name="note_filter_{{ note_question.id }}" value="{{ option.value }}" {% if selected_values and option.value in selected_values %}checked{% endif %}>
+                                            {{ option.label }}
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% endwith %}
+                                {% endfor %}
+                            </div>
+                        </details>
+
+                        <details class="border border-slate-200 bg-slate-50">
+                            <summary class="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-700">Teacher Notes Statistics Elements</summary>
+                            <div class="space-y-1 text-sm px-3 pb-3 pt-1 max-h-56 overflow-y-auto">
+                                {% for note_question in teacher_note_questions %}
+                                <label class="block">
+                                    <input type="checkbox" name="metrics" value="{{ note_question.metric_key }}" {% if note_question.metric_key in selected_metrics %}checked{% endif %}>
+                                    {{ note_question.question_text }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </details>
+                        {% endif %}
                     </div>
                     <div class="md:col-span-2">
                         <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">Assessment PL Filters</h4>
@@ -325,6 +361,7 @@
 (() => {
     const DROP_HIGHLIGHT = 'ring-2 ring-blue-400 bg-blue-50';
     const DETAILS_STATE_PREFIX = 'placement-details-open:';
+    const FILTER_STATE_KEY = 'placement-filters-state-v1';
 
     function detailsStateKey(detailsEl) {
         const persistKey = detailsEl.getAttribute('data-persist-key');
@@ -348,6 +385,39 @@
             }
             detailsEl.open = stored === '1';
         });
+    }
+
+    function toggleConflictOverlayLock() {
+        const hasOverlay = !!document.querySelector('[data-placement-conflict-overlay]');
+        document.body.classList.toggle('overflow-hidden', hasOverlay);
+    }
+
+    function savePlacementFilters(form) {
+        if (!form) {
+            return;
+        }
+        const params = new URLSearchParams(new FormData(form));
+        localStorage.setItem(FILTER_STATE_KEY, params.toString());
+    }
+
+    function restorePlacementFiltersOnLoad(form) {
+        if (!form) {
+            return;
+        }
+        const url = new URL(window.location.href);
+        const currentParams = url.searchParams;
+        const hasCurrentParams = Array.from(currentParams.keys()).length > 0;
+        const saved = localStorage.getItem(FILTER_STATE_KEY) || '';
+
+        if (!hasCurrentParams && saved.trim()) {
+            url.search = saved;
+            window.location.replace(url.toString());
+            return;
+        }
+
+        if (hasCurrentParams) {
+            localStorage.setItem(FILTER_STATE_KEY, currentParams.toString());
+        }
     }
 
     function selectedStudentSsids(assignForm) {
@@ -446,6 +516,18 @@
         assignForm.requestSubmit();
     });
 
+    document.body.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-placement-conflict-ack]');
+        if (!button) {
+            return;
+        }
+        const overlay = button.closest('[data-placement-conflict-overlay]');
+        if (overlay) {
+            overlay.remove();
+        }
+        toggleConflictOverlayLock();
+    });
+
     document.addEventListener('toggle', (event) => {
         const detailsEl = event.target;
         if (!(detailsEl instanceof HTMLDetailsElement)) {
@@ -462,7 +544,21 @@
     }, true);
 
     document.addEventListener('DOMContentLoaded', () => {
+        const filterForm = document.getElementById('placement-filter-form');
+        restorePlacementFiltersOnLoad(filterForm);
+        if (filterForm) {
+            filterForm.addEventListener('submit', () => savePlacementFilters(filterForm));
+        }
+
+        const clearLink = document.querySelector('[data-placement-filters-clear]');
+        if (clearLink) {
+            clearLink.addEventListener('click', () => {
+                localStorage.removeItem(FILTER_STATE_KEY);
+            });
+        }
+
         restoreDetailsState(document);
+        toggleConflictOverlayLock();
     });
 
     document.body.addEventListener('htmx:afterSwap', (event) => {
@@ -472,6 +568,7 @@
         }
         if (target.id === 'placement-workspace') {
             restoreDetailsState(target);
+            toggleConflictOverlayLock();
         }
     });
 })();
