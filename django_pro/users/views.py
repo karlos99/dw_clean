@@ -698,6 +698,8 @@ def user_detail(request, user_id):
         prefs = user_obj.preferences if isinstance(user_obj.preferences, dict) else {}
         prefs['can_move_placement_cards'] = request.POST.get('can_move_placement_cards') == 'on'
         prefs['can_export_classroom_csv'] = request.POST.get('can_export_classroom_csv') == 'on'
+        prefs['can_manage_placement_configuration'] = request.POST.get('can_manage_placement_configuration') == 'on'
+        prefs['can_access_teacher_notes'] = request.POST.get('can_access_teacher_notes') == 'on'
         user_obj.preferences = prefs
 
         user_obj.save()

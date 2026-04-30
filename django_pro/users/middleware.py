@@ -1,5 +1,7 @@
 from .models import Role, UsageSession, PageVisit
 from django.conf import settings
+from django.contrib import messages
+from django.shortcuts import redirect
 from django.utils import timezone
 from datetime import timedelta
 from django.apps import apps
@@ -227,3 +229,41 @@ class UsageTrackingMiddleware:
         visit.ended_at = now
         visit.duration_seconds = max(0, int((visit.ended_at - visit.started_at).total_seconds()))
         visit.save(update_fields=['ended_at', 'duration_seconds'])
+
+
+class RedirectForbiddenToHomeMiddleware:
+    """Redirect full-page 403 responses for authenticated users to home.
+
+    This avoids showing raw Forbidden pages after role switches while preserving
+    403 behavior for API/AJAX/HTMX requests.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+
+        if response.status_code != 403:
+            return response
+
+        if not getattr(request, 'user', None) or not request.user.is_authenticated:
+            return response
+
+        if request.method != 'GET':
+            return response
+
+        # Preserve machine/client-side 403 handling.
+        if request.headers.get('HX-Request') == 'true':
+            return response
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return response
+        if request.path.startswith('/api/'):
+            return response
+
+        accept_header = (request.headers.get('Accept') or '').lower()
+        if 'application/json' in accept_header and 'text/html' not in accept_header:
+            return response
+
+        messages.info(request, 'Your current role does not have access to that page. Redirected to home.')
+        return redirect('index')

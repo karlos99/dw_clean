@@ -15,6 +15,7 @@ from django.shortcuts import render
 from placementcards.models import PlacementCard, QuestionTemplate, StudentPlacement
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
+    can_user_access_teacher_notes,
     can_user_place_students,
     get_accessible_students,
     get_request_school,
@@ -976,7 +977,7 @@ def export_teacher_notes_pdf_half(request: HttpRequest):
     school = get_request_school(request)
     if not school:
         return HttpResponse('No active school context', status=400)
-    if not can_user_access_placement_cards(request.user, school):
+    if not can_user_access_teacher_notes(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     school_year = _resolve_school_year(request)
@@ -995,7 +996,7 @@ def export_student_notes_pdf(request: HttpRequest, ssid: str):
     school = get_request_school(request)
     if not school:
         return HttpResponse('No active school context', status=400)
-    if not can_user_access_placement_cards(request.user, school):
+    if not can_user_access_teacher_notes(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     school_year = _resolve_school_year(request)

@@ -14,7 +14,9 @@ from dataexploration.models import ElementaryHomeroomTeacher
 from dataexploration.view_modules.student_data_utils import get_student_summary_partial_html_cached
 from placementcards.models import NextYearClassroom, PlacementCard, PlacementTag, QuestionTemplate, StudentPlacement
 from placementcards.view_modules.card_data_utils import (
+    can_user_access_classroom_grade,
     can_user_place_students,
+    can_user_unassign_from_classroom_grade,
     get_accessible_students,
     get_request_school,
     placement_card_map,
@@ -228,6 +230,7 @@ def _build_placement_context(request: HttpRequest, school, data):
         .annotate(assignment_count=Count('placements'))
         .order_by('grade', 'classroom_name')
     )
+    classrooms = [classroom for classroom in classrooms if can_user_access_classroom_grade(request.user, classroom.grade)]
 
     placement_rows = list(
         StudentPlacement.objects.filter(classroom__in=classrooms, school_year=placement_year)
@@ -379,7 +382,7 @@ def export_classrooms_csv(request: HttpRequest):
     elif scope == 'selected':
         return HttpResponse('No classrooms selected for export.', status=400)
 
-    classrooms = list(classrooms_qs)
+    classrooms = [classroom for classroom in classrooms_qs if can_user_access_classroom_grade(request.user, classroom.grade)]
     if not classrooms:
         return HttpResponse('No classrooms found for export.', status=404)
 
@@ -465,6 +468,16 @@ def assign_student_to_classroom(request: HttpRequest):
     classroom = get_object_or_404(NextYearClassroom, id=int(classroom_id))
     if not can_user_place_students(request.user, classroom.school):
         return HttpResponse('Forbidden', status=403)
+    if not can_user_access_classroom_grade(request.user, classroom.grade):
+        return HttpResponse('Forbidden', status=403)
+
+    accessible_ssids = set(
+        get_accessible_students(request, school_year=classroom.school_year)
+        .filter(ssid__in=student_ssids)
+        .values_list('ssid', flat=True)
+    )
+    if len(accessible_ssids) != len(student_ssids):
+        return HttpResponse('One or more students are outside your delegated scope', status=403)
 
     for student_ssid in student_ssids:
         StudentPlacement.objects.update_or_create(
@@ -487,12 +500,20 @@ def assign_student_to_classroom(request: HttpRequest):
 def unassign_student_from_classroom(request: HttpRequest):
     student_ssid = request.POST.get('student_ssid', '').strip()
     placement_year = request.POST.get('placement_year', '').strip()
+    student_year = request.POST.get('student_year', '').strip()
     if not student_ssid or not placement_year:
         return HttpResponse('Invalid request', status=400)
 
     placement = get_object_or_404(StudentPlacement, student_ssid=student_ssid, school_year=placement_year)
     if not can_user_place_students(request.user, placement.classroom.school):
         return HttpResponse('Forbidden', status=403)
+    if not can_user_unassign_from_classroom_grade(request.user, placement.classroom.grade):
+        return HttpResponse('Forbidden', status=403)
+
+    scope_year = student_year or placement_year
+    can_touch_student = get_accessible_students(request, school_year=scope_year).filter(ssid=student_ssid).exists()
+    if not can_touch_student:
+        return HttpResponse('Student unavailable', status=403)
 
     classroom_id = placement.classroom_id
     placement.delete()

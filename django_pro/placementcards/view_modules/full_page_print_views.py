@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 
 from placementcards.view_modules.card_data_utils import get_request_school
-from placementcards.view_modules.card_data_utils import can_user_access_placement_cards
+from placementcards.view_modules.card_data_utils import can_user_access_teacher_notes
 from placementcards.view_modules.half_page_print_views import (
     _assessment_snapshot_map,
     _draw_section_title,
@@ -435,7 +435,7 @@ def export_teacher_notes_pdf_full(request: HttpRequest):
     school = get_request_school(request)
     if not school:
         return HttpResponse('No active school context', status=400)
-    if not can_user_access_placement_cards(request.user, school):
+    if not can_user_access_teacher_notes(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     school_year = _resolve_school_year(request)
@@ -454,7 +454,7 @@ def export_student_notes_pdf_full(request: HttpRequest, ssid: str):
     school = get_request_school(request)
     if not school:
         return HttpResponse('No active school context', status=400)
-    if not can_user_access_placement_cards(request.user, school):
+    if not can_user_access_teacher_notes(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     school_year = _resolve_school_year(request)

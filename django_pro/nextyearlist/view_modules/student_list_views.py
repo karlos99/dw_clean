@@ -110,9 +110,18 @@ class NextYearListView(LoginRequiredMixin, ListView):
             else:
                 grade_filter_clauses.append("1=0")
 
+        active_role_name = getattr(getattr(self.request.user, 'active_role', None), 'name', None)
+        if active_role_name == 'School Gr View':
+            delegated_grades = getattr(self.request.user, 'grade_levels', None)
+            if isinstance(delegated_grades, list) and delegated_grades:
+                grade_filter_clauses.append("cs.grade = ANY(%s)")
+                grade_filter_params.append(delegated_grades)
+
         active_school_id = getattr(getattr(self.request.user, 'active_school', None), 'state_id', None)
         schools_key = json.dumps(getattr(self.request.user, 'schools', []) or [], sort_keys=True)
-        grades_key = f"nyl:grades:{self.request.user.id}:{active_school_id}:{hashlib.md5(schools_key.encode()).hexdigest()}"
+        role_key = active_role_name or ''
+        grade_levels_key = json.dumps(getattr(self.request.user, 'grade_levels', None) or [], sort_keys=True)
+        grades_key = f"nyl:grades:{self.request.user.id}:{active_school_id}:{role_key}:{hashlib.md5(schools_key.encode()).hexdigest()}:{hashlib.md5(grade_levels_key.encode()).hexdigest()}"
         grades = cache.get(grades_key)
         if not grades:
             with connections['default'].cursor() as cursor:
@@ -544,20 +553,12 @@ def load_students(request):
         # Next-year school access filter (the key NYL difference)
         _apply_nyl_school_filter(base_where_clauses, base_params, request.user)
 
-        # Grade level restriction for school-scoped roles
-        is_unres = _is_unrestricted(request.user)
-        if not is_unres and hasattr(request.user, 'grade_levels'):
-            grade_levels = request.user.grade_levels
-            if isinstance(grade_levels, list) and grade_levels:
-                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
-                current_role = None
-                if hasattr(request.user, 'active_role') and request.user.active_role:
-                    current_role = request.user.active_role.name
-                elif request.user.roles.count() == 1:
-                    current_role = request.user.roles.first().name
-                if current_role in grade_restricted_roles:
-                    base_where_clauses.append("cs.grade = ANY(%s)")
-                    base_params.append(grade_levels)
+        active_role_name = getattr(getattr(request.user, 'active_role', None), 'name', None)
+        if active_role_name == 'School Gr View':
+            delegated_grades = getattr(request.user, 'grade_levels', None)
+            if isinstance(delegated_grades, list) and delegated_grades:
+                base_where_clauses.append("cs.grade = ANY(%s)")
+                base_params.append(delegated_grades)
 
         # Row-level student access (Teacher)
         if hasattr(request.user, 'get_accessible_student_keys'):
