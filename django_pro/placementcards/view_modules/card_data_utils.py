@@ -189,7 +189,18 @@ def get_request_school(request: HttpRequest) -> School | None:
     return None
 
 
-def get_accessible_students(request: HttpRequest, school_year: str | None = None, grades: Iterable[str] | None = None):
+def get_accessible_students(
+    request: HttpRequest,
+    school_year: str | None = None,
+    grades: Iterable[str] | None = None,
+    for_placement: bool = False,
+):
+    """Return students accessible to the requesting user.
+
+    ``for_placement=True`` skips the schedule-based student-key restriction for
+    School Gr View users so they can see *all* students in their delegated grade
+    level(s) when placing students between classrooms, not just their own roster.
+    """
     user = request.user
     grade_values = set(grades or ELEMENTARY_GRADES)
     queryset = CurrentStudent.objects.filter(grade__in=grade_values)
@@ -212,9 +223,13 @@ def get_accessible_students(request: HttpRequest, school_year: str | None = None
         if delegated_grades:
             queryset = queryset.filter(grade__in=delegated_grades)
 
-        delegated_student_keys = _school_gr_view_student_keys_if_any(user)
-        if delegated_student_keys:
-            queryset = queryset.filter(stu_annual_key__in=delegated_student_keys)
+        # Only apply schedule-based restriction outside of placement contexts.
+        # When placing students a School Gr View user must see every student in
+        # their delegated grade, not just those on their personal schedule.
+        if not for_placement:
+            delegated_student_keys = _school_gr_view_student_keys_if_any(user)
+            if delegated_student_keys:
+                queryset = queryset.filter(stu_annual_key__in=delegated_student_keys)
 
     allowed_keys = user.get_accessible_student_keys() if hasattr(user, 'get_accessible_student_keys') else None
     if role_name == 'Teacher' and allowed_keys is not None:
