@@ -20,7 +20,7 @@
             <button type="submit" class="px-4 py-2 text-sm bg-blue-600 text-white">Assign Selected</button>
         </div>
 
-        <div class="space-y-2">
+        <div class="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
             {% for student in students %}
             <label draggable="true" data-draggable-student="{{ student.ssid }}" class="block border border-slate-200 p-2 bg-white hover:bg-slate-50 cursor-pointer">
                 <div class="flex items-start gap-3">

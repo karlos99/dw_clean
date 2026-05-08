@@ -21,6 +21,9 @@
 {% for assessment_key in selected_assessment_keys %}
 <input type="hidden" name="assessment_keys" value="{{ assessment_key }}">
 {% endfor %}
+{% for note_filter in selected_teacher_note_filters_flat %}
+<input type="hidden" name="note_filter_{{ note_filter.question_id }}" value="{{ note_filter.value }}">
+{% endfor %}
 {% for enabled_filter in enabled_filters %}
 <input type="hidden" name="enabled_filters" value="{{ enabled_filter }}">
 {% endfor %}

@@ -1,5 +1,31 @@
 {% load placementcards_tags %}
 
+{% if placement_conflicts %}
+<div data-placement-conflict-overlay class="fixed inset-0 z-[70] bg-slate-900/55 flex items-center justify-center p-4">
+    <div class="w-full max-w-2xl border border-amber-300 bg-white shadow-xl">
+        <div class="px-4 py-3 border-b border-amber-200 bg-amber-50">
+            <div class="text-sm font-semibold text-amber-900">Placement Conflict Detected</div>
+            <div class="mt-1 text-xs text-amber-800">The following students are marked as "Should Not Be In Same Class With" but are currently assigned to the same classroom.</div>
+        </div>
+        <div class="px-4 py-3 max-h-[55vh] overflow-y-auto">
+            <ul class="space-y-2 text-sm text-slate-800">
+                {% for conflict in placement_conflicts %}
+                <li class="border border-amber-200 bg-amber-50/50 px-3 py-2">
+                    {{ conflict.student_a }}{% if conflict.student_a_grade %} (Grade {{ conflict.student_a_grade }}){% endif %}
+                    and
+                    {{ conflict.student_b }}{% if conflict.student_b_grade %} (Grade {{ conflict.student_b_grade }}){% endif %}
+                    are both in {{ conflict.classroom_name }}{% if conflict.classroom_grade %} (Grade {{ conflict.classroom_grade }}){% endif %}.
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        <div class="px-4 py-3 border-t border-slate-200 flex justify-end">
+            <button type="button" data-placement-conflict-ack class="px-4 py-2 text-sm bg-slate-900 text-white">Acknowledge and Continue</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="grid lg:grid-cols-2 gap-4">
     <div id="students-list">{% include 'placementcards/partials/students_list.html' %}</div>
     <div class="bg-white border border-slate-200 p-3 space-y-2">

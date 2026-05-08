@@ -25,6 +25,9 @@ from studata.models import CurrentStudent, Result, StudentEnroll, Test
 from users.decorators import page_access_required
 
 
+_TEACHER_NOTE_SUPPORTED_TYPES = {'checkbox', 'choice', 'multiselect', 'student_list'}
+
+
 def _bump_classroom_stats_version(classroom_id: int):
     version_key = f'classroom_stats_version:{classroom_id}'
     current_version = cache.get(version_key, 0)
@@ -58,6 +61,178 @@ def _clean_values(queryset, field: str) -> list[str]:
         .distinct()
         .order_by('clean_val')
     )
+
+
+def _teacher_note_questions(school) -> list[dict]:
+    if not school:
+        return []
+
+    questions = (
+        QuestionTemplate.objects.filter(school=school, is_active=True, question_type__in=_TEACHER_NOTE_SUPPORTED_TYPES)
+        .only('id', 'question_text', 'question_type', 'field_options', 'display_order', 'question_category')
+        .order_by('question_category', 'display_order', 'id')
+    )
+
+    teacher_notes: list[dict] = []
+    for question in questions:
+        choices = []
+        if question.question_type == 'checkbox':
+            choices = [
+                {'value': 'true', 'label': 'Yes'},
+                {'value': 'false', 'label': 'No'},
+            ]
+        elif question.question_type in {'choice', 'multiselect'}:
+            field_options = question.field_options if isinstance(question.field_options, dict) else {}
+            option_values = field_options.get('choices', []) if isinstance(field_options.get('choices', []), list) else []
+            choices = [{'value': str(option), 'label': str(option)} for option in option_values if str(option).strip()]
+        elif question.question_type == 'student_list':
+            choices = [
+                {'value': '__HAS_VALUES__', 'label': 'Has Selected Students'},
+                {'value': '__NO_VALUES__', 'label': 'No Selected Students'},
+            ]
+
+        teacher_notes.append(
+            {
+                'id': str(question.id),
+                'question_text': question.question_text,
+                'question_type': question.question_type,
+                'choices': choices,
+                'metric_key': f'note_q_{question.id}',
+            }
+        )
+
+    return teacher_notes
+
+
+def _matches_teacher_note_filter(question_type: str, value, selected_values: list[str]) -> bool:
+    selected_set = {str(item).strip() for item in selected_values if str(item).strip()}
+    if not selected_set:
+        return True
+
+    if question_type == 'checkbox':
+        value_str = 'true' if bool(value) else 'false'
+        return value_str in selected_set
+
+    if question_type == 'choice':
+        normalized = str(value).strip()
+        return normalized in selected_set
+
+    if question_type == 'multiselect':
+        if not isinstance(value, list):
+            return False
+        normalized_values = {str(item).strip() for item in value if str(item).strip()}
+        return bool(normalized_values & selected_set)
+
+    if question_type == 'student_list':
+        has_values = isinstance(value, list) and len([item for item in value if str(item).strip()]) > 0
+        if '__HAS_VALUES__' in selected_set and has_values:
+            return True
+        if '__NO_VALUES__' in selected_set and not has_values:
+            return True
+        return False
+
+    return True
+
+
+def _conflict_question_ids_for_school(school) -> list[str]:
+    if not school:
+        return []
+    question_ids = QuestionTemplate.objects.filter(
+        school=school,
+        is_active=True,
+        question_type='student_list',
+        question_text__iexact='Should Not Be In Same Class With',
+    ).values_list('id', flat=True)
+    return [str(question_id) for question_id in question_ids]
+
+
+def _student_conflicts_for_classroom(
+    *,
+    school,
+    classroom,
+    student_year: str,
+    newly_assigned_ssids: list[str],
+) -> list[dict[str, str]]:
+    if not school or not classroom or not student_year:
+        return []
+
+    question_ids = _conflict_question_ids_for_school(school)
+    if not question_ids:
+        return []
+
+    classroom_student_ssids = list(
+        StudentPlacement.objects.filter(
+            classroom=classroom,
+            school_year=classroom.school_year,
+        ).values_list('student_ssid', flat=True)
+    )
+    if not classroom_student_ssids:
+        return []
+
+    cards = PlacementCard.objects.filter(
+        ssid__in=classroom_student_ssids,
+        school_year=student_year,
+    ).only('ssid', 'responses')
+
+    blocked_by_student: dict[str, set[str]] = {}
+    for card in cards:
+        responses = card.responses if isinstance(card.responses, dict) else {}
+        blocked_ssids: set[str] = set()
+        for question_id in question_ids:
+            value = responses.get(question_id)
+            if isinstance(value, list):
+                blocked_ssids.update(str(item).strip() for item in value if str(item).strip())
+        if blocked_ssids:
+            blocked_by_student[card.ssid] = blocked_ssids
+
+    if not blocked_by_student:
+        return []
+
+    student_rows = CurrentStudent.objects.filter(
+        ssid__in=classroom_student_ssids,
+        school_year=student_year,
+    ).only('ssid', 'student_name', 'grade')
+    student_info = {
+        row.ssid: {
+            'name': row.student_name or row.ssid,
+            'grade': str(row.grade or ''),
+        }
+        for row in student_rows
+    }
+
+    newly_assigned_set = set(newly_assigned_ssids)
+    seen_pairs: set[tuple[str, str]] = set()
+    conflicts: list[dict[str, str]] = []
+
+    for left_ssid in classroom_student_ssids:
+        left_blocked = blocked_by_student.get(left_ssid, set())
+        for right_ssid in classroom_student_ssids:
+            if left_ssid == right_ssid:
+                continue
+            if right_ssid not in left_blocked and left_ssid not in blocked_by_student.get(right_ssid, set()):
+                continue
+            if left_ssid not in newly_assigned_set and right_ssid not in newly_assigned_set:
+                continue
+
+            pair = tuple(sorted((left_ssid, right_ssid)))
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+
+            left_meta = student_info.get(left_ssid, {'name': left_ssid, 'grade': ''})
+            right_meta = student_info.get(right_ssid, {'name': right_ssid, 'grade': ''})
+            conflicts.append(
+                {
+                    'student_a': left_meta['name'],
+                    'student_a_grade': left_meta['grade'],
+                    'student_b': right_meta['name'],
+                    'student_b_grade': right_meta['grade'],
+                    'classroom_name': classroom.classroom_name,
+                    'classroom_grade': str(classroom.grade or ''),
+                }
+            )
+
+    return conflicts
 
 
 def _build_placement_context(request: HttpRequest, school, data):
@@ -172,6 +347,17 @@ def _build_placement_context(request: HttpRequest, school, data):
         for group in assessment_groups
     }
 
+    teacher_note_questions = _teacher_note_questions(school)
+    teacher_note_metric_keys = {question['metric_key'] for question in teacher_note_questions}
+    selected_metrics += [metric for metric in _getlist(data, 'metrics') if metric in teacher_note_metric_keys and metric not in selected_metrics]
+
+    selected_teacher_note_filters: dict[str, list[str]] = {}
+    for question in teacher_note_questions:
+        key = f"note_filter_{question['id']}"
+        selected_values = [value.strip() for value in _getlist(data, key) if value.strip()]
+        if selected_values:
+            selected_teacher_note_filters[question['id']] = selected_values
+
     queryset = _apply_tag_filter(base_queryset, student_year or '', selected_tag_ids)
 
     normalized_field_filters = [
@@ -215,6 +401,30 @@ def _build_placement_context(request: HttpRequest, school, data):
             pl_clean=Upper(Trim('pl'))
         ).filter(selection_filter)
         queryset = queryset.filter(ssid__in=pl_results.values('ssid'))
+
+    if selected_teacher_note_filters:
+        candidate_ssids = list(queryset.values_list('ssid', flat=True))
+        cards = PlacementCard.objects.filter(ssid__in=candidate_ssids, school_year=student_year or '').only('ssid', 'responses')
+        responses_by_ssid = {
+            card.ssid: card.responses if isinstance(card.responses, dict) else {}
+            for card in cards
+        }
+        question_type_by_id = {question['id']: question['question_type'] for question in teacher_note_questions}
+
+        allowed_ssids = []
+        for ssid in candidate_ssids:
+            responses = responses_by_ssid.get(ssid, {})
+            keep_student = True
+            for question_id, selected_values in selected_teacher_note_filters.items():
+                question_type = question_type_by_id.get(question_id)
+                response_value = responses.get(question_id)
+                if not _matches_teacher_note_filter(question_type or '', response_value, selected_values):
+                    keep_student = False
+                    break
+            if keep_student:
+                allowed_ssids.append(ssid)
+
+        queryset = queryset.filter(ssid__in=allowed_ssids)
 
     students = list(queryset.distinct())
     student_ssids = [student.ssid for student in students]
@@ -299,6 +509,21 @@ def _build_placement_context(request: HttpRequest, school, data):
             selected_labels.append(f"{assessment_label_map.get(group_key, group_key)} → PL {pl_value}")
         applied_filters.append(f"Assessment PL: {', '.join(selected_labels)}")
 
+    if selected_teacher_note_filters:
+        teacher_note_lookup = {question['id']: question for question in teacher_note_questions}
+        for question_id, selected_values in selected_teacher_note_filters.items():
+            question = teacher_note_lookup.get(question_id)
+            if not question:
+                continue
+            label_lookup = {choice['value']: choice['label'] for choice in question['choices']}
+            selected_labels = [label_lookup.get(value, value) for value in selected_values]
+            applied_filters.append(f"{question['question_text']}: {', '.join(selected_labels)}")
+
+    selected_teacher_note_filters_flat = []
+    for question_id, values in selected_teacher_note_filters.items():
+        for value in values:
+            selected_teacher_note_filters_flat.append({'question_id': question_id, 'value': value})
+
     return {
         'school': school,
         'student_year': student_year,
@@ -342,6 +567,10 @@ def _build_placement_context(request: HttpRequest, school, data):
         'status_options': status_options,
         'homeroom_teacher_options': homeroom_teacher_options,
         'assessment_groups': assessment_groups,
+        'placement_conflicts': [],
+        'teacher_note_questions': teacher_note_questions,
+        'selected_teacher_note_filters': selected_teacher_note_filters,
+        'selected_teacher_note_filters_flat': selected_teacher_note_filters_flat,
     }
 
 
@@ -471,8 +700,10 @@ def assign_student_to_classroom(request: HttpRequest):
     if not can_user_access_classroom_grade(request.user, classroom.grade):
         return HttpResponse('Forbidden', status=403)
 
+    student_year = request.POST.get('student_year', '').strip() or classroom.school_year
+
     accessible_ssids = set(
-        get_accessible_students(request, school_year=classroom.school_year)
+        get_accessible_students(request, school_year=student_year)
         .filter(ssid__in=student_ssids)
         .values_list('ssid', flat=True)
     )
@@ -490,8 +721,16 @@ def assign_student_to_classroom(request: HttpRequest):
             },
         )
 
+    placement_conflicts = _student_conflicts_for_classroom(
+        school=classroom.school,
+        classroom=classroom,
+        student_year=student_year,
+        newly_assigned_ssids=student_ssids,
+    )
+
     _bump_classroom_stats_version(classroom.id)
     context = _build_placement_context(request, classroom.school, request.POST)
+    context['placement_conflicts'] = placement_conflicts
     return render(request, 'placementcards/partials/placement_workspace.html', context)
 
 
