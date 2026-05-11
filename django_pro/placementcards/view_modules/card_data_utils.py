@@ -7,11 +7,12 @@ from django.core.cache import cache
 from django.db.models import Count, Q
 from django.http import HttpRequest
 
+from dataexploration.models import ElementaryHomeroomTeacher
 from placementcards.models import PlacementCard
 from studata.models import CurrentStudent, School, Schedule
 
 
-ELEMENTARY_GRADES = {'TK', 'KN', 'KG', '01', '1', '02', '2', '03', '3', '04', '4', '05', '5'}
+ELEMENTARY_GRADES = {'TK', 'KN', 'KG', '01', '1', '02', '2', '03', '3', '04', '4', '05', '5', '250'}
 DISALLOWED_PLACEMENT_GRADES = {'05', '5', '06', '6', '07', '7', '08', '8', '09', '9', '10', '11', '12', 'US'}
 
 
@@ -82,6 +83,37 @@ def _school_gr_view_student_keys_if_any(user) -> list[str]:
         .values_list('stu_annual_key', flat=True)
         .distinct()
     )
+
+
+def _teacher_placement_student_keys(user) -> list[str] | None:
+    """Return teacher-accessible student keys for placement cards.
+
+    Placement cards should include a teacher's elementary homeroom roster even
+    when those rows are only keyed by staff email on the period-0 roster.
+    """
+    allowed_keys = user.get_accessible_student_keys() if hasattr(user, 'get_accessible_student_keys') else None
+    if allowed_keys is None:
+        return None
+
+    valid_schools = School.objects.values('state_id')
+    staff_id = (getattr(user, 'staff_id', None) or '').strip()
+    email = (getattr(user, 'email', None) or '').strip()
+
+    homeroom_filters = Q(period__in=['0', '00'], state_school_id__in=valid_schools)
+    schedule_identity_filters = Q()
+    homeroom_identity_filters = Q()
+    if staff_id:
+        schedule_identity_filters |= Q(staff_employee_id=staff_id)
+    if email:
+        schedule_identity_filters |= Q(staff_email__iexact=email)
+        homeroom_identity_filters |= Q(staff_email__iexact=email)
+
+    if schedule_identity_filters or homeroom_identity_filters:
+        homeroom_keys = Schedule.objects.filter(homeroom_filters & schedule_identity_filters).values_list('stu_annual_key', flat=True)
+        eht_keys = ElementaryHomeroomTeacher.objects.filter(homeroom_identity_filters, school_year__isnull=False).values_list('stu_annual_key', flat=True)
+        return list({*allowed_keys, *homeroom_keys, *eht_keys})
+
+    return list(allowed_keys)
 
 
 def can_user_access_classroom_grade(user, classroom_grade: str | None) -> bool:
@@ -202,6 +234,7 @@ def get_accessible_students(
     level(s) when placing students between classrooms, not just their own roster.
     """
     user = request.user
+    role_name = _active_role_name(user) or ''
     grade_values = set(grades or ELEMENTARY_GRADES)
     queryset = CurrentStudent.objects.filter(grade__in=grade_values)
 
@@ -209,15 +242,24 @@ def get_accessible_students(
         queryset = queryset.filter(school_year=school_year)
 
     if not _is_unrestricted(user):
-        school = get_request_school(request)
-        if school:
-            queryset = queryset.filter(school_state_id=school.state_id)
-        elif isinstance(getattr(user, 'schools', None), list) and user.schools:
-            queryset = queryset.filter(school_state_id__in=user.schools)
+        if role_name == 'Teacher':
+            # Teacher placement card access is already row-scoped by roster.
+            # Do not blank the page because of stale or missing user.school
+            # metadata; use the exact teacher roster instead.
+            allowed_keys = _teacher_placement_student_keys(user)
+            if allowed_keys is not None:
+                queryset = queryset.filter(stu_annual_key__in=allowed_keys)
+            else:
+                queryset = queryset.none()
         else:
-            queryset = queryset.none()
+            school = get_request_school(request)
+            if school:
+                queryset = queryset.filter(school_state_id=school.state_id)
+            elif isinstance(getattr(user, 'schools', None), list) and user.schools:
+                queryset = queryset.filter(school_state_id__in=user.schools)
+            else:
+                queryset = queryset.none()
 
-    role_name = _active_role_name(user) or ''
     if role_name == 'School Gr View':
         delegated_grades = _school_gr_view_delegated_grades(user)
         if delegated_grades:
@@ -231,7 +273,9 @@ def get_accessible_students(
             if delegated_student_keys:
                 queryset = queryset.filter(stu_annual_key__in=delegated_student_keys)
 
-    allowed_keys = user.get_accessible_student_keys() if hasattr(user, 'get_accessible_student_keys') else None
+    allowed_keys = _teacher_placement_student_keys(user) if role_name == 'Teacher' else (
+        user.get_accessible_student_keys() if hasattr(user, 'get_accessible_student_keys') else None
+    )
     if role_name == 'Teacher' and allowed_keys is not None:
         queryset = queryset.filter(stu_annual_key__in=allowed_keys)
 
@@ -273,7 +317,7 @@ def _user_has_disallowed_placement_grades(user, school: School | None) -> bool:
         )
 
     if 'Teacher' in role_names:
-        allowed_keys = user.get_accessible_student_keys() if hasattr(user, 'get_accessible_student_keys') else None
+        allowed_keys = _teacher_placement_student_keys(user)
         if not allowed_keys:
             return True
         teacher_scope = CurrentStudent.objects.filter(stu_annual_key__in=allowed_keys)
