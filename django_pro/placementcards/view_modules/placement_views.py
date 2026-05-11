@@ -236,7 +236,7 @@ def _student_conflicts_for_classroom(
 
 
 def _build_placement_context(request: HttpRequest, school, data):
-    students_base = get_accessible_students(request)
+    students_base = get_accessible_students(request, for_placement=True)
     student_year = data.get('student_year') or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
     latest_classroom_year = (
         NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).order_by('-school_year').first()
@@ -280,7 +280,7 @@ def _build_placement_context(request: HttpRequest, school, data):
     homeroom_teacher_filter = data.get('homeroom_teacher', '').strip()
     selected_assessment_keys = [value.strip() for value in _getlist(data, 'assessment_keys') if '::' in value]
 
-    base_queryset = get_accessible_students(request, school_year=student_year)
+    base_queryset = get_accessible_students(request, school_year=student_year, for_placement=True)
     base_ssids = list(base_queryset.values_list('ssid', flat=True))
 
     hr_queryset = ElementaryHomeroomTeacher.objects.filter(school_year=student_year)
@@ -593,7 +593,7 @@ def export_classrooms_csv(request: HttpRequest):
     if not can_user_place_students(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
-    students_base = get_accessible_students(request)
+    students_base = get_accessible_students(request, for_placement=True)
     student_year = request.GET.get('student_year') or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
     latest_classroom_year = (
         NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).order_by('-school_year').first()
@@ -615,7 +615,7 @@ def export_classrooms_csv(request: HttpRequest):
     if not classrooms:
         return HttpResponse('No classrooms found for export.', status=404)
 
-    accessible_ssids = get_accessible_students(request, school_year=student_year).values('ssid')
+    accessible_ssids = get_accessible_students(request, school_year=student_year, for_placement=True).values('ssid')
     placement_rows = list(
         StudentPlacement.objects.filter(
             classroom__in=classrooms,
@@ -703,7 +703,7 @@ def assign_student_to_classroom(request: HttpRequest):
     student_year = request.POST.get('student_year', '').strip() or classroom.school_year
 
     accessible_ssids = set(
-        get_accessible_students(request, school_year=student_year)
+        get_accessible_students(request, school_year=student_year, for_placement=True)
         .filter(ssid__in=student_ssids)
         .values_list('ssid', flat=True)
     )
@@ -750,7 +750,7 @@ def unassign_student_from_classroom(request: HttpRequest):
         return HttpResponse('Forbidden', status=403)
 
     scope_year = student_year or placement_year
-    can_touch_student = get_accessible_students(request, school_year=scope_year).filter(ssid=student_ssid).exists()
+    can_touch_student = get_accessible_students(request, school_year=scope_year, for_placement=True).filter(ssid=student_ssid).exists()
     if not can_touch_student:
         return HttpResponse('Student unavailable', status=403)
 
@@ -774,7 +774,7 @@ def view_student_card_overlay(request: HttpRequest, ssid: str):
         return HttpResponse('Forbidden', status=403)
 
     student_year = request.GET.get('student_year')
-    student_qs = get_accessible_students(request, school_year=student_year) if student_year else get_accessible_students(request)
+    student_qs = get_accessible_students(request, school_year=student_year, for_placement=True) if student_year else get_accessible_students(request, for_placement=True)
     student = student_qs.filter(ssid=ssid).order_by('-school_year').first()
     if not student:
         return HttpResponse('Student not found', status=404)
