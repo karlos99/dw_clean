@@ -47,6 +47,22 @@ def _cfg_from_post(post):
     except (json.JSONDecodeError, ValueError):
         compare_pl_cols = []
 
+    # Parse assessment_compare filters
+    def _parse_json_list(key):
+        raw = post.get(key, '')
+        try:
+            return json.loads(raw) if raw else []
+        except (json.JSONDecodeError, ValueError):
+            return []
+
+    ac_include_cats = _parse_json_list('ac_include_cats')
+    ac_include_pl   = _parse_json_list('ac_include_pl')
+    ac_col_filters_raw = post.get('ac_col_filters', '')
+    try:
+        ac_col_filters = json.loads(ac_col_filters_raw) if ac_col_filters_raw else {}
+    except (json.JSONDecodeError, ValueError):
+        ac_col_filters = {}
+
     # Parse pl_scale (JSON array or comma-separated string)
     pls_raw = post.get('pl_scale', '')
     try:
@@ -57,6 +73,18 @@ def _cfg_from_post(post):
     except (json.JSONDecodeError, ValueError):
         pl_scale = []
 
+    def _parse_int(val, default=0):
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
+
+    def _parse_pos(val):
+        if not val: return None
+        if val in ('center', 'middle', 'left', 'right', 'top', 'bottom'):
+            return val
+        return _parse_int(val, None)
+
     return {
         'chart_type':        post.get('chart_type', 'bar'),
         'x_col':             post.get('x_col', ''),
@@ -64,6 +92,9 @@ def _cfg_from_post(post):
         'series_col':        post.get('series_col', ''),
         'stack_col':         post.get('series_col', ''),
         'compare_pl_cols':   compare_pl_cols,
+        'ac_include_cats':   ac_include_cats,
+        'ac_include_pl':     ac_include_pl,
+        'ac_col_filters':    ac_col_filters,
         'agg':               post.get('agg_func', 'count'),
         # Progress Growth fields
         'pg_before_col':     post.get('pg_before_col', ''),
@@ -75,15 +106,21 @@ def _cfg_from_post(post):
         'st_col_col':        post.get('st_col_col', ''),
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
-        'limit':             int(post.get('limit', 500) or 500),
+        'limit':             _parse_int(post.get('limit'), 500),
         # Visual options
         'palette':           post.get('palette', ''),
         'legend_pos':        legend_pos if legend_pos else ('bottom' if show_legend else 'hidden'),
+        'legend_item_gap':   _parse_int(post.get('legend_item_gap'),  10),
+        'legend_font_size':  _parse_int(post.get('legend_font_size'), 11),
+        'legend_icon_size':  _parse_int(post.get('legend_icon_size'), 10),
+        'legend_offset':     _parse_int(post.get('legend_offset'),     0),
+        'legend_left':       _parse_pos(post.get('legend_left')),
+        'legend_top':        _parse_pos(post.get('legend_top')),
         'data_labels':       bool(post.get('show_labels')),
         'label_position':    post.get('label_position', 'top'),
         'background':        post.get('background', 'white'),
         'opacity':           float(post.get('opacity', 0.9) or 0.9),
-        'bar_border_radius': int(post.get('bar_border_radius', 0) or 0),
+        'bar_border_radius': _parse_int(post.get('bar_border_radius'), 0),
         'show_points':       bool(post.get('show_points')),
         'smooth':            bool(post.get('smooth')),
         'color_map':         color_map,
@@ -97,9 +134,28 @@ def _cfg_from_post(post):
         'animation':         bool(post.get('animation', '1')),
         'show_tooltip':      bool(post.get('show_tooltip', '1')),
         'show_percent':      bool(post.get('show_percent')),
-        'compare_gap':       int(post.get('compare_gap') if post.get('compare_gap') not in (None, '') else 30),
-        'compare_cat_font_size': int(post.get('compare_cat_font_size', 12) or 12),
-        'compare_cat_rotation':  int(post.get('compare_cat_rotation') if post.get('compare_cat_rotation') not in (None, '') else 0),
+        'compare_gap':       _parse_int(post.get('compare_gap'), 30),
+        'compare_cat_font_size': _parse_int(post.get('compare_cat_font_size'), 12),
+        'compare_cat_rotation':  _parse_int(post.get('compare_cat_rotation'), 0),
+        # Axis & layout
+        'x_label_rotation':  _parse_int(post.get('x_label_rotation'), 0),
+        'x_label_font_size': _parse_int(post.get('x_label_font_size'), 11),
+        'x_label_max_length': _parse_int(post.get('x_label_max_length'), 0),
+        'bar_category_gap':  post.get('bar_category_gap') or None,
+        'y_axis_min':        post.get('y_axis_min') or None,
+        'y_axis_max':        post.get('y_axis_max') or None,
+        # Grid + title overrides (from interactive editor)
+        'grid_left':   _parse_int(post.get('grid_left'),   None),
+        'grid_right':  _parse_int(post.get('grid_right'),  None),
+        'grid_top':    _parse_int(post.get('grid_top'),    None),
+        'grid_bottom': _parse_int(post.get('grid_bottom'), None),
+        'title_left':     _parse_pos(post.get('title_left')),
+        'title_top':      _parse_pos(post.get('title_top')),
+        'title_font_size': _parse_int(post.get('title_font_size'), 16),
+        'label_distance':   _parse_int(post.get('label_distance'),   None),
+        'chart_title':      post.get('chart_title', '').strip(),
+        'container_width':  _parse_int(post.get('container_width'),  None),
+        'container_height': _parse_int(post.get('container_height'), None),
     }
 
 
@@ -214,10 +270,14 @@ def chart_preview_api(request):
     try:
         option = build_option(rows, {}, cfg)
         # Extract series names for the stack-order UI, then strip the internal key
-        series_names = option.pop('__series_names__', [])
+        series_names    = option.pop('__series_names__', [])
+        ac_avail_cats   = option.pop('__ac_avail_cats__', [])
+        ac_avail_pl     = option.pop('__ac_avail_pl__', [])
         return render(request, 'dataviz/partials/chart_preview.html', {
             'option_json':        json.dumps(option),
             'series_names_json':  json.dumps(series_names),
+            'ac_avail_cats_json': json.dumps(ac_avail_cats),
+            'ac_avail_pl_json':   json.dumps(ac_avail_pl),
             'chart_id':           _chart_id or 'preview',
             'drill_enabled':      '1' if _chart_id else '0',
         })
@@ -339,6 +399,50 @@ def chart_detail_api(request, chart_id):
 
 
 @login_required
+@require_POST
+def chart_move_api(request, chart_id):
+    """Move a chart to a different folder by updating its name prefix."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+
+    chart = get_object_or_404(SavedChart, pk=chart_id, owner=request.user)
+    try:
+        body = json.loads(request.body)
+        new_folder = body.get('folder', '').strip().strip('/')
+    except (json.JSONDecodeError, AttributeError):
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    # Extract current display name (part after last slash)
+    display_name = chart.name.split('/')[-1].strip()
+    
+    if new_folder:
+        chart.name = f"{new_folder} / {display_name}"
+    else:
+        chart.name = display_name
+    
+    chart.save()
+    return JsonResponse({'chart': chart.to_dict(), 'success': True})
+
+
+@login_required
+@require_POST
+def chart_duplicate_api(request, chart_id):
+    """Duplicate a saved chart."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+
+    chart = get_object_or_404(SavedChart, pk=chart_id, owner=request.user)
+    
+    # Clone the object
+    chart.pk = None
+    chart.id = None
+    chart.name = f"{chart.name} (Copy)"
+    chart.save()
+    
+    return JsonResponse({'chart': chart.to_dict(), 'success': True})
+
+
+@login_required
 @require_GET
 def chart_render_api(request, chart_id):
     """
@@ -423,9 +527,9 @@ def chart_render_api(request, chart_id):
     }
     html = render_to_string('dataviz/partials/chart_preview.html', ctx, request=request)
 
-    # Cache only successful renders (no error), TTL = 5 minutes
+    # Cache only successful renders (no error), TTL = 1 hour
     if not error:
-        cache.set(cache_key, html, timeout=300)
+        cache.set(cache_key, html, timeout=3600)
 
     resp = HttpResponse(html, content_type='text/html')
     resp['X-Chart-Cache'] = 'MISS'
@@ -444,4 +548,20 @@ def chart_list_partial(request):
     if q:
         charts = charts.filter(name__icontains=q)
 
-    return render(request, 'dataviz/partials/chart_picker_list.html', {'charts': charts})
+    # Build a full tree structure
+    root = {'folders': {}, 'charts': []}
+    for chart in charts:
+        parts = [p.strip() for p in chart.name.split('/')]
+        curr = root
+        for part in parts[:-1]:
+            if part not in curr['folders']:
+                curr['folders'][part] = {'folders': {}, 'charts': []}
+            curr = curr['folders'][part]
+        
+        chart.display_name = parts[-1]
+        curr['charts'].append(chart)
+
+    return render(request, 'dataviz/partials/chart_picker_list.html', {
+        'tree': root,
+        'q': q,
+    })

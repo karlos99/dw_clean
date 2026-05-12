@@ -6,7 +6,7 @@ from .views import (
     page_index, page_builder, page_view,
     drill_table,
     # Chart API
-    chart_preview_api, chart_save_api, chart_detail_api, chart_render_api, chart_list_partial,
+    chart_preview_api, chart_save_api, chart_detail_api, chart_duplicate_api, chart_move_api, chart_render_api, chart_list_partial,
     # Query / SQL API
     query_run_api, query_columns_api, query_filter_options_api, sql_lab_api, sql_schema_api,
     # Column Picker (Explorer) API
@@ -45,6 +45,8 @@ urlpatterns = [
     path('api/charts/preview/',          chart_preview_api,  name='chart_preview'),
     path('api/charts/save/',             chart_save_api,     name='chart_save'),
     path('api/charts/list/',             chart_list_partial, name='chart_list'),
+    path('api/charts/<int:chart_id>/duplicate/', chart_duplicate_api, name='chart_duplicate'),
+    path('api/charts/<int:chart_id>/move/',      chart_move_api,      name='chart_move'),
     path('api/charts/<int:chart_id>/render/', chart_render_api,   name='chart_render'),
     path('api/charts/<int:chart_id>/',   chart_detail_api,   name='chart_detail'),
 

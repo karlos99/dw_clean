@@ -66,9 +66,15 @@
 
     chart.setOption(option);
 
+    // Expose instance for external tools (e.g. chart-editor.js)
+    container._echartsInstance = chart;
+
     // Auto-resize when container dimensions change
     const ro = new ResizeObserver(() => chart.resize());
     ro.observe(container);
+
+    // Notify listeners that this chart is ready
+    container.dispatchEvent(new CustomEvent('chartInited', { bubbles: true, detail: { chart } }));
 
     // Drill-through click handler
     const chartId = container.dataset.chartId;

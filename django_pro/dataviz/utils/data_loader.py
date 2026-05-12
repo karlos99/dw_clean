@@ -272,73 +272,105 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place)."""
     if not test_cols_info or not student_ids:
         return
-    for info in test_cols_info:
-        metric = info['metric']
-        window_clause, window_params = '', []
-        if info.get('test_window'):
-            window_clause = 'AND t.test_window ILIKE %s'
-            window_params = [info['test_window']]
-        if metric in ('ss', 'pl'):
-            select_expr = f'r.{metric}'
-            extra_params: list = []
-        else:
-            select_expr = "(r.other_info ->> %s)"
-            extra_params = [info.get('other_info_key', '')]
 
-        cursor.execute(
-            f"""
-            SELECT r.local_student_id, {select_expr}
-            FROM results r
-            INNER JOIN tests t ON r.test_group_key = t.test_group_key
-            WHERE r.local_student_id = ANY(%s)
-              AND r.school_year = %s
-              AND t.test_name ILIKE %s
-              AND t.subject ILIKE %s
-              {window_clause}
-            """,
-            [*extra_params, student_ids, info['year'],
-             f"%{info['test_name']}%", f"%{info['subject']}%", *window_params],
-        )
-        data = {row[0]: row[1] for row in cursor.fetchall()}
-        col_name = info['col_name']
-        for s in students:
-            s[col_name] = data.get(s.get('student_id'), '\u2014')
+    student_map = {s.get('student_id'): s for s in students if s.get('student_id')}
+    where_parts = []
+    params = []
+    for info in test_cols_info:
+        part = "(r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s"
+        part_params = [info['year'], f"%{info['test_name']}%", f"%{info['subject']}%"]
+        if info.get('test_window'):
+            part += " AND t.test_window ILIKE %s"
+            part_params.append(info['test_window'])
+        else:
+            part += " AND (t.test_window IS NULL OR t.test_window = '')"
+        part += ")"
+        where_parts.append(part)
+        params.extend(part_params)
+
+    sql = f"""
+        SELECT r.local_student_id, r.ss, r.pl, r.other_info,
+               r.school_year, t.test_name, t.subject, t.test_window
+        FROM results r
+        INNER JOIN tests t ON r.test_group_key = t.test_group_key
+        WHERE r.local_student_id = ANY(%s)
+          AND ({" OR ".join(where_parts)})
+    """
+    cursor.execute(sql, [student_ids, *params])
+    
+    for row in cursor.fetchall():
+        sid, ss, pl, oi, ry, rt, rs, rw = row
+        s_obj = student_map.get(sid)
+        if not s_obj: continue
+        for info in test_cols_info:
+            if (info['year'] == ry and info['test_name'].lower() in rt.lower() and 
+                info['subject'].lower() in rs.lower()):
+                # Window match
+                iw = info.get('test_window')
+                if not iw and not rw: pass
+                elif iw and rw and iw.lower() == rw.lower(): pass
+                else: continue
+
+                metric = info['metric']
+                col_name = info['col_name']
+                if metric == 'ss': 
+                    s_obj[col_name] = (str(ss).strip() if ss is not None else '\u2014')
+                elif metric == 'pl': 
+                    s_obj[col_name] = (str(pl).strip() if pl else '\u2014')
+                elif metric == 'oi':
+                    key = info.get('other_info_key')
+                    if key and isinstance(oi, dict):
+                        v = oi.get(key)
+                        s_obj[col_name] = (str(v).strip() if v is not None else '\u2014')
+                    else:
+                        s_obj[col_name] = '\u2014'
 
 
 def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str], students: list[dict]):
     """Bulk-fetch student marks and merge into student dicts (mutates *students* in-place)."""
     if not mark_cols_info or not student_keys:
         return
-    for info in mark_cols_info:
-        period_clause, period_params = '', []
-        if info.get('mark_period'):
-            period_clause = 'AND sm.mark_period ILIKE %s'
-            period_params = [info['mark_period']]
-        else:
-            period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
 
-        cursor.execute(
-            f"""
-            SELECT sm.stu_annual_key, sm.mark
-            FROM student_marks_list sm
-            WHERE sm.stu_annual_key = ANY(%s)
-              AND sm.school_year = %s
-              AND sm.subject ILIKE %s
-              AND sm.course_name ILIKE %s
-              {period_clause}
-            """,
-            [student_keys, info['year'],
-             f"%{info['subject']}%", f"%{info['course_name']}%", *period_params],
-        )
-        data = {row[0]: row[1] for row in cursor.fetchall()}
-        col_name = info['col_name']
-        for s in students:
-            s[col_name] = data.get(s.get('stu_annual_key'), '\u2014')
+    student_map = {s.get('stu_annual_key'): s for s in students if s.get('stu_annual_key')}
+    where_parts = []
+    params = []
+    for info in mark_cols_info:
+        part = "(sm.school_year = %s AND sm.subject ILIKE %s AND sm.course_name ILIKE %s"
+        part_params = [info['year'], f"%{info['subject']}%", f"%{info['course_name']}%"]
+        if info.get('mark_period'):
+            part += " AND sm.mark_period ILIKE %s"
+            part_params.append(info['mark_period'])
+        else:
+            part += " AND (sm.mark_period IS NULL OR sm.mark_period = '')"
+        part += ")"
+        where_parts.append(part)
+        params.extend(part_params)
+
+    sql = f"""
+        SELECT sm.stu_annual_key, sm.mark, sm.school_year, sm.subject, sm.course_name, sm.mark_period
+        FROM student_marks_list sm
+        WHERE sm.stu_annual_key = ANY(%s)
+          AND ({" OR ".join(where_parts)})
+    """
+    cursor.execute(sql, [student_keys, *params])
+
+    for row in cursor.fetchall():
+        sk, mark, ry, rs, rc, rp = row
+        s_obj = student_map.get(sk)
+        if not s_obj: continue
+        for info in mark_cols_info:
+            if (info['year'] == ry and info['subject'].lower() in rs.lower() and 
+                info['course_name'].lower() in rc.lower()):
+                ip = info.get('mark_period')
+                if not ip and not rp: pass
+                elif ip and rp and ip.lower() == rp.lower(): pass
+                else: continue
+                s_obj[info['col_name']] = (str(mark).strip() if mark else '\u2014')
 
 
 # ── Public entry points ──────────────────────────────────────────────────────
 
-def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: list | None = None) -> dict:
+def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: list | None = None, apply_user_filters: bool = False) -> dict:
     """
     Execute a ``dataexploration.SavedQuery`` and return rows as a list of dicts.
 
@@ -376,10 +408,10 @@ def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: lis
                 existing_set.add(c)
         config['columns'] = existing
 
-    return _run_saved_query_sql(config)
+    return _run_saved_query_sql(config, user=user if apply_user_filters else None)
 
 
-def run_column_query(selected_columns: list[str], filters: dict | None = None) -> dict:
+def run_column_query(selected_columns: list[str], filters: dict | None = None, user=None, apply_user_filters: bool = False) -> dict:
     """
     Execute a query using directly-selected columns (Column Picker source type).
 
@@ -395,10 +427,10 @@ def run_column_query(selected_columns: list[str], filters: dict | None = None) -
         'columns': selected_columns,
         'filters': filters or {},
     }
-    return _run_saved_query_sql(config)
+    return _run_saved_query_sql(config, user=user if apply_user_filters else None)
 
 
-def _run_saved_query_sql(config: dict) -> dict:
+def _run_saved_query_sql(config: dict, user=None) -> dict:
     """
     Execute a saved query config against ``current_student`` using raw SQL.
 
@@ -406,9 +438,32 @@ def _run_saved_query_sql(config: dict) -> dict:
     test (``test_*``) columns are fetched via separate bulk queries against
     ``student_marks_list`` and ``results``/``tests`` respectively, then merged
     into each row dict.
+
+    If ``user`` is provided, school-level access filters are applied based on
+    the user's role and permitted schools.
     """
+    # ── Cache check ───────────────────────────────────────────────────────────
+    # We cache the entire result dict (rows, columns, types) for 5 minutes.
+    # The key is based on the hash of the JSON-serialized config.
+    # If a user is provided, we include the user's ID and active role/school 
+    # to ensure they only get data they are allowed to see.
+    user_part = ""
+    if user:
+        user_role = getattr(user, 'active_role', None)
+        role_name = user_role.name if user_role else 'None'
+        active_school = getattr(user, 'active_school', None)
+        school_id = active_school.state_id if active_school else 'All'
+        user_part = f":u{user.pk}:r{role_name}:s{school_id}"
+
+    config_hash = hashlib.md5(json.dumps(config, sort_keys=True).encode()).hexdigest()
+    cache_key = f"dv_query_result:{config_hash}{user_part}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     requested = config.get('columns', [])
     filters   = config.get('filters', {}) if isinstance(config.get('filters'), dict) else {}
+
 
     # Partition requested columns into base / test / mark buckets.
     # Base columns go directly into SQL (cs.{col}) so must be safe identifiers.
@@ -440,6 +495,58 @@ def _run_saved_query_sql(config: dict) -> dict:
     where_parts: list[str] = []
     params: list = []
 
+    # Always exclude Inactive/Deleted students unless the caller explicitly filters on status
+    if 'status' not in filters:
+        where_parts.append("cs.status = 'Active'")
+
+    # ── Role-based access ──────────────────────────────────────────────
+    if user:
+        is_unrestricted = False
+        if user.is_superuser:
+            is_unrestricted = True
+        else:
+            # Check for Project Admin or District roles
+            active_role = getattr(user, 'active_role', None)
+            role_name = active_role.name if active_role else ''
+            
+            # If no active role, check all roles
+            user_roles = [r.name for r in user.roles.all()] if not role_name else [role_name]
+            
+            unrestricted_names = {'Project Admin', 'District Admin', 'District View'}
+            if any(name in unrestricted_names or 'District' in name for name in user_roles):
+                is_unrestricted = True
+
+        # School Gr View grade restrictions
+        active_role_name = getattr(getattr(user, 'active_role', None), 'name', None)
+        if active_role_name == 'School Gr View':
+            delegated_grades = getattr(user, 'grade_levels', None)
+            if isinstance(delegated_grades, list) and delegated_grades:
+                where_parts.append("cs.grade = ANY(%s)")
+                params.append(delegated_grades)
+
+        # Teacher / Homeroom restriction
+        if hasattr(user, 'get_accessible_student_keys'):
+            keys = user.get_accessible_student_keys()
+            if keys is not None:
+                if keys:
+                    where_parts.append("cs.stu_annual_key = ANY(%s)")
+                    params.append(list(keys))
+                else:
+                    where_parts.append("1=0")  # No students assigned
+
+        if hasattr(user, 'active_school') and user.active_school:
+            # Explicitly filtered to one school via the UI selector
+            where_parts.append("cs.school_state_id = %s")
+            params.append(user.active_school.state_id)
+        elif not is_unrestricted:
+            # Filter to the list of schools the user is permitted to see
+            user_schools = getattr(user, 'schools', [])
+            if isinstance(user_schools, list) and user_schools:
+                where_parts.append("cs.school_state_id = ANY(%s)")
+                params.append(user_schools)
+            else:
+                where_parts.append("1=0")  # Deny access if no schools assigned
+
     # Fields that live in student_enroll (not current_student)
     _ENROLL_FIELDS = {'ell': 'se.ell_status', 'birth_date': 'se.birth_date',
                       'us_enter_date': 'se.us_enter_date', 'fep_date': 'se.fep_date',
@@ -450,16 +557,31 @@ def _run_saved_query_sql(config: dict) -> dict:
         """Add an IN / = filter using the given SQL expression."""
         if not value:
             return
+
         if isinstance(value, list):
             value = [v for v in value if v]
             if not value:
                 return
-            placeholders = ', '.join(['%s'] * len(value))
-            where_parts.append(f'{expr} IN ({placeholders})')
-            params.extend(value)
+            has_blank = '(Blank)' in value
+            others = [v for v in value if v != '(Blank)']
+            parts = []
+            if others:
+                placeholders = ', '.join(['%s'] * len(others))
+                parts.append(f'{expr} IN ({placeholders})')
+                params.extend(others)
+            if has_blank:
+                parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
+            
+            if len(parts) > 1:
+                where_parts.append(f"({' OR '.join(parts)})")
+            elif parts:
+                where_parts.append(parts[0])
         else:
-            where_parts.append(f'{expr} = %s')
-            params.append(value)
+            if value == '(Blank)':
+                where_parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
+            else:
+                where_parts.append(f'{expr} = %s')
+                params.append(value)
 
     # Apply every filter whose key is a base CS column or an enroll field
     for fkey, fval in filters.items():
@@ -551,7 +673,7 @@ def _run_saved_query_sql(config: dict) -> dict:
                     break
             col_types.setdefault(col, 'string')
 
-        return {
+        res = {
             'columns':   all_cols,
             'col_types': col_types,
             'rows':      rows,
@@ -559,6 +681,9 @@ def _run_saved_query_sql(config: dict) -> dict:
             'has_more':  len(raw) == MAX_CHART_ROWS,
             'error':     None,
         }
+        # Cache for 5 minutes (300s)
+        cache.set(cache_key, res, 300)
+        return res
     except Exception as exc:
         return {'error': str(exc), 'rows': [], 'columns': []}
 
