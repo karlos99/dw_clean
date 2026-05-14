@@ -494,6 +494,7 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     # Build WHERE clauses — apply ALL saved-query filters generically.
     where_parts: list[str] = []
     params: list = []
+    dynamic_filters: dict[str, object] = {}
 
     # Always exclude Inactive/Deleted students unless the caller explicitly filters on status
     if 'status' not in filters:
@@ -588,12 +589,37 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
         if fkey == 'search':
             continue  # handled separately below
         if fkey.startswith(('test_', 'mark_')):
-            continue  # dynamic columns, not base CS filters
+            dynamic_filters[fkey] = fval
+            continue  # dynamic columns are filtered after enrichment below
         if fkey in _ENROLL_FIELDS:
             needs_enroll = True
             _add_filter(_ENROLL_FIELDS[fkey], fval)
         elif fkey in _CS_COLUMNS and _SAFE_IDENT_RE.match(fkey):
             _add_filter(f'cs.{fkey}', fval)
+
+    def _matches_dynamic_filter(row_value, filter_value) -> bool:
+        blank_tokens = {'', '—', '(Blank)'}
+
+        def _normalize(value):
+            if value is None:
+                return ''
+            return str(value).strip()
+
+        normalized_row = _normalize(row_value)
+        if isinstance(filter_value, list):
+            selected = [_normalize(item) for item in filter_value if _normalize(item)]
+            if not selected:
+                return True
+            if '(Blank)' in selected and normalized_row in {'', '—'}:
+                return True
+            return normalized_row in {item for item in selected if item != '(Blank)'}
+
+        normalized_filter = _normalize(filter_value)
+        if not normalized_filter:
+            return True
+        if normalized_filter == '(Blank)':
+            return normalized_row in {'', '—'}
+        return normalized_row == normalized_filter
 
     # Search filter
     search = filters.get('search', '')
@@ -654,6 +680,12 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                     mark_infos, _ = _build_mark_columns_from_db(cursor, mark_cols)
                     student_keys = [r['stu_annual_key'] for r in rows if r.get('stu_annual_key')]
                     _fetch_mark_data(cursor, mark_infos, student_keys, rows)
+
+            if rows and dynamic_filters:
+                rows = [
+                    row for row in rows
+                    if all(_matches_dynamic_filter(row.get(filter_key), filter_value) for filter_key, filter_value in dynamic_filters.items())
+                ]
 
         # Build final ordered column list (base + test + mark)
         all_cols = list(db_cols)
