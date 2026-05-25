@@ -18,7 +18,7 @@ def page_index(request):
         from django.http import HttpResponseForbidden
         return HttpResponseForbidden('Project Admins only.')
 
-    pages = DataVizPage.objects.filter(owner=request.user).order_by('-updated_at')
+    pages = DataVizPage.objects.all().order_by('-updated_at')
     return render(request, 'dataviz/pages/index.html', {'pages': pages})
 
 
@@ -37,7 +37,7 @@ class PageBuilderView(ProjectAdminMixin, TemplateView):
         sections = []
         filters_json = '[]'
         if page_slug:
-            dv_page = get_object_or_404(DataVizPage, slug=page_slug, owner=user)
+            dv_page = get_object_or_404(DataVizPage, slug=page_slug)
             sections = list(dv_page.sections.select_related('dashboard', 'chart').all())
             sections_json = json.dumps([s.to_dict() for s in sections])
             rows = list(dv_page.rows.prefetch_related('sections__chart', 'sections__dashboard').all())
@@ -45,7 +45,7 @@ class PageBuilderView(ProjectAdminMixin, TemplateView):
             filters_json = json.dumps(dv_page.page_filters or [])
 
         # Charts available to add (same as dashboard builder)
-        available_charts = SavedChart.objects.filter(owner=user).order_by('name')
+        available_charts = SavedChart.objects.all().order_by('name')
 
         context.update({
             'page':             dv_page,
@@ -73,7 +73,7 @@ def page_view(request, slug):
     dv_page = get_object_or_404(DataVizPage, slug=slug)
 
     # Owner can always preview; everyone else needs active status + access check
-    is_owner = request.user.is_authenticated and dv_page.owner == request.user
+    is_owner = request.user.is_authenticated and (dv_page.owner == request.user or is_project_admin(request.user))
     if not is_owner:
         if dv_page.status != DataVizPage.STATUS_ACTIVE:
             from django.http import Http404

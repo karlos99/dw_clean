@@ -337,7 +337,7 @@ def chart_save_api(request):
         return JsonResponse({'error': msg}, status=400)
 
     if chart_id:
-        chart = get_object_or_404(SavedChart, pk=chart_id, owner=request.user)
+        chart = get_object_or_404(SavedChart, pk=chart_id)
     else:
         chart = SavedChart(owner=request.user)
 
@@ -388,7 +388,7 @@ def chart_detail_api(request, chart_id):
     if not is_project_admin(request.user):
         return FORBIDDEN
 
-    chart = get_object_or_404(SavedChart, pk=chart_id, owner=request.user)
+    chart = get_object_or_404(SavedChart, pk=chart_id)
 
     if request.method == 'GET':
         return JsonResponse({'chart': chart.to_dict()})
@@ -405,7 +405,7 @@ def chart_move_api(request, chart_id):
     if not is_project_admin(request.user):
         return FORBIDDEN
 
-    chart = get_object_or_404(SavedChart, pk=chart_id, owner=request.user)
+    chart = get_object_or_404(SavedChart, pk=chart_id)
     try:
         body = json.loads(request.body)
         new_folder = body.get('folder', '').strip().strip('/')
@@ -431,7 +431,7 @@ def chart_duplicate_api(request, chart_id):
     if not is_project_admin(request.user):
         return FORBIDDEN
 
-    chart = get_object_or_404(SavedChart, pk=chart_id, owner=request.user)
+    chart = get_object_or_404(SavedChart, pk=chart_id)
     
     # Clone the object
     chart.pk = None
@@ -544,7 +544,7 @@ def chart_list_partial(request):
         return FORBIDDEN
 
     q = request.GET.get('q', '').strip()
-    charts = SavedChart.objects.filter(owner=request.user).order_by('name')
+    charts = SavedChart.objects.all().order_by('name')
     if q:
         charts = charts.filter(name__icontains=q)
 

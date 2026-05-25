@@ -32,7 +32,7 @@ def page_save_api(request):
     slug = body.get('slug', '').strip() or None
     page_id = body.get('id')
     if page_id:
-        page = get_object_or_404(DataVizPage, pk=page_id, owner=request.user)
+        page = get_object_or_404(DataVizPage, pk=page_id)
     else:
         page = DataVizPage(owner=request.user)
 
@@ -67,7 +67,7 @@ def page_delete_api(request, slug):
     if request.method not in ('POST', 'DELETE'):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
-    page = get_object_or_404(DataVizPage, slug=slug, owner=request.user)
+    page = get_object_or_404(DataVizPage, slug=slug)
     unpublish_page(page)
     page.delete()
     return JsonResponse({'success': True})
@@ -88,7 +88,7 @@ def page_sections_api(request, slug):
     if not is_project_admin(request.user):
         return FORBIDDEN
 
-    page = get_object_or_404(DataVizPage, slug=slug, owner=request.user)
+    page = get_object_or_404(DataVizPage, slug=slug)
 
     if request.method == 'GET':
         rows = page.rows.prefetch_related('sections__chart', 'sections__dashboard').all()
@@ -121,7 +121,7 @@ def page_sections_api(request, slug):
     if action == 'add_chart':
         row_id = body.get('row_id')
         row = get_object_or_404(DataVizPageRow, pk=row_id, page=page)
-        chart = get_object_or_404(SavedChart, pk=body.get('chart_id'), owner=request.user)
+        chart = get_object_or_404(SavedChart, pk=body.get('chart_id'))
         pos = row.sections.count()
         s = DataVizPageSection.objects.create(
             page=page, row=row,
@@ -179,7 +179,7 @@ def section_detail_api(request, section_id):
 
     section = get_object_or_404(
         DataVizPageSection.objects.select_related('page'),
-        pk=section_id, page__owner=request.user,
+        pk=section_id,
     )
 
     if request.method == 'DELETE':
@@ -273,7 +273,7 @@ def row_detail_api(request, row_id):
 
     row = get_object_or_404(
         DataVizPageRow.objects.select_related('page'),
-        pk=row_id, page__owner=request.user,
+        pk=row_id,
     )
 
     if request.method == 'DELETE':

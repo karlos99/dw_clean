@@ -21,7 +21,7 @@ def dashboard_index(request):
 
     dashboards = (
         Dashboard.objects
-        .filter(owner=request.user)
+        .all()
         .annotate(chart_count=Count('chart_slots'))
         .order_by('-updated_at')
     )
@@ -40,12 +40,12 @@ class DashboardBuilderView(ProjectAdminMixin, TemplateView):
         dashboard = None
         slots_json = '[]'
         if dashboard_id:
-            dashboard = get_object_or_404(Dashboard, pk=dashboard_id, owner=user)
+            dashboard = get_object_or_404(Dashboard, pk=dashboard_id)
             slots = list(dashboard.chart_slots.select_related('chart').all())
             slots_json = json.dumps([s.to_dict() for s in slots])
 
         # Charts available to add
-        charts = SavedChart.objects.filter(owner=user).order_by('name')
+        charts = SavedChart.objects.all().order_by('name')
         slots = []
         if dashboard:
             slots = list(dashboard.chart_slots.select_related('chart').all())
