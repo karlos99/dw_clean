@@ -16,6 +16,7 @@ from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
 from ..column_utils import _get_display_name
 from ..utils import can_user_view_query, get_user_folders
+from ..survey_utils import get_survey_columns
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -629,6 +630,39 @@ def get_column_statistics(request):
                     ORDER BY val
                 """
                 q_params = base_params + [info['year'], f"%{info['subject']}%", f"%{info['course_name']}%"] + period_params
+
+            # --- Survey Columns ---
+            elif col.startswith('survey_'):
+                _survey_meta = get_survey_columns().get('col_meta', {}).get(col)
+                if not _survey_meta:
+                    continue
+                is_string_stats_column = False  # values are integers 1-N
+
+                query = f"""
+                    SELECT sr.value as val, COUNT(*) as cnt
+                    FROM "dataLoader_surveyresponse" sr
+                    INNER JOIN "dataLoader_surveyquestion" sq ON sr.question_id = sq.id
+                    INNER JOIN "dataLoader_surveydefinition" sd ON sq.survey_definition_id = sd.id
+                    INNER JOIN "dataLoader_importlog" il ON sr.import_log_id = il.id
+                    WHERE sr.student_id IN (
+                        SELECT cs.student_id FROM current_student cs {join_sql} WHERE {where_sql}
+                    )
+                    AND sd.survey_type = %s
+                    AND sd.school_year = %s
+                    AND sd.testing_window = %s
+                    AND sd.grade_range = %s
+                    AND sq."order" = %s
+                    AND (il.ready_for_exploration = true OR sd.ready_for_exploration = true)
+                    AND il.status = 'COMPLETED'
+                    AND sr.value IS NOT NULL
+                    GROUP BY val
+                    ORDER BY val ASC
+                """
+                q_params = base_params + [
+                    _survey_meta['survey_type'], _survey_meta['school_year'],
+                    _survey_meta['window'], _survey_meta.get('grade_range', ''),
+                    _survey_meta['question_order'],
+                ]
 
             # --- Standard Columns ---
             else:

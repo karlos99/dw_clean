@@ -104,13 +104,129 @@
                             </div>
 
                         {% elif q.question_type == 'student_list' %}
-                             <input type="text" name="q_{{ q.id }}" value="{{ card.responses|get_item:q.id }}" placeholder="Type student names..." class="block w-full rounded-md border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:ring-blue-500">
+                            <div
+                                class="space-y-2"
+                                data-student-picker
+                                data-question-id="{{ q.id }}"
+                            >
+                                <div class="flex gap-2">
+                                    <input
+                                        type="text"
+                                        list="student-options-{{ q.id }}"
+                                        class="flex-1 rounded-md border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:ring-blue-500"
+                                        placeholder="Type student name, grade, or SSID..."
+                                        data-student-picker-input
+                                    >
+                                    <button
+                                        type="button"
+                                        class="px-3 py-2 text-xs font-medium border border-slate-300 bg-white text-slate-700"
+                                        data-student-picker-add
+                                    >
+                                        Add
+                                    </button>
+                                </div>
+
+                                <datalist id="student-options-{{ q.id }}">
+                                    {% for option in student_list_options %}
+                                    <option
+                                        value="{{ option.student_name }} (Grade {{ option.grade|default:'—' }}) · {{ option.ssid }}"
+                                        data-ssid="{{ option.ssid }}"
+                                    ></option>
+                                    {% endfor %}
+                                </datalist>
+
+                                <div class="flex flex-wrap gap-2" data-student-picker-selected>
+                                    {% for selected in selected_student_list_values|get_item:q.id %}
+                                    <span class="inline-flex items-center gap-2 px-2 py-1 bg-blue-50 border border-blue-200 text-xs text-blue-900" data-student-chip data-ssid="{{ selected.ssid }}">
+                                        <span>{{ selected.student_name }} (Grade {{ selected.grade|default:'—' }}) · {{ selected.ssid }}</span>
+                                        <button type="button" class="text-blue-700" data-student-remove="{{ selected.ssid }}">Remove</button>
+                                        <input type="hidden" name="q_{{ q.id }}" value="{{ selected.ssid }}">
+                                    </span>
+                                    {% endfor %}
+                                </div>
+
+                                <p class="text-xs text-slate-500">Type a student and click Add. You can add multiple students from the school list.</p>
+                            </div>
                         {% endif %}
                     </div>
                     {% endfor %}
                 </div>
             </details>
             {% endfor %}
+
+            <script>
+                (function () {
+                    const pickers = document.querySelectorAll('[data-student-picker]');
+                    pickers.forEach((picker) => {
+                        const input = picker.querySelector('[data-student-picker-input]');
+                        const addButton = picker.querySelector('[data-student-picker-add]');
+                        const selectedContainer = picker.querySelector('[data-student-picker-selected]');
+                        const questionId = picker.getAttribute('data-question-id');
+
+                        const findSsidFromInput = (value) => {
+                            const text = (value || '').trim();
+                            if (!text) return '';
+                            const parts = text.split(' · ');
+                            const maybeSsid = parts.length > 1 ? parts[parts.length - 1].trim() : '';
+                            return maybeSsid;
+                        };
+
+                        const hasSsid = (ssid) => !!selectedContainer.querySelector('[data-student-chip][data-ssid="' + ssid + '"]');
+
+                        const addSelected = () => {
+                            const rawValue = input.value || '';
+                            const ssid = findSsidFromInput(rawValue);
+                            if (!ssid || hasSsid(ssid)) {
+                                input.value = '';
+                                return;
+                            }
+
+                            const chip = document.createElement('span');
+                            chip.className = 'inline-flex items-center gap-2 px-2 py-1 bg-blue-50 border border-blue-200 text-xs text-blue-900';
+                            chip.setAttribute('data-student-chip', '');
+                            chip.setAttribute('data-ssid', ssid);
+
+                            const label = document.createElement('span');
+                            label.textContent = rawValue;
+
+                            const remove = document.createElement('button');
+                            remove.type = 'button';
+                            remove.className = 'text-blue-700';
+                            remove.textContent = 'Remove';
+                            remove.setAttribute('data-student-remove', ssid);
+
+                            const hidden = document.createElement('input');
+                            hidden.type = 'hidden';
+                            hidden.name = 'q_' + questionId;
+                            hidden.value = ssid;
+
+                            chip.appendChild(label);
+                            chip.appendChild(remove);
+                            chip.appendChild(hidden);
+                            selectedContainer.appendChild(chip);
+                            input.value = '';
+                        };
+
+                        addButton.addEventListener('click', addSelected);
+                        input.addEventListener('keydown', (event) => {
+                            if (event.key === 'Enter') {
+                                event.preventDefault();
+                                addSelected();
+                            }
+                        });
+
+                        selectedContainer.addEventListener('click', (event) => {
+                            const target = event.target;
+                            if (!(target instanceof HTMLElement)) return;
+                            if (!target.hasAttribute('data-student-remove')) return;
+                            const ssid = target.getAttribute('data-student-remove');
+                            if (!ssid) return;
+                            const chip = selectedContainer.querySelector('[data-student-chip][data-ssid="' + ssid + '"]');
+                            if (chip) chip.remove();
+                        });
+                    });
+                })();
+            </script>
 
             <!-- Actions Footer -->
             <div class="sticky bottom-0 bg-white pt-4 pb-2 border-t border-slate-200 mt-8 flex items-center justify-between z-10" id="save-status-container">

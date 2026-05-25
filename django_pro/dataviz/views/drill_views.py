@@ -8,7 +8,8 @@ from dataviz.models import SavedChart
 from dataviz.utils.drill_through import (
     build_drill_filter, execute_drill_query, get_all_available_columns,
 )
-from dataexploration.constants import COLUMN_DEFINITIONS
+from dataexploration.column_utils import get_mark_columns, get_test_columns
+from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
 
 
 def _col_label(key):
@@ -50,24 +51,40 @@ def _parse_column_filters(request):
     return result
 
 
+from django.urls import reverse
+from dataexploration.column_utils import get_mark_columns, get_test_columns
+
+
 def _build_breadcrumbs(request):
     """Build a list of breadcrumb dicts [{label, url}] from source params."""
     source = request.GET.get('source', '')
     source_id = request.GET.get('source_id', '')
     source_name = request.GET.get('source_name', '')
 
-    crumbs = [{'label': 'DataViz', 'url': '/dataviz/'}]
+    crumbs = []
 
     if source == 'page' and source_id:
         label = source_name or 'Page'
-        crumbs.append({'label': label, 'url': f'/dataviz/pages/{source_id}/'})
+        try:
+            url = reverse('dataviz:page_view', kwargs={'slug': source_id})
+            crumbs.append({'label': label, 'url': url})
+        except:
+            crumbs.append({'label': label, 'url': f'/dataviz/pages/{source_id}/'})
     elif source == 'dashboard' and source_id:
-        # Try to resolve dashboard name
         label = source_name or 'Dashboard'
-        crumbs.append({'label': label, 'url': f'/dataviz/dashboards/{source_id}/edit/'})
+        # Dashboards seem to be legacy or handled elsewhere; fall back if reverse fails
+        try:
+            url = reverse('dataviz:dashboard_edit', kwargs={'dashboard_id': source_id})
+            crumbs.append({'label': label, 'url': url})
+        except:
+            crumbs.append({'label': label, 'url': f'/dataviz/dashboards/{source_id}/edit/'})
     elif source == 'chart_view' and source_id:
         label = source_name or 'Chart'
-        crumbs.append({'label': label, 'url': f'/dataviz/charts/{source_id}/view/'})
+        try:
+            url = reverse('dataviz:chart_view', kwargs={'chart_id': source_id})
+            crumbs.append({'label': label, 'url': url})
+        except:
+            crumbs.append({'label': label, 'url': f'/dataviz/charts/{source_id}/view/'})
 
     crumbs.append({'label': 'Drill-Through', 'url': None})
     return crumbs
@@ -207,6 +224,10 @@ def drill_table(request, chart_id):
             'value': display_val,
         })
 
+    # Fetch assessment structures for the column picker
+    test_structure  = get_test_columns()
+    marks_structure = get_mark_columns()
+
     return render(request, 'dataviz/drill/table.html', {
         'chart':              chart,
         'rows':               result['rows'],
@@ -219,6 +240,10 @@ def drill_table(request, chart_id):
         'selected_columns_json': json.dumps(selected_columns),
         'col_labels':         col_labels,
         'col_labels_json':    json.dumps(col_labels),
+        'column_categories':  COLUMN_CATEGORIES,
+        'column_categories_json': json.dumps(COLUMN_CATEGORIES),
+        'test_structure':     test_structure,
+        'marks_structure':    marks_structure,
         'total_rows':         result['total_rows'],
         'page':               result['page'],
         'per_page':           result['per_page'],

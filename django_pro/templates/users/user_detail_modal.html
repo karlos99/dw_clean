@@ -54,8 +54,12 @@
         <!-- Name -->
         <div>
             <label for="name" class="block text-sm font-medium text-slate-700 mb-2">Full Name</label>
+            {% if is_school_admin_only %}
+            <p class="text-sm text-slate-900 px-4 py-2 bg-slate-50 border border-slate-300 rounded-md">{{ user_obj.name|default:"—" }}</p>
+            {% else %}
             <input type="text" name="name" id="name" value="{{ user_obj.name }}"
                 class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border">
+            {% endif %}
         </div>
 
         <!-- Email (read-only) -->
@@ -69,16 +73,22 @@
         <!-- Job Title -->
         <div>
             <label for="job_title" class="block text-sm font-medium text-slate-700 mb-2">Job Title</label>
+            {% if is_school_admin_only %}
+            <p class="text-sm text-slate-900 px-4 py-2 bg-slate-50 border border-slate-300 rounded-md">{{ user_obj.job_title|default:"—" }}</p>
+            {% else %}
             <input type="text" name="job_title" id="job_title" value="{{ user_obj.job_title }}"
                 class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border">
+            {% endif %}
         </div>
 
+        {% if not is_school_admin_only %}
         <!-- Staff ID -->
         <div>
             <label for="staff_id" class="block text-sm font-medium text-slate-700 mb-2">Staff ID</label>
             <input type="text" name="staff_id" id="staff_id" value="{{ user_obj.staff_id }}"
                 class="block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-4 py-2 border">
         </div>
+        {% endif %}
 
         <!-- Roles -->
         <div x-data="{ gradeRoles: ['School Gr View', 'Teacher', 'School View'] }">
@@ -152,6 +162,77 @@
             </div>
         </div>
 
+        <!-- Placement & Export Permissions (shown for School Gr View only) -->
+        <div x-data="{ 
+                showPerms: false,
+                updatePermVisibility() {
+                    const checkedRoles = Array.from(document.querySelectorAll('input[name=roles]:checked'))
+                        .map(cb => cb.closest('div').querySelector('label').textContent.trim());
+                    this.showPerms = checkedRoles.includes('School Gr View');
+                }
+             }" 
+             x-init="updatePermVisibility()"
+             @change.window="updatePermVisibility()">
+            <div x-show="showPerms" x-transition style="display: none;">
+                <label class="block text-sm font-medium text-slate-700 mb-2">Placement Cards Access (School Gr View)</label>
+                <p class="text-xs text-slate-500 mb-3">Use these toggles to delegate what this user can do inside Placement Cards.</p>
+                <div class="border border-slate-300 rounded-md p-4 space-y-4">
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Student Placement</p>
+                        <div class="flex items-start">
+                            <input type="checkbox" name="can_move_placement_cards" id="can_move_placement_cards_modal"
+                                {% if user_obj.preferences.can_move_placement_cards %}checked{% endif %}
+                                class="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                            <div class="ml-2">
+                                <label for="can_move_placement_cards_modal" class="text-sm text-slate-700 font-medium">Move Students Between Classrooms</label>
+                                <p class="text-xs text-slate-500">Can place and unplace students, limited to delegated schools/grades/student scope.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Exports</p>
+                        <div class="flex items-start">
+                            <input type="checkbox" name="can_export_classroom_csv" id="can_export_classroom_csv_modal"
+                                {% if user_obj.preferences.can_export_classroom_csv %}checked{% endif %}
+                                class="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                            <div class="ml-2">
+                                <label for="can_export_classroom_csv_modal" class="text-sm text-slate-700 font-medium">Export Classroom CSV</label>
+                                <p class="text-xs text-slate-500">Can export classroom placement CSV files for allowed classrooms.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Configuration</p>
+                        <div class="flex items-start">
+                            <input type="checkbox" name="can_manage_placement_configuration" id="can_manage_placement_configuration_modal"
+                                {% if user_obj.preferences.can_manage_placement_configuration %}checked{% endif %}
+                                class="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                            <div class="ml-2">
+                                <label for="can_manage_placement_configuration_modal" class="text-sm text-slate-700 font-medium">View and Edit Placement Configuration</label>
+                                <p class="text-xs text-slate-500">Shows the Configuration page and allows managing classrooms/questions/tags.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Teacher Notes</p>
+                        <div class="flex items-start">
+                            <input type="checkbox" name="can_access_teacher_notes" id="can_access_teacher_notes_modal"
+                                {% if user_obj.preferences.can_access_teacher_notes %}checked{% endif %}
+                                class="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded">
+                            <div class="ml-2">
+                                <label for="can_access_teacher_notes_modal" class="text-sm text-slate-700 font-medium">View Teacher Notes Page</label>
+                                <p class="text-xs text-slate-500">Shows Teacher Notes in menu and allows Teacher Notes PDF export.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if not is_school_admin_only %}
         <!-- Active Status -->
         <div>
             <div class="flex items-center">
@@ -163,6 +244,7 @@
             </div>
             <p class="mt-1 text-xs text-slate-500 ml-6">Inactive users cannot log in</p>
         </div>
+        {% endif %}
     </div>
 
     <!-- Action Buttons -->

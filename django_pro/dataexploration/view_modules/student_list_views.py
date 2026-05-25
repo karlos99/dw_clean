@@ -15,6 +15,7 @@ import json
 from ..models import SavedQuery, StudentList
 from studata.models import CurrentStudent
 from ..column_utils import get_test_columns, get_mark_columns, _get_display_name
+from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
 from .student_data_utils import (
@@ -40,6 +41,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         # Get dynamic test columns
         test_structure = get_test_columns()
         marks_structure = get_mark_columns()
+        survey_structure = get_survey_columns()
         
         # Get unique values for filters using cache
         school_years_key = "dataexp:school_years"
@@ -73,24 +75,18 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
                 else:
                     grade_filter_clauses.append("1=0")
 
-        # Apply grade level restrictions for specific roles
-        if not is_unrestricted and hasattr(self.request.user, 'grade_levels'):
-            user_grade_levels = self.request.user.grade_levels
-            if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
-                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
-                current_role = None
-                if hasattr(self.request.user, 'active_role') and self.request.user.active_role:
-                    current_role = self.request.user.active_role.name
-                elif self.request.user.roles.count() == 1:
-                    current_role = self.request.user.roles.first().name
-                if current_role in grade_restricted_roles:
-                    grade_filter_clauses.append("grade = ANY(%s)")
-                    grade_filter_params.append(user_grade_levels)
+        active_role_name = getattr(getattr(self.request.user, 'active_role', None), 'name', None)
+        if active_role_name == 'School Gr View':
+            delegated_grades = getattr(self.request.user, 'grade_levels', None)
+            if isinstance(delegated_grades, list) and delegated_grades:
+                grade_filter_clauses.append("grade = ANY(%s)")
+                grade_filter_params.append(delegated_grades)
 
         active_school_id = getattr(getattr(self.request.user, 'active_school', None), 'state_id', None)
-        grade_levels_key = json.dumps(self.request.user.grade_levels or [], sort_keys=True)
         schools_key = json.dumps(self.request.user.schools or [], sort_keys=True)
-        grades_key = f"dataexp:grades:{self.request.user.id}:{active_school_id}:{hashlib.md5(grade_levels_key.encode()).hexdigest()}:{hashlib.md5(schools_key.encode()).hexdigest()}"
+        role_key = active_role_name or ''
+        grade_levels_key = json.dumps(getattr(self.request.user, 'grade_levels', None) or [], sort_keys=True)
+        grades_key = f"dataexp:grades:{self.request.user.id}:{active_school_id}:{role_key}:{hashlib.md5(schools_key.encode()).hexdigest()}:{hashlib.md5(grade_levels_key.encode()).hexdigest()}"
         grades = cache.get(grades_key)
         if not grades:
             with connections['default'].cursor() as cursor:
@@ -106,6 +102,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['grades'] = grades
         context['test_structure'] = test_structure
         context['marks_structure'] = marks_structure
+        context['survey_structure'] = survey_structure.get('structure', {})
         context['column_categories'] = COLUMN_CATEGORIES
         context['column_definitions'] = COLUMN_DEFINITIONS
         default_columns = get_saved_default_columns()
@@ -196,6 +193,19 @@ def load_students(request):
                 pass
         # Single value
         return val_str if val_str else fallback
+
+    # Pasted ID list search (overrides regular search when present)
+    search_ids = None
+    search_ids_param = request.GET.get('search_ids', '')
+    if search_ids_param:
+        try:
+            parsed_ids = json.loads(search_ids_param)
+            if isinstance(parsed_ids, list):
+                search_ids = [str(s).strip() for s in parsed_ids if str(s).strip()]
+                if not search_ids:
+                    search_ids = None
+        except Exception:
+            pass
 
     # Get filters - URL params take precedence over saved config
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
@@ -731,11 +741,15 @@ def load_students(request):
                     filters = {}
 
         # Apply filters
-        if search:
+        if search_ids:
+            # Exact ID list match against ssid or student_id
+            base_where_clauses.append("(cs.ssid = ANY(%s) OR cs.student_id = ANY(%s))")
+            base_params.extend([search_ids, search_ids])
+        elif search:
             # Handle search if it comes in as a list
             if isinstance(search, list):
                 search = search[0] if search else ''
-            
+
             if search:
                 base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
                 search_param = f'%{search}%'
@@ -801,28 +815,12 @@ def load_students(request):
                       # Non-admin user with no assigned schools sees nothing
                       base_where_clauses.append("1=0")
 
-        # Apply grade level restrictions for specific roles
-        # Only apply if user has explicitly assigned grade levels
-        if not is_unrestricted and hasattr(request.user, 'grade_levels'):
-            user_grade_levels = request.user.grade_levels
-            # Only apply grade restriction if explicitly configured (non-empty list)
-            if isinstance(user_grade_levels, list) and len(user_grade_levels) > 0:
-                # Check if current active role should be grade-restricted
-                grade_restricted_roles = {'School Gr View', 'School View', 'School Admin'}
-                current_role = None
-                
-                # Get the current role (from active_role or if user has only one role)
-                if hasattr(request.user, 'active_role') and request.user.active_role:
-                    current_role = request.user.active_role.name
-                elif request.user.roles.count() == 1:
-                    # If user has only one role, use that
-                    current_role = request.user.roles.first().name
-                
-                # Only apply grade filter for School Gr View and School View roles
-                # Teachers are handled by row-level permissions (get_accessible_student_keys)
-                if current_role in grade_restricted_roles:
-                    base_where_clauses.append("cs.grade = ANY(%s)")
-                    base_params.append(user_grade_levels)
+        active_role_name = getattr(getattr(request.user, 'active_role', None), 'name', None)
+        if active_role_name == 'School Gr View':
+            delegated_grades = getattr(request.user, 'grade_levels', None)
+            if isinstance(delegated_grades, list) and delegated_grades:
+                base_where_clauses.append("cs.grade = ANY(%s)")
+                base_params.append(delegated_grades)
 
         # Apply specific row-level permissions (e.g. Teacher seeing only their students)
         if hasattr(request.user, 'get_accessible_student_keys'):
@@ -835,13 +833,14 @@ def load_students(request):
                     base_where_clauses.append("cs.stu_annual_key = ANY(%s)")
                     base_params.append(accessible_keys)
 
-        # Separate base columns from test/mark columns
+        # Separate base columns from test/mark/survey columns
         selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
         selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
+        selected_survey_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')]
         base_cols = [
             c for c in selected_columns
             if isinstance(c, str)
-            and (not c.startswith(('test_', 'mark_')))
+            and (not c.startswith(('test_', 'mark_', 'survey_')))
             and c in COLUMN_DEFINITIONS
         ]
 
@@ -896,6 +895,36 @@ def load_students(request):
         params = list(base_params)
         _apply_column_filters(where_clauses, params, filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
 
+        # Handle survey column filters (subquery since survey data is not in the main SQL table)
+        survey_filters = {k: v for k, v in filters.items() if isinstance(k, str) and k.startswith('survey_') and v} if isinstance(filters, dict) else {}
+        if survey_filters:
+            _survey_col_meta = get_survey_columns().get('col_meta', {})
+            for _sr_col_key, _sr_values in survey_filters.items():
+                _sr_meta = _survey_col_meta.get(_sr_col_key)
+                if not _sr_meta:
+                    continue
+                _sr_has_blank = '' in _sr_values
+                _sr_real_values = [v for v in _sr_values if v != '']
+                _sr_conditions = []
+                _sr_base_query = (
+                    'SELECT sr.student_id FROM "dataLoader_surveyresponse" sr '
+                    'INNER JOIN "dataLoader_surveyquestion" sq ON sr.question_id = sq.id '
+                    'INNER JOIN "dataLoader_surveydefinition" sd ON sq.survey_definition_id = sd.id '
+                    'INNER JOIN "dataLoader_importlog" il ON sr.import_log_id = il.id '
+                    "WHERE sd.survey_type = %s AND sd.school_year = %s "
+                    "AND sd.testing_window = %s AND sd.grade_range = %s AND sq.\"order\" = %s "
+                    "AND (il.ready_for_exploration = true OR sd.ready_for_exploration = true) AND il.status = 'COMPLETED'"
+                )
+                _sr_base_params = [_sr_meta['survey_type'], _sr_meta['school_year'], _sr_meta['window'], _sr_meta.get('grade_range', ''), _sr_meta['question_order']]
+                if _sr_real_values:
+                    _sr_conditions.append(f"cs.student_id IN ({_sr_base_query} AND sr.value = ANY(%s))")
+                    params.extend(_sr_base_params + [_sr_real_values])
+                if _sr_has_blank:
+                    _sr_conditions.append(f"cs.student_id NOT IN ({_sr_base_query})")
+                    params.extend(_sr_base_params)
+                if _sr_conditions:
+                    where_clauses.append(f"({' OR '.join(_sr_conditions)})")
+
         where_sql = " AND ".join(where_clauses)
         
         # Count total with caching
@@ -922,7 +951,7 @@ def load_students(request):
         if 'ssid' not in base_cols:
             base_cols.insert(0, 'ssid')
 
-        if test_cols_info and 'student_id' not in base_cols:
+        if (test_cols_info or selected_survey_cols) and 'student_id' not in base_cols:
             base_cols.insert(0, 'student_id')
 
         if (mark_cols_info or 'elem_teacher_name' in base_cols) and 'stu_annual_key' not in base_cols:
@@ -978,6 +1007,30 @@ def load_students(request):
                 ])
                 if mark_info.get('mark_period'):
                     params.append(mark_info['mark_period'])
+            elif sort_by.startswith('survey_'):
+                _sv_col_meta = get_survey_columns().get('col_meta', {})
+                _sv_meta = _sv_col_meta.get(sort_by)
+                if _sv_meta:
+                    order_by_expr = (
+                        "(SELECT sr.value FROM \"dataLoader_surveyresponse\" sr "
+                        "INNER JOIN \"dataLoader_surveyquestion\" sq ON sr.question_id = sq.id "
+                        "INNER JOIN \"dataLoader_surveydefinition\" sd ON sq.survey_definition_id = sd.id "
+                        "INNER JOIN \"dataLoader_importlog\" il ON sr.import_log_id = il.id "
+                        "WHERE sr.student_id = cs.student_id "
+                        "AND sd.survey_type = %s AND sd.school_year = %s "
+                        "AND sd.testing_window = %s AND sd.grade_range = %s "
+                        "AND sq.\"order\" = %s "
+                        "AND (il.ready_for_exploration = true OR sd.ready_for_exploration = true) "
+                        "AND il.status = 'COMPLETED' "
+                        "LIMIT 1)"
+                    )
+                    params.extend([
+                        _sv_meta['survey_type'],
+                        _sv_meta['school_year'],
+                        _sv_meta['window'],
+                        _sv_meta.get('grade_range', ''),
+                        _sv_meta['question_order'],
+                    ])
             elif sort_by in test_col_map:
                 # Use subquery for now, but we'll cache the result ids
                 test_info = test_col_map.get(sort_by)
@@ -1192,6 +1245,26 @@ def load_students(request):
                     student_key = student.get('stu_annual_key')
                     student[mark_info['col_name']] = mark_data.get(student_key, '—')
 
+        # Fetch survey data in bulk for selected survey columns
+        survey_colors = {}  # Map column_key -> {'colors': {...}, 'scale_max': int}
+        if selected_survey_cols and students:
+            student_ids = [s.get('student_id') for s in students if s.get('student_id')]
+            if student_ids:
+                # Use the school_year filter if set, otherwise None for all years
+                survey_year = school_year[0] if isinstance(school_year, list) and school_year else school_year
+                survey_data = get_survey_data_for_students(student_ids, survey_year)
+                
+                # Get survey colors from survey_utils
+                survey_info = get_survey_columns()
+                survey_colors = survey_info.get('colors', {})
+                
+                # survey_data is {student_id: {col_key: value}}
+                for student in students:
+                    student_id = student.get('student_id')
+                    student_survey_data = survey_data.get(student_id, {})
+                    for col_key in selected_survey_cols:
+                        student[col_key] = student_survey_data.get(col_key, '—')
+
         # Fast fetch elem_teacher_name if requested but not joined
         if 'elem_teacher_name' in base_cols and not needs_eht and student_keys:
             q_eht = """
@@ -1219,6 +1292,15 @@ def load_students(request):
 
         # Build filter options for repeatable columns (with Redis caching)
         filter_options = {}
+
+        # Add filter options for survey columns based on their response scale
+        if selected_survey_cols:
+            _survey_all_colors = survey_colors or get_survey_columns().get('colors', {})
+            for _sv_col_key in selected_survey_cols:
+                _sv_color_info = _survey_all_colors.get(_sv_col_key, {})
+                _sv_scale_max = _sv_color_info.get('scale_max', 5)
+                filter_options[_sv_col_key] = list(range(1, _sv_scale_max + 1))
+
         if total > 0:
             excluded_filters = {'ssid', 'student_id', 'student_name'}
             always_include = {'school'}
@@ -1508,6 +1590,8 @@ def load_students(request):
 
     # Build dynamic definitions including test windows
     dynamic_definitions = COLUMN_DEFINITIONS.copy()
+    # Always merge survey column definitions (full question text for column headers)
+    dynamic_definitions.update(get_survey_columns().get('definitions', {}))
     if test_cols_info:
         for info in test_cols_info:
             metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
@@ -1541,6 +1625,7 @@ def load_students(request):
             'status': status or '',
             'sort_by': sort_by,
             'sort_dir': sort_dir,
+            'survey_colors': survey_colors,
         })
 
     # Convert students list to JSON for legacy/template rendering (non-API path)
@@ -1555,6 +1640,7 @@ def load_students(request):
         'page': page,
         'total_pages': total_pages,
         'column_definitions': dynamic_definitions,
+        'survey_colors': survey_colors,
     }
 
     return render(request, 'dataexploration/partials/student_table.html', context)

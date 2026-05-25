@@ -1,0 +1,335 @@
+"""
+Survey column utilities for Data Exploration integration.
+
+Provides functions to generate dynamic survey columns from dataLoader survey data.
+"""
+import hashlib
+import json
+from django.core.cache import cache
+from django.db import connections
+
+
+def _get_survey_display_name(question_text, max_length=50):
+    """Truncate and clean question text for column display."""
+    if not question_text:
+        return question_text
+    text = str(question_text).strip()
+    if len(text) > max_length:
+        text = text[:max_length-3] + '...'
+    return text
+
+
+def _abbreviate_survey_header(survey_type, school_year, window, grade_range):
+    """Build a short header label like 'SC 6-8 Spr 25-26'."""
+    _type_map = {
+        'skills and competencies': 'SC',
+        'support and environment': 'SE',
+    }
+    type_abbrev = _type_map.get((survey_type or '').lower().strip())
+    if not type_abbrev:
+        type_abbrev = ''.join(w[0].upper() for w in (survey_type or '').split() if w)
+
+    yr_parts = (school_year or '').split('-')
+    if len(yr_parts) == 2 and len(yr_parts[0]) == 4 and len(yr_parts[1]) == 4:
+        year_abbrev = f"{yr_parts[0][2:]}-{yr_parts[1][2:]}"
+    else:
+        year_abbrev = school_year or ''
+
+    _win_map = {'SPRING': 'Spr', 'FALL': 'Fall', 'WINTER': 'Win', 'SUMMER': 'Sum'}
+    win_abbrev = _win_map.get((window or '').upper(), window or '')
+
+    gr = (grade_range or '').replace('Grades ', '').replace('Grade ', '').strip()
+
+    parts = [type_abbrev]
+    if gr:
+        parts.append(gr)
+    if win_abbrev:
+        parts.append(win_abbrev)
+    if year_abbrev:
+        parts.append(year_abbrev)
+    return ' '.join(parts)
+
+
+def _generate_survey_column_key(survey_type, school_year, window, question_order, grade_range=''):
+    """Generate a unique column key for a survey question."""
+    # Create a readable but unique key - grade_range must be included so that
+    # surveys sharing the same type/year/window but different grade bands
+    # (e.g. Gr 3-5 vs Gr 6-8) produce distinct keys.
+    type_short = survey_type.replace(' ', '_').replace('and', '').replace('__', '_')[:20]
+    year_short = school_year.replace('-', '')[-4:]  # e.g., 2026
+    window_short = window[:3].upper() if window else 'ALL'
+    grade_short = (grade_range or '').replace('Grades ', '').replace('Grade ', '').replace(' ', '').replace('-', '_') or 'ALL'
+    grade_short = grade_short[:6]  # keep it compact, e.g. "3_5" or "6_8"
+    return f"survey_{type_short}_{year_short}_{window_short}_{grade_short}_Q{question_order + 1}"
+
+
+def get_survey_columns(column_filters=None):
+    """
+    Get dynamic survey columns from published survey data.
+    
+    Returns structure:
+    {
+        school_year: {
+            survey_type: {
+                'windows': {
+                    testing_window: {
+                        question_order: {
+                            'key': column_key,
+                            'label': question_text,
+                            'scale_max': 5 or 7,
+                        }
+                    }
+                },
+                'grade_range': 'Grades 3-5'
+            }
+        }
+    }
+    """
+    cache_key = f"survey_columns_v7_{hashlib.md5(json.dumps(column_filters or {}, sort_keys=True).encode()).hexdigest()}"
+    cached_data = cache.get(cache_key)
+    
+    if cached_data:
+        return cached_data
+    
+    columns = {}
+    definitions = {}
+    column_colors = {}  # Map column_key -> {'colors': {...}, 'scale_max': int}
+    col_meta = {}  # Map column_key -> {survey_type, school_year, window, question_order}
+    
+    with connections['default'].cursor() as cursor:
+        # Get survey definitions and their questions from published imports
+        # We check if there's at least one published import for this survey definition
+        cursor.execute("""
+            SELECT DISTINCT
+                sd.id,
+                sd.survey_type,
+                sd.school_year,
+                sd.testing_window,
+                sd.grade_range,
+                sd.response_colors,
+                sq.id as question_id,
+                sq.question_text,
+                sq."order",
+                sq.response_scale_max,
+                COALESCE(st.name, sq.domain) AS theme_name
+            FROM "dataLoader_surveydefinition" sd
+            INNER JOIN "dataLoader_surveyquestion" sq ON sq.survey_definition_id = sd.id
+            LEFT JOIN "dataLoader_surveytopic" st ON st.id = sq.topic_id
+            INNER JOIN "dataLoader_importlog" il ON il.survey_definition_id = sd.id
+            WHERE (il.ready_for_exploration = true OR sd.ready_for_exploration = true)
+              AND il.status = 'COMPLETED'
+              AND sd.is_active = true
+              AND sq.is_active = true
+            ORDER BY sd.school_year DESC, sd.survey_type, sd.testing_window, sq."order"
+        """)
+        
+        rows = cursor.fetchall()
+        
+        for row in rows:
+            (survey_id, survey_type, school_year, window, grade_range, response_colors,
+             question_id, question_text, order, scale_max, theme_name) = row
+            
+            # Initialize nested structure
+            # Use composite key so different grade bands of the same survey type
+            # don't overwrite each other in the structure dict.
+            type_grade_key = f"{survey_type}||{grade_range}" if grade_range else survey_type
+            if school_year not in columns:
+                columns[school_year] = {}
+            if type_grade_key not in columns[school_year]:
+                columns[school_year][type_grade_key] = {
+                    'windows': {},
+                    'grade_range': grade_range or '',
+                    'survey_type': survey_type,
+                }
+            if window not in columns[school_year][type_grade_key]['windows']:
+                columns[school_year][type_grade_key]['windows'][window] = {}
+            
+            # Generate column key - grade_range ensures uniqueness across grade bands
+            col_key = _generate_survey_column_key(survey_type, school_year, window, order, grade_range)
+            
+            # Store response colors and scale for this column
+            # response_colors format: {'scale_5': {...}, 'scale_7': {...}}
+            question_scale = scale_max or 5
+            # psycopg3 may return JSONB columns as strings from raw cursor queries
+            if isinstance(response_colors, str):
+                try:
+                    response_colors = json.loads(response_colors)
+                except (json.JSONDecodeError, TypeError):
+                    response_colors = {}
+            _short_label = _abbreviate_survey_header(survey_type, school_year, window, grade_range)
+            if response_colors:
+                column_colors[col_key] = {
+                    'colors': response_colors,
+                    'scale_max': question_scale,
+                    'short_label': _short_label,
+                    'topic': theme_name or '',
+                }
+            else:
+                column_colors[col_key] = {
+                    'colors': {},
+                    'scale_max': question_scale,
+                    'short_label': _short_label,
+                    'topic': theme_name or '',
+                }
+            
+            # Add question info
+            columns[school_year][type_grade_key]['windows'][window][order] = {
+                'key': col_key,
+                'label': _get_survey_display_name(question_text),
+                'full_text': question_text,
+                'scale_max': scale_max or 7,
+                'domain': theme_name or '',
+                'question_id': question_id,
+            }
+            
+            # Store metadata for use in SQL filter building
+            col_meta[col_key] = {
+                'survey_type': survey_type,
+                'school_year': school_year,
+                'window': window,
+                'grade_range': grade_range,
+                'question_order': order,
+            }
+
+            # Add to definitions for the data exploration app (full text for column headers)
+            definitions[col_key] = question_text
+    
+    # Build topics_grouped for each survey_data entry so the template can group
+    # questions by topic without needing DB access or Python logic in the template.
+    for year_key in columns:
+        for tg_key in columns[year_key]:
+            survey_data = columns[year_key][tg_key]
+            topics_grouped = {}
+            for window, question_dict in survey_data['windows'].items():
+                window_topics = {}
+                for order_k in sorted(question_dict.keys()):
+                    q = question_dict[order_k]
+                    topic = (q.get('domain') or '').strip() or 'Uncategorized'
+                    if topic not in window_topics:
+                        window_topics[topic] = []
+                    window_topics[topic].append(q)
+                # Named topics alphabetically, 'Uncategorized' last
+                named = sorted(t for t in window_topics if t != 'Uncategorized')
+                sorted_topics = {t: window_topics[t] for t in named}
+                if 'Uncategorized' in window_topics:
+                    sorted_topics['Uncategorized'] = window_topics['Uncategorized']
+                topics_grouped[window] = sorted_topics
+            survey_data['topics_grouped'] = topics_grouped
+
+    result = {
+        'structure': columns,
+        'definitions': definitions,
+        'colors': column_colors,  # Map column_key -> {value: color}
+        'col_meta': col_meta,  # Map column_key -> survey metadata for SQL filtering
+    }
+
+    # Cache for 5 minutes
+    cache.set(cache_key, result, 300)
+    
+    return result
+
+
+def get_survey_data_for_students(student_ids, school_year=None):
+    """
+    Fetch survey response data for a list of students.
+    
+    Args:
+        student_ids: List of student_id values to fetch data for
+        school_year: Optional school year filter
+    
+    Returns:
+        Dict mapping student_id -> {column_key: value}
+    """
+    if not student_ids:
+        return {}
+    
+    results = {}
+    
+    with connections['default'].cursor() as cursor:
+        # Build query - use ANY() for psycopg3 compatibility
+        params = [list(student_ids)]
+        where_clauses = ["sr.student_id = ANY(%s)"]
+        
+        if school_year:
+            where_clauses.append("sd.school_year = %s")
+            params.append(school_year)
+        
+        # Only get data from published imports
+        where_clauses.append("(il.ready_for_exploration = true OR sd.ready_for_exploration = true)")
+        where_clauses.append("il.status = 'COMPLETED'")
+        where_clauses.append("sd.is_active = true")
+        
+        where_sql = " AND ".join(where_clauses)
+        
+        cursor.execute(f"""
+            SELECT 
+                sr.student_id,
+                sd.survey_type,
+                sd.school_year,
+                sd.testing_window,
+                sd.grade_range,
+                sq."order",
+                sr.value
+            FROM "dataLoader_surveyresponse" sr
+            INNER JOIN "dataLoader_surveyquestion" sq ON sr.question_id = sq.id
+            INNER JOIN "dataLoader_surveydefinition" sd ON sq.survey_definition_id = sd.id
+            INNER JOIN "dataLoader_importlog" il ON sr.import_log_id = il.id
+            WHERE {where_sql}
+            ORDER BY sr.student_id, sq."order"
+        """, params)
+        
+        for row in cursor.fetchall():
+            student_id, survey_type, sy, window, grade_range, order, value = row
+            
+            if student_id not in results:
+                results[student_id] = {}
+            
+            col_key = _generate_survey_column_key(survey_type, sy, window, order, grade_range)
+            results[student_id][col_key] = value
+    
+    return results
+
+
+def get_published_survey_summary():
+    """
+    Get a summary of all published surveys for display.
+    
+    Returns list of dicts with survey info.
+    """
+    with connections['default'].cursor() as cursor:
+        cursor.execute("""
+            SELECT 
+                sd.id,
+                sd.name,
+                sd.survey_type,
+                sd.school_year,
+                sd.testing_window,
+                sd.grade_range,
+                COUNT(DISTINCT sq.id) as question_count,
+                COUNT(DISTINCT sr.student_id) as student_count,
+                sd.published_at
+            FROM "dataLoader_surveydefinition" sd
+            LEFT JOIN "dataLoader_surveyquestion" sq ON sq.survey_definition_id = sd.id AND sq.is_active = true
+            LEFT JOIN "dataLoader_surveyresponse" sr ON sr.question_id = sq.id
+            WHERE sd.ready_for_exploration = true
+              AND sd.is_active = true
+            GROUP BY sd.id, sd.name, sd.survey_type, sd.school_year, 
+                     sd.testing_window, sd.grade_range, sd.published_at
+            ORDER BY sd.school_year DESC, sd.survey_type
+        """)
+        
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'id': row[0],
+                'name': row[1],
+                'survey_type': row[2],
+                'school_year': row[3],
+                'testing_window': row[4],
+                'grade_range': row[5],
+                'question_count': row[6],
+                'student_count': row[7],
+                'published_at': row[8],
+            })
+        
+        return results

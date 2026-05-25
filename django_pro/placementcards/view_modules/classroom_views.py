@@ -12,6 +12,8 @@ from django.shortcuts import get_object_or_404, render
 from dataexploration.models import ElementaryHomeroomTeacher
 from placementcards.models import NextYearClassroom, PlacementCard, PlacementTag, QuestionTemplate, StudentPlacement
 from placementcards.view_modules.card_data_utils import (
+    can_user_access_classroom_grade,
+    can_user_configure_placements,
     can_user_place_students,
     can_user_manage_tags,
     get_request_school,
@@ -61,7 +63,7 @@ def manage_classrooms(request: HttpRequest):
 @login_required
 def placement_configuration(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     school_year = request.GET.get('school_year')
@@ -102,7 +104,7 @@ def placement_configuration(request: HttpRequest):
 @login_required
 def create_classroom_modal(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     if request.method == 'GET':
@@ -149,7 +151,7 @@ def create_classroom_modal(request: HttpRequest):
 @transaction.atomic
 def edit_classroom_modal(request: HttpRequest, classroom_id: int):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id, school=school)
@@ -191,7 +193,7 @@ def edit_classroom_modal(request: HttpRequest, classroom_id: int):
 @transaction.atomic
 def delete_classroom(request: HttpRequest, classroom_id: int):
     school = get_request_school(request)
-    if not can_user_place_students(request.user, school):
+    if not can_user_configure_placements(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id, school=school)
@@ -205,6 +207,19 @@ def classroom_statistics(request: HttpRequest, classroom_id: int):
     classroom = get_object_or_404(NextYearClassroom, id=classroom_id)
     if not can_user_place_students(request.user, classroom.school):
         return HttpResponse('Forbidden', status=403)
+    if not can_user_access_classroom_grade(request.user, classroom.grade):
+        return HttpResponse('Forbidden', status=403)
+
+    teacher_note_questions = list(
+        QuestionTemplate.objects.filter(
+            school=classroom.school,
+            is_active=True,
+            question_type__in=['checkbox', 'choice', 'multiselect', 'student_list'],
+        )
+        .only('id', 'question_text', 'question_type')
+        .order_by('question_category', 'display_order', 'id')
+    )
+    teacher_note_metric_keys = {f'note_q_{question.id}' for question in teacher_note_questions}
 
     selected_metrics = [
         metric
@@ -213,7 +228,7 @@ def classroom_statistics(request: HttpRequest, classroom_id: int):
             'gender', 'race', 'ell', 'sped', 'sed', 'foster', 'homeless',
             'gate', 'in_504', 'dli', 'ltel', 'status', 'homeroom_teacher',
             'assessment_pl', 'tags'
-        }
+        } or metric in teacher_note_metric_keys
     ]
     if not selected_metrics:
         selected_metrics = ['ell', 'race', 'homeroom_teacher']
@@ -315,9 +330,56 @@ def classroom_statistics(request: HttpRequest, classroom_id: int):
 
     tag_counter = Counter()
     card_school_year = student_year or classroom.school_year
-    for card in PlacementCard.objects.filter(ssid__in=ssids, school_year=card_school_year).prefetch_related('tags'):
+    card_rows = list(PlacementCard.objects.filter(ssid__in=ssids, school_year=card_school_year).prefetch_related('tags'))
+    for card in card_rows:
         for tag in card.tags.all():
             tag_counter[tag.name] += 1
+
+    responses_by_ssid = {
+        card.ssid: card.responses if isinstance(card.responses, dict) else {}
+        for card in card_rows
+    }
+    teacher_note_metrics = []
+    for question in teacher_note_questions:
+        metric_key = f'note_q_{question.id}'
+        if metric_key not in selected_metrics:
+            continue
+
+        counts = Counter()
+        for ssid in ssids:
+            response_value = responses_by_ssid.get(ssid, {}).get(str(question.id))
+
+            if question.question_type == 'checkbox':
+                counts['YES' if bool(response_value) else 'NO'] += 1
+                continue
+
+            if question.question_type == 'choice':
+                counts[_norm(str(response_value) if response_value is not None else None)] += 1
+                continue
+
+            if question.question_type == 'multiselect':
+                if isinstance(response_value, list):
+                    normalized_items = [str(item).strip() for item in response_value if str(item).strip()]
+                    if normalized_items:
+                        for item in normalized_items:
+                            counts[_norm(item)] += 1
+                    else:
+                        counts['NONE'] += 1
+                else:
+                    counts['NONE'] += 1
+                continue
+
+            if question.question_type == 'student_list':
+                has_values = isinstance(response_value, list) and any(str(item).strip() for item in response_value)
+                counts['HAS_SELECTED_STUDENTS' if has_values else 'NO_SELECTED_STUDENTS'] += 1
+
+        teacher_note_metrics.append(
+            {
+                'metric_key': metric_key,
+                'question_text': question.question_text,
+                'counts': dict(counts),
+            }
+        )
 
     context = {
         'classroom': classroom,
@@ -338,6 +400,7 @@ def classroom_statistics(request: HttpRequest, classroom_id: int):
         'assessment_pl_counts': dict(assessment_pl_counter),
         'assessment_breakdown': assessment_breakdown,
         'tag_counts': dict(tag_counter),
+        'teacher_note_metrics': teacher_note_metrics,
         'selected_metrics': selected_metrics,
     }
     cache.set(key, context, timeout=600)

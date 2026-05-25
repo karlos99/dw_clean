@@ -15,6 +15,7 @@ from dataexploration.view_modules.student_data_utils import (
 from placementcards.models import PlacementCard, PlacementTag, QuestionTemplate
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
+    can_user_access_teacher_notes,
     get_accessible_students,
     get_request_school,
     invalidate_school_caches,
@@ -22,6 +23,7 @@ from placementcards.view_modules.card_data_utils import (
 )
 from studata.models import Schedule
 from users.decorators import page_access_required
+from studata.models import CurrentStudent
 
 
 DEFAULT_QUESTIONS = [
@@ -144,11 +146,37 @@ def _get_questions(school_id: int):
     )
 
 
+def _school_student_picker_options(school):
+    if not school:
+        return []
+
+    rows = (
+        CurrentStudent.objects.filter(school_state_id=school.state_id)
+        .exclude(ssid__isnull=True)
+        .exclude(ssid='')
+        .values('ssid', 'student_name', 'grade', 'school_year')
+        .order_by('ssid', '-school_year')
+    )
+
+    options_by_ssid: dict[str, dict[str, str]] = {}
+    for row in rows:
+        ssid = (row.get('ssid') or '').strip()
+        if not ssid or ssid in options_by_ssid:
+            continue
+        options_by_ssid[ssid] = {
+            'ssid': ssid,
+            'student_name': row.get('student_name') or ssid,
+            'grade': str(row.get('grade') or ''),
+        }
+
+    return sorted(options_by_ssid.values(), key=lambda item: (item['student_name'].lower(), item['ssid']))
+
+
 @login_required
 @page_access_required('placement-cards-teacher-notes')
 def teacher_notes_page(request: HttpRequest):
     school = get_request_school(request)
-    if not can_user_access_placement_cards(request.user, school):
+    if not can_user_access_teacher_notes(request.user, school):
         return HttpResponse('Forbidden', status=403)
 
     is_school_admin = _is_school_admin(request.user)
@@ -225,6 +253,30 @@ def edit_placement_card_modal(request: HttpRequest, ssid: str):
 
     card = PlacementCard.objects.filter(ssid=ssid, school_year=school_year).prefetch_related('tags').first()
     selected_tag_ids = set(card.tags.values_list('id', flat=True)) if card else set()
+    student_list_options = [option for option in _school_student_picker_options(school) if option['ssid'] != ssid]
+
+    selected_student_list_values: dict[str, list[dict[str, str]]] = {}
+    if card and isinstance(card.responses, dict):
+        options_by_ssid = {option['ssid']: option for option in student_list_options}
+        for key, value in card.responses.items():
+            if isinstance(value, list):
+                selected_items: list[dict[str, str]] = []
+                for item in value:
+                    normalized_ssid = str(item).strip()
+                    if not normalized_ssid:
+                        continue
+                    selected_items.append(
+                        options_by_ssid.get(
+                            normalized_ssid,
+                            {
+                                'ssid': normalized_ssid,
+                                'student_name': normalized_ssid,
+                                'grade': '',
+                            },
+                        )
+                    )
+                selected_student_list_values[str(key)] = selected_items
+
     grouped_questions = defaultdict(list)
     for question in questions:
         grouped_questions[question.question_category].append(question)
@@ -236,6 +288,8 @@ def edit_placement_card_modal(request: HttpRequest, ssid: str):
         'card': card,
         'tags': tags,
         'selected_tag_ids': selected_tag_ids,
+        'student_list_options': student_list_options,
+        'selected_student_list_values': selected_student_list_values,
         'student_summary_html': get_student_summary_partial_html_cached(request, ssid, embedded=True),
     }
     return render(request, 'placementcards/partials/placement_card_form.html', context)
@@ -257,6 +311,15 @@ def save_placement_card(request: HttpRequest):
         return HttpResponse('Forbidden', status=403)
 
     questions = _get_questions(school.pk)
+    school_scope_ssids = set()
+    if school and school.state_id:
+        school_scope_ssids = set(
+            CurrentStudent.objects.filter(school_state_id=school.state_id)
+            .exclude(ssid__isnull=True)
+            .exclude(ssid='')
+            .values_list('ssid', flat=True)
+            .distinct()
+        )
     responses = {}
     for question in questions:
         key = f'q_{question.id}'
@@ -267,6 +330,13 @@ def save_placement_card(request: HttpRequest):
                 responses[f'{question.id}_detail'] = request.POST.get(detail_key, '').strip()
         elif question.question_type == 'multiselect':
             responses[str(question.id)] = request.POST.getlist(key)
+        elif question.question_type == 'student_list':
+            selected_students = []
+            for selected_ssid in request.POST.getlist(key):
+                normalized_ssid = selected_ssid.strip()
+                if normalized_ssid and normalized_ssid in school_scope_ssids and normalized_ssid not in selected_students:
+                    selected_students.append(normalized_ssid)
+            responses[str(question.id)] = selected_students
         else:
             responses[str(question.id)] = request.POST.get(key, '').strip()
 

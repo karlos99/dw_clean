@@ -141,7 +141,7 @@ def execute_drill_query(
                 if c not in sel_set:
                     selected_columns.append(c)
                     sel_set.add(c)
-        result = run_column_query(selected_columns, merged_filters)
+        result = run_column_query(selected_columns, merged_filters, user=user, apply_user_filters=True)
         rows = result.get('rows', [])
         cols = result.get('columns', [])
         error = result.get('error')
@@ -152,6 +152,7 @@ def execute_drill_query(
         result = run_saved_query(
             chart.source_id, merged_filters, user,
             extra_columns=extra_columns,
+            apply_user_filters=True,
         )
         rows = result.get('rows', [])
         cols = result.get('columns', [])
@@ -165,10 +166,15 @@ def execute_drill_query(
             if not fkey.startswith(('test_', 'mark_')):
                 continue
             if isinstance(fval, list):
-                vals = set(fval)
-                rows = [r for r in rows if r.get(fkey) in vals]
+                vals = set(str(v) for v in fval)
+                rows = [r for r in rows if str(r.get(fkey) or '\u2014').strip() in vals or 
+                        ('(Blank)' in vals and (not r.get(fkey) or r.get(fkey) == '\u2014'))]
             else:
-                rows = [r for r in rows if r.get(fkey) == fval]
+                target = str(fval).strip()
+                if target == '(Blank)':
+                    rows = [r for r in rows if not r.get(fkey) or r.get(fkey) == '\u2014']
+                else:
+                    rows = [r for r in rows if str(r.get(fkey) or '').strip() == target]
 
     # summary_table: deduplicate by student id AFTER dynamic column filters so
     # the row count matches the chart (which deduplicates on the same filtered

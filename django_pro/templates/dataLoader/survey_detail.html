@@ -1,0 +1,562 @@
+{% extends "base.html" %}
+{% load static dataloader_tags %}
+
+{% block title %}{{ survey.name }} - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li><a href="{% url 'dataLoader:survey_list' %}" class="text-slate-500 hover:text-slate-700">Surveys</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">{{ survey.name|truncatechars:30 }}</li>
+            </ol>
+        </nav>
+        <div class="flex justify-between items-start">
+            <div>
+                <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ survey.name }}</h1>
+                <p class="mt-2 text-slate-600">{{ survey.survey_type }} • {{ survey.school_year }} {{ survey.get_testing_window_display }}</p>
+            </div>
+            <div class="flex gap-2">
+                {% if survey.ready_for_exploration %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-blue-100 text-blue-800">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                    Published
+                </span>
+                {% endif %}
+                {% if survey.is_active %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-green-100 text-green-800">Active</span>
+                {% else %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-slate-100 text-slate-800">Inactive</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Publication Status Card -->
+    <div class="bg-white rounded-xl shadow-sm border {% if survey.ready_for_exploration %}border-blue-200{% else %}border-slate-200{% endif %} mb-6">
+        <div class="p-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    {% if survey.ready_for_exploration %}
+                    <div class="flex-shrink-0 h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
+                        <svg class="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-slate-900">Published to Data Exploration</h3>
+                        <p class="text-sm text-slate-600">
+                            Survey columns are visible in the Data Exploration app.
+                            {% if survey.published_at %}Published {{ survey.published_at|date:"M d, Y" }}{% endif %}
+                        </p>
+                    </div>
+                    {% else %}
+                    <div class="flex-shrink-0 h-12 w-12 bg-slate-100 rounded-full flex items-center justify-center">
+                        <svg class="h-6 w-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-slate-900">Not Published</h3>
+                        <p class="text-sm text-slate-600">Survey data is not visible in the Data Exploration app.</p>
+                    </div>
+                    {% endif %}
+                </div>
+                <a href="{% url 'dataLoader:toggle_publish' survey.pk %}" 
+                   class="px-4 py-2 {% if survey.ready_for_exploration %}border border-yellow-300 text-yellow-700 hover:bg-yellow-50{% else %}bg-blue-600 text-white hover:bg-blue-700{% endif %} rounded-md transition duration-200 font-medium">
+                    {% if survey.ready_for_exploration %}Unpublish{% else %}Publish{% endif %}
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Questions</p>
+            <p class="text-2xl font-bold text-slate-900">{{ questions|length }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Responses</p>
+            <p class="text-2xl font-bold text-slate-900">{{ response_count }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Grade Range</p>
+            <p class="text-2xl font-bold text-slate-900">{{ survey.grade_range|default:"-" }}</p>
+        </div>
+        <div class="bg-white rounded-md shadow-sm border border-slate-200 p-4">
+            <p class="text-sm text-slate-500">Version</p>
+            <p class="text-2xl font-bold text-slate-900">{{ survey.version }}</p>
+        </div>
+    </div>
+
+    <!-- Response Colors Configuration -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Response Colors</h2>
+            <p class="text-sm text-slate-500 mt-1">Configure colors for each response value to display in Data Exploration</p>
+        </div>
+        <div class="p-6 space-y-8">
+            
+            {% if has_scale_5 %}
+            <!-- Scale 1-5 Colors -->
+            <div class="border border-slate-200 rounded-md p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-md font-semibold text-slate-800">Scale 1-5 Colors</h3>
+                    <button data-apply-default="5" class="text-sm text-blue-600 hover:text-blue-800 underline">
+                        Apply Default Gradient
+                    </button>
+                </div>
+                <div class="grid grid-cols-5 gap-4" id="colorConfig5">
+                    {% for value in scale_5_range %}
+                    <div class="flex flex-col items-center">
+                        <label class="text-sm font-medium text-slate-700 mb-2">{{ value }}</label>
+                        <div class="relative">
+                            <input type="color" 
+                                   name="color_5_{{ value }}" 
+                                   data-scale="5"
+                                   data-value="{{ value }}"
+                                   value="{% if survey.response_colors.scale_5 %}{{ survey.response_colors.scale_5|get_item:value|default:default_colors_5|get_item:value }}{% else %}{{ default_colors_5|get_item:value }}{% endif %}"
+                                   class="color-input-5 w-14 h-14 rounded-md cursor-pointer border-2 border-slate-200 hover:border-slate-400 transition">
+                            <div class="mt-1 text-center">
+                                <span class="color-preview-5 text-xs font-mono text-slate-500" data-value="{{ value }}">
+                                    {% if survey.response_colors.scale_5 %}{{ survey.response_colors.scale_5|get_item:value|default:default_colors_5|get_item:value }}{% else %}{{ default_colors_5|get_item:value }}{% endif %}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <!-- Preview 5 -->
+                <div class="mt-4 pt-4 border-t border-slate-100">
+                    <span class="text-xs text-slate-500 mb-2 block">Preview:</span>
+                    <div class="flex gap-2" id="colorPreview5">
+                        {% for value in scale_5_range %}
+                        <div class="preview-cell-5 w-10 h-8 rounded flex items-center justify-center text-sm font-semibold"
+                             data-value="{{ value }}"
+                             style="background-color: {% if survey.response_colors.scale_5 %}{{ survey.response_colors.scale_5|get_item:value|default:default_colors_5|get_item:value }}{% else %}{{ default_colors_5|get_item:value }}{% endif %}">
+                            {{ value }}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            
+            {% if has_scale_7 %}
+            <!-- Scale 1-7 Colors -->
+            <div class="border border-slate-200 rounded-md p-4">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-md font-semibold text-slate-800">Scale 1-7 Colors</h3>
+                    <button data-apply-default="7" class="text-sm text-blue-600 hover:text-blue-800 underline">
+                        Apply Default Gradient
+                    </button>
+                </div>
+                <div class="grid grid-cols-7 gap-3" id="colorConfig7">
+                    {% for value in scale_7_range %}
+                    <div class="flex flex-col items-center">
+                        <label class="text-sm font-medium text-slate-700 mb-2">{{ value }}</label>
+                        <div class="relative">
+                            <input type="color" 
+                                   name="color_7_{{ value }}" 
+                                   data-scale="7"
+                                   data-value="{{ value }}"
+                                   value="{% if survey.response_colors.scale_7 %}{{ survey.response_colors.scale_7|get_item:value|default:default_colors_7|get_item:value }}{% else %}{{ default_colors_7|get_item:value }}{% endif %}"
+                                   class="color-input-7 w-12 h-12 rounded-md cursor-pointer border-2 border-slate-200 hover:border-slate-400 transition">
+                            <div class="mt-1 text-center">
+                                <span class="color-preview-7 text-xs font-mono text-slate-500" data-value="{{ value }}">
+                                    {% if survey.response_colors.scale_7 %}{{ survey.response_colors.scale_7|get_item:value|default:default_colors_7|get_item:value }}{% else %}{{ default_colors_7|get_item:value }}{% endif %}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <!-- Preview 7 -->
+                <div class="mt-4 pt-4 border-t border-slate-100">
+                    <span class="text-xs text-slate-500 mb-2 block">Preview:</span>
+                    <div class="flex gap-2" id="colorPreview7">
+                        {% for value in scale_7_range %}
+                        <div class="preview-cell-7 w-9 h-8 rounded flex items-center justify-center text-sm font-semibold"
+                             data-value="{{ value }}"
+                             style="background-color: {% if survey.response_colors.scale_7 %}{{ survey.response_colors.scale_7|get_item:value|default:default_colors_7|get_item:value }}{% else %}{{ default_colors_7|get_item:value }}{% endif %}">
+                            {{ value }}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            
+            <div class="flex items-center justify-between pt-4 border-t border-slate-200">
+                <span id="saveStatus" class="text-sm text-slate-500"></span>
+                <button id="saveColors" 
+                        class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200 font-medium">
+                    Save Colors
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Survey Details -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Survey Information</h2>
+        </div>
+        <div class="p-6">
+            <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <dt class="text-sm font-medium text-slate-500">Source System</dt>
+                    <dd class="mt-1 text-sm text-slate-900">{{ survey.source_system }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-slate-500">Created</dt>
+                    <dd class="mt-1 text-sm text-slate-900">{{ survey.created_at|date:"M d, Y H:i" }}</dd>
+                </div>
+                {% if survey.description %}
+                <div class="md:col-span-2">
+                    <dt class="text-sm font-medium text-slate-500">Description</dt>
+                    <dd class="mt-1 text-sm text-slate-900">{{ survey.description }}</dd>
+                </div>
+                {% endif %}
+            </dl>
+        </div>
+    </div>
+
+    <!-- Topics note -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-semibold text-slate-900">Topics</h2>
+                <p class="text-sm text-slate-500 mt-1">
+                    Topics are global. Assign them to questions below.
+                    {% if topics %}
+                        <span class="ml-1 text-slate-400">({{ topics|length }} topic{{ topics|length|pluralize }} available)</span>
+                    {% endif %}
+                </p>
+            </div>
+            <a href="{% url 'dataLoader:topic_list' %}"
+               class="px-3 py-1.5 border border-indigo-300 text-indigo-700 text-sm rounded-md hover:bg-indigo-50 transition">
+                Manage Topics
+            </a>
+        </div>
+    </div>
+
+    <!-- Questions -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Questions ({{ questions|length }})</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">#</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Question</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Topic</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Scale</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for question in questions %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">{{ question.order|add:1 }}</td>
+                        <td class="px-6 py-3 text-sm text-slate-900">
+                            <div title="{{ question.question_text }}">{{ question.question_text|truncatechars:80 }}</div>
+                            <div class="text-xs text-slate-400 mt-1">Key: {{ question.question_key }}</div>
+                        </td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm">
+                            <div class="flex items-center gap-2">
+                                <span class="topic-dot-{{ question.pk }} inline-block w-2.5 h-2.5 rounded-full {% if not question.topic %}hidden{% endif %}"
+                                      style="background-color: {{ question.topic.color|default:'transparent' }}"></span>
+                                <select class="question-topic-select text-sm border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                        data-question-id="{{ question.pk }}"
+                                        data-survey-pk="{{ survey.pk }}">
+                                    <option value="">— None —</option>
+                                    {% for topic in topics %}
+                                    <option value="{{ topic.id }}" {% if question.topic_id == topic.id %}selected{% endif %}
+                                            data-color="{{ topic.color }}">{{ topic.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">1-{{ question.response_scale_max }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="4" class="px-6 py-4 text-center text-sm text-slate-500">No questions defined</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Recent Imports -->
+    {% if imports %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Recent Imports</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Records</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Uploaded</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for import in imports %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-6 py-3 text-sm text-slate-900">{{ import.name }}</td>
+                        <td class="px-6 py-3 whitespace-nowrap">
+                            {% if import.status == 'COMPLETED' %}
+                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">Completed</span>
+                            {% else %}
+                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-800">{{ import.get_status_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">{{ import.records_processed }}</td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">{{ import.uploaded_at|date:"M d, Y" }}</td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm">
+                            <a href="{% url 'dataLoader:import_detail' import.pk %}" class="text-blue-600 hover:text-blue-900">View</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Actions -->
+    <div class="flex justify-between items-center">
+        <a href="{% url 'dataLoader:survey_list' %}" 
+           class="px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition duration-200">
+            ← Back to Surveys
+        </a>
+        <a href="{% url 'dataLoader:delete_survey' survey.pk %}" 
+           class="px-4 py-2 border border-red-300 text-red-600 rounded-md hover:bg-red-50 transition duration-200">
+            Delete Survey
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+
+    const SURVEY_PK = {{ survey.pk }};
+
+    // ── Question topic assignment ──────────────────────────────────────────
+    function updateDot(questionPk, color) {
+        const dot = document.querySelector(`.topic-dot-${questionPk}`);
+        if (!dot) return;
+        if (color) {
+            dot.style.backgroundColor = color;
+            dot.classList.remove('hidden');
+        } else {
+            dot.classList.add('hidden');
+        }
+    }
+
+    async function assignTopic(surveyPk, questionPk, topicId) {
+        const url = `/dataloader/surveys/${surveyPk}/questions/${questionPk}/topic/`;
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+            body: JSON.stringify({ topic_id: topicId || null }),
+        });
+    }
+
+    document.querySelectorAll('.question-topic-select').forEach(sel => {
+        sel.addEventListener('change', function() {
+            const topicId = this.value ? parseInt(this.value) : null;
+            const questionPk = this.dataset.questionId;
+            const color = topicId ? this.options[this.selectedIndex].dataset.color : null;
+            updateDot(questionPk, color);
+            assignTopic(this.dataset.surveyPk, questionPk, topicId);
+        });
+    });
+
+    // Initialise dots for already-assigned topics on page load
+    document.querySelectorAll('.question-topic-select').forEach(sel => {
+        if (sel.value) {
+            const color = sel.options[sel.selectedIndex].dataset.color;
+            updateDot(sel.dataset.questionId, color);
+        }
+    });
+
+    // ── Response Color pickers ─────────────────────────────────────────────
+    const colorInputs5 = document.querySelectorAll('.color-input-5');
+    const colorInputs7 = document.querySelectorAll('.color-input-7');
+    const previewCells5 = document.querySelectorAll('.preview-cell-5');
+    const previewCells7 = document.querySelectorAll('.preview-cell-7');
+    const saveBtn = document.getElementById('saveColors');
+    const saveStatus = document.getElementById('saveStatus');
+    
+    // Default gradient colors for each scale
+    const defaultColors5 = {
+        '1': '#ef4444',
+        '2': '#f97316',
+        '3': '#eab308',
+        '4': '#84cc16',
+        '5': '#22c55e'
+    };
+    
+    const defaultColors7 = {
+        '1': '#ef4444',
+        '2': '#f97316',
+        '3': '#facc15',
+        '4': '#a3e635',
+        '5': '#22c55e',
+        '6': '#14b8a6',
+        '7': '#0ea5e9'
+    };
+    
+    // Update preview when color changes - Scale 5
+    colorInputs5.forEach(input => {
+        input.addEventListener('input', function() {
+            const value = this.dataset.value;
+            const color = this.value;
+            
+            const previewCell = document.querySelector(`.preview-cell-5[data-value="${value}"]`);
+            if (previewCell) {
+                previewCell.style.backgroundColor = color;
+                previewCell.style.color = isLightColor(color) ? '#1e293b' : '#ffffff';
+            }
+            
+            const previewSpan = document.querySelector(`.color-preview-5[data-value="${value}"]`);
+            if (previewSpan) {
+                previewSpan.textContent = color;
+            }
+        });
+    });
+    
+    // Update preview when color changes - Scale 7
+    colorInputs7.forEach(input => {
+        input.addEventListener('input', function() {
+            const value = this.dataset.value;
+            const color = this.value;
+            
+            const previewCell = document.querySelector(`.preview-cell-7[data-value="${value}"]`);
+            if (previewCell) {
+                previewCell.style.backgroundColor = color;
+                previewCell.style.color = isLightColor(color) ? '#1e293b' : '#ffffff';
+            }
+            
+            const previewSpan = document.querySelector(`.color-preview-7[data-value="${value}"]`);
+            if (previewSpan) {
+                previewSpan.textContent = color;
+            }
+        });
+    });
+    
+    // Apply default colors buttons
+    document.querySelectorAll('[data-apply-default]').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const scale = this.dataset.applyDefault;
+            const defaults = scale === '5' ? defaultColors5 : defaultColors7;
+            const inputs = scale === '5' ? colorInputs5 : colorInputs7;
+            
+            inputs.forEach(input => {
+                const value = input.dataset.value;
+                if (defaults[value]) {
+                    input.value = defaults[value];
+                    input.dispatchEvent(new Event('input'));
+                }
+            });
+        });
+    });
+    
+    // Save colors - send both scales
+    saveBtn.addEventListener('click', async function() {
+        const colors = {
+            scale_5: {},
+            scale_7: {}
+        };
+        
+        colorInputs5.forEach(input => {
+            colors.scale_5[input.dataset.value] = input.value;
+        });
+        
+        colorInputs7.forEach(input => {
+            colors.scale_7[input.dataset.value] = input.value;
+        });
+        
+        saveStatus.textContent = 'Saving...';
+        saveStatus.className = 'text-sm text-slate-500';
+        
+        try {
+            const response = await fetch('{% url "dataLoader:save_response_colors" survey.pk %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: JSON.stringify({ colors })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                saveStatus.textContent = 'Colors saved successfully!';
+                saveStatus.className = 'text-sm text-green-600';
+            } else {
+                saveStatus.textContent = 'Error: ' + (data.error || 'Unknown error');
+                saveStatus.className = 'text-sm text-red-600';
+            }
+        } catch (err) {
+            saveStatus.textContent = 'Error saving colors';
+            saveStatus.className = 'text-sm text-red-600';
+        }
+        
+        setTimeout(() => {
+            saveStatus.textContent = '';
+        }, 3000);
+    });
+    
+    // Helper function to determine if a color is light
+    function isLightColor(hex) {
+        const c = hex.substring(1);
+        const rgb = parseInt(c, 16);
+        const r = (rgb >> 16) & 0xff;
+        const g = (rgb >>  8) & 0xff;
+        const b = (rgb >>  0) & 0xff;
+        const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        return luma > 150;
+    }
+    
+    function rgbToHex(rgb) {
+        const match = rgb.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+        if (!match) return '#ffffff';
+        const r = parseInt(match[1]).toString(16).padStart(2, '0');
+        const g = parseInt(match[2]).toString(16).padStart(2, '0');
+        const b = parseInt(match[3]).toString(16).padStart(2, '0');
+        return '#' + r + g + b;
+    }
+    
+    // Initialize preview colors on load
+    [...previewCells5, ...previewCells7].forEach(cell => {
+        const color = window.getComputedStyle(cell).backgroundColor;
+        if (color) {
+            cell.style.color = isLightColor(rgbToHex(color)) ? '#1e293b' : '#ffffff';
+        }
+    });
+});
+</script>
+{% endblock %}

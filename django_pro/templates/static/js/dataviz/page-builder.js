@@ -522,6 +522,9 @@ function pageBuilder() {
       try {
         const res = await fetch(url, { credentials: 'same-origin' });
         body.innerHTML = await res.text();
+        if (window.Alpine && typeof window.Alpine.initTree === 'function') {
+          window.Alpine.initTree(body);
+        }
       } catch (e) {
         body.innerHTML = '<p class="text-xs text-red-500 text-center py-4">Failed to load charts</p>';
       }

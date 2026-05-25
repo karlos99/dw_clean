@@ -132,23 +132,138 @@
         <p class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Add columns</p>
         <!-- Search -->
         <input type="text" x-model="colSearch" placeholder="Search columns…"
-               class="w-full text-xs border border-slate-200 rounded px-2 py-1 mb-2 focus:ring-1 focus:ring-blue-400">
+               class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-2 focus:ring-1 focus:ring-blue-400 bg-slate-50">
         <!-- Quick actions -->
-        <div class="flex gap-2 text-[10px] text-blue-600 mb-1.5">
-          <button @click="selectAllCols()" class="hover:underline">All</button>
-          <button @click="selectNoneCols()" class="hover:underline">None</button>
+        <div class="flex gap-2 text-[10px] text-blue-600 mb-1.5 px-0.5">
+          <button @click="selectAllCols()" class="hover:underline font-semibold">All</button>
+          <button @click="selectNoneCols()" class="hover:underline font-semibold">None</button>
         </div>
-        <!-- Available column list -->
-        <div class="max-h-60 overflow-y-auto space-y-0.5">
-          <template x-for="col in filteredAvailableColumns" :key="col">
-            <label class="flex items-center gap-1.5 text-xs py-0.5 cursor-pointer hover:bg-slate-50 rounded px-1">
-              <input type="checkbox" :value="col"
-                     :checked="visibleCols.includes(col)"
-                     @change="toggleColumn(col)"
-                     class="rounded text-blue-600 w-3 h-3">
-              <span x-text="colLabel(col)" class="truncate"></span>
-            </label>
-          </template>
+        
+        <!-- Categorized Column Tree -->
+        <div class="space-y-1 mt-2">
+          {# ── Static categories (Student Info, etc.) ── #}
+          {% for cat_key, cat in column_categories.items %}
+          <div class="rounded border border-slate-100 bg-white overflow-hidden shadow-sm">
+            <button type="button" @click="explorerOpenNode = (explorerOpenNode === '{{ cat_key }}' ? '' : '{{ cat_key }}')"
+                    class="flex items-center justify-between w-full px-2 py-1.5 text-[10px] hover:bg-slate-50 transition">
+              <span class="font-medium text-slate-700 truncate">{{ cat.title }}</span>
+              <div class="flex items-center gap-1">
+                <span class="text-[8px] text-slate-400" x-text="explorerCatSelectedCount('{{ cat_key }}')"></span>
+                <svg class="w-2.5 h-2.5 text-slate-400 transition-transform" :class="explorerOpenNode === '{{ cat_key }}' && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+              </div>
+            </button>
+            <div x-show="explorerOpenNode === '{{ cat_key }}'" x-collapse class="border-t border-slate-50 px-1.5 py-1 space-y-0.5 bg-slate-50/20">
+              <template x-for="col in explorerFilteredCatCols('{{ cat_key }}')" :key="'sc_'+col">
+                <label class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
+                  <input type="checkbox" :checked="visibleCols.includes(col)" @change="toggleColumn(col)"
+                         class="rounded text-blue-600 w-2.5 h-2.5 border-slate-300">
+                  <span class="truncate text-slate-600" x-text="colLabel(col)"></span>
+                </label>
+              </template>
+            </div>
+          </div>
+          {% endfor %}
+
+          {# ── Test columns tree ── #}
+          {% for year, year_obj in test_structure.items %}
+          <div class="rounded border border-slate-100 bg-white overflow-hidden shadow-sm">
+            <button type="button" @click="explorerOpenNode = (explorerOpenNode === 'test_{{ year }}' ? '' : 'test_{{ year }}')"
+                    class="flex items-center justify-between w-full px-2 py-1.5 text-[10px] hover:bg-slate-50 transition">
+              <span class="font-medium text-slate-700"><span class="text-[8px] text-blue-500 font-bold mr-1">TEST</span>{{ year }}</span>
+              <svg class="w-2.5 h-2.5 text-slate-400 transition-transform" :class="explorerOpenNode === 'test_{{ year }}' && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            <div x-show="explorerOpenNode === 'test_{{ year }}'" x-collapse class="border-t border-slate-50 p-1 space-y-1 bg-slate-50/20">
+              {% for assess_name, assess_obj in year_obj.items %}
+              <div class="ml-1 border-l border-slate-100 pl-1.5">
+                <button type="button" @click="explorerOpenSub = (explorerOpenSub === 'test_{{ year }}{{ assess_name|slugify }}' ? '' : 'test_{{ year }}{{ assess_name|slugify }}')"
+                        class="flex items-center justify-between w-full py-0.5 text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+                  <span class="truncate pr-2">{{ assess_name }}</span>
+                  <svg class="w-2 h-2 transition-transform" :class="explorerOpenSub === 'test_{{ year }}{{ assess_name|slugify }}' && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                <div x-show="explorerOpenSub === 'test_{{ year }}{{ assess_name|slugify }}'" x-collapse class="space-y-0.5 mt-0.5 pb-1">
+                  {% for win_name, win_obj in assess_obj.windows.items %}
+                    {% if win_name %}<p class="text-[8px] font-bold text-slate-400 uppercase mt-1 mb-0.5 px-1">{{ win_name }}</p>{% endif %}
+                    {% for testing_name, metrics in win_obj.items %}
+                      <div class="space-y-0.5">
+                        {% for m_key, m_col in metrics.items %}
+                        {% if m_col %}
+                        <label x-show="!colSearch || colLabel('{{ m_col }}').toLowerCase().includes(colSearch.toLowerCase())"
+                               class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
+                          <input type="checkbox" :checked="visibleCols.includes('{{ m_col }}')" @change="toggleColumn('{{ m_col }}')"
+                                 class="rounded text-blue-500 w-2.5 h-2.5 border-slate-300">
+                          <span class="truncate text-slate-600">{{ m_key }} - {{ testing_name }}</span>
+                        </label>
+                        {% endif %}
+                        {% endfor %}
+                      </div>
+                    {% endfor %}
+                  {% endfor %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+
+          {# ── Mark columns tree ── #}
+          {% for year, year_obj in marks_structure.items %}
+          <div class="rounded border border-slate-100 bg-white overflow-hidden shadow-sm">
+            <button type="button" @click="explorerOpenNode = (explorerOpenNode === 'mark_{{ year }}' ? '' : 'mark_{{ year }}')"
+                    class="flex items-center justify-between w-full px-2 py-1.5 text-[10px] hover:bg-slate-50 transition">
+              <span class="font-medium text-slate-700"><span class="text-[8px] text-emerald-500 font-bold mr-1">MARK</span>{{ year }}</span>
+              <svg class="w-2.5 h-2.5 text-slate-400 transition-transform" :class="explorerOpenNode === 'mark_{{ year }}' && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            <div x-show="explorerOpenNode === 'mark_{{ year }}'" x-collapse class="border-t border-slate-50 p-1 space-y-1 bg-slate-50/20">
+              {% for assess_name, assess_obj in year_obj.items %}
+              <div class="ml-1 border-l border-slate-100 pl-1.5">
+                <button type="button" @click="explorerOpenSub = (explorerOpenSub === 'mark_{{ year }}{{ assess_name|slugify }}' ? '' : 'mark_{{ year }}{{ assess_name|slugify }}')"
+                        class="flex items-center justify-between w-full py-0.5 text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+                  <span class="truncate pr-2">{{ assess_name }}</span>
+                  <svg class="w-2 h-2 transition-transform" :class="explorerOpenSub === 'mark_{{ year }}{{ assess_name|slugify }}' && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                <div x-show="explorerOpenSub === 'mark_{{ year }}{{ assess_name|slugify }}'" x-collapse class="space-y-0.5 mt-0.5 pb-1">
+                  {% for win_name, win_obj in assess_obj.windows.items %}
+                    {% if win_name %}<p class="text-[8px] font-bold text-slate-400 uppercase mt-1 mb-0.5 px-1">{{ win_name }}</p>{% endif %}
+                    {% for testing_name, metrics in win_obj.items %}
+                      <div class="space-y-0.5">
+                        {% for m_key, m_col in metrics.items %}
+                        {% if m_col %}
+                        <label x-show="!colSearch || colLabel('{{ m_col }}').toLowerCase().includes(colSearch.toLowerCase())"
+                               class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
+                          <input type="checkbox" :checked="visibleCols.includes('{{ m_col }}')" @change="toggleColumn('{{ m_col }}')"
+                                 class="rounded text-emerald-500 w-2.5 h-2.5 border-slate-300">
+                          <span class="truncate text-slate-600">{{ m_key }} - {{ testing_name }}</span>
+                        </label>
+                        {% endif %}
+                        {% endfor %}
+                      </div>
+                    {% endfor %}
+                  {% endfor %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+
+          {# ── Uncategorized / Extra Columns (catch-all for things not in static tree) ── #}
+          <div class="rounded border border-slate-100 bg-white overflow-hidden shadow-sm">
+            <button type="button" @click="explorerOpenNode = (explorerOpenNode === 'extra' ? '' : 'extra')"
+                    class="flex items-center justify-between w-full px-2 py-1.5 text-[10px] hover:bg-slate-50 transition">
+              <span class="font-medium text-slate-700">Other Columns</span>
+              <svg class="w-2.5 h-2.5 text-slate-400 transition-transform" :class="explorerOpenNode === 'extra' && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            <div x-show="explorerOpenNode === 'extra'" x-collapse class="border-t border-slate-50 px-1.5 py-1 space-y-0.5 bg-slate-50/20 max-h-48 overflow-y-auto">
+              <template x-for="col in filteredAvailableColumns" :key="'extra_'+col">
+                <label class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
+                  <input type="checkbox" :checked="visibleCols.includes(col)" @change="toggleColumn(col)"
+                         class="rounded text-slate-600 w-2.5 h-2.5 border-slate-300">
+                  <span class="truncate text-slate-600" x-text="colLabel(col)"></span>
+                </label>
+              </template>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -234,11 +349,12 @@
 
 function drillTable() {
   // Parse initial state from Django context
-  const universe  = JSON.parse('{{ universe_json|escapejs }}');
-  const colLabels = JSON.parse('{{ col_labels_json|escapejs }}');
-  const selCols   = JSON.parse('{{ selected_columns_json|escapejs }}');
-  const allCols   = JSON.parse('{{ all_columns_json|escapejs }}');
-  const chartId   = {{ chart.id }};
+  const universe   = JSON.parse('{{ universe_json|escapejs }}');
+  const colLabels  = JSON.parse('{{ col_labels_json|escapejs }}');
+  const selCols    = JSON.parse('{{ selected_columns_json|escapejs }}');
+  const allCols    = JSON.parse('{{ all_columns_json|escapejs }}');
+  const categories = JSON.parse('{{ column_categories_json|default:"{}"|escapejs }}');
+  const chartId    = {{ chart.id }};
 
   return {
     sidebarOpen: false,
@@ -251,6 +367,11 @@ function drillTable() {
     filterValues: {},
     filterChecked: {},
 
+    explorerOpenNode: '',
+    explorerOpenSub:  '',
+
+    categories: categories,
+
     /* ── Column helpers ─────────────────────────────────── */
     get filteredAvailableColumns() {
       const q = (this.colSearch || '').toLowerCase();
@@ -260,6 +381,22 @@ function drillTable() {
       });
     },
     colLabel(key) { return colLabels[key] || key; },
+
+    explorerCatSelectedCount(catKey) {
+      const catCols = this.explorerFilteredCatCols(catKey);
+      const n = catCols.filter(c => this.visibleCols.includes(c)).length;
+      return n > 0 ? `${n}/${catCols.length}` : '';
+    },
+
+    explorerFilteredCatCols(catKey) {
+      const cat = this.categories[catKey];
+      if (!cat) return [];
+      const cols = cat.columns || [];
+      if (!this.colSearch) return cols;
+      const q = this.colSearch.toLowerCase();
+      return cols.filter(c => (colLabels[c] || c).toLowerCase().includes(q));
+    },
+
     selectAllCols() { this.visibleCols = [...universe]; this.applyColumns(); },
     selectNoneCols() { this.visibleCols = []; this.applyColumns(); },
 

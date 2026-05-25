@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     'mathr.apps.MathrConfig',
     'assesments',
     'dataviz.apps.DatavizConfig',
+    'dataLoader.apps.DataloaderConfig',
     # Allauth
     'allauth',
     'allauth.account',
@@ -43,12 +44,14 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'django.middleware.gzip.GZipMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'users.middleware.ActiveRoleMiddleware',
+    'users.middleware.RedirectForbiddenToHomeMiddleware',
     'users.middleware.UsageTrackingMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',

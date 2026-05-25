@@ -259,22 +259,36 @@ def _label(col: str, col_defs: dict) -> str:
 def _agg(df, x_col, y_col, agg, stack_col=''):
     if x_col not in df.columns:
         return pd.DataFrame()
-    group_cols = [x_col] + ([stack_col] if stack_col and stack_col in df.columns else [])
+    
+    # Filter out rows where x_col or stack_col are NaN/None before aggregation
+    group_cols = [x_col]
+    if stack_col and stack_col in df.columns:
+        group_cols.append(stack_col)
+    
+    # Strictly drop rows with NaN in grouping columns
+    df = df.dropna(subset=group_cols)
+    
     try:
         if agg in ('sum', 'avg', 'min', 'max', 'median') and y_col and y_col in df.columns:
             dfc = df.copy()
             dfc[y_col] = pd.to_numeric(dfc[y_col], errors='coerce')
-            grp = dfc.groupby(group_cols, dropna=False)[y_col]
+            # dropna=True (default) ensures NaNs in group_cols don't create a group
+            grp = dfc.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
             result = {
                 'sum': grp.sum(), 'avg': grp.mean(),
                 'min': grp.min(), 'max': grp.max(), 'median': grp.median(),
             }.get(agg, grp.size()).reset_index().rename(columns={y_col: '_value'})
         else:
-            result = df.groupby(group_cols, dropna=False).size().reset_index(name='_value')
+            # For 'count', we count rows where y_col is not NaN if provided
+            if y_col and y_col in df.columns:
+                result = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True).size().reset_index(name='_value')
+            else:
+                result = df.groupby(group_cols, dropna=True).size().reset_index(name='_value')
     except Exception:
-        result = df.groupby(group_cols, dropna=False).size().reset_index(name='_value')
+        result = df.groupby(group_cols, dropna=True).size().reset_index(name='_value')
+
     for c in group_cols:
-        result[c] = result[c].fillna('(Blank)').astype(str)
+        result[c] = result[c].astype(str)
     return result
 
 
@@ -289,14 +303,55 @@ def _theme(cfg: dict) -> dict:
 
 
 def _legend(cfg: dict, text_color: str) -> dict:
-    pos = cfg.get('legend_pos', 'bottom')
+    pos       = cfg.get('legend_pos', 'bottom')
     if pos == 'hidden':
         return {'show': False}
-    base = {'show': True, 'textStyle': {'color': text_color, 'fontSize': 11}}
-    if   pos == 'top':   base.update({'top': 4,   'left':  'center'})
-    elif pos == 'left':  base.update({'left': 4,  'top':   'middle', 'orient': 'vertical'})
-    elif pos == 'right': base.update({'right': 4, 'top':   'middle', 'orient': 'vertical'})
-    else:                base.update({'bottom': 0, 'left': 'center'})
+
+    item_gap   = int(cfg.get('legend_item_gap',   10) or 10)
+    font_size  = int(cfg.get('legend_font_size',  11) or 11)
+    icon_size  = int(cfg.get('legend_icon_size',  10) or 10)
+    # User-overridden legend offset from its docked edge (px)
+    legend_offset = cfg.get('legend_offset')   # None = use default
+    legend_left   = cfg.get('legend_left')     # None = use default
+    legend_top    = cfg.get('legend_top')      # None = use default
+
+    base = {
+        'show': True,
+        'itemGap':   item_gap,
+        'itemWidth': icon_size,
+        'itemHeight': icon_size,
+        'textStyle': {'color': text_color, 'fontSize': font_size},
+    }
+
+    def _to_pos(val):
+        if val in ('center', 'middle', 'left', 'right', 'top', 'bottom'):
+            return val
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return None
+
+    l_left = _to_pos(legend_left)
+    l_top  = _to_pos(legend_top)
+
+    # If user has dragged the legend to an exact pixel position, use that
+    if l_left is not None and l_top is not None:
+        base.update({'left': l_left, 'top': l_top})
+        # Detect orientation from saved position or fall back to pos-based
+        if pos in ('left', 'right'):
+            base['orient'] = 'vertical'
+        return base
+
+    # Default dock positions — offset shifts the legend away from its edge
+    offset = int(legend_offset or 0)
+    if pos == 'top':
+        base.update({'top': max(0, 4 + offset), 'left': 'center'})
+    elif pos == 'left':
+        base.update({'left': max(0, 4 + offset), 'top': 'middle', 'orient': 'vertical'})
+    elif pos == 'right':
+        base.update({'right': max(0, 4 + offset), 'top': 'middle', 'orient': 'vertical'})
+    else:  # bottom
+        base.update({'bottom': max(0, offset), 'left': 'center'})
     return base
 
 
@@ -359,7 +414,7 @@ def _apply_color_map(option: dict, cfg: dict) -> None:
 
 def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
     t = _theme(cfg)
-    title_text = cfg.get('title', '')
+    title_text = cfg.get('chart_title', '') or cfg.get('title', '')
     show_toolbox = cfg.get('show_toolbox', True) is not False
     show_tooltip = cfg.get('show_tooltip', True) is not False
     animate      = cfg.get('animation', True) is not False
@@ -372,8 +427,9 @@ def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
         'title': {
             'show': bool(title_text),
             'text': title_text,
-            'left': 'center',
-            'textStyle': {'color': t['text'], 'fontSize': 15, 'fontWeight': 600},
+            'left': cfg.get('title_left', 'center') if cfg.get('title_left') else 'center',
+            'top':  cfg.get('title_top',  'auto')   if cfg.get('title_top')  else 'auto',
+            'textStyle': {'color': t['text'], 'fontSize': int(cfg.get('title_font_size', 16) or 16), 'fontWeight': 600},
         },
         'legend': _legend(cfg, t['text']),
         'tooltip': {
@@ -391,14 +447,17 @@ def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
             },
         },
         'grid': {
-            'left': 55, 'right': 20,
-            'top': 50 if title_text else 24,
-            'bottom': 60, 'containLabel': True,
+            'left':   int(cfg.get('grid_left',   55) or 55),
+            'right':  int(cfg.get('grid_right',  20) or 20),
+            'top':    int(cfg.get('grid_top',    60 if title_text else 36) or (60 if title_text else 36)),
+            'bottom': int(cfg.get('grid_bottom', 80) or 80),
+            'containLabel': True,
         },
     }
 
 
 def _axis_style(cfg: dict) -> dict:
+    """Return shared axis style dict (used for both x and y axes)."""
     t = _theme(cfg)
     show_grid   = cfg.get('show_grid', True) is not False
     show_labels = cfg.get('show_axis_labels', True) is not False
@@ -408,6 +467,24 @@ def _axis_style(cfg: dict) -> dict:
         'axisLabel': {'show': show_labels, 'color': t['text']},
         'splitLine': {'show': show_grid, 'lineStyle': {'color': t['grid']}},
     }
+
+
+def _x_axis_label_style(cfg: dict) -> dict:
+    """Return axisLabel overrides for x-axis based on user config."""
+    t = _theme(cfg)
+    show_labels = cfg.get('show_axis_labels', True) is not False
+    rotation    = int(cfg.get('x_label_rotation', 0) or 0)
+    font_size   = int(cfg.get('x_label_font_size', 11) or 11)
+    max_len     = int(cfg.get('x_label_max_length', 0) or 0)
+
+    lbl: dict = {'show': show_labels, 'color': t['text'], 'fontSize': font_size}
+    if rotation:
+        lbl['rotate'] = rotation
+    if max_len > 0:
+        lbl['__formatter_js__'] = (
+            f'function(v){{var s=String(v);return s.length>{max_len}?s.slice(0,{max_len})+"…":s;}}'
+        )
+    return lbl
 
 
 def _add_zoom(option: dict, cfg: dict = None) -> None:
@@ -816,13 +893,15 @@ def _waterfall_option(df, x_col, y_col, agg, cfg, labels):
     return option
 
 
-def _auto_detect_pl_scale(values: list) -> list:
+def _auto_detect_pl_scale(values) -> list:
     """Try to order PL values using known scales; fall back to alphabetical."""
-    val_set = {str(v).strip() for v in values if v and str(v).strip()}
+    # Ensure all values are strings and filter out empty/null ones, but keep '0'
+    val_set = {str(v).strip() for v in values if v is not None and str(v).strip() != ''}
     for scale in _KNOWN_PL_SCALES:
         if val_set.issubset(set(scale)):
             return [s for s in scale if s in val_set]
-    return sorted(val_set)
+    # Final fallback: guaranteed string sort to avoid TypeError: '<' not supported between 'float' and 'str'
+    return sorted(list(val_set))
 
 
 def _summary_table_option(df, row_col, col_col, cfg, col_defs):
@@ -858,8 +937,10 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     if _dup_key:
         work = work.drop_duplicates(subset=[_dup_key, row_col, col_col], keep='first')
 
-    row_vals = sorted(work[row_col].unique().tolist())
-    col_vals = sorted(work[col_col].unique().tolist())
+    # Use auto-detection to get properly ordered PL levels if applicable, 
+    # and to ensure all values are strings for sorting.
+    row_vals = _auto_detect_pl_scale(work[row_col].unique())
+    col_vals = _auto_detect_pl_scale(work[col_col].unique())
 
     ct = work.groupby([row_col, col_col]).size().unstack(fill_value=0)
     ct = ct.reindex(index=row_vals, columns=col_vals, fill_value=0)
@@ -1203,13 +1284,37 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     if len(valid_cols) < 2:
         return _message_option('Need at least 2 valid PL columns in the data', cfg, error=True)
 
+    # ── Apply user-defined filters on x-col categories and PL values ──────
+    ac_include_cats = cfg.get('ac_include_cats') or []   # list of category values to keep
+    ac_include_pl   = cfg.get('ac_include_pl')   or []   # list of PL values to keep
+    # Extra column filters: {col: [val, ...]}
+    ac_col_filters  = cfg.get('ac_col_filters')  or {}
+
+    # ── Apply user-defined filters and order on x-col categories ──────
+    if x_col and x_col in df.columns:
+        unique_vals = df[x_col].fillna('(Blank)').astype(str).unique().tolist()
+        if ac_include_cats:
+            # Respect user order and filter
+            base_categories = [c for c in ac_include_cats if c in unique_vals]
+            df = df[df[x_col].fillna('(Blank)').astype(str).isin(ac_include_cats)]
+        else:
+            base_categories = sorted(unique_vals)
+    else:
+        base_categories = []
+
+    if ac_col_filters:
+        for fcol, fvals in ac_col_filters.items():
+            if fcol in df.columns and fvals:
+                df = df[df[fcol].fillna('(Blank)').astype(str).isin(fvals)]
+    if df.empty:
+        return _message_option('No data after applying filters', cfg, error=True)
+
     # Parse metadata for each PL column
     col_meta = {c: _parse_col_meta(c, col_defs) for c in valid_cols}
 
-    # Auto-detect compare dimension: what varies between columns?
+    # Auto-detect compare dimension labels
     windows = [col_meta[c]['window'] for c in valid_cols]
     years   = [col_meta[c]['year']   for c in valid_cols]
-
     if len(set(windows)) > 1:
         group_labels = {c: col_meta[c]['window'] or c for c in valid_cols}
     elif len(set(years)) > 1:
@@ -1231,18 +1336,24 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     cat_font_size = int(cfg.get('compare_cat_font_size', 12) or 12)
     cat_rotation  = int(cfg.get('compare_cat_rotation', 0) or 0)
 
-    base_categories = sorted(df[x_col].fillna('(Blank)').astype(str).unique().tolist())
-
     # Collect all unique PL values across selected columns (skip blanks)
-    _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+    _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL', 'nan', 'NAN', 'NaN'})
     all_pl = set()
     for c in valid_cols:
         vals = df[c].dropna().astype(str).str.strip()
         all_pl.update(v for v in vals.unique() if v not in _BLANK)
-    pl_vals = _ordered_stacks(list(all_pl), cfg)
 
-    # Order groups by label
-    ordered_cols = sorted(valid_cols, key=lambda c: group_labels[c])
+    # Respect user order for PL values if selected, else use default scale detection/sorting
+    if ac_include_pl:
+        pl_vals = [pv for pv in ac_include_pl if pv in all_pl]
+    else:
+        pl_vals = _ordered_stacks(list(all_pl), cfg)
+
+    if not pl_vals:
+        return _message_option('No PL values remain after filtering — adjust PL filter', cfg, error=True)
+
+    # Order groups: respect selection order from valid_cols (which comes from compare_pl_cols)
+    ordered_cols = valid_cols
     n_groups = len(ordered_cols)
 
     # Assign a fixed colour per PL value using semantic colours + palette fallback
@@ -1409,6 +1520,10 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         },
     })
 
+    # Expose available filter values so the builder UI can populate filter pickers
+    option['__ac_avail_cats__'] = base_categories          # all unique x-col values
+    option['__ac_avail_pl__']   = _ordered_stacks(list(all_pl), cfg)  # all PL values (unfiltered)
+
     # Embed drill-through metadata so the click handler can resolve
     # the real category from a dataIndex (needed because xAxis[0] shows window/year).
     option['_drillMeta'] = {
@@ -1481,10 +1596,14 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
 
     # Drop rows where key categorical columns contain placeholder / blank values
     # (e.g. '—' assigned by data_loader for students with no test result)
-    _BLANK_VALUES = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+    _BLANK_VALUES = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL', 'nan', 'NAN', 'NaN'})
     for _col in (stack_col, x_col):
-        if _col and _col in df.columns and not pd.api.types.is_numeric_dtype(df[_col]):
-            df = df[~df[_col].astype(str).str.strip().isin(_BLANK_VALUES)]
+        if _col and _col in df.columns:
+            # Drop actual NaNs
+            df = df.dropna(subset=[_col])
+            # Drop blank-like strings
+            if not pd.api.types.is_numeric_dtype(df[_col]):
+                df = df[~df[_col].astype(str).str.strip().isin(_BLANK_VALUES)]
     if df.empty:
         return _message_option('All rows filtered out (no valid data)', cfg)
 
@@ -1532,6 +1651,50 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
 
     # Apply colour mapping (user overrides + semantic defaults) to all chart types
     _apply_color_map(option, cfg)
+
+    # Apply x-axis label overrides (rotation, font size, truncation)
+    x_label_style = _x_axis_label_style(cfg)
+    x_axes = option.get('xAxis', None)
+    if x_axes is not None:
+        if isinstance(x_axes, list):
+            for xa in x_axes:
+                if isinstance(xa, dict):
+                    xa.setdefault('axisLabel', {}).update(x_label_style)
+        elif isinstance(x_axes, dict):
+            x_axes.setdefault('axisLabel', {}).update(x_label_style)
+
+    # Apply y-axis min/max overrides
+    y_min = cfg.get('y_axis_min')
+    y_max = cfg.get('y_axis_max')
+    if y_min is not None or y_max is not None:
+        y_axes = option.get('yAxis', None)
+        targets = y_axes if isinstance(y_axes, list) else ([y_axes] if isinstance(y_axes, dict) else [])
+        for ya in targets:
+            if isinstance(ya, dict) and ya.get('type') == 'value':
+                if y_min not in (None, ''):
+                    try: ya['min'] = float(y_min)
+                    except (TypeError, ValueError): pass
+                if y_max not in (None, ''):
+                    try: ya['max'] = float(y_max)
+                    except (TypeError, ValueError): pass
+
+    # Apply bar category gap
+    bar_gap = cfg.get('bar_category_gap')
+    if bar_gap not in (None, ''):
+        for s in option.get('series', []):
+            if isinstance(s, dict) and s.get('type') == 'bar':
+                s['barCategoryGap'] = str(bar_gap) + '%'
+
+    # Apply label distance
+    label_dist = cfg.get('label_distance')
+    if label_dist not in (None, ''):
+        try:
+            ld = int(label_dist)
+            for s in option.get('series', []):
+                if isinstance(s, dict) and isinstance(s.get('label'), dict):
+                    s['label']['distance'] = ld
+        except (TypeError, ValueError):
+            pass
 
     # Attach series names so the preview template can expose them
     series_names = [s.get('name', '') for s in option.get('series', []) if s.get('name')]
