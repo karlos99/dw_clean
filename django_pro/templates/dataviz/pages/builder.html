@@ -292,7 +292,8 @@
                          }"
                          draggable="true"
                          @dragstart="startSectionDrag($event, sec.id, row.id)"
-                         @dragover.prevent="sectionDragOver(sec.id)"
+                         @dragover.prevent="sectionDragOver($event, sec.id)"
+                         @dragenter.prevent="sectionDragOver($event, sec.id)"
                          @drop.prevent="dropSection($event, row.id, sec.id)"
                          @dragend="endSectionDrag()"
                          @click="selectedSection = selectedSection === sec.id ? null : sec.id">

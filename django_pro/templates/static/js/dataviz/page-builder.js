@@ -125,6 +125,12 @@ function pageBuilder() {
           grid.batchUpdate(false);
           this.$nextTick(() => {
             if (window.htmx) htmx.process(el);
+            // Auto-fit all HTML sections after initial render
+            row.sections.forEach(sec => {
+              if (sec.element_type !== 'html') return;
+              const widget = el.querySelector('[gs-id="' + sec.id + '"]');
+              if (widget) this._fitHtmlWidget(grid, widget);
+            });
           });
         }
       });
@@ -146,6 +152,10 @@ function pageBuilder() {
       item.setAttribute('gs-y', String(y));
       item.setAttribute('gs-w', String(w));
       item.setAttribute('gs-h', String(h));
+      // HTML sections auto-size to their content
+      if (sec.element_type === 'html') {
+        item.setAttribute('gs-size-to-content', 'true');
+      }
 
       const content = document.createElement('div');
       content.classList.add('grid-stack-item-content',
@@ -155,7 +165,30 @@ function pageBuilder() {
       item.appendChild(content);
 
       grid.addWidget(item);
+
+      // After paint, auto-fit height to content for HTML blocks
+      if (sec.element_type === 'html') {
+        this.$nextTick(() => this._fitHtmlWidget(grid, item));
+      }
+
       return item;
+    },
+
+    _fitHtmlWidget(grid, item) {
+      // Prefer GridStack's built-in resizeToContent if available
+      if (typeof grid.resizeToContent === 'function') {
+        grid.resizeToContent(item);
+        return;
+      }
+      // Fallback: measure inner content and update height
+      const inner = item.querySelector('.grid-stack-item-content > div');
+      if (!inner) return;
+      const cellPx = grid.getCellHeight(true) || 80;
+      const needed = Math.max(1, Math.ceil((inner.scrollHeight + 16) / cellPx));
+      const current = parseInt(item.getAttribute('gs-h') || '2');
+      if (needed > current) {
+        grid.update(item, { h: needed });
+      }
     },
 
     _buildSectionHtml(sec) {
@@ -486,14 +519,18 @@ function pageBuilder() {
     startSectionDrag(event, secId, rowId) {
       this.dragSectionId = secId;
       this.dragSourceRowId = rowId;
+      // setData() is required by browsers to activate the drag
+      event.dataTransfer.setData('text/plain', String(secId));
       event.dataTransfer.effectAllowed = 'move';
     },
 
-    sectionDragOver(secId) {
+    sectionDragOver(event, secId) {
+      event.preventDefault();
       this.dragOverSectionId = secId;
     },
 
     dropSection(event, rowId, targetSecId) {
+      event.preventDefault();
       if (!this.dragSectionId || this.dragSectionId === targetSecId) {
         this.endSectionDrag(); return;
       }
@@ -695,8 +732,16 @@ function pageBuilder() {
     },
 
     _rerenderSection(rowId, sec) {
-      const el = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sec.id + '"] .grid-stack-item-content');
-      if (el) el.innerHTML = this._buildSectionHtml(sec);
+      const contentEl = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sec.id + '"] .grid-stack-item-content');
+      if (contentEl) contentEl.innerHTML = this._buildSectionHtml(sec);
+      // Auto-fit height for HTML sections after content changes
+      if (sec.element_type === 'html') {
+        const grid = this.grids[rowId];
+        const widget = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sec.id + '"]');
+        if (grid && widget) {
+          this.$nextTick(() => this._fitHtmlWidget(grid, widget));
+        }
+      }
     },
 
     /* ── Chart picker ───────────────────────────────────────────── */
