@@ -107,7 +107,7 @@ def _cfg_from_post(post):
         'st_col_col':        post.get('st_col_col', ''),
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
-        'limit':             _parse_int(post.get('limit'), 500),
+        'limit':             _parse_int(post.get('limit'), None),
         # Visual options
         'palette':           post.get('palette', ''),
         'legend_pos':        legend_pos if legend_pos else ('bottom' if show_legend else 'hidden'),

@@ -1926,6 +1926,11 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
 
     df = pd.DataFrame(rows)
 
+    # Apply row limit before any processing (None = no limit)
+    _row_limit = cfg.get('limit')
+    if _row_limit and _row_limit > 0:
+        df = df.head(_row_limit)
+
     def _resolve_cfg_col(col):
         if not isinstance(col, str):
             return col

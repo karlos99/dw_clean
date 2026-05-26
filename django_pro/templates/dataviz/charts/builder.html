@@ -1011,8 +1011,10 @@
         </div>
         <div>
           <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Row Limit</label>
-          <input type="number" x-model.number="limit" min="1" max="5000"
+          <input type="number" x-model.number="limit" min="1" max="100000"
+                 placeholder="No limit"
                  class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <p class="text-[10px] text-slate-400 mt-1">Leave blank to load all rows</p>
         </div>
         </div>{# /agg collapse #}
       </section>
@@ -1730,7 +1732,7 @@
     <input type="hidden" name="agg_decimals"   x-bind:value="aggDecimals !== null ? aggDecimals : ''">
     <input type="hidden" name="sort_col"       x-bind:value="sortCol">
     <input type="hidden" name="sort_dir"       x-bind:value="sortDir">
-    <input type="hidden" name="limit"          x-bind:value="limit">
+    <input type="hidden" name="limit"          x-bind:value="limit !== null ? limit : ''">
     <input type="hidden" name="palette"        x-bind:value="palette">
     <input type="hidden" name="show_legend"       x-bind:value="showLegend ? '1' : ''">
     <input type="hidden" name="legend_pos"        x-bind:value="showLegend ? legendPos : 'hidden'">
@@ -1879,7 +1881,7 @@ function chartBuilder() {
     aggDecimals:  existing?.config?.agg_decimals ?? null,
     sortCol:      existing?.config?.sort_col ?? '',
     sortDir:      existing?.config?.sort_dir ?? 'asc',
-    limit:        existing?.config?.limit ?? 500,
+    limit:        existing?.config?.limit ?? null,
     /* Visual options */
     palette:          existing?.config?.palette ?? '',
     showLegend:       existing ? (existing.config?.legend_pos !== 'hidden') : true,
