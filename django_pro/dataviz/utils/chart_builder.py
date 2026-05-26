@@ -1328,14 +1328,23 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
              'itemStyle': {'color': _PG_COLORS[cat]}}
             for cat in ORDER if counts.get(cat, 0) > 0
         ]
-        tooltip_js = (
-            "function(params) {"
-            f"  var total = {total};"
-            f"  var pct = total > 0 ? (params.value / total * 100).toFixed({percent_decimals}) : '{'0.' + ('0' * percent_decimals) if percent_decimals else '0'}';"
-            "  return params.marker + ' ' + params.name + ': <b>' + params.value"
-            f"       + '</b> (' + pct + '{percent_suffix}');"
-            "}"
-        )
+        _sp = _tooltip_show_pct(cfg)
+        _zero = '0.' + '0' * percent_decimals if percent_decimals else '0'
+        if _sp:
+            tooltip_js = (
+                "function(params) {"
+                f"  var total = {total};"
+                f"  var pct = total > 0 ? (params.value / total * 100).toFixed({percent_decimals}) : '{_zero}';"
+                "  return params.marker + ' ' + params.name + ': <b>' + params.value"
+                f"       + '</b> (' + pct + '{percent_suffix}');"
+                "}"
+            )
+        else:
+            tooltip_js = (
+                "function(params) {"
+                "  return params.marker + ' ' + params.name + ': <b>' + params.value + '</b>';"
+                "}"
+            )
         option['color'] = [_PG_COLORS[cat] for cat in ORDER]
         option['series'] = [{
             'name': 'Progress Growth',
@@ -1488,6 +1497,18 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
                 vals = [float(raw[cat].get(xv, 0)) for xv in categories]
             series.append(make_series(cat, vals))
 
+        _sp2 = _tooltip_show_pct(cfg)
+        _sc2 = _tooltip_show_count(cfg)
+        _zero2 = '0.' + '0' * percent_decimals if percent_decimals else '0'
+        _count_line2 = (
+            "  if (total > 0) html += ' <span style=\"color:#999\">(n=' + total + ')</span>';"
+            if _sc2 else ""
+        )
+        _pct_calc2 = (
+            f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{_zero2}';"
+            if _sp2 else ""
+        )
+        _pct_frag2 = f" + ' (' + pct + '{percent_suffix}');" if _sp2 else ";"
         tooltip_js = (
             "function(params) {"
             "  if (!Array.isArray(params)) params = [params];"
@@ -1496,12 +1517,12 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             "  var cat = params[0].name || '';"
             "  var total = totals[cat] || 0;"
             "  var html = '<b>' + cat + '</b>';"
-            "  if (total > 0) html += ' <span style=\"color:#999\">(n=' + total + ')</span>';"
+            f"{_count_line2}"
             "  for (var i = 0; i < params.length; i++) {"
             "    var d = params[i];"
             "    var cnt = (raw[d.seriesName] || {})[cat] || 0;"
-            f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{'0.' + ('0' * percent_decimals) if percent_decimals else '0'}';"
-            f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '{percent_suffix}');"
+            f"{_pct_calc2}"
+            f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b>'{_pct_frag2}"
             "  }"
             "  return html;"
             "}"
@@ -1710,7 +1731,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             s['itemStyle']['borderRadius'] = [border_radius, border_radius, 0, 0]
         series.append(s)
 
-    # ── Tooltip: always show count + percent ──
+    # ── Tooltip: respect tooltipShowPct / tooltipShowCount flags ──
     raw_counts_flat = {str(p): {pv: raw_counts[p].get(pv, 0) for pv in pl_vals} for p in range(total_positions)}
     totals_flat = {str(p): totals[p] for p in range(total_positions)}
     display_names = {}
@@ -1719,6 +1740,18 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         gi = pos % n_groups
         display_names[str(pos)] = f"{base_categories[ci]} \u00b7 {group_labels[ordered_cols[gi]]}"
 
+    _sp3 = _tooltip_show_pct(cfg)
+    _sc3 = _tooltip_show_count(cfg)
+    _zero3 = '0.' + '0' * percent_decimals if percent_decimals else '0'
+    _count_line3 = (
+        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
+        if _sc3 else ""
+    )
+    _pct_calc3 = (
+        f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{_zero3}';"
+        if _sp3 else ""
+    )
+    _pct_frag3 = f" + ' (' + pct + '{percent_suffix}');" if _sp3 else ";"
     tooltip_js = (
         "function(params) {"
         "  if (!Array.isArray(params)) params = [params];"
@@ -1729,13 +1762,13 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         "  var cat = names[String(idx)] || params[0].name || '';"
         "  var total = totals[String(idx)] || 0;"
         "  var html = '<b>' + cat + '</b>';"
-        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
+        f"{_count_line3}"
         "  for (var i = params.length - 1; i >= 0; i--) {"
         "    var d = params[i];"
         "    if (d.value == null) continue;"
         "    var cnt = (rawCounts[String(idx)] || {})[d.seriesName] || 0;"
-        f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{'0.' + ('0' * percent_decimals) if percent_decimals else '0'}';"
-        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '{percent_suffix}');"
+        f"{_pct_calc3}"
+        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b>'{_pct_frag3}"
         "  }"
         "  return html;"
         "}"
