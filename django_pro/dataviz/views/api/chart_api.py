@@ -131,9 +131,18 @@ def _cfg_from_post(post):
         'show_toolbox':      bool(post.get('show_toolbox', '1')),
         'show_grid':         bool(post.get('show_grid', '1')),
         'show_axis_labels':  bool(post.get('show_axis_labels', '1')),
+        'show_categories':   bool(post.get('show_categories', '1')),
+        'show_axis_titles':  bool(post.get('show_axis_titles', '1')),
         'animation':         bool(post.get('animation', '1')),
         'show_tooltip':      bool(post.get('show_tooltip', '1')),
         'show_percent':      bool(post.get('show_percent')),
+        'show_percent_symbol': bool(post.get('show_percent_symbol', '1')),
+        'percent_decimals':  _parse_int(post.get('percent_decimals'), 1),
+        'category_order':    _parse_json_list('category_order'),
+        'bar_layout':       post.get('bar_layout', 'grouped'),
+        'bar_orientation':  post.get('bar_orientation', 'vertical'),
+        'bar_radial':       bool(post.get('bar_radial')),
+        'bar_polar':        bool(post.get('bar_polar')),
         'compare_gap':       _parse_int(post.get('compare_gap'), 30),
         'compare_cat_font_size': _parse_int(post.get('compare_cat_font_size'), 12),
         'compare_cat_rotation':  _parse_int(post.get('compare_cat_rotation'), 0),
@@ -194,6 +203,7 @@ def chart_preview_api(request):
             try:
                 option = build_option(body['rows'], body.get('column_definitions', {}), cfg)
                 option.pop('__series_names__', None)
+                option.pop('__category_names__', None)
                 return render(request, 'dataviz/partials/chart_preview.html', {
                     'option_json': json.dumps(option), 'chart_id': 'preview',
                 })
@@ -271,11 +281,13 @@ def chart_preview_api(request):
         option = build_option(rows, {}, cfg)
         # Extract series names for the stack-order UI, then strip the internal key
         series_names    = option.pop('__series_names__', [])
+        category_names  = option.pop('__category_names__', [])
         ac_avail_cats   = option.pop('__ac_avail_cats__', [])
         ac_avail_pl     = option.pop('__ac_avail_pl__', [])
         return render(request, 'dataviz/partials/chart_preview.html', {
             'option_json':        json.dumps(option),
             'series_names_json':  json.dumps(series_names),
+            'category_names_json': json.dumps(category_names),
             'ac_avail_cats_json': json.dumps(ac_avail_cats),
             'ac_avail_pl_json':   json.dumps(ac_avail_pl),
             'chart_id':           _chart_id or 'preview',

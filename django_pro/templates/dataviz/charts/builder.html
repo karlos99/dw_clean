@@ -1469,18 +1469,21 @@
                                 class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Stacked</button>
                       </div>
                     </div>
-                    <div>
-                      <p class="text-[9px] text-slate-400 mb-1">Canvas</p>
-                      <div class="grid grid-cols-2 gap-1">
-                        <button type="button" @click="barRadial=false"
-                                :class="!barRadial ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Cartesian</button>
-                        <button type="button" @click="barRadial=true"
-                                :class="barRadial ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Radial</button>
+                      <div>
+                        <p class="text-[9px] text-slate-400 mb-1">Canvas</p>
+                        <div class="grid grid-cols-3 gap-1">
+                          <button type="button" @click="barRadial=false; barPolar=false"
+                                  :class="!barRadial && !barPolar ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                  class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Cartesian</button>
+                          <button type="button" @click="barRadial=true; barPolar=false"
+                                  :class="barRadial ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                  class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Radial</button>
+                          <button type="button" @click="barPolar=true; barRadial=false"
+                                  :class="barPolar ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                  class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Polar</button>
+                        </div>
                       </div>
-                    </div>
-                    <div x-show="!barRadial">
+                    <div x-show="!barRadial && !barPolar">
                       <p class="text-[9px] text-slate-400 mb-1">Orientation</p>
                       <div class="grid grid-cols-2 gap-1">
                         <button type="button" @click="barOrientation='vertical'"
@@ -1706,6 +1709,7 @@
     <input type="hidden" name="bar_layout"      x-bind:value="barLayout">
     <input type="hidden" name="bar_orientation" x-bind:value="barOrientation">
     <input type="hidden" name="bar_radial"      x-bind:value="barRadial ? '1' : ''">
+    <input type="hidden" name="bar_polar"       x-bind:value="barPolar  ? '1' : ''">
     <input type="hidden" name="compare_gap"     x-bind:value="compareGap">
     <input type="hidden" name="compare_cat_font_size" x-bind:value="compareCatFontSize">
     <input type="hidden" name="compare_cat_rotation" x-bind:value="compareCatRotation">
@@ -1749,11 +1753,13 @@ function chartBuilder() {
       }
       if (!existing.config.bar_orientation) existing.config.bar_orientation = 'vertical';
       if (existing.config.bar_radial == null) existing.config.bar_radial = false;
+      if (existing.config.bar_polar  == null) existing.config.bar_polar  = false;
       existing.chart_type = 'bar';
     } else if (existing.chart_type === 'bar') {
       if (!existing.config.bar_layout) existing.config.bar_layout = 'grouped';
       if (!existing.config.bar_orientation) existing.config.bar_orientation = 'vertical';
       if (existing.config.bar_radial == null) existing.config.bar_radial = false;
+      if (existing.config.bar_polar  == null) existing.config.bar_polar  = false;
     }
   }
   const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
@@ -1796,6 +1802,7 @@ function chartBuilder() {
     barLayout:    existing?.config?.bar_layout ?? 'grouped',
     barOrientation: existing?.config?.bar_orientation ?? 'vertical',
     barRadial:    existing ? !!existing.config?.bar_radial : false,
+    barPolar:     existing ? !!existing.config?.bar_polar  : false,
     xCol:         existing?.config?.x_col ?? '',
     yCol:         existing?.config?.y_col ?? '',
     seriesCol:    existing?.config?.stack_col ?? existing?.config?.series_col ?? '',
@@ -2053,7 +2060,7 @@ function chartBuilder() {
       if (this.sourceType === 'columns') this.loadExplorerStructure();
 
       // Data props — changing these requires a full server re-render
-      const dataProps = ['chartType','barLayout','barOrientation','barRadial','xCol','yCol','seriesCol','comparePlCols','aggFunc',
+      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','xCol','yCol','seriesCol','comparePlCols','aggFunc',
                          'sortCol','sortDir','categoryOrder','limit','palette','colorMap','showPercent','showPercentSymbol','percentDecimals','stackOrder',
                          'stRowCol','stColCol','explorerSelected',
                          'acIncludeCats','acIncludePl','acColFilters',
@@ -2164,6 +2171,19 @@ function chartBuilder() {
             fontSize: +this.xLabelFontSize || 11,
           }}];
           opt.radiusAxis = [{
+            splitLine: { show: !!this.showGrid },
+            axisLabel: { show: valLblShow },
+            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
+            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
+          }];
+        } else if (this.chartType === 'bar' && this.barPolar) {
+          // Polar: radiusAxis is the category axis, angleAxis is the value axis
+          opt.radiusAxis = [{ axisLabel: {
+            show:     catLblShow,
+            rotate:   +this.xLabelRotation || 0,
+            fontSize: +this.xLabelFontSize || 11,
+          }}];
+          opt.angleAxis = [{
             splitLine: { show: !!this.showGrid },
             axisLabel: { show: valLblShow },
             min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,

@@ -583,6 +583,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
     is_stacked = stacked or bar_layout == 'stacked'
     orientation = (cfg.get('bar_orientation') or 'vertical').lower()
     radial = bool(cfg.get('bar_radial', False))
+    polar  = bool(cfg.get('bar_polar', False)) and not radial  # polar: radiusAxis=category, angleAxis=value
     valid_y = [c for c in (y_cols or []) if c in df.columns]
     if len(valid_y) == 1 and not y_col:
         y_col = valid_y[0]
@@ -600,12 +601,12 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
             'itemStyle': {'opacity': opacity},
             'data': data,
         }
-        if radial:
+        if radial or polar:
             s['coordinateSystem'] = 'polar'
             if label_pos == 'top':
                 s['label']['position'] = 'outside'
         if border_radius:
-            if radial:
+            if radial or polar:
                 s['itemStyle']['borderRadius'] = border_radius
             elif orientation == 'horizontal':
                 s['itemStyle']['borderRadius'] = [0, border_radius, border_radius, 0]
@@ -623,6 +624,16 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                 'series': series,
             })
             option.setdefault('dv', {})['category_axis'] = 'angle'
+            return
+        if polar:
+            option.pop('grid', None)
+            option.update({
+                'radiusAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                'angleAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+                'polar': {'radius': '70%'},
+                'series': series,
+            })
+            option.setdefault('dv', {})['category_axis'] = 'radius'
             return
         if orientation == 'horizontal':
             option.update({
@@ -718,6 +729,8 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
             update_axes(categories, series, y_axis_name)
             if radial:
                 option['radiusAxis']['max'] = 100
+            elif polar:
+                option['angleAxis']['max'] = 100
             elif orientation == 'horizontal':
                 option['xAxis']['max'] = 100
             else:
@@ -754,9 +767,9 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
             _axis_name(labels['y'] or 'Count', cfg),
         )
     option['__category_names__'] = categories if 'categories' in locals() else ordered_categories
-    if radial and isinstance(option.get('tooltip'), dict):
+    if (radial or polar) and isinstance(option.get('tooltip'), dict):
         option['tooltip']['axisPointer'] = {'type': 'line'}
-    if not radial:
+    if not radial and not polar:
         _add_zoom(option, cfg, axis='y' if orientation == 'horizontal' else 'x')
     return option
 
@@ -1876,6 +1889,8 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         axis_targets.append(option.get('yAxis'))
     elif category_axis == 'angle':
         axis_targets.append(option.get('angleAxis'))
+    elif category_axis == 'radius':
+        axis_targets.append(option.get('radiusAxis'))
     else:
         axis_targets.append(option.get('xAxis'))
 
@@ -1893,7 +1908,10 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     y_min = cfg.get('y_axis_min')
     y_max = cfg.get('y_axis_max')
     if y_min is not None or y_max is not None:
-        value_axis = option.get('radiusAxis') if category_axis == 'angle' else option.get('xAxis' if category_axis == 'y' else 'yAxis')
+        value_axis = (option.get('radiusAxis') if category_axis == 'angle'
+                      else option.get('angleAxis') if category_axis == 'radius'
+                      else option.get('xAxis') if category_axis == 'y'
+                      else option.get('yAxis'))
         targets = value_axis if isinstance(value_axis, list) else ([value_axis] if isinstance(value_axis, dict) else [])
         for ya in targets:
             if isinstance(ya, dict) and ya.get('type') == 'value':
