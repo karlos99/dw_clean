@@ -1,13 +1,11 @@
 /**
  * page-builder.js — Alpine.js component for the row-based page builder.
  *
- * Each page has rows (layout sections). Each row has its own 12-column
- * GridStack grid with charts and text blocks.
- *
  * Globals set by the template:
  *   _PAGE_ID, _PAGE_SLUG, _PAGE_TITLE, _PAGE_DESC, _PAGE_STATUS,
  *   _PAGE_FILTERS, _ROWS_JSON, _SECTIONS_JSON, _SAVE_URL, _SECTIONS_URL,
- *   _SECTION_URL_TPL, _ROW_URL_TPL, _CHART_LIST_URL, _CHART_RENDER_TPL, _CSRF
+ *   _SECTION_URL_TPL, _ROW_URL_TPL, _CHART_LIST_URL, _CHART_RENDER_TPL,
+ *   _FILTER_COLS_URL, _CSRF
  */
 function pageBuilder() {
   return {
@@ -22,8 +20,21 @@ function pageBuilder() {
     filters:  (_PAGE_FILTERS || []).map(f => ({ ...f })),
     filtersEnabled: (_PAGE_FILTERS || []).length > 0,
     filterCategories: [],
-    filterPickerOpen: false,
+
+    /* Sidebar accordion open/closed state */
+    sidebarSections: { settings: true, filters: true, layout: true },
+
+    /* Filter modal */
+    filterModalOpen: false,
+    filterColumnSearch: '',
+
+    /* Text editor modal */
     htmlEditorMode: 'visual',
+    editorModalOpen: false,
+    editorSectionId: null,
+
+    /* Saving indicator */
+    saving: false,
 
     rows: _ROWS_JSON.map(r => ({
       id:        r.id,
@@ -36,14 +47,29 @@ function pageBuilder() {
 
     activeRow: null,
     selectedSection: null,
-    grids: {},          // rowId → GridStack instance
+    grids: {},
     pickerOpen: false,
     pickerSearch: '',
-    pickerTargetRow: null,  // which row the chart picker is adding to
+    pickerTargetRow: null,
 
     toast: '',
     toastType: 'success',
     lastSaved: '',
+
+    /* ── Computed: filtered categories for filter modal ─────────── */
+    get filteredFilterCategories() {
+      const q = (this.filterColumnSearch || '').toLowerCase().trim();
+      if (!q) return this.filterCategories;
+      return this.filterCategories
+        .map(cat => ({
+          ...cat,
+          columns: cat.columns.filter(col =>
+            (col.label || '').toLowerCase().includes(q) ||
+            (col.key  || '').toLowerCase().includes(q)
+          ),
+        }))
+        .filter(cat => cat.columns.length > 0);
+    },
 
     /* ── Init ───────────────────────────────────────────────────── */
     init() {
@@ -64,15 +90,7 @@ function pageBuilder() {
       });
 
       // Load available filter columns
-      this._loadFilterColumns();
-
-      // Re-init rich editor when selected section changes
-      this.$watch('selectedSection', (newId) => {
-        if (newId) {
-          this.htmlEditorMode = 'visual';
-          this.initRichEditor(newId);
-        }
-      });
+      this.loadFilterColumns();
     },
 
     /* ── Grid management ────────────────────────────────────────── */
@@ -96,7 +114,6 @@ function pageBuilder() {
         }, el);
         this.grids[row.id] = grid;
 
-        // Render existing sections
         if (row.sections.length > 0) {
           grid.batchUpdate(true);
           row.sections.forEach(sec => this._addWidgetToGrid(row.id, sec));
@@ -138,7 +155,7 @@ function pageBuilder() {
 
     _buildSectionHtml(sec) {
       if (sec.element_type === 'html') {
-        return '<div class="p-4 text-sm text-slate-600">' + (sec.html_content || '<p>Text block</p>') + '</div>';
+        return '<div class="p-4 text-sm text-slate-700 leading-relaxed">' + (sec.html_content || '<p class="text-slate-400 italic">Empty text block — click Edit Content to add text</p>') + '</div>';
       }
       const pageSlug = encodeURIComponent(this.pageSlug);
       const chartId = sec.chart_id;
@@ -197,11 +214,13 @@ function pageBuilder() {
           source_col: f.source_col,
           source_table: f.source_table || 'current_student',
           widget: f.widget || 'select',
+          default_val: f.default_val || '',
         }));
     },
 
     async autoSave() {
       if (!this.pageId || !this.title.trim()) return;
+      this.saving = true;
       await this._post(_SAVE_URL, {
         id: this.pageId,
         title: this.title.trim(),
@@ -213,13 +232,14 @@ function pageBuilder() {
         page_filters: this._collectFilters(),
       });
       this.lastSaved = new Date().toLocaleTimeString();
+      this.saving = false;
     },
 
     async savePage(status) {
       const pageId = await this._ensurePage();
       if (!pageId) return;
 
-      // Save page metadata
+      this.saving = true;
       const res = await this._post(_SAVE_URL, {
         id: pageId,
         title: this.title.trim(),
@@ -230,7 +250,7 @@ function pageBuilder() {
         show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
-      if (res.error) { this.showToast(res.error, 'error'); return; }
+      if (res.error) { this.showToast(res.error, 'error'); this.saving = false; return; }
       if (res.page) {
         this.pageSlug = res.page.slug;
         this.status = res.page.status;
@@ -243,14 +263,11 @@ function pageBuilder() {
 
         if (grid) {
           const items = grid.save(false) || [];
-          console.log('[page-builder] grid.save(false) for row', row.id, JSON.stringify(items));
           sectionLayout = items.map(item => ({
             section_id: parseInt(item.id, 10),
             gs_x: item.x ?? 0, gs_y: item.y ?? 0,
             gs_w: item.w ?? 6, gs_h: item.h ?? 4,
           })).filter(i => i.section_id);
-          console.log('[page-builder] sectionLayout after filter:', JSON.stringify(sectionLayout));
-
           sectionLayout.sort((a, b) => a.gs_y - b.gs_y || a.gs_x - b.gs_x);
           sectionLayout.forEach((item, idx) => item.position = idx);
         }
@@ -263,9 +280,7 @@ function pageBuilder() {
       });
 
       const url = this._sectionsUrl();
-      console.log('[page-builder] reorder payload:', JSON.stringify({ action: 'reorder', rows: rowsPayload }));
       const reorderRes = await this._post(url, { action: 'reorder', rows: rowsPayload });
-      console.log('[page-builder] reorder response:', JSON.stringify(reorderRes));
 
       // Sync local state
       rowsPayload.forEach(rp => {
@@ -278,6 +293,7 @@ function pageBuilder() {
       });
 
       this.lastSaved = new Date().toLocaleTimeString();
+      this.saving = false;
       this.showToast(status === 'active' ? 'Page published' : 'Page saved');
     },
 
@@ -308,7 +324,6 @@ function pageBuilder() {
       const url = this._sectionsUrl();
       await this._post(url, { action: 'remove_row', row_id: rowId });
 
-      // Destroy GridStack instance
       if (this.grids[rowId]) {
         this.grids[rowId].destroy(false);
         delete this.grids[rowId];
@@ -381,7 +396,7 @@ function pageBuilder() {
       const url = this._sectionsUrl();
       const res = await this._post(url, {
         action: 'add_html', row_id: rowId,
-        html_content: '<h3>Title</h3><p>Description text…</p>',
+        html_content: '<p>Add your text here…</p>',
         gs_w: 12, gs_h: 2,
       });
       if (res.error) { this.showToast(res.error, 'error'); return; }
@@ -392,8 +407,8 @@ function pageBuilder() {
         chart_id: null,
         chart_name: null,
         element_type: 'html',
-        html_content: '<h3>Title</h3><p>Description text…</p>',
-        html_preview: 'Title Description text…',
+        html_content: '<p>Add your text here…</p>',
+        html_preview: 'Add your text here…',
         show_title: false,
         gs_x: 0, gs_y: 0,
         gs_w: 12, gs_h: 2,
@@ -406,6 +421,43 @@ function pageBuilder() {
       this.showToast('Text block added');
     },
 
+    /* ── Add title block to row ─────────────────────────────────── */
+    async addTitleToRow(rowId) {
+      const pageId = await this._ensurePage();
+      if (!pageId) return;
+
+      const titleHtml = '<h2 style="font-size:1.4rem;font-weight:700;color:#1e293b;margin:0;line-height:1.3">Section Title</h2>';
+
+      const url = this._sectionsUrl();
+      const res = await this._post(url, {
+        action: 'add_html', row_id: rowId,
+        html_content: titleHtml,
+        gs_w: 12, gs_h: 2,
+      });
+      if (res.error) { this.showToast(res.error, 'error'); return; }
+
+      const sec = {
+        id: res.section.id,
+        row_id: rowId,
+        chart_id: null,
+        chart_name: null,
+        element_type: 'html',
+        html_content: titleHtml,
+        html_preview: 'Section Title',
+        show_title: false,
+        gs_x: 0, gs_y: 0,
+        gs_w: 12, gs_h: 2,
+      };
+
+      const row = this.getRow(rowId);
+      if (row) row.sections.push(sec);
+
+      this._addWidgetToGrid(rowId, sec);
+      // Open editor immediately so user can edit the title
+      this.$nextTick(() => this.openEditorModal(sec.id));
+      this.showToast('Title block added');
+    },
+
     /* ── Remove section ─────────────────────────────────────────── */
     async removeSection(rowId, sectionId) {
       const url = _SECTION_URL_TPL.replace('SECTIONID', sectionId);
@@ -414,7 +466,6 @@ function pageBuilder() {
         headers: { 'X-CSRFToken': _CSRF },
       });
 
-      // Remove from grid
       const grid = this.grids[rowId];
       if (grid) {
         const el = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sectionId + '"]');
@@ -469,43 +520,101 @@ function pageBuilder() {
       await this._post(url, { html_content: content });
     },
 
-    /* ── Rich text editor ───────────────────────────────────────── */
+    /* ── Rich text editor (modal) ───────────────────────────────── */
     richCmd(cmd, value) {
-      const editor = document.getElementById('rich-editor');
+      const editor = document.getElementById('pb-rich-editor');
       if (editor) editor.focus();
       document.execCommand(cmd, false, value || null);
     },
 
     initRichEditor(sectionId) {
       this.$nextTick(() => {
-        const editor = document.getElementById('rich-editor');
+        const editor = document.getElementById('pb-rich-editor');
         if (!editor) return;
         const sec = this.getSection(sectionId);
         editor.innerHTML = sec?.html_content || '<p></p>';
+        editor.focus();
       });
     },
 
     syncRichEditor(sectionId) {
-      const editor = document.getElementById('rich-editor');
+      const editor = document.getElementById('pb-rich-editor');
       if (editor) this.updateHtmlContent(sectionId, editor.innerHTML);
     },
 
     switchEditorMode(mode, sectionId) {
+      const richEl = document.getElementById('pb-rich-editor');
+      const codeEl = document.getElementById('pb-code-editor');
+      const sec = this.getSection(sectionId);
+
       if (mode === 'code') {
-        // Flush visual editor content to state before switching
-        const editor = document.getElementById('rich-editor');
-        if (editor) {
-          const sec = this.getSection(sectionId);
-          if (sec) {
-            sec.html_content = editor.innerHTML;
-            sec.html_preview = editor.innerHTML.replace(/<[^>]*>/g, '').slice(0, 30);
-          }
+        // Flush visual → code
+        if (richEl && sec) {
+          sec.html_content = richEl.innerHTML;
+          sec.html_preview = richEl.innerHTML.replace(/<[^>]*>/g, '').slice(0, 30);
         }
+        this.$nextTick(() => {
+          if (codeEl && sec) codeEl.value = sec.html_content || '';
+        });
       } else {
-        // Populate visual editor from current state when switching back
-        this.initRichEditor(sectionId);
+        // Flush code → visual
+        if (codeEl && sec) {
+          sec.html_content = codeEl.value;
+          sec.html_preview = codeEl.value.replace(/<[^>]*>/g, '').slice(0, 30);
+        }
+        this.$nextTick(() => {
+          if (richEl && sec) {
+            richEl.innerHTML = sec.html_content || '<p></p>';
+            richEl.focus();
+          }
+        });
       }
       this.htmlEditorMode = mode;
+    },
+
+    /* ── Editor modal ───────────────────────────────────────────── */
+    openEditorModal(sectionId) {
+      this.editorSectionId = sectionId;
+      this.htmlEditorMode = 'visual';
+      this.editorModalOpen = true;
+      this.$nextTick(() => this.initRichEditor(sectionId));
+    },
+
+    closeEditorModal() {
+      // Flush content before closing
+      if (this.editorSectionId) {
+        const editor = document.getElementById('pb-rich-editor');
+        if (editor && this.htmlEditorMode === 'visual') {
+          this.updateHtmlContent(this.editorSectionId, editor.innerHTML);
+        }
+        const codeEl = document.getElementById('pb-code-editor');
+        if (codeEl && this.htmlEditorMode === 'code') {
+          this.updateHtmlContent(this.editorSectionId, codeEl.value);
+        }
+      }
+      this.editorModalOpen = false;
+      this.editorSectionId = null;
+    },
+
+    saveEditorModal(sectionId) {
+      const editor = document.getElementById('pb-rich-editor');
+      const codeEl = document.getElementById('pb-code-editor');
+      const content = this.htmlEditorMode === 'visual'
+        ? (editor ? editor.innerHTML : '')
+        : (codeEl ? codeEl.value : '');
+      if (sectionId) this.updateHtmlContent(sectionId, content);
+      this.editorModalOpen = false;
+      this.editorSectionId = null;
+      this.showToast('Content saved');
+    },
+
+    insertLink() {
+      const url = prompt('Enter URL:');
+      if (url) {
+        const editor = document.getElementById('pb-rich-editor');
+        if (editor) editor.focus();
+        document.execCommand('createLink', false, url);
+      }
     },
 
     _rerenderSection(rowId, sec) {
@@ -531,7 +640,7 @@ function pageBuilder() {
     },
 
     /* ── Filters ────────────────────────────────────────────────── */
-    async _loadFilterColumns() {
+    async loadFilterColumns() {
       try {
         const res = await fetch(_FILTER_COLS_URL, { credentials: 'same-origin' });
         const data = await res.json();
@@ -556,6 +665,7 @@ function pageBuilder() {
           source_col: col.key,
           source_table: 'current_student',
           widget: 'select',
+          default_val: '',
         });
       }
       this.autoSave();
