@@ -518,14 +518,35 @@ def _percent_suffix(cfg: dict) -> str:
     return '%' if _show_percent_symbol(cfg) else ''
 
 
+def _tooltip_show_pct(cfg: dict) -> bool:
+    return cfg.get('tooltip_show_pct', True) is not False
+
+
+def _tooltip_show_count(cfg: dict) -> bool:
+    return cfg.get('tooltip_show_count', True) is not False
+
+
 def _rich_tooltip_js(raw_lookup: dict, totals_lookup: dict,
-                     percent_decimals: int, percent_suffix: str) -> str:
+                     percent_decimals: int, percent_suffix: str,
+                     show_pct: bool = True, show_count: bool = True) -> str:
     """Return a JS axis-tooltip formatter that shows count + % + (n=total) per category.
 
     ``raw_lookup``   – {series_name: {category: raw_value}}
     ``totals_lookup`` – {category: total_count}
     """
     zero_pct = "'" + ('0.' + ('0' * percent_decimals) if percent_decimals else '0') + "'"
+    count_line = (
+        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
+        if show_count else ""
+    )
+    pct_fragment = (
+        f" + ' (' + pct + '{percent_suffix}');"
+        if show_pct else ";"
+    )
+    pct_calc = (
+        f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : {zero_pct};"
+        if show_pct else ""
+    )
     return (
         "function(params) {"
         "  if (!Array.isArray(params)) params = [params];"
@@ -534,12 +555,12 @@ def _rich_tooltip_js(raw_lookup: dict, totals_lookup: dict,
         "  var cat = params[0].name || '';"
         "  var total = totals[cat] || 0;"
         "  var html = '<b>' + cat + '</b>';"
-        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
+        f"{count_line}"
         "  for (var i = params.length - 1; i >= 0; i--) {"
         "    var d = params[i];"
         "    var cnt = (rawLookup[d.seriesName] || {})[cat] || 0;"
-        f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : {zero_pct};"
-        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '{percent_suffix}');"
+        f"{pct_calc}"
+        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b>'{pct_fragment}"
         "  }"
         "  return html;"
         "}"
@@ -547,7 +568,8 @@ def _rich_tooltip_js(raw_lookup: dict, totals_lookup: dict,
 
 
 def _inline_pct_tooltip_js(percent_decimals: int = 1, percent_suffix: str = '%',
-                           grand_total: float | None = None) -> str:
+                           grand_total: float | None = None,
+                           show_pct: bool = True, show_count: bool = True) -> str:
     """Return a JS axis-tooltip formatter that computes % client-side from the params array.
     If grand_total is provided (single-series), it is embedded and used as the denominator.
     Otherwise the sum of all series values for the axis category is used.
@@ -557,19 +579,31 @@ def _inline_pct_tooltip_js(percent_decimals: int = 1, percent_suffix: str = '%',
         total_expr = str(round(grand_total, 6))
     else:
         total_expr = "params.reduce(function(s,d){return s+(Number(d.value)||0);},0)"
+    count_line = (
+        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + Math.round(total) + ')</span>';"
+        if show_count else ""
+    )
+    pct_calc = (
+        f"    var pct = total > 0 ? (v / total * 100).toFixed({percent_decimals}) : {zero_pct};"
+        if show_pct else ""
+    )
+    pct_fragment = (
+        f" + ' (' + pct + '{percent_suffix}');"
+        if show_pct else ";"
+    )
     return (
         "function(params) {"
         "  if (!Array.isArray(params)) params = [params];"
         "  var cat = params[0].name || '';"
         f"  var total = {total_expr};"
         "  var html = '<b>' + cat + '</b>';"
-        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + Math.round(total) + ')</span>';"
+        f"{count_line}"
         "  for (var i = params.length - 1; i >= 0; i--) {"
         "    var d = params[i];"
         "    if (d.value == null) continue;"
         "    var v = Number(d.value) || 0;"
-        f"    var pct = total > 0 ? (v / total * 100).toFixed({percent_decimals}) : {zero_pct};"
-        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + v + '</b> (' + pct + '{percent_suffix}');"
+        f"{pct_calc}"
+        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + v + '</b>'{pct_fragment}"
         "  }"
         "  return html;"
         "}"
@@ -761,7 +795,8 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         # Build tooltip — always shows raw count + % + (n=total), regardless of show_percent display mode
         raw_lookup = {sv: {xv: raw_vals.get((xv, sv), 0) for xv in categories} for sv in stacks}
         totals_lookup = {xv: cat_totals.get(xv, 0) for xv in categories}
-        tooltip_js = _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix)
+        tooltip_js = _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                      show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg))
         update_axes(categories, series, y_axis_name)
         if show_percent:
             if radial:
@@ -790,7 +825,8 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         grand_total = sum(ordered_values)
         option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False,
                              'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                             '__formatter_js__': _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total)}
+                             '__formatter_js__': _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
+                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg))}
     option['__category_names__'] = categories if 'categories' in locals() else ordered_categories
     if (radial or polar) and isinstance(option.get('tooltip'), dict):
         option['tooltip']['axisPointer'] = {'type': 'line'}
@@ -846,7 +882,8 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
                        'yAxis': {'type': 'value', 'name': _axis_name('Value', cfg), **ax}, 'series': series,
                        'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                   '__formatter_js__': _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix)}})
+                                   '__formatter_js__': _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                                                        show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg))}})
     elif stack_col and stack_col in df.columns:
         adf = _agg(df, x_col, y_col, agg, stack_col)
         categories = sorted(adf[x_col].astype(str).unique().tolist())
@@ -863,14 +900,16 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
                        'yAxis': {'type': 'value', 'name': _axis_name(labels['y'] or 'Count', cfg), **ax}, 'series': series,
                        'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                   '__formatter_js__': _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix)}})
+                                   '__formatter_js__': _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                                                        show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg))}})
     else:
         adf = _agg(df, x_col, y_col, agg)
         value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
         categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
         ordered_vals = [float(value_map.get(cat, 0) or 0) for cat in categories]
         grand_total = sum(ordered_vals)
-        _ltjs = _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total)
+        _ltjs = _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
+                                           show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg))
         option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
                        'yAxis': {'type': 'value', 'name': _axis_name(labels['y'] or 'Count', cfg), **ax},
                        'series': [make_series(labels['y'] or 'Value', ordered_vals)],

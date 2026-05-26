@@ -1280,6 +1280,17 @@
             <input type="checkbox" x-model="showTooltip" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
             <span class="text-[10px] text-slate-600">Tooltip</span>
           </label>
+          {# Tooltip sub-options — shown only when tooltip is enabled #}
+          <div x-show="showTooltip" x-cloak class="col-span-2 ml-4 flex flex-col gap-1">
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" x-model="tooltipShowPct" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+              <span class="text-[10px] text-slate-500">Show % in tooltip</span>
+            </label>
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" x-model="tooltipShowCount" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+              <span class="text-[10px] text-slate-500">Show count (n=) in tooltip</span>
+            </label>
+          </div>
           <label class="flex items-center gap-1.5 cursor-pointer">
             <input type="checkbox" x-model="enableAnimation" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
             <span class="text-[10px] text-slate-600">Animation</span>
@@ -1682,7 +1693,9 @@
     <input type="hidden" name="show_categories" x-bind:value="showCategories ? '1' : ''">
     <input type="hidden" name="show_axis_titles" x-bind:value="showAxisTitles ? '1' : ''">
     <input type="hidden" name="animation"       x-bind:value="enableAnimation ? '1' : ''">
-    <input type="hidden" name="show_tooltip"    x-bind:value="showTooltip ? '1' : ''">
+    <input type="hidden" name="show_tooltip"       x-bind:value="showTooltip ? '1' : ''">
+    <input type="hidden" name="tooltip_show_pct"   x-bind:value="tooltipShowPct ? '1' : ''">
+    <input type="hidden" name="tooltip_show_count" x-bind:value="tooltipShowCount ? '1' : ''">
     <input type="hidden" name="show_percent"    x-bind:value="showPercent ? '1' : ''">
     <input type="hidden" name="show_percent_symbol" x-bind:value="showPercentSymbol ? '1' : ''">
     <input type="hidden" name="percent_decimals" x-bind:value="percentDecimals">
@@ -1834,6 +1847,8 @@ function chartBuilder() {
     showAxisTitles:   existing ? (existing.config?.show_axis_titles !== false) : true,
     enableAnimation:  existing ? (existing.config?.animation !== false) : true,
     showTooltip:      existing ? (existing.config?.show_tooltip !== false) : true,
+      tooltipShowPct:   existing ? (existing.config?.tooltip_show_pct !== false) : true,
+      tooltipShowCount: existing ? (existing.config?.tooltip_show_count !== false) : true,
     showPercent:      existing ? !!existing.config?.show_percent : false,
     showPercentSymbol: existing ? (existing.config?.show_percent_symbol !== false) : true,
     percentDecimals:  existing?.config?.percent_decimals ?? 1,
@@ -2046,7 +2061,8 @@ function chartBuilder() {
                          'sortCol','sortDir','categoryOrder','limit','palette','colorMap','showPercent','showPercentSymbol','percentDecimals','stackOrder',
                          'stRowCol','stColCol','explorerSelected',
                          'acIncludeCats','acIncludePl','acColFilters',
-                         'compareGap','compareCatFontSize','compareCatRotation','showCategories','showAxisTitles'];
+                         'compareGap','compareCatFontSize','compareCatRotation','showCategories','showAxisTitles',
+                         'tooltipShowPct','tooltipShowCount'];
       // Style props — applied live via setOption, no server round-trip needed
       const styleProps = ['chartTitle','titleFontSize','showLegend','showLabels',
                           'legendPos','legendItemGap','legendFontSize','legendIconSize','legendOffset',
