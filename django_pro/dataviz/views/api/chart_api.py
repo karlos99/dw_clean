@@ -138,6 +138,7 @@ def _cfg_from_post(post):
         'show_tooltip':           bool(post.get('show_tooltip', '1')),
         'tooltip_show_pct':       bool(post.get('tooltip_show_pct', '1')),
         'tooltip_show_count':     bool(post.get('tooltip_show_count', '1')),
+        'tooltip_value_pct':      post.get('tooltip_value_pct') == '1',
         'show_percent':           bool(post.get('show_percent')),
         'show_percent_symbol':    bool(post.get('show_percent_symbol', '1')),
         'percent_decimals':  _parse_int(post.get('percent_decimals'), 1),
