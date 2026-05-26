@@ -540,7 +540,7 @@ def _rich_tooltip_js(raw_lookup: dict, totals_lookup: dict,
         if show_count else ""
     )
     pct_fragment = (
-        f" + ' (' + pct + '{percent_suffix}');"
+        f" + ' (' + pct + '%)';"
         if show_pct else ";"
     )
     pct_calc = (
@@ -588,7 +588,7 @@ def _inline_pct_tooltip_js(percent_decimals: int = 1, percent_suffix: str = '%',
         if show_pct else ""
     )
     pct_fragment = (
-        f" + ' (' + pct + '{percent_suffix}');"
+        f" + ' (' + pct + '%)';"
         if show_pct else ";"
     )
     return (
@@ -1336,7 +1336,7 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
                 f"  var total = {total};"
                 f"  var pct = total > 0 ? (params.value / total * 100).toFixed({percent_decimals}) : '{_zero}';"
                 "  return params.marker + ' ' + params.name + ': <b>' + params.value"
-                f"       + '</b> (' + pct + '{percent_suffix}');"
+                f"       + '</b> (' + pct + '%)';"
                 "}"
             )
         else:
@@ -1508,7 +1508,7 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{_zero2}';"
             if _sp2 else ""
         )
-        _pct_frag2 = f" + ' (' + pct + '{percent_suffix}');" if _sp2 else ";"
+        _pct_frag2 = " + ' (' + pct + '%)';" if _sp2 else ";"
         tooltip_js = (
             "function(params) {"
             "  if (!Array.isArray(params)) params = [params];"
@@ -1751,7 +1751,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{_zero3}';"
         if _sp3 else ""
     )
-    _pct_frag3 = f" + ' (' + pct + '{percent_suffix}');" if _sp3 else ";"
+    _pct_frag3 = " + ' (' + pct + '%)';" if _sp3 else ";"
     tooltip_js = (
         "function(params) {"
         "  if (!Array.isArray(params)) params = [params];"
