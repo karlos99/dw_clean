@@ -96,6 +96,7 @@ def _cfg_from_post(post):
         'ac_include_pl':     ac_include_pl,
         'ac_col_filters':    ac_col_filters,
         'agg':               post.get('agg_func', 'count'),
+        'agg_decimals':      _parse_int(post.get('agg_decimals'), None),
         # Progress Growth fields
         'pg_before_col':     post.get('pg_before_col', ''),
         'pg_after_col':      post.get('pg_after_col', ''),

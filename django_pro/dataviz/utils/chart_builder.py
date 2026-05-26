@@ -262,7 +262,14 @@ def _label(col: str, col_defs: dict) -> str:
     return str(raw).replace('\n', ' — ').replace('\r', '')
 
 
-def _agg(df, x_col, y_col, agg, stack_col=''):
+def _agg(df, x_col, y_col, agg, stack_col='', agg_decimals=None, cfg=None):
+    if agg_decimals is None and cfg is not None:
+        _raw = cfg.get('agg_decimals')
+        if _raw is not None:
+            try:
+                agg_decimals = int(_raw)
+            except (ValueError, TypeError):
+                pass
     if x_col not in df.columns:
         return pd.DataFrame()
     
@@ -284,6 +291,9 @@ def _agg(df, x_col, y_col, agg, stack_col=''):
                 'sum': grp.sum(), 'avg': grp.mean(),
                 'min': grp.min(), 'max': grp.max(), 'median': grp.median(),
             }.get(agg, grp.size()).reset_index().rename(columns={y_col: '_value'})
+            # Apply decimal rounding for avg (or any numeric agg when decimals set)
+            if agg_decimals is not None and '_value' in result.columns:
+                result['_value'] = result['_value'].round(agg_decimals)
         else:
             # For 'count', we count rows where y_col is not NaN if provided
             if y_col and y_col in df.columns:
@@ -748,7 +758,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         series = []
         for mc in valid_y:
             col_agg = agg if pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count' else 'count'
-            adf = _agg(df, x_col, mc, col_agg)
+            adf = _agg(df, x_col, mc, col_agg, cfg=cfg)
             vm = dict(zip(adf[x_col].astype(str), adf['_value']))
             series_value_maps[_label(mc, col_defs)] = vm
             series.append(make_series(_label(mc, col_defs), [float(vm.get(xv, 0) or 0) for xv in categories], is_stacked))
@@ -761,7 +771,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
             categories = ordered_categories
         update_axes(categories, series, 'Value')
     elif stack_col and stack_col in df.columns:
-        adf = _agg(df, x_col, y_col, agg, stack_col)
+        adf = _agg(df, x_col, y_col, agg, stack_col, cfg=cfg)
         categories = sorted(adf[x_col].astype(str).unique().tolist())
         stacks = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
 
@@ -811,7 +821,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                              'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
                              '__formatter_js__': tooltip_js}
     else:
-        adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False)
+        adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False)
         value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
         ordered_categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
         ordered_values = [float(value_map.get(cat, 0) or 0) for cat in ordered_categories]
@@ -867,7 +877,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         series = []
         for mc in valid_y:
             col_agg = agg if pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count' else 'count'
-            adf = _agg(df, x_col, mc, col_agg)
+            adf = _agg(df, x_col, mc, col_agg, cfg=cfg)
             vm = dict(zip(adf[x_col].astype(str), adf['_value']))
             series_name = _label(mc, col_defs or {})
             series_value_maps[series_name] = vm
@@ -885,7 +895,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
                                    '__formatter_js__': _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix,
                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg))}})
     elif stack_col and stack_col in df.columns:
-        adf = _agg(df, x_col, y_col, agg, stack_col)
+        adf = _agg(df, x_col, y_col, agg, stack_col, cfg=cfg)
         categories = sorted(adf[x_col].astype(str).unique().tolist())
         stacks_ordered = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
         total_value_map = {cat: float(adf[adf[x_col].astype(str) == cat]['_value'].sum() or 0) for cat in categories}
@@ -903,7 +913,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
                                    '__formatter_js__': _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix,
                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg))}})
     else:
-        adf = _agg(df, x_col, y_col, agg)
+        adf = _agg(df, x_col, y_col, agg, cfg=cfg)
         value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
         categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
         ordered_vals = [float(value_map.get(cat, 0) or 0) for cat in categories]
@@ -923,7 +933,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
 def _pie_option(df, x_col, y_col, agg, cfg, donut=False):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False).head(30)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False).head(30)
     value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
     categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
@@ -983,7 +993,7 @@ def _scatter_option(df, x_col, y_col, stack_col, size_col, cfg, labels, bubble=F
 def _heatmap_option(df, x_col, y_col, agg, cfg, labels):
     if not x_col or not y_col:
         return _message_option('X and Y are required for heatmap', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg, stack_col=y_col)
+    adf = _agg(df, x_col, y_col, agg, stack_col=y_col, cfg=cfg)
     if adf.empty:
         return _message_option('No data loaded', cfg)
     option = _base_option(cfg, axis_trigger=False)
@@ -1088,7 +1098,7 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
 def _funnel_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False)
     value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
     categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
@@ -1102,7 +1112,7 @@ def _funnel_option(df, x_col, y_col, agg, cfg):
 def _treemap_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg)
     value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
     categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
@@ -1115,7 +1125,7 @@ def _treemap_option(df, x_col, y_col, agg, cfg):
 def _radar_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg)
     value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
     names = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     vals = [float(value_map.get(name, 0) or 0) for name in names]
@@ -1135,6 +1145,12 @@ def _gauge_option(df, y_col, agg, cfg, labels):
         return _message_option('No numeric values for gauge', cfg, error=True)
     value = {'sum': float(vals.sum()), 'avg': float(vals.mean()), 'min': float(vals.min()),
              'max': float(vals.max()), 'median': float(vals.median())}.get(agg, float(len(df)))
+    _ad = cfg.get('agg_decimals')
+    if _ad is not None and agg in ('avg', 'sum', 'min', 'max', 'median'):
+        try:
+            value = round(value, int(_ad))
+        except (ValueError, TypeError):
+            pass
     max_v = float(vals.max()) * 1.1 if agg != 'count' else float(max(len(df), 1)) * 1.2
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'gauge', 'max': max_v, 'detail': {'formatter': '{value}'},
@@ -1146,7 +1162,7 @@ def _gauge_option(df, y_col, agg, cfg, labels):
 def _waterfall_option(df, x_col, y_col, agg, cfg, labels):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg)
     value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
     categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg)
@@ -1897,6 +1913,8 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     agg          = str(cfg.get('agg', 'count') or 'count').lower()
     if agg not in {'count', 'sum', 'avg', 'min', 'max', 'median'}:
         agg = 'count'
+    _raw_decimals = cfg.get('agg_decimals')
+    agg_decimals  = int(_raw_decimals) if _raw_decimals is not None else None
     # Progress Growth extra fields
     pg_before_col = cfg.get('pg_before_col', '')
     pg_after_col  = cfg.get('pg_after_col', '')

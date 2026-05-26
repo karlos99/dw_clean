@@ -955,6 +955,14 @@
             {% endfor %}
           </select>
         </div>
+        {# Decimal precision — shown for numeric aggregation functions #}
+        <div x-show="['avg','sum','min','max','median'].includes(aggFunc)" class="flex items-center gap-2">
+          <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 whitespace-nowrap">Decimal Places</label>
+          <input type="number" min="0" max="10" placeholder="Auto"
+                 x-model.number="aggDecimals"
+                 class="w-24 text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <span class="text-[10px] text-slate-400">leave blank for auto</span>
+        </div>
         <div class="flex gap-2">
           <div class="flex-1">
             <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Category Order</label>
@@ -1719,6 +1727,7 @@
     <input type="hidden" name="ac_include_pl"    x-bind:value="JSON.stringify(acIncludePl)">
     <input type="hidden" name="ac_col_filters"   x-bind:value="JSON.stringify(acColFilters)">
     <input type="hidden" name="agg_func"       x-bind:value="aggFunc">
+    <input type="hidden" name="agg_decimals"   x-bind:value="aggDecimals !== null ? aggDecimals : ''">
     <input type="hidden" name="sort_col"       x-bind:value="sortCol">
     <input type="hidden" name="sort_dir"       x-bind:value="sortDir">
     <input type="hidden" name="limit"          x-bind:value="limit">
@@ -1867,6 +1876,7 @@ function chartBuilder() {
     stRowCol:         existing?.config?.st_row_col ?? '',
     stColCol:         existing?.config?.st_col_col ?? '',
     aggFunc:      existing?.config?.agg ?? existing?.config?.agg_func ?? 'count',
+    aggDecimals:  existing?.config?.agg_decimals ?? null,
     sortCol:      existing?.config?.sort_col ?? '',
     sortDir:      existing?.config?.sort_dir ?? 'asc',
     limit:        existing?.config?.limit ?? 500,
@@ -2112,7 +2122,7 @@ function chartBuilder() {
       if (this.sourceType === 'columns') this.loadExplorerStructure();
 
       // Data props — changing these requires a full server re-render
-      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','xCol','yCol','seriesCol','comparePlCols','aggFunc',
+      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','xCol','yCol','seriesCol','comparePlCols','aggFunc','aggDecimals',
                          'sortCol','sortDir','categoryOrder','limit','palette','colorMap','showPercent','showPercentSymbol','percentDecimals','stackOrder',
                          'stRowCol','stColCol','explorerSelected',
                          'acIncludeCats','acIncludePl','acColFilters',
