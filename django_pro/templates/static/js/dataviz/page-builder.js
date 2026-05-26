@@ -36,6 +36,11 @@ function pageBuilder() {
     /* Saving indicator */
     saving: false,
 
+    /* Section drag-to-reorder */
+    dragSectionId: null,
+    dragOverSectionId: null,
+    dragSourceRowId: null,
+
     rows: _ROWS_JSON.map(r => ({
       id:        r.id,
       label:     r.label || '',
@@ -477,6 +482,49 @@ function pageBuilder() {
       if (this.selectedSection === sectionId) this.selectedSection = null;
     },
 
+    /* ── Section drag-to-reorder ────────────────────────────────── */
+    startSectionDrag(event, secId, rowId) {
+      this.dragSectionId = secId;
+      this.dragSourceRowId = rowId;
+      event.dataTransfer.effectAllowed = 'move';
+    },
+
+    sectionDragOver(secId) {
+      this.dragOverSectionId = secId;
+    },
+
+    dropSection(event, rowId, targetSecId) {
+      if (!this.dragSectionId || this.dragSectionId === targetSecId) {
+        this.endSectionDrag(); return;
+      }
+      const row = this.getRow(rowId);
+      if (!row) { this.endSectionDrag(); return; }
+
+      const fromIdx = row.sections.findIndex(s => s.id === this.dragSectionId);
+      const toIdx   = row.sections.findIndex(s => s.id === targetSecId);
+      if (fromIdx < 0 || toIdx < 0) { this.endSectionDrag(); return; }
+
+      const moved = row.sections.splice(fromIdx, 1)[0];
+      row.sections.splice(toIdx, 0, moved);
+      this._saveSectionOrder(rowId, row.sections);
+      this.endSectionDrag();
+    },
+
+    endSectionDrag() {
+      this.dragSectionId = null;
+      this.dragOverSectionId = null;
+      this.dragSourceRowId = null;
+    },
+
+    async _saveSectionOrder(rowId, sections) {
+      const url = this._sectionsUrl();
+      const rows = [{
+        row_id: rowId,
+        sections: sections.map((s, i) => ({ section_id: s.id, position: i })),
+      }];
+      await this._post(url, { action: 'reorder', rows });
+    },
+
     /* ── Section helpers ────────────────────────────────────────── */
     getSection(sectionId) {
       for (const row of this.rows) {
@@ -520,11 +568,27 @@ function pageBuilder() {
       await this._post(url, { html_content: content });
     },
 
+    setSectionPadding(sectionId, px) {
+      const sec = this.getSection(sectionId);
+      if (!sec) return;
+      sec.padding_px = px;
+      // Strip any existing padding wrapper then re-apply
+      let inner = sec.html_content.replace(/^<div[^>]*data-pb-p="\d+"[^>]*>([\s\S]*?)<\/div>$/, '$1');
+      sec.html_content = px > 0
+        ? `<div data-pb-p="${px}" style="padding:${px}px;box-sizing:border-box;">${inner}</div>`
+        : inner;
+      sec.html_preview = sec.html_content.replace(/<[^>]*>/g, '').slice(0, 30);
+      const row = this._findRowForSection(sectionId);
+      if (row) this._rerenderSection(row.id, sec);
+      const url = _SECTION_URL_TPL.replace('SECTIONID', sectionId);
+      this._post(url, { html_content: sec.html_content });
+    },
+
     /* ── Rich text editor (modal) ───────────────────────────────── */
     richCmd(cmd, value) {
-      const editor = document.getElementById('pb-rich-editor');
-      if (editor) editor.focus();
-      document.execCommand(cmd, false, value || null);
+      // @mousedown.prevent on toolbar buttons already keeps editor focus/selection intact.
+      // Do NOT call editor.focus() here – it would collapse the selection.
+      document.execCommand(cmd, false, value !== undefined ? value : null);
     },
 
     initRichEditor(sectionId) {
@@ -532,7 +596,10 @@ function pageBuilder() {
         const editor = document.getElementById('pb-rich-editor');
         if (!editor) return;
         const sec = this.getSection(sectionId);
-        editor.innerHTML = sec?.html_content || '<p></p>';
+        // Strip any padding wrapper so the editor shows clean inner content
+        let html = sec?.html_content || '<p></p>';
+        html = html.replace(/^<div[^>]*data-pb-p="\d+"[^>]*>([\s\S]*?)<\/div>$/, '$1');
+        editor.innerHTML = html;
         editor.focus();
       });
     },
@@ -581,11 +648,16 @@ function pageBuilder() {
     },
 
     closeEditorModal() {
-      // Flush content before closing
+      // Flush content before closing, re-wrapping with padding if needed
       if (this.editorSectionId) {
+        const sec = this.getSection(this.editorSectionId);
         const editor = document.getElementById('pb-rich-editor');
         if (editor && this.htmlEditorMode === 'visual') {
-          this.updateHtmlContent(this.editorSectionId, editor.innerHTML);
+          let content = editor.innerHTML;
+          if (sec?.padding_px > 0) {
+            content = `<div data-pb-p="${sec.padding_px}" style="padding:${sec.padding_px}px;box-sizing:border-box;">${content}</div>`;
+          }
+          this.updateHtmlContent(this.editorSectionId, content);
         }
         const codeEl = document.getElementById('pb-code-editor');
         if (codeEl && this.htmlEditorMode === 'code') {
@@ -599,9 +671,14 @@ function pageBuilder() {
     saveEditorModal(sectionId) {
       const editor = document.getElementById('pb-rich-editor');
       const codeEl = document.getElementById('pb-code-editor');
-      const content = this.htmlEditorMode === 'visual'
+      let content = this.htmlEditorMode === 'visual'
         ? (editor ? editor.innerHTML : '')
         : (codeEl ? codeEl.value : '');
+      // Re-apply padding wrapper when saving
+      const sec = this.getSection(sectionId);
+      if (sec?.padding_px > 0) {
+        content = `<div data-pb-p="${sec.padding_px}" style="padding:${sec.padding_px}px;box-sizing:border-box;">${content}</div>`;
+      }
       if (sectionId) this.updateHtmlContent(sectionId, content);
       this.editorModalOpen = false;
       this.editorSectionId = null;
@@ -701,15 +778,18 @@ function pageBuilder() {
 
 /* ── Helper to map a section from JSON ──────────────────────────── */
 function _mapSection(s) {
+  const html = s.html_content || '';
+  const padMatch = html.match(/data-pb-p="(\d+)"/);
   return {
     id: s.id,
     row_id: s.row_id,
     chart_id: s.chart ? s.chart.id : null,
     chart_name: s.chart ? s.chart.name : null,
     element_type: s.element_type || 'chart',
-    html_content: s.html_content || '',
-    html_preview: (s.html_content || '').replace(/<[^>]*>/g, '').slice(0, 30),
+    html_content: html,
+    html_preview: html.replace(/<[^>]*>/g, '').slice(0, 30),
     show_title: s.show_title !== false,
+    padding_px: padMatch ? parseInt(padMatch[1]) : 0,
     gs_x: s.gs_x ?? 0, gs_y: s.gs_y ?? 0,
     gs_w: s.gs_w ?? 6, gs_h: s.gs_h ?? 4,
   };

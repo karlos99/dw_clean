@@ -285,8 +285,23 @@
                 <div x-show="activeRow === row.id" class="ml-5 mt-0.5 space-y-0.5">
                   <template x-for="sec in row.sections" :key="sec.id">
                     <div class="flex items-center gap-1.5 text-[10px] py-1 px-2 rounded-lg hover:bg-slate-50 group cursor-pointer"
-                         :class="{'bg-blue-50/50 border border-blue-100 text-blue-700': selectedSection === sec.id, 'text-slate-500': selectedSection !== sec.id}"
+                         :class="{
+                           'bg-blue-50/50 border border-blue-100 text-blue-700': selectedSection === sec.id,
+                           'text-slate-500': selectedSection !== sec.id,
+                           'border-2 border-blue-400 bg-blue-50': dragOverSectionId === sec.id && dragSectionId !== sec.id
+                         }"
+                         draggable="true"
+                         @dragstart="startSectionDrag($event, sec.id, row.id)"
+                         @dragover.prevent="sectionDragOver(sec.id)"
+                         @drop.prevent="dropSection($event, row.id, sec.id)"
+                         @dragend="endSectionDrag()"
                          @click="selectedSection = selectedSection === sec.id ? null : sec.id">
+                      <!-- Drag handle -->
+                      <svg class="w-3 h-3 flex-shrink-0 text-slate-300 group-hover:text-slate-400 cursor-grab" fill="currentColor" viewBox="0 0 20 20">
+                        <circle cx="7" cy="6" r="1.2"/><circle cx="13" cy="6" r="1.2"/>
+                        <circle cx="7" cy="10" r="1.2"/><circle cx="13" cy="10" r="1.2"/>
+                        <circle cx="7" cy="14" r="1.2"/><circle cx="13" cy="14" r="1.2"/>
+                      </svg>
                       <template x-if="sec.element_type === 'chart'">
                         <svg class="w-3 h-3 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10"/></svg>
                       </template>
@@ -319,11 +334,26 @@
                         </div>
                       </template>
                       <template x-if="getSection(selectedSection)?.element_type === 'html'">
-                        <button @click="openEditorModal(selectedSection)"
-                                class="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-all">
-                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                          Edit Content
-                        </button>
+                        <div class="space-y-2">
+                          <button @click="openEditorModal(selectedSection)"
+                                  class="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-all">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            Edit Content
+                          </button>
+                          <!-- Padding control -->
+                          <div>
+                            <div class="text-[9px] text-slate-500 mb-0.5 font-semibold uppercase tracking-wider">Padding</div>
+                            <select :value="getSection(selectedSection)?.padding_px || 0"
+                                    @change="setSectionPadding(selectedSection, parseInt($event.target.value))"
+                                    class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              <option value="0">None</option>
+                              <option value="8">Compact (8px)</option>
+                              <option value="16">Normal (16px)</option>
+                              <option value="24">Comfortable (24px)</option>
+                              <option value="32">Spacious (32px)</option>
+                            </select>
+                          </div>
+                        </div>
                       </template>
                     </div>
                   </template>
@@ -560,13 +590,13 @@
                   class="w-7 h-7 flex items-center justify-center text-xs line-through text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">S</button>
           <div class="w-px h-5 bg-slate-300 mx-1"></div>
           <!-- Headings -->
-          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'H1')" title="Heading 1"
+          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'h1')" title="Heading 1"
                   class="px-2 h-7 flex items-center justify-center text-[10px] font-black text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">H1</button>
-          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'H2')" title="Heading 2"
+          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'h2')" title="Heading 2"
                   class="px-2 h-7 flex items-center justify-center text-[10px] font-black text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">H2</button>
-          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'H3')" title="Heading 3"
+          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'h3')" title="Heading 3"
                   class="px-2 h-7 flex items-center justify-center text-[10px] font-bold text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">H3</button>
-          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'P')" title="Paragraph"
+          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'p')" title="Paragraph"
                   class="px-2 h-7 flex items-center justify-center text-[10px] text-slate-600 hover:bg-white hover:shadow rounded-md transition-all">¶</button>
           <div class="w-px h-5 bg-slate-300 mx-1"></div>
           <!-- Lists -->
