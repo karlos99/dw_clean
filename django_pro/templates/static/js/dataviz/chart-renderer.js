@@ -5,6 +5,80 @@
 (function () {
   'use strict';
 
+  function adjustParliamentAspectRatio(chart, container, option) {
+    if (!option || !option.__is_parliament__) return;
+
+    const shape = option.__parliament_shape__ || 'semi-circle';
+
+    // Parse grid padding
+    let left = 40, right = 40, top = 60, bottom = 60;
+    if (option.grid) {
+      if (option.grid.left != null && !isNaN(option.grid.left)) left = Number(option.grid.left);
+      if (option.grid.right != null && !isNaN(option.grid.right)) right = Number(option.grid.right);
+      if (option.grid.top != null && !isNaN(option.grid.top)) top = Number(option.grid.top);
+      if (option.grid.bottom != null && !isNaN(option.grid.bottom)) bottom = Number(option.grid.bottom);
+    }
+
+    const W = container.clientWidth - left - right;
+    const H = container.clientHeight - top - bottom;
+    if (W <= 0 || H <= 0) return;
+
+    const R = W / H;
+
+    // Define data ranges based on shape
+    let default_x_min = -260, default_x_max = 260;
+    let default_y_min, default_y_max;
+    if (shape === 'circle') {
+      default_y_min = -260;
+      default_y_max = 260;
+    } else if (shape === 'horseshoe') {
+      default_y_min = -190;
+      default_y_max = 260;
+    } else {
+      default_y_min = -20;
+      default_y_max = 260;
+    }
+
+    const dw = default_x_max - default_x_min; // 480
+    const dh = default_y_max - default_y_min; // 480, 410, or 260
+    const shape_r = dw / dh;
+
+    let x_min, x_max, y_min, y_max;
+
+    if (R >= shape_r) {
+      // Container is wider than the shape aspect ratio -> height limits width
+      y_min = default_y_min;
+      y_max = default_y_max;
+      const dw_new = dh * R;
+      x_max = dw_new / 2;
+      x_min = -x_max;
+    } else {
+      // Container is taller than the shape aspect ratio -> width limits height
+      x_min = default_x_min;
+      x_max = default_x_max;
+      const dh_new = dw / R;
+      if (shape === 'circle') {
+        y_max = dh_new / 2;
+        y_min = -y_max;
+      } else {
+        // Anchor the bottom at default_y_min
+        y_min = default_y_min;
+        y_max = default_y_min + dh_new;
+      }
+    }
+
+    chart.setOption({
+      xAxis: {
+        min: x_min,
+        max: x_max
+      },
+      yAxis: {
+        min: y_min,
+        max: y_max
+      }
+    });
+  }
+
   function initChart(container) {
     const raw = container.dataset.chartOption;
     if (!raw) return;
@@ -66,11 +140,20 @@
 
     chart.setOption(option);
 
+    if (option && option.__is_parliament__) {
+      adjustParliamentAspectRatio(chart, container, option);
+    }
+
     // Expose instance for external tools (e.g. chart-editor.js)
     container._echartsInstance = chart;
 
     // Auto-resize when container dimensions change
-    const ro = new ResizeObserver(() => chart.resize());
+    const ro = new ResizeObserver(() => {
+      if (option && option.__is_parliament__) {
+        adjustParliamentAspectRatio(chart, container, option);
+      }
+      chart.resize();
+    });
     ro.observe(container);
 
     // Notify listeners that this chart is ready

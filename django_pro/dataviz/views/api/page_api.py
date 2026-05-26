@@ -196,6 +196,9 @@ def section_detail_api(request, section_id):
             section.html_content = body['html_content']
         if 'show_title' in body:
             section.show_title = bool(body['show_title'])
+        if 'chart_name' in body and section.chart:
+            section.chart.name = body['chart_name'].strip()
+            section.chart.save()
         if 'position' in body:
             section.position = int(body['position'])
         if 'slot_filters' in body:

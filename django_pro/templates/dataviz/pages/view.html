@@ -12,6 +12,14 @@
     gap: 1rem;
     grid-template-columns: repeat(12, 1fr);
   }
+  .page-grid > div {
+    height: calc(var(--gs-h, 4) * 80px);
+  }
+  @media (min-width: 1025px) {
+    .page-grid > div {
+      grid-row: var(--gs-y) / span var(--gs-h);
+    }
+  }
   @media (max-width: 1024px) {
     .page-grid {
       grid-template-columns: repeat(6, 1fr);
@@ -19,12 +27,30 @@
     .page-grid > [style*="grid-column"] {
       grid-column: 1 / -1 !important;
     }
+    /* HTML blocks can expand vertically if text overflows on tablet/mobile */
+    .page-grid > div.html-section {
+      height: auto !important;
+      min-height: calc(var(--gs-h, 4) * 80px);
+    }
   }
   @media (max-width: 640px) {
     .page-grid {
       grid-template-columns: 1fr;
     }
+    /* Ensure charts on mobile are not squished vertically */
+    .page-grid > div.chart-section {
+      height: max(calc(var(--gs-h, 4) * 80px), 220px);
+    }
   }
+  /* Unified HTML prose styling */
+  .html-prose h1 { font-size: 1.5rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #0f172a; line-height: 1.2; }
+  .html-prose h2 { font-size: 1.25rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #1e293b; line-height: 1.3; }
+  .html-prose h3 { font-size: 1.1rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #334155; line-height: 1.4; }
+  .html-prose p  { margin-bottom: 0.5em; line-height: 1.5; }
+  .html-prose ul { list-style-type: disc; padding-left: 1.5rem; margin: 0.5em 0; }
+  .html-prose ol { list-style-type: decimal; padding-left: 1.5rem; margin: 0.5em 0; }
+  .html-prose a  { color: #2563eb; text-decoration: underline; }
+  .html-prose a:hover { color: #1d4ed8; }
   /* Tree menu transitions */
   .filter-tree-values { max-height: 14rem; overflow-y: auto; }
   .filter-tag { animation: tagIn .15s ease-out; }
@@ -163,8 +189,8 @@
 
       <div class="page-grid">
         {% for section in row.sections.all %}
-        <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; height: {% widthratio section.gs_h 1 80 %}px;"
-             class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto{% else %}overflow-hidden{% endif %} flex flex-col">
+        <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; --gs-h: {{ section.gs_h }}; --gs-y: {{ section.gs_y|add:1 }};"
+             class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto html-section html-prose{% else %}overflow-hidden chart-section{% endif %} flex flex-col">
 
           {% if section.element_type == 'chart' and section.chart %}
             {% if section.show_title %}
@@ -195,7 +221,7 @@
 
           {% elif section.element_type == 'html' %}
             {# Render html_content directly — padding/centering is stored inside the content wrapper #}
-            <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %}">
+            <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %} html-prose">
               {{ section.html_content|safe }}
             </div>
           {% endif %}
@@ -209,8 +235,8 @@
     {% if orphan_sections %}
     <div class="page-grid">
       {% for section in orphan_sections %}
-      <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; height: {% widthratio section.gs_h 1 80 %}px;"
-           class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto{% else %}overflow-hidden{% endif %} flex flex-col">
+      <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; --gs-h: {{ section.gs_h }}; --gs-y: {{ section.gs_y|add:1 }};"
+           class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto html-section html-prose{% else %}overflow-hidden chart-section{% endif %} flex flex-col">
 
         {% if section.element_type == 'chart' and section.chart %}
           {% if section.show_title %}
@@ -227,7 +253,7 @@
           </div>
 
         {% elif section.element_type == 'html' %}
-          <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %}">
+          <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %} html-prose">
             {{ section.html_content|safe }}
           </div>
         {% endif %}

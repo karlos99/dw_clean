@@ -41,6 +41,10 @@ function pageBuilder() {
     dragOverSectionId: null,
     dragSourceRowId: null,
 
+    /* Row drag-to-reorder */
+    dragRowId: null,
+    dragOverRowId: null,
+
     /* Editor selection save (for toolbar controls that steal focus) */
     _savedSel: null,
 
@@ -87,6 +91,25 @@ function pageBuilder() {
         }
       };
 
+      // Event delegation for widget title input and show_title toggle on the canvas
+      document.addEventListener('change', (e) => {
+        if (e.target.matches('.widget-title-toggle')) {
+          const secId = parseInt(e.target.dataset.secId, 10);
+          const showTitle = e.target.checked;
+          this.updateSectionProp(secId, 'show_title', showTitle);
+        }
+        if (e.target.matches('.widget-title-input')) {
+          const secId = parseInt(e.target.dataset.secId, 10);
+          const newName = e.target.value.trim();
+          this.updateSectionProp(secId, 'chart_name', newName);
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.target.matches('.widget-title-input') && e.key === 'Enter') {
+          e.target.blur();
+        }
+      });
+
       this.$nextTick(() => {
         if (this.pageId) {
           this._initAllGrids();
@@ -116,6 +139,7 @@ function pageBuilder() {
           cellHeight: 80,
           animate: true,
           margin: 8,
+          acceptWidgets: true,
           disableOneColumnMode: true,
           resizable: { handles: 'se,s,sw,e,w,n,nw,ne' },
           float: false,
@@ -146,12 +170,6 @@ function pageBuilder() {
           grid.batchUpdate(false);
           this.$nextTick(() => {
             if (window.htmx) htmx.process(el);
-            // Auto-fit all HTML sections after initial render
-            row.sections.forEach(sec => {
-              if (sec.element_type !== 'html') return;
-              const widget = el.querySelector('[gs-id="' + sec.id + '"]');
-              if (widget) this._fitHtmlWidget(grid, widget);
-            });
           });
         }
       });
@@ -185,6 +203,24 @@ function pageBuilder() {
 
       grid.addWidget(item);
 
+      // Read finalized coordinates assigned by GridStack and save them immediately
+      this.$nextTick(() => {
+        const node = item.gridstackNode || {};
+        const newX = node.x ?? sec.gs_x;
+        const newY = node.y ?? sec.gs_y;
+        const newW = node.w ?? sec.gs_w;
+        const newH = node.h ?? sec.gs_h;
+
+        if (newX !== sec.gs_x || newY !== sec.gs_y || newW !== sec.gs_w || newH !== sec.gs_h) {
+          sec.gs_x = newX;
+          sec.gs_y = newY;
+          sec.gs_w = newW;
+          sec.gs_h = newH;
+          const url = _SECTION_URL_TPL.replace('SECTIONID', String(sec.id));
+          this._post(url, { gs_x: newX, gs_y: newY, gs_w: newW, gs_h: newH });
+        }
+      });
+
       // After paint, auto-fit height to content for HTML blocks
       if (sec.element_type === 'html') {
         this.$nextTick(() => this._fitHtmlWidget(grid, item));
@@ -202,25 +238,15 @@ function pageBuilder() {
         this._post(_SECTION_URL_TPL.replace('SECTIONID', String(secId)), { gs_h: h });
       };
 
-      if (typeof grid.resizeToContent === 'function') {
-        grid.resizeToContent(item);
-        // Read settled height from node and persist
-        this.$nextTick(() => {
-          const node = item.gridstackNode;
-          const h = node?.h || parseInt(item.getAttribute('data-gs-h') || item.getAttribute('gs-h') || '2');
-          saveHeight(h);
-        });
-        return;
-      }
-      // Fallback: measure scrollHeight and update
       const inner = item.querySelector('.grid-stack-item-content > div');
       if (!inner) return;
       const cellPx = grid.getCellHeight(true) || 80;
-      const needed = Math.max(1, Math.ceil((inner.scrollHeight + 16) / cellPx));
-      const current = parseInt(item.getAttribute('gs-h') || '2');
-      const h = needed > current ? needed : current;
-      if (needed > current) grid.update(item, { h: needed });
-      saveHeight(h);
+      const needed = Math.max(1, Math.ceil(inner.scrollHeight / cellPx));
+      const current = parseInt(item.getAttribute('gs-h') || item.getAttribute('data-gs-h') || '2');
+      if (needed !== current) {
+        grid.update(item, { h: needed });
+      }
+      saveHeight(needed);
     },
 
     _buildSectionHtml(sec) {
@@ -233,18 +259,37 @@ function pageBuilder() {
         const centerStyle = sec.center_content
           ? 'display:flex;align-items:center;justify-content:center;height:100%;'
           : 'height:100%;';
-        return `<div class="${padClass}text-sm text-slate-700 leading-relaxed overflow-y-auto" style="${centerStyle}">${content}</div>`;
+        return `<div class="${padClass}text-sm text-slate-700 leading-relaxed overflow-y-auto html-prose" style="${centerStyle}">${content}</div>`;
       }
       const pageSlug = encodeURIComponent(this.pageSlug);
       const chartId = sec.chart_id;
       const renderUrl = _CHART_RENDER_TPL.replace('CHARTID', chartId)
         + '?source=page&source_id=' + encodeURIComponent(this.pageId) + '&source_name=' + pageSlug;
-      const titleBar = sec.show_title !== false
-        ? '<div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 bg-slate-50/50">'
-        + '<span class="text-xs font-semibold text-slate-600 truncate">' + this._esc(sec.chart_name || 'Chart') + '</span>'
-        + '<a href="/dataviz/charts/' + chartId + '/edit/" class="text-[10px] text-blue-500 hover:underline" title="Edit chart">edit</a>'
-        + '</div>'
-        : '';
+      const isChecked = sec.show_title !== false ? 'checked' : '';
+      const titleOpacity = sec.show_title !== false ? 'opacity-100' : 'opacity-60 bg-slate-100/70';
+      const titleBar = `
+        <div class="flex items-center justify-between px-3 py-1 border-b border-slate-100 bg-slate-50/50 ${titleOpacity} transition-opacity select-none">
+          <div class="flex items-center gap-1.5 flex-1 min-w-0">
+            <span class="text-[9px] font-bold text-slate-400 uppercase select-none mr-1">Title:</span>
+            <input type="text" value="${this._esc(sec.chart_name || '')}" 
+                   placeholder="Chart Title..."
+                   class="widget-title-input text-xs font-semibold text-slate-700 bg-transparent hover:bg-white/80 focus:bg-white border border-transparent hover:border-slate-200 focus:border-slate-300 rounded px-1.5 py-0.5 w-full max-w-[240px] focus:ring-0 transition"
+                   data-sec-id="${sec.id}">
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-1 cursor-pointer text-[10px] text-slate-500 select-none">
+              <input type="checkbox" ${isChecked} 
+                     class="widget-title-toggle rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3"
+                     data-sec-id="${sec.id}">
+              <span>Visible on Page</span>
+            </label>
+            <a href="/dataviz/charts/${chartId}/edit/" target="_blank" class="text-[10px] text-blue-500 hover:underline inline-flex items-center gap-0.5">
+              <span>Edit Chart</span>
+              <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            </a>
+          </div>
+        </div>
+      `;
       return titleBar
         + '<div class="flex-1 min-h-0" hx-get="' + renderUrl + '" hx-trigger="load" hx-swap="innerHTML">'
         + '<div class="flex items-center justify-center h-full text-slate-300 text-xs">Loading…</div>'
@@ -340,12 +385,19 @@ function pageBuilder() {
         let sectionLayout = [];
 
         if (grid) {
-          const items = grid.save(false) || [];
-          sectionLayout = items.map(item => ({
-            section_id: parseInt(item.id, 10),
-            gs_x: item.x ?? 0, gs_y: item.y ?? 0,
-            gs_w: item.w ?? 6, gs_h: item.h ?? 4,
-          })).filter(i => i.section_id);
+          const el = document.getElementById('row-grid-' + row.id);
+          const items = el ? el.querySelectorAll('[gs-id]') : [];
+          sectionLayout = Array.from(items).map(item => {
+            const secId = parseInt(item.getAttribute('gs-id'), 10);
+            const node = item.gridstackNode || {};
+            return {
+              section_id: secId,
+              gs_x: node.x ?? parseInt(item.getAttribute('gs-x'), 10) ?? 0,
+              gs_y: node.y ?? parseInt(item.getAttribute('gs-y'), 10) ?? 0,
+              gs_w: node.w ?? parseInt(item.getAttribute('gs-w'), 10) ?? 6,
+              gs_h: node.h ?? parseInt(item.getAttribute('gs-h'), 10) ?? 4,
+            };
+          }).filter(i => i.section_id);
           sectionLayout.sort((a, b) => a.gs_y - b.gs_y || a.gs_x - b.gs_x);
           sectionLayout.forEach((item, idx) => item.position = idx);
         }
@@ -361,13 +413,23 @@ function pageBuilder() {
       const reorderRes = await this._post(url, { action: 'reorder', rows: rowsPayload });
 
       // Sync local state
+      const allSections = [];
+      this.rows.forEach(r => allSections.push(...r.sections));
       rowsPayload.forEach(rp => {
         const row = this.rows.find(r => r.id === rp.row_id);
         if (!row) return;
-        rp.sections.forEach(l => {
-          const s = row.sections.find(s => s.id === l.section_id);
-          if (s) { s.gs_x = l.gs_x; s.gs_y = l.gs_y; s.gs_w = l.gs_w; s.gs_h = l.gs_h; }
-        });
+        row.sections = rp.sections.map(l => {
+          const s = allSections.find(sec => sec.id === l.section_id);
+          if (s) {
+            s.row_id = rp.row_id;
+            s.gs_x = l.gs_x;
+            s.gs_y = l.gs_y;
+            s.gs_w = l.gs_w;
+            s.gs_h = l.gs_h;
+            return s;
+          }
+          return null;
+        }).filter(Boolean);
       });
 
       this.lastSaved = new Date().toLocaleTimeString();
@@ -510,7 +572,7 @@ function pageBuilder() {
       const res = await this._post(url, {
         action: 'add_html', row_id: rowId,
         html_content: titleHtml,
-        gs_w: 12, gs_h: 2,
+        gs_w: 12, gs_h: 1,
       });
       if (res.error) { this.showToast(res.error, 'error'); return; }
 
@@ -524,7 +586,7 @@ function pageBuilder() {
         html_preview: 'Section Title',
         show_title: false,
         gs_x: 0, gs_y: 0,
-        gs_w: 12, gs_h: 2,
+        gs_w: 12, gs_h: 1,
       };
 
       const row = this.getRow(rowId);
@@ -600,6 +662,64 @@ function pageBuilder() {
         sections: sections.map((s, i) => ({ section_id: s.id, position: i })),
       }];
       await this._post(url, { action: 'reorder', rows });
+    },
+
+    /* ── Row drag-to-reorder ───────────────────────────────────── */
+    startRowDrag(event, rowId) {
+      this.dragRowId = rowId;
+      event.dataTransfer.setData('text/plain', String(rowId));
+      event.dataTransfer.effectAllowed = 'move';
+    },
+
+    rowDragOver(event, rowId) {
+      event.preventDefault();
+      this.dragOverRowId = rowId;
+    },
+
+    async dropRow(event, targetRowId) {
+      event.preventDefault();
+      if (!this.dragRowId || this.dragRowId === targetRowId) {
+        this.endRowDrag(); return;
+      }
+      const fromIdx = this.rows.findIndex(r => r.id === this.dragRowId);
+      const toIdx   = this.rows.findIndex(r => r.id === targetRowId);
+      if (fromIdx < 0 || toIdx < 0) { this.endRowDrag(); return; }
+
+      const moved = this.rows.splice(fromIdx, 1)[0];
+      this.rows.splice(toIdx, 0, moved);
+
+      // Save the updated row positions immediately
+      this.saving = true;
+      const url = this._sectionsUrl();
+      const rowsPayload = this.rows.map((row, ri) => {
+        row.position = ri;
+        const grid = this.grids[row.id];
+        let sectionLayout = [];
+        if (grid) {
+          const items = grid.save(false) || [];
+          sectionLayout = items.map(item => ({
+            section_id: parseInt(item.id, 10),
+            gs_x: item.x ?? 0, gs_y: item.y ?? 0,
+            gs_w: item.w ?? 6, gs_h: item.h ?? 4,
+          })).filter(i => i.section_id);
+          sectionLayout.sort((a, b) => a.gs_y - b.gs_y || a.gs_x - b.gs_x);
+          sectionLayout.forEach((item, idx) => item.position = idx);
+        }
+        return {
+          row_id: row.id,
+          position: ri,
+          sections: sectionLayout,
+        };
+      });
+      await this._post(url, { action: 'reorder', rows: rowsPayload });
+      this.saving = false;
+      this.endRowDrag();
+      this.showToast('Row order updated');
+    },
+
+    endRowDrag() {
+      this.dragRowId = null;
+      this.dragOverRowId = null;
     },
 
     /* ── Section helpers ────────────────────────────────────────── */
@@ -782,7 +902,8 @@ function pageBuilder() {
         }
         const codeEl = document.getElementById('pb-code-editor');
         if (codeEl && this.htmlEditorMode === 'code') {
-          this.updateHtmlContent(this.editorSectionId, codeEl.value);
+          const content = _applyHtmlWrapper(codeEl.value, sec?.padding_px || 0, sec?.center_content || false);
+          this.updateHtmlContent(this.editorSectionId, content);
         }
       }
       this.editorModalOpen = false;
@@ -796,9 +917,7 @@ function pageBuilder() {
       const rawContent = this.htmlEditorMode === 'visual'
         ? (editor ? editor.innerHTML : '')
         : (codeEl ? codeEl.value : '');
-      const content = this.htmlEditorMode === 'visual'
-        ? _applyHtmlWrapper(rawContent, sec?.padding_px || 0, sec?.center_content || false)
-        : rawContent;
+      const content = _applyHtmlWrapper(rawContent, sec?.padding_px || 0, sec?.center_content || false);
       if (sectionId) this.updateHtmlContent(sectionId, content);
       this.editorModalOpen = false;
       this.editorSectionId = null;

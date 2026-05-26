@@ -858,6 +858,177 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
     return option
 
 
+def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
+    if not x_col:
+        return _message_option('X / Category is required', cfg, error=True)
+    
+    # Aggregate data using the existing _agg helper
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False)
+    
+    # Map values to integers (each representing a student dot)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+    
+    # Compute total dots N
+    N = sum(max(0, int(round(value_map.get(cat, 0)))) for cat in categories)
+    if N <= 0:
+        return _message_option('No data (total dots is 0)', cfg)
+
+    import math
+    # Calculate rows (R) and concentric semicircular radii
+    custom_rows = cfg.get('parliament_rows')
+    if custom_rows is not None:
+        try:
+            R = max(1, min(20, int(custom_rows)))
+        except (ValueError, TypeError):
+            R = max(3, min(15, int(round(math.sqrt(N) / 2.0))))
+    else:
+        R = max(3, min(15, int(round(math.sqrt(N) / 2.0))))
+
+    R_min = 100.0
+    R_max = 220.0
+    
+    if R > 1:
+        radii = [R_min + i * (R_max - R_min) / (R - 1) for i in range(R)]
+    else:
+        radii = [R_min]
+        
+    # Distribute dots proportional to row radii
+    S = sum(radii)
+    assigned = [int(round(N * r / S)) for r in radii]
+    diff = N - sum(assigned)
+    while diff != 0:
+        step = 1 if diff > 0 else -1
+        # Adjust starting from outer rows (largest radii)
+        for idx in sorted(range(len(radii)), key=lambda k: radii[k], reverse=True):
+            if diff == 0:
+                break
+            assigned[idx] += step
+            diff -= step
+
+    # Get shape configuration
+    shape = cfg.get('parliament_shape', 'semi-circle')
+    if shape not in ('semi-circle', 'horseshoe', 'circle'):
+        shape = 'semi-circle'
+
+    # Generate seats coordinates
+    coords = []
+    phi = 0.05 * math.pi
+    for i, r in enumerate(radii):
+        num_seats = assigned[i]
+        if num_seats <= 0:
+            continue
+        if num_seats == 1:
+            angles = [math.pi / 2.0]
+        else:
+            if shape == 'circle':
+                # Full circle layout starting at pi and wrapping around counter-clockwise
+                angles = [math.pi - j * 2.0 * math.pi / num_seats for j in range(num_seats)]
+            elif shape == 'horseshoe':
+                # Horseshoe spans from 1.25*pi down to -0.25*pi (270 degrees)
+                start_angle = 1.25 * math.pi - phi
+                end_angle = -0.25 * math.pi + phi
+                span = start_angle - end_angle
+                angles = [start_angle - j * span / (num_seats - 1) for j in range(num_seats)]
+            else: # semi-circle
+                start_angle = math.pi - phi
+                end_angle = phi
+                span = start_angle - end_angle
+                angles = [start_angle - j * span / (num_seats - 1) for j in range(num_seats)]
+                
+        for theta in angles:
+            x = round(r * math.cos(theta), 2)
+            y = round(r * math.sin(theta), 2)
+            coords.append((theta, x, y))
+
+    # Sort coordinates by angle theta from left to right (decreasing theta) to group categories side-by-side
+    coords.sort(key=lambda t: -t[0])
+    sorted_coords = [(cx, cy) for _, cx, cy in coords]
+
+    # Assign seats to categories sequentially
+    series = []
+    coord_idx = 0
+    
+    # Determine point size dynamically based on N so it fits beautifully
+    if N < 50:
+        pt_size = 14
+    elif N < 150:
+        pt_size = 10
+    elif N < 400:
+        pt_size = 8
+    elif N < 800:
+        pt_size = 6
+    else:
+        pt_size = 4
+
+    # Apply custom dot size scaling multiplier if provided
+    dot_scale = cfg.get('parliament_dot_scale')
+    if dot_scale is not None:
+        try:
+            scale_val = max(0.2, min(5.0, float(dot_scale)))
+            pt_size = int(round(pt_size * scale_val))
+        except (ValueError, TypeError):
+            pass
+
+    for cat in categories:
+        cat_val = max(0, int(round(value_map.get(cat, 0))))
+        if cat_val <= 0:
+            continue
+        cat_coords = sorted_coords[coord_idx:coord_idx + cat_val]
+        coord_idx += cat_val
+        
+        series.append({
+            'name': cat,
+            'type': 'scatter',
+            'symbolSize': pt_size,
+            'data': cat_coords,
+            'clip': False,
+            'itemStyle': {
+                'opacity': 0.85,
+                'shadowBlur': 2,
+                'shadowColor': 'rgba(0,0,0,0.15)'
+            }
+        })
+
+    # Set coordinate boundaries based on layout shape (expanded margins to prevent clipping)
+    if shape == 'circle':
+        x_min, x_max = -260, 260
+        y_min, y_max = -260, 260
+    elif shape == 'horseshoe':
+        x_min, x_max = -260, 260
+        y_min, y_max = -190, 260
+    else: # semi-circle
+        x_min, x_max = -260, 260
+        y_min, y_max = -20, 260
+
+    show_legend = cfg.get('legend_pos', 'bottom') != 'hidden'
+    title_text = cfg.get('chart_title', '') or cfg.get('title', '')
+
+    option = _base_option(cfg, axis_trigger=False)
+    option['__is_parliament__'] = True
+    option['__parliament_shape__'] = shape
+    option['grid'] = {
+        'left': 40,
+        'right': 40,
+        'top': 60 if title_text else 20,
+        'bottom': 60 if show_legend else 20,
+        'containLabel': False
+    }
+    option['xAxis'] = {'show': False, 'type': 'value', 'min': x_min, 'max': x_max}
+    option['yAxis'] = {'show': False, 'type': 'value', 'min': y_min, 'max': y_max}
+    option['series'] = series
+    
+    # Custom tooltip
+    tooltip_js = (
+        "function(params) {"
+        "  return '<b>' + params.seriesName + '</b><br/>' + params.marker + ' Student dot';"
+        "}"
+    )
+    option['tooltip'] = {'show': True, 'trigger': 'item', '__formatter_js__': tooltip_js}
+    option['__category_names__'] = categories
+    return option
+
+
 def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stacked, y_cols=None, col_defs=None, smooth=False):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
@@ -2026,7 +2197,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'stacked_bar':  lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, True,  col_defs),
         'waterfall':    lambda: _waterfall_option(df, x_col, y_col, agg, cfg, labels),
         'line':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, False, False, y_cols, col_defs),
-        'spline':       lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, False, False, y_cols, col_defs, smooth=True),
+        'spline':       lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
         'area':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  False, y_cols, col_defs),
         'areaspline':   lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  False, y_cols, col_defs, smooth=True),
         'stacked_area': lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  True,  y_cols, col_defs),
@@ -2130,7 +2301,7 @@ CHART_TYPES = [
     ('summary_table',      'Summary Table',      'chart-table',   'Comparison'),
     ('waterfall',    'Waterfall',     'chart-waterfall',     'Comparison'),
     ('line',         'Line',          'chart-line',          'Trend'),
-    ('spline',       'Smooth Line',   'chart-spline',        'Trend'),
+    ('spline',       'Parliament',    'chart-parliament',    'Proportion'),
     ('area',         'Area',          'chart-area',          'Trend'),
     ('areaspline',   'Smooth Area',   'chart-area-s',        'Trend'),
     ('stacked_area', 'Stacked Area',  'chart-area-stacked',  'Trend'),

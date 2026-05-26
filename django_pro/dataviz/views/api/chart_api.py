@@ -79,6 +79,12 @@ def _cfg_from_post(post):
         except (ValueError, TypeError):
             return default
 
+    def _parse_float(val, default=None):
+        try:
+            return float(val) if val else default
+        except (ValueError, TypeError):
+            return default
+
     def _parse_pos(val):
         if not val: return None
         if val in ('center', 'middle', 'left', 'right', 'top', 'bottom'):
@@ -169,6 +175,9 @@ def _cfg_from_post(post):
         'chart_title':      post.get('chart_title', '').strip(),
         'container_width':  _parse_int(post.get('container_width'),  None),
         'container_height': _parse_int(post.get('container_height'), None),
+        'parliament_dot_scale': _parse_float(post.get('parliament_dot_scale'), None),
+        'parliament_shape':     post.get('parliament_shape', 'semi-circle'),
+        'parliament_rows':      _parse_int(post.get('parliament_rows'), None) if post.get('parliament_rows') else None,
     }
 
 
