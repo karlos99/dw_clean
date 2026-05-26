@@ -9,6 +9,12 @@ import re
 
 import pandas as pd
 
+try:
+    from dataexploration.school_year_utils import resolve_relative_column_key
+except Exception:  # pragma: no cover - keep chart builder usable in isolated contexts
+    def resolve_relative_column_key(col_key: str) -> str:
+        return col_key
+
 # ── Meta-column constants ─────────────────────────────────────────────────────
 
 _YEAR_RE         = re.compile(r'^(?:test|mark)_(\d{4})_(\d{4})_')
@@ -473,11 +479,12 @@ def _x_axis_label_style(cfg: dict) -> dict:
     """Return axisLabel overrides for x-axis based on user config."""
     t = _theme(cfg)
     show_labels = cfg.get('show_axis_labels', True) is not False
+    show_categories = cfg.get('show_categories', True) is not False
     rotation    = int(cfg.get('x_label_rotation', 0) or 0)
     font_size   = int(cfg.get('x_label_font_size', 11) or 11)
     max_len     = int(cfg.get('x_label_max_length', 0) or 0)
 
-    lbl: dict = {'show': show_labels, 'color': t['text'], 'fontSize': font_size}
+    lbl: dict = {'show': show_labels and show_categories, 'color': t['text'], 'fontSize': font_size}
     if rotation:
         lbl['rotate'] = rotation
     if max_len > 0:
@@ -487,12 +494,46 @@ def _x_axis_label_style(cfg: dict) -> dict:
     return lbl
 
 
-def _add_zoom(option: dict, cfg: dict = None) -> None:
+def _axis_name(name: str, cfg: dict) -> str:
+    return name if cfg.get('show_axis_titles', True) is not False else ''
+
+
+def _percent_decimals(cfg: dict) -> int:
+    try:
+        return max(0, min(6, int(cfg.get('percent_decimals', 1) or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _show_percent_symbol(cfg: dict) -> bool:
+    return cfg.get('show_percent_symbol', True) is not False
+
+
+def _percent_suffix(cfg: dict) -> str:
+    return '%' if _show_percent_symbol(cfg) else ''
+
+
+def _ordered_categories(categories: list[str], cfg: dict, value_map: dict | None = None) -> list[str]:
+    cats = [str(c) for c in categories]
+    mode = (cfg.get('sort_col') or '').strip()
+    reverse = str(cfg.get('sort_dir', 'asc')).lower() == 'desc'
+    manual = [str(c) for c in (cfg.get('category_order') or []) if str(c) in cats]
+    if mode == '__manual__':
+        return manual + [c for c in cats if c not in manual]
+    if mode == '_value' and value_map:
+        return sorted(cats, key=lambda c: (float(value_map.get(c, 0) or 0), c), reverse=reverse)
+    if mode and mode != '_value':
+        return sorted(cats, reverse=reverse)
+    return cats
+
+
+def _add_zoom(option: dict, cfg: dict = None, axis: str = 'x') -> None:
     if cfg and cfg.get('show_zoom', True) is False:
         return
+    axis_index_key = 'yAxisIndex' if axis == 'y' else 'xAxisIndex'
     option['dataZoom'] = [
-        {'type': 'inside', 'xAxisIndex': 0},
-        {'type': 'slider', 'xAxisIndex': 0, 'bottom': 14},
+        {'type': 'inside', axis_index_key: 0},
+        {'type': 'slider', axis_index_key: 0, 'bottom': 14},
     ]
 
 
@@ -526,36 +567,91 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         return _message_option('X / Category is required', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
     opacity = float(cfg.get('opacity', 0.9) or 0.9)
     border_radius = int(cfg.get('bar_border_radius', 0) or 0)
     label_pos = cfg.get('label_position', 'top') or 'top'
     show_percent = bool(cfg.get('show_percent', False))
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
+    bar_layout = (cfg.get('bar_layout') or ('stacked' if stacked else 'grouped')).lower()
+    is_stacked = stacked or bar_layout == 'stacked'
+    orientation = (cfg.get('bar_orientation') or 'vertical').lower()
+    radial = bool(cfg.get('bar_radial', False))
     valid_y = [c for c in (y_cols or []) if c in df.columns]
     if len(valid_y) == 1 and not y_col:
         y_col = valid_y[0]
 
     def make_series(name, data, stk=None):
+        label_cfg = {'show': bool(cfg.get('data_labels', False)), 'position': label_pos}
+        if show_percent:
+            label_cfg['__formatter_js__'] = (
+                f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"
+            )
         s = {
             'name': name, 'type': 'bar',
             'stack': 'total' if stk else None,
-            'label': {'show': bool(cfg.get('data_labels', False)), 'position': label_pos},
+            'label': label_cfg,
             'itemStyle': {'opacity': opacity},
             'data': data,
         }
+        if radial:
+            s['coordinateSystem'] = 'polar'
+            if label_pos == 'top':
+                s['label']['position'] = 'outside'
         if border_radius:
-            s['itemStyle']['borderRadius'] = [border_radius, border_radius, 0, 0]
+            if radial:
+                s['itemStyle']['borderRadius'] = border_radius
+            elif orientation == 'horizontal':
+                s['itemStyle']['borderRadius'] = [0, border_radius, border_radius, 0]
+            else:
+                s['itemStyle']['borderRadius'] = [border_radius, border_radius, 0, 0]
         return s
+
+    def update_axes(categories, series, y_axis_name):
+        if radial:
+            option.pop('grid', None)
+            option.update({
+                'angleAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                'radiusAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+                'polar': {'radius': '70%'},
+                'series': series,
+            })
+            option.setdefault('dv', {})['category_axis'] = 'angle'
+            return
+        if orientation == 'horizontal':
+            option.update({
+                'xAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+                'yAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                'series': series,
+            })
+            option.setdefault('dv', {})['category_axis'] = 'y'
+            return
+        option.update({
+            'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+            'yAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+            'series': series,
+        })
+        option.setdefault('dv', {})['category_axis'] = 'x'
 
     if len(valid_y) > 1:
         categories = sorted(df[x_col].fillna('(Blank)').astype(str).unique().tolist())
+        series_value_maps = {}
         series = []
         for mc in valid_y:
             col_agg = agg if pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count' else 'count'
             adf = _agg(df, x_col, mc, col_agg)
             vm = dict(zip(adf[x_col].astype(str), adf['_value']))
-            series.append(make_series(_label(mc, col_defs), [float(vm.get(xv, 0) or 0) for xv in categories], stacked))
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': 'Value', **ax}, 'series': series})
+            series_value_maps[_label(mc, col_defs)] = vm
+            series.append(make_series(_label(mc, col_defs), [float(vm.get(xv, 0) or 0) for xv in categories], is_stacked))
+        if series_value_maps:
+            total_value_map = {cat: sum(float(vm.get(cat, 0) or 0) for vm in series_value_maps.values()) for cat in categories}
+            ordered_categories = _ordered_categories(categories, cfg, total_value_map)
+            for s in series:
+                vm = series_value_maps.get(s['name'], {})
+                s['data'] = [float(vm.get(cat, 0) or 0) for cat in ordered_categories]
+            categories = ordered_categories
+        update_axes(categories, series, 'Value')
     elif stack_col and stack_col in df.columns:
         adf = _agg(df, x_col, y_col, agg, stack_col)
         categories = sorted(adf[x_col].astype(str).unique().tolist())
@@ -574,6 +670,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         if show_percent:
             for xv in categories:
                 cat_totals[xv] = sum(raw_vals.get((xv, sv), 0) for sv in stacks)
+        categories = _ordered_categories(categories, cfg, {xv: cat_totals.get(xv, sum(raw_vals.get((xv, sv), 0) for sv in stacks)) for xv in categories})
 
         series = []
         for sv in reversed(stacks):
@@ -583,9 +680,10 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                         for xv in categories]
             else:
                 data = [raw_vals.get((xv, sv), 0) for xv in categories]
-            series.append(make_series(sv, data, stacked))
+            series.append(make_series(sv, data, is_stacked))
 
-        y_axis = {'type': 'value', 'name': '%' if show_percent else (labels['y'] or 'Count'), **ax}
+        y_axis_name = '%' if show_percent else (labels['y'] or 'Count')
+        y_axis = {'type': 'value', 'name': y_axis_name, **ax}
         if show_percent:
             y_axis['max'] = 100
 
@@ -606,17 +704,22 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                 "  for (var i = params.length - 1; i >= 0; i--) {"
                 "    var d = params[i];"
                 "    var cnt = (rawLookup[d.seriesName] || {})[cat] || 0;"
-                "    var pct = total > 0 ? (cnt / total * 100).toFixed(1) : '0.0';"
-                "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '%)';"
+                f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{'0.' + ('0' * percent_decimals) if percent_decimals else '0'}';"
+                f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '{percent_suffix}');"
                 "  }"
                 "  return html;"
                 "}"
             )
-            option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                           'yAxis': y_axis, 'series': series,
-                           'tooltip': {'show': cfg.get('show_tooltip', True) is not False,
-                                       'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                       '__formatter_js__': tooltip_js}})
+            update_axes(categories, series, y_axis_name)
+            if radial:
+                option['radiusAxis']['max'] = 100
+            elif orientation == 'horizontal':
+                option['xAxis']['max'] = 100
+            else:
+                option['yAxis']['max'] = 100
+            option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False,
+                                 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
+                                 '__formatter_js__': tooltip_js}
         else:
             _tjs = (
                 "function(params) {"
@@ -631,17 +734,25 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                 "  return html;"
                 "}"
             )
-            option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                           'yAxis': y_axis, 'series': series,
-                           'tooltip': {'show': cfg.get('show_tooltip', True) is not False,
-                                       'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                       '__formatter_js__': _tjs}})
+            update_axes(categories, series, y_axis_name)
+            option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False,
+                                 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
+                                 '__formatter_js__': _tjs}
     else:
         adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False)
-        option.update({'xAxis': {'type': 'category', 'data': adf[x_col].astype(str).tolist(), 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': labels['y'] or 'Count', **ax},
-                       'series': [make_series(labels['y'] or 'Value', [float(v or 0) for v in adf['_value'].tolist()])]})
-    _add_zoom(option, cfg)
+        value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+        ordered_categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+        ordered_values = [float(value_map.get(cat, 0) or 0) for cat in ordered_categories]
+        update_axes(
+            ordered_categories,
+            [make_series(labels['y'] or 'Value', ordered_values)],
+            _axis_name(labels['y'] or 'Count', cfg),
+        )
+    option['__category_names__'] = categories if 'categories' in locals() else ordered_categories
+    if radial and isinstance(option.get('tooltip'), dict):
+        option['tooltip']['axisPointer'] = {'type': 'line'}
+    if not radial:
+        _add_zoom(option, cfg, axis='y' if orientation == 'horizontal' else 'x')
     return option
 
 
@@ -650,6 +761,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         return _message_option('X / Category is required', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
     opacity = float(cfg.get('opacity', 0.9) or 0.9)
     smooth = smooth or bool(cfg.get('smooth', False))
     show_pts = bool(cfg.get('show_points', False))
@@ -669,27 +781,40 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
 
     if len(valid_y) > 1:
         categories = sorted(df[x_col].fillna('(Blank)').astype(str).unique().tolist())
+        series_value_maps = {}
         series = []
         for mc in valid_y:
             col_agg = agg if pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count' else 'count'
             adf = _agg(df, x_col, mc, col_agg)
             vm = dict(zip(adf[x_col].astype(str), adf['_value']))
-            series.append(make_series(_label(mc, col_defs or {}), [float(vm.get(xv, 0) or 0) for xv in categories], stacked))
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': 'Value', **ax}, 'series': series})
+            series_name = _label(mc, col_defs or {})
+            series_value_maps[series_name] = vm
+            series.append(make_series(series_name, [float(vm.get(xv, 0) or 0) for xv in categories], stacked))
+        total_value_map = {cat: sum(float(vm.get(cat, 0) or 0) for vm in series_value_maps.values()) for cat in categories}
+        categories = _ordered_categories(categories, cfg, total_value_map)
+        for s in series:
+            vm = series_value_maps.get(s['name'], {})
+            s['data'] = [float(vm.get(cat, 0) or 0) for cat in categories]
+        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                       'yAxis': {'type': 'value', 'name': _axis_name('Value', cfg), **ax}, 'series': series})
     elif stack_col and stack_col in df.columns:
         adf = _agg(df, x_col, y_col, agg, stack_col)
         categories = sorted(adf[x_col].astype(str).unique().tolist())
         stacks_ordered = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
+        total_value_map = {cat: float(adf[adf[x_col].astype(str) == cat]['_value'].sum() or 0) for cat in categories}
+        categories = _ordered_categories(categories, cfg, total_value_map)
         series = [make_series(sv, [float(dict(zip(adf[adf[stack_col].astype(str) == sv][x_col].astype(str), adf[adf[stack_col].astype(str) == sv]['_value'])).get(xv, 0) or 0) for xv in categories], stacked)
                   for sv in reversed(stacks_ordered)]
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': labels['y'] or 'Count', **ax}, 'series': series})
+        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                       'yAxis': {'type': 'value', 'name': _axis_name(labels['y'] or 'Count', cfg), **ax}, 'series': series})
     else:
         adf = _agg(df, x_col, y_col, agg)
-        option.update({'xAxis': {'type': 'category', 'data': adf[x_col].astype(str).tolist(), 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': labels['y'] or 'Count', **ax},
-                       'series': [make_series(labels['y'] or 'Value', [float(v or 0) for v in adf['_value'].tolist()])]})
+        value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+        categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                       'yAxis': {'type': 'value', 'name': _axis_name(labels['y'] or 'Count', cfg), **ax},
+                       'series': [make_series(labels['y'] or 'Value', [float(value_map.get(cat, 0) or 0) for cat in categories])]})
+    option['__category_names__'] = categories
     _add_zoom(option, cfg)
     return option
 
@@ -698,13 +823,16 @@ def _pie_option(df, x_col, y_col, agg, cfg, donut=False):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False).head(30)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{
         'name': 'Distribution', 'type': 'pie',
         'radius': ['45%', '70%'] if donut else '70%',
-        'data': [{'name': str(r[x_col]), 'value': float(r['_value'] or 0)} for _, r in adf.iterrows()],
+        'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories],
         'label': {'show': bool(cfg.get('data_labels', False))},
     }]
+    option['__category_names__'] = categories
     return option
 
 
@@ -745,8 +873,9 @@ def _heatmap_option(df, x_col, y_col, agg, cfg, labels):
         return _message_option('No data loaded', cfg)
     option = _base_option(cfg, axis_trigger=False)
     ax = _axis_style(cfg)
-    x_vals = sorted(adf[x_col].astype(str).unique().tolist())
-    y_vals = sorted(adf[y_col].astype(str).unique().tolist())
+    x_lbl = _x_axis_label_style(cfg)
+    x_vals = _ordered_categories(sorted(adf[x_col].astype(str).unique().tolist()), cfg)
+    y_vals = _ordered_categories(sorted(adf[y_col].astype(str).unique().tolist()), {'sort_col': cfg.get('sort_col') if cfg.get('sort_col') == '__manual__' else '', 'category_order': cfg.get('category_order', []), 'sort_dir': cfg.get('sort_dir', 'asc')})
     xi, yi = {v: i for i, v in enumerate(x_vals)}, {v: i for i, v in enumerate(y_vals)}
     points, max_val = [], 0
     for _, row in adf.iterrows():
@@ -754,11 +883,12 @@ def _heatmap_option(df, x_col, y_col, agg, cfg, labels):
         points.append([xi[str(row[x_col])], yi[str(row[y_col])], val])
         max_val = max(max_val, val)
     option.update({
-        'xAxis': {'type': 'category', 'data': x_vals, 'name': labels['x'], **ax},
-        'yAxis': {'type': 'category', 'data': y_vals, 'name': labels['y'], **ax},
+        'xAxis': {'type': 'category', 'data': x_vals, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+        'yAxis': {'type': 'category', 'data': y_vals, 'name': _axis_name(labels['y'], cfg), **ax, 'axisLabel': x_lbl},
         'visualMap': {'min': 0, 'max': max_val or 1, 'calculable': True, 'orient': 'vertical', 'right': 10, 'top': 'center'},
         'series': [{'type': 'heatmap', 'data': points, 'label': {'show': bool(cfg.get('data_labels', False))}}],
     })
+    option['__category_names__'] = x_vals
     _add_zoom(option, cfg)
     return option
 
@@ -768,6 +898,7 @@ def _histogram_option(df, x_col, stack_col, cfg, labels):
         return _message_option('X / Category is required', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
     bins = max(4, min(40, int(cfg.get('bins', 12) or 12)))
 
     def hist(vals, nbins):
@@ -785,15 +916,19 @@ def _histogram_option(df, x_col, stack_col, cfg, labels):
             bns, cnts = hist(sub[x_col], bins)
             per_group[g] = dict(zip(bns, cnts))
             all_x.extend(bns)
-        x_axis = sorted(set(all_x))
+        x_axis = _ordered_categories(sorted(set(all_x)), cfg)
         series = [{'name': g, 'type': 'bar', 'stack': 'total', 'data': [int(per_group[g].get(b, 0)) for b in x_axis]}
                   for g in reversed(list(per_group))]
     else:
         x_axis, counts = hist(df[x_col], bins)
+        value_map = dict(zip(x_axis, counts))
+        x_axis = _ordered_categories(x_axis, cfg, value_map)
+        counts = [value_map.get(cat, 0) for cat in x_axis]
         series = [{'name': 'Count', 'type': 'bar', 'data': [int(v) for v in counts]}]
 
-    option.update({'xAxis': {'type': 'category', 'data': x_axis, 'name': labels['x'], **ax},
-                   'yAxis': {'type': 'value', 'name': 'Count', **ax}, 'series': series})
+    option.update({'xAxis': {'type': 'category', 'data': x_axis, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                   'yAxis': {'type': 'value', 'name': _axis_name('Count', cfg), **ax}, 'series': series})
+    option['__category_names__'] = x_axis
     _add_zoom(option, cfg)
     return option
 
@@ -803,6 +938,7 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
         return _message_option('Y / Value is required', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
 
     def stats(vals):
         s = pd.to_numeric(vals, errors='coerce').dropna()
@@ -818,14 +954,18 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
             if st:
                 lbls.append(g)
                 data.append(st)
+        paired = dict(zip(lbls, data))
+        lbls = _ordered_categories(lbls, cfg)
+        data = [paired[lbl] for lbl in lbls]
     else:
         st = stats(df[y_col])
         if st:
             lbls, data = ['All'], [st]
 
-    option.update({'xAxis': {'type': 'category', 'data': lbls, 'name': labels['x'], **ax},
-                   'yAxis': {'type': 'value', 'name': labels['y'], **ax},
+    option.update({'xAxis': {'type': 'category', 'data': lbls, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                   'yAxis': {'type': 'value', 'name': _axis_name(labels['y'], cfg), **ax},
                    'series': [{'type': 'boxplot', 'data': data}]})
+    option['__category_names__'] = lbls
     _add_zoom(option, cfg)
     return option
 
@@ -834,10 +974,13 @@ def _funnel_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'funnel', 'left': '10%', 'top': 40, 'bottom': 20, 'width': '80%',
-                          'sort': 'descending', 'label': {'show': True, 'position': 'inside'},
-                          'data': [{'name': str(r[x_col]), 'value': float(r['_value'] or 0)} for _, r in adf.iterrows()]}]
+                           'sort': 'descending', 'label': {'show': True, 'position': 'inside'},
+                           'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories]}]
+    option['__category_names__'] = categories
     return option
 
 
@@ -845,9 +988,12 @@ def _treemap_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'treemap', 'nodeClick': 'zoomToNode',
-                          'data': [{'name': str(r[x_col]), 'value': float(r['_value'] or 0)} for _, r in adf.iterrows()]}]
+                          'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories]}]
+    option['__category_names__'] = categories
     return option
 
 
@@ -855,12 +1001,14 @@ def _radar_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg)
-    vals = [float(v or 0) for v in adf['_value'].tolist()]
-    names = adf[x_col].astype(str).tolist()
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    names = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+    vals = [float(value_map.get(name, 0) or 0) for name in names]
     max_v = max(vals) if vals else 1
     option = _base_option(cfg, axis_trigger=False)
     option.update({'radar': {'indicator': [{'name': n, 'max': max_v * 1.1} for n in names], 'splitArea': {'show': True}},
                    'series': [{'type': 'radar', 'data': [{'name': 'Values', 'value': vals}]}]})
+    option['__category_names__'] = names
     return option
 
 
@@ -884,12 +1032,15 @@ def _waterfall_option(df, x_col, y_col, agg, cfg, labels):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg)
-    option['xAxis'] = {'type': 'category', 'data': adf[x_col].astype(str).tolist(), 'name': labels.get('x', '')}
-    option['yAxis'] = {'name': labels.get('y', '')}
+    option['xAxis'] = {'type': 'category', 'data': categories, 'name': _axis_name(labels.get('x', ''), cfg)}
+    option['yAxis'] = {'name': _axis_name(labels.get('y', ''), cfg)}
     option['series'] = [{'type': 'bar', 'name': labels.get('y', 'Value'),
-                          'data': [float(v or 0) for v in adf['_value'].tolist()],
+                          'data': [float(value_map.get(cat, 0) or 0) for cat in categories],
                           'label': {'show': bool(cfg.get('data_labels', False))}}]
+    option['__category_names__'] = categories
     return option
 
 
@@ -1049,6 +1200,8 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     show_labels = bool(cfg.get('data_labels', False))
     label_pos = cfg.get('label_position', 'top') or 'top'
     show_percent = bool(cfg.get('show_percent', False))
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
     t = _theme(cfg)
     ax = _axis_style(cfg)
 
@@ -1063,9 +1216,9 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
         tooltip_js = (
             "function(params) {"
             f"  var total = {total};"
-            "  var pct = total > 0 ? (params.value / total * 100).toFixed(1) : '0';"
+            f"  var pct = total > 0 ? (params.value / total * 100).toFixed({percent_decimals}) : '{'0.' + ('0' * percent_decimals) if percent_decimals else '0'}';"
             "  return params.marker + ' ' + params.name + ': <b>' + params.value"
-            "       + '</b> (' + pct + '%)';"
+            f"       + '</b> (' + pct + '{percent_suffix}');"
             "}"
         )
         option['color'] = [_PG_COLORS[cat] for cat in ORDER]
@@ -1182,11 +1335,16 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     stacked = pg_display != 'grouped_bar'
 
     def make_series(cat, data_vals):
+        label_cfg = {'show': show_labels, 'position': label_pos}
+        if show_percent:
+            label_cfg['__formatter_js__'] = (
+                f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"
+            )
         s = {
             'name': cat,
             'type': 'bar',
             'stack': 'total' if stacked else None,
-            'label': {'show': show_labels, 'position': label_pos},
+            'label': label_cfg,
             'itemStyle': {'color': _PG_COLORS[cat], 'opacity': opacity},
             'data': data_vals,
         }
@@ -1201,12 +1359,13 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             sub = dfc[dfc['_pg'] == cat]
             raw[cat] = {k: int(v) for k, v in sub[x_col].fillna('(Blank)').astype(str).value_counts().items()}
         cat_totals = {xv: int(sum(raw[cat].get(xv, 0) for cat in ORDER)) for xv in categories}
+        categories = _ordered_categories(categories, cfg, cat_totals)
 
         series = []
         for cat in ORDER:
             if show_percent:
                 vals = [
-                    round(raw[cat].get(xv, 0) / cat_totals[xv] * 100, 1)
+                    round(raw[cat].get(xv, 0) / cat_totals[xv] * 100, percent_decimals)
                     if cat_totals.get(xv, 0) > 0 else 0.0
                     for xv in categories
                 ]
@@ -1226,17 +1385,17 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             "  for (var i = 0; i < params.length; i++) {"
             "    var d = params[i];"
             "    var cnt = (raw[d.seriesName] || {})[cat] || 0;"
-            "    var pct = total > 0 ? (cnt / total * 100).toFixed(1) : '0.0';"
-            "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '%)';"
+            f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{'0.' + ('0' * percent_decimals) if percent_decimals else '0'}';"
+            f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '{percent_suffix}');"
             "  }"
             "  return html;"
             "}"
         )
-        y_axis = {'type': 'value', 'name': '%' if show_percent else 'Students', **ax}
+        y_axis = {'type': 'value', 'name': _axis_name('%' if show_percent else 'Students', cfg), **ax}
         if show_percent:
             y_axis['max'] = 100
         option.update({
-            'xAxis': {'type': 'category', 'data': categories, 'name': labels.get('x', ''), **ax},
+            'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels.get('x', ''), cfg), **ax},
             'yAxis': y_axis,
             'series': series,
             'tooltip': {
@@ -1250,8 +1409,8 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
         # No grouping — overall counts as a simple coloured bar
         overall_counts = [float(counts.get(cat, 0)) for cat in ORDER]
         option.update({
-            'xAxis': {'type': 'category', 'data': ORDER, **ax},
-            'yAxis': {'type': 'value', 'name': 'Students', **ax},
+            'xAxis': {'type': 'category', 'data': ORDER, 'name': _axis_name(labels.get('x', ''), cfg), **ax},
+            'yAxis': {'type': 'value', 'name': _axis_name('Students', cfg), **ax},
             'series': [{
                 'name': 'Students',
                 'type': 'bar',
@@ -1263,6 +1422,7 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             }],
         })
 
+    option['__category_names__'] = categories if x_col and x_col in dfc.columns else ORDER
     _add_zoom(option, cfg)
     return option
 
@@ -1301,6 +1461,9 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             base_categories = sorted(unique_vals)
     else:
         base_categories = []
+    if base_categories:
+        category_value_map = {cat: int((df[x_col].fillna('(Blank)').astype(str) == cat).sum()) for cat in base_categories}
+        base_categories = _ordered_categories(base_categories, cfg, category_value_map)
 
     if ac_col_filters:
         for fcol, fvals in ac_col_filters.items():
@@ -1329,6 +1492,8 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     label_pos     = cfg.get('label_position', 'top') or 'top'
     show_labels   = bool(cfg.get('data_labels', False))
     show_percent  = bool(cfg.get('show_percent', False))
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
 
     # User-configurable compare layout options
     _raw_gap = cfg.get('compare_gap', 30)
@@ -1409,7 +1574,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         for pos in range(total_positions):
             cnt = raw_counts[pos].get(pv, 0)
             if show_percent and totals[pos] > 0:
-                data_vals.append(round(cnt / totals[pos] * 100, 1))
+                data_vals.append(round(cnt / totals[pos] * 100, percent_decimals))
             else:
                 data_vals.append(float(cnt))
         s = {
@@ -1418,7 +1583,11 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             'stack': 'total',
             'xAxisIndex': 0,
             'barCategoryGap': f'{compare_gap}%',
-            'label': {'show': show_labels, 'position': label_pos},
+            'label': {
+                'show': show_labels,
+                'position': label_pos,
+                **({'__formatter_js__': f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"} if show_percent else {}),
+            },
             'itemStyle': {'color': pl_color[pv], 'opacity': opacity},
             'data': data_vals,
         }
@@ -1450,8 +1619,8 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         "    var d = params[i];"
         "    if (d.value == null) continue;"
         "    var cnt = (rawCounts[String(idx)] || {})[d.seriesName] || 0;"
-        "    var pct = total > 0 ? (cnt / total * 100).toFixed(1) : '0.0';"
-        "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '%)';"
+        f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{'0.' + ('0' * percent_decimals) if percent_decimals else '0'}';"
+        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '{percent_suffix}');"
         "  }"
         "  return html;"
         "}"
@@ -1467,6 +1636,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             **ax.get('axisLabel', {}),
             'interval': 0,
             'fontSize': 10,
+            'show': cfg.get('show_categories', True) is not False and cfg.get('show_axis_labels', True) is not False,
         },
         'axisTick': {'show': False},
         'axisLine': {'show': False},
@@ -1494,6 +1664,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             'color': ax.get('axisLabel', {}).get('color', '#475569'),
             'rotate': cat_rotation,
             'margin': 4,
+            'show': cfg.get('show_categories', True) is not False and cfg.get('show_axis_labels', True) is not False,
             '__formatter_js__': cat_formatter_js,
         },
         'axisTick': {'show': False},
@@ -1502,7 +1673,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     }
 
     # ── Y-axis ──
-    y_name = '%' if show_percent else 'Count'
+    y_name = _axis_name('%' if show_percent else 'Count', cfg)
     y_max = 100 if show_percent else None
     y_axis = {'type': 'value', 'name': y_name, **ax}
     if y_max:
@@ -1523,6 +1694,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     # Expose available filter values so the builder UI can populate filter pickers
     option['__ac_avail_cats__'] = base_categories          # all unique x-col values
     option['__ac_avail_pl__']   = _ordered_stacks(list(all_pl), cfg)  # all PL values (unfiltered)
+    option['__category_names__'] = base_categories
 
     # Embed drill-through metadata so the click handler can resolve
     # the real category from a dataIndex (needed because xAxis[0] shows window/year).
@@ -1549,6 +1721,24 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         return _message_option('No data loaded', cfg)
 
     chart_type   = cfg.get('chart_type', 'bar')
+    legacy_bar_defaults = {
+        'column': {'bar_layout': 'grouped', 'bar_orientation': 'vertical', 'bar_radial': False},
+        'grouped_bar': {'bar_layout': 'grouped', 'bar_orientation': 'vertical', 'bar_radial': False},
+        'stacked_bar': {'bar_layout': 'stacked', 'bar_orientation': 'vertical', 'bar_radial': False},
+    }
+    if chart_type in legacy_bar_defaults:
+        merged_cfg = dict(cfg)
+        for key, value in legacy_bar_defaults[chart_type].items():
+            if merged_cfg.get(key) in (None, ''):
+                merged_cfg[key] = value
+        cfg = merged_cfg
+        chart_type = 'bar'
+    elif chart_type == 'bar':
+        merged_cfg = dict(cfg)
+        merged_cfg.setdefault('bar_layout', 'grouped')
+        merged_cfg.setdefault('bar_orientation', 'vertical')
+        merged_cfg.setdefault('bar_radial', False)
+        cfg = merged_cfg
     x_col        = cfg.get('x_col', '')
     x_cols_raw   = cfg.get('x_cols', [])
     y_col        = cfg.get('y_col', '')
@@ -1569,6 +1759,27 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     st_col_col    = cfg.get('st_col_col', '')
 
     df = pd.DataFrame(rows)
+
+    def _resolve_cfg_col(col):
+        if not isinstance(col, str):
+            return col
+        if col in df.columns:
+            return col
+        resolved = resolve_relative_column_key(col)
+        return resolved if resolved in df.columns else col
+
+    # Resolve relative-year config keys against the loaded dataframe columns.
+    x_col = _resolve_cfg_col(x_col)
+    y_col = _resolve_cfg_col(y_col)
+    stack_col = _resolve_cfg_col(stack_col)
+    size_col = _resolve_cfg_col(size_col)
+    pg_before_col = _resolve_cfg_col(pg_before_col)
+    pg_after_col = _resolve_cfg_col(pg_after_col)
+    st_row_col = _resolve_cfg_col(st_row_col)
+    st_col_col = _resolve_cfg_col(st_col_col)
+    x_cols_raw = [_resolve_cfg_col(c) for c in x_cols_raw] if isinstance(x_cols_raw, list) else x_cols_raw
+    y_cols_raw = [_resolve_cfg_col(c) for c in y_cols_raw] if isinstance(y_cols_raw, list) else y_cols_raw
+    compare_pl_cols = [_resolve_cfg_col(c) for c in compare_pl_cols] if isinstance(compare_pl_cols, list) else compare_pl_cols
 
     # Composite x-axis
     x_cols = [c for c in x_cols_raw if isinstance(c, str) and c in df.columns] if isinstance(x_cols_raw, list) else []
@@ -1652,23 +1863,33 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Apply colour mapping (user overrides + semantic defaults) to all chart types
     _apply_color_map(option, cfg)
 
-    # Apply x-axis label overrides (rotation, font size, truncation)
+    # Apply category-axis label overrides (rotation, font size, truncation)
     x_label_style = _x_axis_label_style(cfg)
-    x_axes = option.get('xAxis', None)
-    if x_axes is not None:
-        if isinstance(x_axes, list):
-            for xa in x_axes:
-                if isinstance(xa, dict):
-                    xa.setdefault('axisLabel', {}).update(x_label_style)
-        elif isinstance(x_axes, dict):
-            x_axes.setdefault('axisLabel', {}).update(x_label_style)
+    category_axis = (option.get('dv') or {}).get('category_axis', 'x')
+    axis_targets = []
+    if category_axis == 'y':
+        axis_targets.append(option.get('yAxis'))
+    elif category_axis == 'angle':
+        axis_targets.append(option.get('angleAxis'))
+    else:
+        axis_targets.append(option.get('xAxis'))
 
-    # Apply y-axis min/max overrides
+    for axes in axis_targets:
+        if axes is None:
+            continue
+        if isinstance(axes, list):
+            for axis in axes:
+                if isinstance(axis, dict):
+                    axis.setdefault('axisLabel', {}).update(x_label_style)
+        elif isinstance(axes, dict):
+            axes.setdefault('axisLabel', {}).update(x_label_style)
+
+    # Apply value-axis min/max overrides
     y_min = cfg.get('y_axis_min')
     y_max = cfg.get('y_axis_max')
     if y_min is not None or y_max is not None:
-        y_axes = option.get('yAxis', None)
-        targets = y_axes if isinstance(y_axes, list) else ([y_axes] if isinstance(y_axes, dict) else [])
+        value_axis = option.get('radiusAxis') if category_axis == 'angle' else option.get('xAxis' if category_axis == 'y' else 'yAxis')
+        targets = value_axis if isinstance(value_axis, list) else ([value_axis] if isinstance(value_axis, dict) else [])
         for ya in targets:
             if isinstance(ya, dict) and ya.get('type') == 'value':
                 if y_min not in (None, ''):
@@ -1708,9 +1929,6 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
 CHART_TYPES = [
     # (key, label, icon_class, group)
     ('bar',          'Bar',           'chart-bar',           'Comparison'),
-    ('column',       'Column',        'chart-bar-r',         'Comparison'),
-    ('grouped_bar',  'Grouped Bar',   'chart-grouped',       'Comparison'),
-    ('stacked_bar',  'Stacked Bar',   'chart-stacked',       'Comparison'),
     ('assessment_compare', 'Assessment Compare', 'chart-assess', 'Comparison'),
     ('progress_growth',    'Progress Growth',    'chart-growth',  'Comparison'),
     ('summary_table',      'Summary Table',      'chart-table',   'Comparison'),

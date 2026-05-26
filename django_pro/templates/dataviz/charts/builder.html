@@ -182,6 +182,19 @@
         </div>
 
         <div x-show="!explorerLoading && explorerStructure" class="space-y-1">
+          {# ── Year Mode Toggle ── #}
+          <div class="flex items-center justify-between px-1 py-1 mb-1.5 bg-slate-50 rounded border border-slate-200">
+            <span class="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Year:</span>
+            <div class="flex rounded overflow-hidden border border-slate-200 text-[10px]">
+              <button type="button" @click="setDvYearMode('specific')"
+                      :class="dvYearMode === 'specific' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'"
+                      class="px-2.5 py-0.5 transition-colors">Specific</button>
+              <button type="button" @click="setDvYearMode('relative')"
+                      :class="dvYearMode === 'relative' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'"
+                      class="px-2.5 py-0.5 transition-colors">Relative</button>
+            </div>
+          </div>
+
           {# Search within column picker #}
           <input type="text" x-model="explorerSearch" placeholder="Search columns…"
                  class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-2 focus:ring-1 focus:ring-blue-200 bg-slate-50">
@@ -217,10 +230,11 @@
 
           {# ── Test columns tree ── #}
           <template x-for="(yearObj, year) in (explorerStructure?.test_structure || {})" :key="'ty_'+year">
-            <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
+            <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]"
+                 class="rounded-md border border-slate-200 bg-white overflow-hidden">
               <button type="button" @click="explorerOpenNode = explorerOpenNode === 'test_'+year ? '' : 'test_'+year"
                       class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
-                <span class="font-medium text-slate-700"><span class="text-[9px] text-blue-500 font-bold mr-1">TEST</span><span x-text="year"></span></span>
+                <span class="font-medium text-slate-700"><span class="text-[9px] text-blue-500 font-bold mr-1">TEST</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
                 <svg class="w-3 h-3 text-slate-400 transition-transform"
                      :class="explorerOpenNode === 'test_'+year && 'rotate-180'"
                      fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -246,7 +260,7 @@
                               <template x-for="mKey in ['SS','PL']" :key="'tm_'+metrics[mKey]">
                                 <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
                                   <input type="checkbox"
-                                         :checked="explorerSelected.includes(metrics[mKey])"
+                                         :checked="_dvIsColSelected(metrics[mKey])"
                                          @change="toggleExplorerCol(metrics[mKey])"
                                          class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
                                   <span x-text="mKey" class="font-mono text-[10px]"></span>
@@ -265,10 +279,10 @@
 
           {# ── Mark columns tree ── #}
           <template x-for="(yearObj, year) in (explorerStructure?.mark_structure || {})" :key="'my_'+year">
-            <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
+            <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]" class="rounded-md border border-slate-200 bg-white overflow-hidden">
               <button type="button" @click="explorerOpenNode = explorerOpenNode === 'mark_'+year ? '' : 'mark_'+year"
                       class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
-                <span class="font-medium text-slate-700"><span class="text-[9px] text-emerald-500 font-bold mr-1">MARK</span><span x-text="year"></span></span>
+                <span class="font-medium text-slate-700"><span class="text-[9px] text-emerald-500 font-bold mr-1">MARK</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
                 <svg class="w-3 h-3 text-slate-400 transition-transform"
                      :class="explorerOpenNode === 'mark_'+year && 'rotate-180'"
                      fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -291,7 +305,7 @@
                           <template x-for="(colKey, period) in courseObj" :key="'mp_'+colKey">
                             <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
                               <input type="checkbox"
-                                     :checked="explorerSelected.includes(colKey)"
+                                     :checked="_dvIsColSelected(colKey)"
                                      @change="toggleExplorerCol(colKey)"
                                      class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
                               <span class="truncate" x-text="period"></span>
@@ -414,7 +428,7 @@
                                  :checked="(chartFilters[col] || []).includes(val)"
                                  @change="toggleFilterValue(col, val)"
                                  class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
-                          <span class="truncate" x-text="val || '(blank)'"></span>
+                          <span class="truncate" x-text="yearAliasLabels[val] || val || '(blank)'"></span>
                         </label>
                       </template>
                       <p x-show="filteredFilterValues(col).length === 0" class="text-[10px] text-slate-400 py-1 px-1">No matches</p>
@@ -425,7 +439,7 @@
                        class="flex flex-wrap gap-1 px-2 pb-1.5 border-t border-slate-50 pt-1">
                     <template x-for="sv in (chartFilters[col] || [])" :key="'sv_'+col+'_'+sv">
                       <span class="inline-flex items-center gap-0.5 text-[9px] bg-blue-50 text-blue-700 rounded-full px-2 py-0.5">
-                        <span class="truncate max-w-[80px]" x-text="sv"></span>
+                        <span class="truncate max-w-[80px]" x-text="yearAliasLabels[sv] || sv"></span>
                         <button @click="removeFilterValue(col, sv)" class="hover:text-red-500 font-bold">&times;</button>
                       </span>
                     </template>
@@ -857,20 +871,49 @@
         </div>
         <div class="flex gap-2">
           <div class="flex-1">
-            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Sort By</label>
+            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Category Order</label>
             <select x-model="sortCol" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">Auto</option>
-              <template x-for="c in activeCols" :key="'so_'+c"><option :value="c" x-text="c"></option></template>
+              <option value="_label">Category label</option>
               <option value="_value">Aggregated value</option>
+              <option value="__manual__">Manual order</option>
             </select>
           </div>
-          <div class="w-24">
+          <div class="w-28" x-show="sortCol !== '__manual__'">
             <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Direction</label>
             <select x-model="sortDir" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="asc">ASC ↑</option>
               <option value="desc">DESC ↓</option>
             </select>
           </div>
+        </div>
+        <div x-show="sortCol === '__manual__' && categoryOrderAvail.length > 1" class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Manual Category Order</p>
+            <button type="button"
+                    @click="categoryOrder = [...categoryOrderAvail]; _schedulePreview();"
+                    class="text-[9px] text-blue-500 hover:text-blue-700 font-semibold uppercase tracking-wide">Reset</button>
+          </div>
+          <template x-for="(item, idx) in categoryOrder" :key="'co_'+item">
+            <div draggable="true"
+                 @dragstart="_dragCategoryIdx = idx"
+                 @dragend="_dragCategoryIdx = null"
+                 @dragover.prevent
+                 @drop.prevent="
+                   if (_dragCategoryIdx !== null && _dragCategoryIdx !== idx) {
+                     const moved = categoryOrder.splice(_dragCategoryIdx, 1)[0];
+                     categoryOrder.splice(idx, 0, moved);
+                     categoryOrder = [...categoryOrder];
+                     _dragCategoryIdx = null;
+                     _schedulePreview();
+                   }"
+                 class="flex items-center gap-1.5 bg-white border border-slate-200 rounded px-2 py-1 cursor-grab active:cursor-grabbing hover:border-blue-300 transition select-none">
+              <svg class="w-3 h-3 text-slate-300 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
+              </svg>
+              <span class="text-xs text-slate-600 truncate" x-text="item"></span>
+            </div>
+          </template>
         </div>
         <div>
           <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Row Limit</label>
@@ -1104,7 +1147,7 @@
               <div class="rounded border border-slate-100 bg-white overflow-hidden">
                 <button type="button" @click="drillOpenNode = drillOpenNode === 'test_'+year ? '' : 'test_'+year"
                         class="flex items-center justify-between w-full px-2 py-1 text-[10px] hover:bg-slate-50 transition">
-                  <span class="font-medium text-slate-600"><span class="text-[8px] text-blue-400 font-bold mr-1">TEST</span><span x-text="year"></span></span>
+                  <span class="font-medium text-slate-600"><span class="text-[8px] text-blue-400 font-bold mr-1">TEST</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
                   <svg class="w-2.5 h-2.5 text-slate-300 transition-transform" :class="drillOpenNode === 'test_'+year && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
                 </button>
                 <div x-show="drillOpenNode === 'test_'+year" class="border-t border-slate-50 p-1 space-y-1 bg-slate-50/30">
@@ -1145,7 +1188,7 @@
               <div class="rounded border border-slate-100 bg-white overflow-hidden">
                 <button type="button" @click="drillOpenNode = drillOpenNode === 'mark_'+year ? '' : 'mark_'+year"
                         class="flex items-center justify-between w-full px-2 py-1 text-[10px] hover:bg-slate-50 transition">
-                  <span class="font-medium text-slate-600"><span class="text-[8px] text-emerald-400 font-bold mr-1">MARK</span><span x-text="year"></span></span>
+                  <span class="font-medium text-slate-600"><span class="text-[8px] text-emerald-400 font-bold mr-1">MARK</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
                   <svg class="w-2.5 h-2.5 text-slate-300 transition-transform" :class="drillOpenNode === 'mark_'+year && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
                 </button>
                 <div x-show="drillOpenNode === 'mark_'+year" class="border-t border-slate-50 p-1 space-y-1 bg-slate-50/30">
@@ -1395,17 +1438,68 @@
               </div>
             </div>
 
+            <div class="px-3 py-3 border-b border-slate-100 space-y-2">
+              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Percent Format</p>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model="showPercentSymbol" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
+                <span class="text-[10px] text-slate-600">Show % symbol on percent values</span>
+              </label>
+              <div class="flex items-center gap-2">
+                <span class="text-[9px] text-slate-400 w-20 flex-shrink-0">Decimals</span>
+                <input type="range" min="0" max="4" step="1" x-model.number="percentDecimals"
+                       class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
+                <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="percentDecimals"></span>
+              </div>
+            </div>
+
             {# ── BAR OPTIONS (conditional) ── #}
-            <template x-if="['bar','column','grouped_bar','stacked_bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
+            <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
               <div class="px-3 py-3 border-b border-slate-100 space-y-2">
                 <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Bar Style</p>
+                <template x-if="chartType === 'bar'">
+                  <div class="space-y-2">
+                    <div>
+                      <p class="text-[9px] text-slate-400 mb-1">Layout</p>
+                      <div class="grid grid-cols-2 gap-1">
+                        <button type="button" @click="barLayout='grouped'"
+                                :class="barLayout==='grouped' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Grouped</button>
+                        <button type="button" @click="barLayout='stacked'"
+                                :class="barLayout==='stacked' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Stacked</button>
+                      </div>
+                    </div>
+                    <div>
+                      <p class="text-[9px] text-slate-400 mb-1">Canvas</p>
+                      <div class="grid grid-cols-2 gap-1">
+                        <button type="button" @click="barRadial=false"
+                                :class="!barRadial ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Cartesian</button>
+                        <button type="button" @click="barRadial=true"
+                                :class="barRadial ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Radial</button>
+                      </div>
+                    </div>
+                    <div x-show="!barRadial">
+                      <p class="text-[9px] text-slate-400 mb-1">Orientation</p>
+                      <div class="grid grid-cols-2 gap-1">
+                        <button type="button" @click="barOrientation='vertical'"
+                                :class="barOrientation==='vertical' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Vertical</button>
+                        <button type="button" @click="barOrientation='horizontal'"
+                                :class="barOrientation==='horizontal' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Horizontal</button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
                 <div class="flex items-center gap-2">
                   <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Radius</span>
                   <input type="range" min="0" max="12" step="1" x-model.number="barBorderRadius"
                          class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
                   <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="barBorderRadius+'px'"></span>
                 </div>
-                <template x-if="['stacked_bar','assessment_compare','progress_growth'].includes(chartType)">
+                <template x-if="(chartType === 'bar' && barLayout === 'stacked') || ['assessment_compare','progress_growth'].includes(chartType)">
                   <label class="flex items-center gap-1.5 cursor-pointer">
                     <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
                     <span class="text-[10px] text-slate-600">100% stacked</span>
@@ -1479,7 +1573,7 @@
                   <span class="text-[9px] font-mono text-slate-400 w-12 text-right"
                         x-text="xLabelMaxLength>0?xLabelMaxLength+'ch':'Off'"></span>
                 </div>
-                <template x-if="['bar','column','grouped_bar','stacked_bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
+                <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
                   <div class="flex items-center gap-2">
                     <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Bar gap</span>
                     <input type="range" min="0" max="80" step="5" x-model.number="barCategoryGap"
@@ -1533,6 +1627,14 @@
                     <label class="flex items-center gap-1.5 cursor-pointer">
                       <input type="checkbox" x-model="showAxisLabels" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
                       <span class="text-[10px] text-slate-600">Axis labels</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" x-model="showCategories" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
+                      <span class="text-[10px] text-slate-600">Categories</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" x-model="showAxisTitles" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
+                      <span class="text-[10px] text-slate-600">Axis titles</span>
                     </label>
                   </div>
                 </template>
@@ -1593,9 +1695,17 @@
     <input type="hidden" name="show_toolbox"    x-bind:value="showToolbox ? '1' : ''">
     <input type="hidden" name="show_grid"       x-bind:value="showGrid ? '1' : ''">
     <input type="hidden" name="show_axis_labels" x-bind:value="showAxisLabels ? '1' : ''">
+    <input type="hidden" name="show_categories" x-bind:value="showCategories ? '1' : ''">
+    <input type="hidden" name="show_axis_titles" x-bind:value="showAxisTitles ? '1' : ''">
     <input type="hidden" name="animation"       x-bind:value="enableAnimation ? '1' : ''">
     <input type="hidden" name="show_tooltip"    x-bind:value="showTooltip ? '1' : ''">
     <input type="hidden" name="show_percent"    x-bind:value="showPercent ? '1' : ''">
+    <input type="hidden" name="show_percent_symbol" x-bind:value="showPercentSymbol ? '1' : ''">
+    <input type="hidden" name="percent_decimals" x-bind:value="percentDecimals">
+    <input type="hidden" name="category_order"  x-bind:value="JSON.stringify(categoryOrder)">
+    <input type="hidden" name="bar_layout"      x-bind:value="barLayout">
+    <input type="hidden" name="bar_orientation" x-bind:value="barOrientation">
+    <input type="hidden" name="bar_radial"      x-bind:value="barRadial ? '1' : ''">
     <input type="hidden" name="compare_gap"     x-bind:value="compareGap">
     <input type="hidden" name="compare_cat_font_size" x-bind:value="compareCatFontSize">
     <input type="hidden" name="compare_cat_rotation" x-bind:value="compareCatRotation">
@@ -1631,14 +1741,26 @@
 <script>
 function chartBuilder() {
   const existing = JSON.parse('{{ existing_chart_json|escapejs }}' || 'null');
+  if (existing) {
+    existing.config = existing.config || {};
+    if (['column', 'grouped_bar', 'stacked_bar'].includes(existing.chart_type)) {
+      if (!existing.config.bar_layout) {
+        existing.config.bar_layout = existing.chart_type === 'stacked_bar' ? 'stacked' : 'grouped';
+      }
+      if (!existing.config.bar_orientation) existing.config.bar_orientation = 'vertical';
+      if (existing.config.bar_radial == null) existing.config.bar_radial = false;
+      existing.chart_type = 'bar';
+    } else if (existing.chart_type === 'bar') {
+      if (!existing.config.bar_layout) existing.config.bar_layout = 'grouped';
+      if (!existing.config.bar_orientation) existing.config.bar_orientation = 'vertical';
+      if (existing.config.bar_radial == null) existing.config.bar_radial = false;
+    }
+  }
   const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
 
   /* Per-chart-type metadata: req = required, hide = hidden well, lbl = label. */
   const CHART_META = {
-    bar:          { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Vertical bars comparing categories' },
-    column:       { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Vertical bars comparing categories' },
-    grouped_bar:  { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Side-by-side bars \u2014 use Series to group' },
-    stacked_bar:  { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Stack / Group-by'},   hint:'Stacked bars \u2014 use Series to split' },
+    bar:          { x:{req:1,lbl:'Category Axis'},      y:{req:0,lbl:'Value Axis'},          s:{req:0,lbl:'Series / Split'},     hint:'One bar builder for grouped, stacked, horizontal, and radial bar visuals' },
     assessment_compare: { x:{req:0,lbl:'X-Axis / Category (School, Grade…)'},  y:{hide:1},  s:{hide:1}, hint:'Pick 2+ PL columns to compare across windows or years — grouped + stacked by performance level' },
     progress_growth:    { x:{req:0,lbl:'Group By (School, Grade…)'},           y:{hide:1},  s:{hide:1}, hint:'Compare two PL columns per student — classifies each as Growth 🌱, Sliders 📉, or Stickers 📌. Define the PL scale order.' },
     summary_table:      { x:{hide:1}, y:{hide:1}, s:{hide:1}, hint:'Count cross-tab — pick a Row column and a Column column to build a frequency table with drill-through.' },
@@ -1671,6 +1793,9 @@ function chartBuilder() {
     savedQueryId: existing ? String(existing.source_id ?? '') : '',
     rawSql:       existing?.source_sql ?? '',
     chartType:    existing?.chart_type ?? 'bar',
+    barLayout:    existing?.config?.bar_layout ?? 'grouped',
+    barOrientation: existing?.config?.bar_orientation ?? 'vertical',
+    barRadial:    existing ? !!existing.config?.bar_radial : false,
     xCol:         existing?.config?.x_col ?? '',
     yCol:         existing?.config?.y_col ?? '',
     seriesCol:    existing?.config?.stack_col ?? existing?.config?.series_col ?? '',
@@ -1716,9 +1841,13 @@ function chartBuilder() {
     showToolbox:      existing ? (existing.config?.show_toolbox !== false) : true,
     showGrid:         existing ? (existing.config?.show_grid !== false) : true,
     showAxisLabels:   existing ? (existing.config?.show_axis_labels !== false) : true,
+    showCategories:   existing ? (existing.config?.show_categories !== false) : true,
+    showAxisTitles:   existing ? (existing.config?.show_axis_titles !== false) : true,
     enableAnimation:  existing ? (existing.config?.animation !== false) : true,
     showTooltip:      existing ? (existing.config?.show_tooltip !== false) : true,
     showPercent:      existing ? !!existing.config?.show_percent : false,
+    showPercentSymbol: existing ? (existing.config?.show_percent_symbol !== false) : true,
+    percentDecimals:  existing?.config?.percent_decimals ?? 1,
     compareGap:       existing?.config?.compare_gap ?? 30,
     compareCatFontSize: existing?.config?.compare_cat_font_size ?? 12,
     compareCatRotation: existing?.config?.compare_cat_rotation ?? 0,
@@ -1750,6 +1879,9 @@ function chartBuilder() {
     /* Stack order */
     stackOrder:       existing?.config?.stack_order ?? [],
     stackOrderAvail:  [],   // populated from preview response
+    _dragCategoryIdx: null,
+    categoryOrder:    existing?.config?.category_order ?? [],
+    categoryOrderAvail: [],
     /* Assessment Compare filters */
     acIncludeCats:    existing?.config?.ac_include_cats  ?? [],
     acIncludePl:      existing?.config?.ac_include_pl    ?? [],
@@ -1781,6 +1913,7 @@ function chartBuilder() {
     /* ─── Filter state ───────────────────────────────────── */
     filterOptions:  {},               // { grade: ['K','1',...], school: [...] }
     filterLabels:   {},               // { grade: 'Grade', test_..._PL: 'Dibbles BOY PL', ... }
+    yearAliasLabels: {},              // { '__sy_this__': 'This School Year', ... } — from API
     chartFilters:   existing?.source_filters ?? {},  // { grade: ['K','1'], school: ['Lincoln'] }
     filtersLoading: false,
     openFilter:     '',               // which filter dropdown is expanded
@@ -1794,6 +1927,8 @@ function chartBuilder() {
     explorerSearch:    '',
     explorerOpenNode:  '',            // currently expanded top-level tree node
     explorerOpenSub:   '',            // currently expanded sub-level tree node
+    dvYearMode:        localStorage.getItem('dwYearMode') || 'specific',  // 'specific' | 'relative'
+    dvYearAliasMap:    {},            // underscore-keyed: {'2025_2026': '__sy_this__', ...}
 
     /* ─── Computed ───────────────────────────────────────── */
     get activeCols()   {
@@ -1918,11 +2053,11 @@ function chartBuilder() {
       if (this.sourceType === 'columns') this.loadExplorerStructure();
 
       // Data props — changing these requires a full server re-render
-      const dataProps = ['chartType','xCol','yCol','seriesCol','comparePlCols','aggFunc',
-                         'sortCol','sortDir','limit','palette','colorMap','showPercent','stackOrder',
+      const dataProps = ['chartType','barLayout','barOrientation','barRadial','xCol','yCol','seriesCol','comparePlCols','aggFunc',
+                         'sortCol','sortDir','categoryOrder','limit','palette','colorMap','showPercent','showPercentSymbol','percentDecimals','stackOrder',
                          'stRowCol','stColCol','explorerSelected',
                          'acIncludeCats','acIncludePl','acColFilters',
-                         'compareGap','compareCatFontSize','compareCatRotation'];
+                         'compareGap','compareCatFontSize','compareCatRotation','showCategories','showAxisTitles'];
       // Style props — applied live via setOption, no server round-trip needed
       const styleProps = ['chartTitle','titleFontSize','showLegend','showLabels',
                           'legendPos','legendItemGap','legendFontSize','legendIconSize','legendOffset',
@@ -2017,17 +2152,44 @@ function chartBuilder() {
       // Axes (only for chart types that have axes)
       const noAxis = ['pie','donut','funnel','treemap','radar','gauge'].includes(this.chartType);
       if (!noAxis) {
-        opt.xAxis = [{ axisLabel: {
-          show:     !!this.showAxisLabels,
-          rotate:   +this.xLabelRotation || 0,
-          fontSize: +this.xLabelFontSize || 11,
-        }}];
-        opt.yAxis = [{
-          splitLine: { show: !!this.showGrid },
-          axisLabel: { show: !!this.showAxisLabels },
-          min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
-          max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
-        }];
+        const catLblShow = !!this.showAxisLabels && !!this.showCategories;
+        if (this.chartType === 'bar' && this.barRadial) {
+          opt.angleAxis = [{ axisLabel: {
+            show:     catLblShow,
+            rotate:   +this.xLabelRotation || 0,
+            fontSize: +this.xLabelFontSize || 11,
+          }}];
+          opt.radiusAxis = [{
+            splitLine: { show: !!this.showGrid },
+            axisLabel: { show: !!this.showAxisLabels },
+            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
+            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
+          }];
+        } else if (this.chartType === 'bar' && this.barOrientation === 'horizontal') {
+          opt.yAxis = [{ axisLabel: {
+            show:     catLblShow,
+            rotate:   +this.xLabelRotation || 0,
+            fontSize: +this.xLabelFontSize || 11,
+          }}];
+          opt.xAxis = [{
+            splitLine: { show: !!this.showGrid },
+            axisLabel: { show: !!this.showAxisLabels },
+            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
+            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
+          }];
+        } else {
+          opt.xAxis = [{ axisLabel: {
+            show:     catLblShow,
+            rotate:   +this.xLabelRotation || 0,
+            fontSize: +this.xLabelFontSize || 11,
+          }}];
+          opt.yAxis = [{
+            splitLine: { show: !!this.showGrid },
+            axisLabel: { show: !!this.showAxisLabels },
+            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
+            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
+          }];
+        }
       }
 
       // Series: bar gap, border radius, label show/position, smooth, points, opacity
@@ -2144,7 +2306,10 @@ function chartBuilder() {
                               { headers: { 'X-CSRFToken': csrfToken } });
         const d = await r.json();
         this.filterOptions = d.filter_options || {};
-        this.filterLabels  = d.filter_labels  || {};
+        const labels = d.filter_labels || {};
+        this.yearAliasLabels = labels.__school_year_alias_labels__ || {};
+        delete labels.__school_year_alias_labels__;
+        this.filterLabels = labels;
       } catch (e) { console.error('Filter options:', e); this.filterOptions = {}; this.filterLabels = {}; }
       this.filtersLoading = false;
       // If editing a progress_growth chart, auto-populate scale now that
@@ -2161,15 +2326,23 @@ function chartBuilder() {
         const r = await fetch('/dataviz/api/columns/structures/',
                               { headers: { 'X-CSRFToken': csrfToken } });
         const data = await r.json();
+        // Build underscore-keyed alias map for column key matching
+        const rawAliasMap = data?.year_alias_map || {};
+        const aliasMap = {};
+        for (const [yr, alias] of Object.entries(rawAliasMap)) {
+          aliasMap[yr.replaceAll('-', '_')] = alias;
+        }
+        this.dvYearAliasMap = aliasMap;
         this.explorerStructure = {
           categories: data?.categories || {},
           definitions: data?.definitions || {},
           test_structure: data?.test_structure || {},
           mark_structure: data?.mark_structure || {},
+          year_labels: data?.year_labels || {},
         };
       } catch (e) {
         console.error('Explorer structure:', e);
-        this.explorerStructure = { categories: {}, definitions: {}, test_structure: {}, mark_structure: {} };
+        this.explorerStructure = { categories: {}, definitions: {}, test_structure: {}, mark_structure: {}, year_labels: {} };
       }
       this.explorerLoading = false;
       // If editing an existing columns-source chart, rebuild explorerCols
@@ -2177,10 +2350,64 @@ function chartBuilder() {
     },
 
     toggleExplorerCol(col) {
-      const idx = this.explorerSelected.indexOf(col);
-      if (idx >= 0) this.explorerSelected.splice(idx, 1);
-      else this.explorerSelected.push(col);
+      // Resolve both specific and alias forms of the incoming column key
+      const specific = this._dvNormaliseKey(col);
+      const alias = this._dvColKeyForMode(specific, 'relative');
+      // Match against all three possible stored forms to ensure we find it
+      const idx = this.explorerSelected.findIndex(k => k === col || k === specific || k === alias);
+      if (idx >= 0) {
+        this.explorerSelected.splice(idx, 1);
+      } else {
+        this.explorerSelected.push(this._dvColKey(col));
+      }
       this.explorerSelected = [...this.explorerSelected];
+      this._syncExplorerCols();
+    },
+
+    // Convert col key to storage key based on current dvYearMode
+    _dvColKey(col) {
+      return this._dvColKeyForMode(col, this.dvYearMode);
+    },
+    // Convert col key to a given mode's format (used for both current and conversion)
+    _dvColKeyForMode(col, mode) {
+      if (mode !== 'relative') return col;
+      const prefix = col.startsWith('test_') ? 'test_' : col.startsWith('mark_') ? 'mark_' : null;
+      if (!prefix) return col;
+      const rest = col.slice(prefix.length);
+      const parts = rest.split('_');
+      if (parts.length < 3) return col;
+      const yearUnder = parts.slice(0, 2).join('_');
+      const alias = this.dvYearAliasMap[yearUnder];
+      if (!alias) return col;
+      return prefix + alias + '_' + parts.slice(2).join('_');
+    },
+    // Convert alias col key → specific year key
+    _dvNormaliseKey(col) {
+      const prefix = col.startsWith('test_') ? 'test_' : col.startsWith('mark_') ? 'mark_' : null;
+      if (!prefix) return col;
+      const rest = col.slice(prefix.length);
+      for (const [yearUnder, alias] of Object.entries(this.dvYearAliasMap)) {
+        if (rest.startsWith(alias + '_')) {
+          return prefix + yearUnder + '_' + rest.slice(alias.length + 1);
+        }
+      }
+      return col;
+    },
+    // True if col (in either specific or alias form) is in explorerSelected
+    _dvIsColSelected(col) {
+      const norm = this._dvNormaliseKey(col);
+      const aliasForm = this._dvColKeyForMode(norm, 'relative');
+      return this.explorerSelected.includes(norm) || this.explorerSelected.includes(aliasForm);
+    },
+    // Switch year mode, converting existing selections to the new format
+    setDvYearMode(mode) {
+      if (mode === this.dvYearMode) return;
+      this.explorerSelected = [...new Set(this.explorerSelected.map(key =>
+        mode === 'relative' ? this._dvColKeyForMode(this._dvNormaliseKey(key), 'relative')
+                            : this._dvNormaliseKey(key)
+      ))];
+      this.dvYearMode = mode;
+      localStorage.setItem('dwYearMode', mode);
       this._syncExplorerCols();
     },
     toggleDrillCol(col) {
@@ -2212,7 +2439,10 @@ function chartBuilder() {
         });
         const d = await r.json();
         this.filterOptions = d.filter_options || {};
-        this.filterLabels  = d.filter_labels  || {};
+        const labels = d.filter_labels || {};
+        this.yearAliasLabels = labels.__school_year_alias_labels__ || {};
+        delete labels.__school_year_alias_labels__;
+        this.filterLabels = labels;
       } catch (e) { console.error('Explorer filters:', e); this.filterOptions = {}; this.filterLabels = {}; }
       this.filtersLoading = false;
     },
@@ -2362,6 +2592,18 @@ function chartBuilder() {
                 this.stackOrderAvail = names;
                 if (this.stackOrder.length !== names.length || !names.every(n => this.stackOrder.includes(n))) {
                   this.stackOrder = [...names];
+                }
+              } catch (_) {}
+
+              try {
+                const categories = JSON.parse(el.dataset.categoryNames || '[]');
+                if (categories.length) {
+                  this.categoryOrderAvail = categories;
+                  if (this.categoryOrder.length !== categories.length || !categories.every(c => this.categoryOrder.includes(c))) {
+                    this.categoryOrder = [...categories];
+                  }
+                } else {
+                  this.categoryOrderAvail = [];
                 }
               } catch (_) {}
 
