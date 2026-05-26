@@ -862,15 +862,50 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     
-    # Aggregate data using the existing _agg helper
-    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False)
-    
-    # Map values to integers (each representing a student dot)
-    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
-    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
-    
-    # Compute total dots N
-    N = sum(max(0, int(round(value_map.get(cat, 0)))) for cat in categories)
+    # 1. Locate the corresponding Scale Score (SS) column
+    ss_col = None
+    x_meta = _parse_col_meta(x_col, col_defs or {})
+    if x_meta and x_meta.get('col_type') == 'test':
+        for c in df.columns:
+            c_meta = _parse_col_meta(c, col_defs or {})
+            if c_meta and c_meta.get('col_type') == 'test':
+                if (c_meta.get('assessment') == x_meta.get('assessment') and
+                    c_meta.get('year') == x_meta.get('year') and
+                    c_meta.get('window') == x_meta.get('window') and
+                    (c.endswith('_SS') or 'ss' in c.lower() or 'scale score' in (col_defs or {}).get(c, '').lower())):
+                    ss_col = c
+                    break
+    if not ss_col:
+        # Fallback to standard conventions
+        for candidate in [x_col.replace('_PL', '_SS'), x_col.replace('_pl', '_ss'), 'ss']:
+            if candidate in df.columns:
+                ss_col = candidate
+                break
+
+    # 2. Sort the student rows by SS (ascending, lowest to highest)
+    df_sorted = df.copy()
+    if ss_col:
+        # Create a numeric column for sorting, coercing invalid values to NaN
+        df_sorted['_ss_numeric'] = pd.to_numeric(df_sorted[ss_col], errors='coerce')
+        # Sort ascending, placing NaNs first (so they are on the left-most / lowest side)
+        df_sorted = df_sorted.sort_values(by='_ss_numeric', ascending=True, na_position='first')
+    else:
+        # Fallback: sort by Category or Student Name
+        sort_by_cols = []
+        if x_col in df_sorted.columns:
+            sort_by_cols.append(x_col)
+        if 'student_name' in df_sorted.columns:
+            sort_by_cols.append('student_name')
+        if sort_by_cols:
+            df_sorted = df_sorted.sort_values(by=sort_by_cols, ascending=True)
+
+    # 3. Get categories and value counts for sorting the categories list
+    value_counts = df_sorted[x_col].dropna().astype(str).value_counts()
+    value_map = value_counts.to_dict()
+    categories = _ordered_categories(list(value_map.keys()), cfg, value_map)
+
+    # 4. Total dots N = number of students
+    N = len(df_sorted)
     if N <= 0:
         return _message_option('No data (total dots is 0)', cfg)
 
@@ -945,10 +980,53 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
     coords.sort(key=lambda t: -t[0])
     sorted_coords = [(cx, cy) for _, cx, cy in coords]
 
-    # Assign seats to categories sequentially
-    series = []
-    coord_idx = 0
+    # Map each student row to one of the generated coordinates
+    # Adjust N in case generated coordinates differ slightly from N due to rounding edge cases
+    N = min(len(df_sorted), len(sorted_coords))
     
+    student_data_by_cat = {cat: [] for cat in categories}
+    
+    def _clean_val(val):
+        if pd.isna(val):
+            return None
+        if isinstance(val, (int, float)):
+            if float(val).is_integer():
+                return int(val)
+            return float(val)
+        val_str = str(val).strip()
+        try:
+            if '.' in val_str:
+                return float(val_str)
+            else:
+                return int(val_str)
+        except ValueError:
+            return val_str
+
+    for i in range(N):
+        row = df_sorted.iloc[i]
+        cat = str(row[x_col])
+        if cat not in student_data_by_cat:
+            student_data_by_cat[cat] = []
+            
+        cx, cy = sorted_coords[i]
+        
+        student_name = row.get('student_name', '')
+        if pd.isna(student_name):
+            student_name = 'Student'
+            
+        pl_val = row.get(x_col, '')
+        if pd.isna(pl_val):
+            pl_val = ''
+            
+        ss_val = _clean_val(row.get(ss_col, '')) if ss_col else None
+            
+        student_data_by_cat[cat].append({
+            'value': [cx, cy],
+            'student_name': str(student_name),
+            'pl': str(pl_val),
+            'ss': ss_val
+        })
+
     # Determine point size dynamically based on N so it fits beautifully
     if N < 50:
         pt_size = 14
@@ -970,18 +1048,18 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
         except (ValueError, TypeError):
             pass
 
+    # Assign seats to categories sequentially
+    series = []
     for cat in categories:
-        cat_val = max(0, int(round(value_map.get(cat, 0))))
-        if cat_val <= 0:
+        cat_data = student_data_by_cat.get(cat, [])
+        if not cat_data:
             continue
-        cat_coords = sorted_coords[coord_idx:coord_idx + cat_val]
-        coord_idx += cat_val
         
         series.append({
             'name': cat,
             'type': 'scatter',
             'symbolSize': pt_size,
-            'data': cat_coords,
+            'data': cat_data,
             'clip': False,
             'itemStyle': {
                 'opacity': 0.85,
@@ -1019,9 +1097,20 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
     option['series'] = series
     
     # Custom tooltip
+    show_ss = cfg.get('parliament_show_ss', False) is True
     tooltip_js = (
         "function(params) {"
-        "  return '<b>' + params.seriesName + '</b><br/>' + params.marker + ' Student dot';"
+        "  var data = params.data;"
+        "  var marker = params.marker || '';"
+        "  var studentName = data.student_name || 'Student';"
+        "  var pl = data.pl || params.seriesName || '';"
+        f"  var showSs = {'true' if show_ss else 'false'};"
+        "  var ss = data.ss;"
+        "  var tooltip = '<b>' + studentName + '</b><br/>' + marker + ' ' + pl;"
+        "  if (showSs && ss !== undefined && ss !== null && ss !== '') {"
+        "    tooltip += ' (SS: ' + ss + ')';"
+        "  }"
+        "  return tooltip;"
         "}"
     )
     option['tooltip'] = {'show': True, 'trigger': 'item', '__formatter_js__': tooltip_js}

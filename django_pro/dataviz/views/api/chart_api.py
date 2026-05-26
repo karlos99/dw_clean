@@ -178,6 +178,7 @@ def _cfg_from_post(post):
         'parliament_dot_scale': _parse_float(post.get('parliament_dot_scale'), None),
         'parliament_shape':     post.get('parliament_shape', 'semi-circle'),
         'parliament_rows':      _parse_int(post.get('parliament_rows'), None) if post.get('parliament_rows') else None,
+        'parliament_show_ss':   bool(post.get('parliament_show_ss')),
     }
 
 
