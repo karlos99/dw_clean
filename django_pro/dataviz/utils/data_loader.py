@@ -268,8 +268,13 @@ def _build_mark_columns_from_db(cursor, selected_mark_cols: list[str]) -> tuple[
     return result
 
 
-def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict]):
-    """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place)."""
+def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict],
+                     tested_school_codes: list[str] | None = None):
+    """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place).
+
+    ``tested_school_codes``: when provided, restricts results to rows where
+    ``results.school_code`` is one of the given codes (tested/assessment school filter).
+    """
     if not test_cols_info or not student_ids:
         return
 
@@ -288,6 +293,13 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
         where_parts.append(part)
         params.extend(part_params)
 
+    tested_school_clause = ''
+    if tested_school_codes:
+        codes = [c for c in tested_school_codes if c]
+        if codes:
+            tested_school_clause = f"AND r.school_code = ANY(%s)"
+            params.append(codes)
+
     sql = f"""
         SELECT r.local_student_id, r.ss, r.pl, r.other_info,
                r.school_year, t.test_name, t.subject, t.test_window
@@ -295,6 +307,7 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
         INNER JOIN tests t ON r.test_group_key = t.test_group_key
         WHERE r.local_student_id = ANY(%s)
           AND ({" OR ".join(where_parts)})
+          {tested_school_clause}
     """
     cursor.execute(sql, [student_ids, *params])
     
@@ -464,6 +477,17 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     requested = config.get('columns', [])
     filters   = config.get('filters', {}) if isinstance(config.get('filters'), dict) else {}
 
+    # Resolve school-year aliases (e.g. '__sy_this__') to concrete year values.
+    if 'school_year' in filters:
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            sy_val = filters['school_year']
+            if isinstance(sy_val, list):
+                filters = {**filters, 'school_year': [resolve_school_year(v) for v in sy_val]}
+            else:
+                filters = {**filters, 'school_year': resolve_school_year(sy_val)}
+        except Exception:
+            pass
 
     # Partition requested columns into base / test / mark buckets.
     # Base columns go directly into SQL (cs.{col}) so must be safe identifiers.
@@ -479,6 +503,15 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             test_cols.append(c)
         elif c.startswith('mark_'):
             mark_cols.append(c)
+
+    # Resolve relative column key aliases (e.g. test___sy_this___... → test_2025_2026_...)
+    # before they reach _parse_year / _build_test_columns_from_db which expect real years.
+    try:
+        from dataexploration.school_year_utils import resolve_relative_column_key
+        test_cols = [resolve_relative_column_key(c) for c in test_cols]
+        mark_cols = [resolve_relative_column_key(c) for c in mark_cols]
+    except Exception:
+        pass
 
     # Ensure we always have join keys so we can do bulk fetches
     need_test = bool(test_cols)
@@ -584,7 +617,12 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                 where_parts.append(f'{expr} = %s')
                 params.append(value)
 
-    # Apply every filter whose key is a base CS column or an enroll field
+    # Apply every filter whose key is a base CS column or an enroll field.
+    # Pull out special non-column filters first.
+    tested_school_filter = filters.pop('tested_school', None) if isinstance(filters, dict) else None
+    if tested_school_filter and not isinstance(tested_school_filter, list):
+        tested_school_filter = [tested_school_filter]
+
     for fkey, fval in filters.items():
         if fkey == 'search':
             continue  # handled separately below
@@ -674,7 +712,8 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                 if need_test:
                     test_infos, _ = _build_test_columns_from_db(cursor, test_cols)
                     student_ids = [r['student_id'] for r in rows if r.get('student_id')]
-                    _fetch_test_data(cursor, test_infos, student_ids, rows)
+                    _fetch_test_data(cursor, test_infos, student_ids, rows,
+                                     tested_school_codes=tested_school_filter)
 
                 if need_mark:
                     mark_infos, _ = _build_mark_columns_from_db(cursor, mark_cols)

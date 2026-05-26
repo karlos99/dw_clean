@@ -196,6 +196,23 @@ _ENROLL_JOIN = (
 )
 
 
+def _inject_school_year_aliases(options: dict, labels: dict) -> None:
+    """Prepend relative alias options to the school_year filter if present."""
+    if 'school_year' not in options:
+        return
+    from dataexploration.constants import SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR
+    alias_entries = [
+        (SY_THIS_YEAR, 'This School Year'),
+        (SY_LAST_YEAR, 'Last School Year'),
+        (SY_TWO_PRIOR, 'Two Years Prior'),
+    ]
+    # Prepend aliases so they appear at the top of the list
+    existing = options['school_year']
+    options['school_year'] = [a for a, _ in alias_entries] + [y for y in existing if y not in {a for a, _ in alias_entries}]
+    # Store per-value labels under a special key for the frontend
+    labels['__school_year_alias_labels__'] = {a: lbl for a, lbl in alias_entries}
+
+
 @login_required
 def query_filter_options_api(request, query_id):
     """Return distinct values for every filterable column available in a query.
@@ -253,6 +270,7 @@ def query_filter_options_api(request, query_id):
     join_sql  = _ENROLL_JOIN if needs_enroll else ''
 
     options: dict[str, list] = {}
+    labels: dict[str, str] = {}
     try:
         with connection.cursor() as cursor:
             # ── Base demographic columns from current_student ──
@@ -277,6 +295,9 @@ def query_filter_options_api(request, query_id):
             if pl_cols:
                 from dataviz.utils.data_loader import _build_test_columns_from_db
                 _infos, col_map = _build_test_columns_from_db(cursor, pl_cols)
+
+                # Collect tested school codes from results for all PL columns
+                tested_school_codes: dict[str, str] = {}  # code → display name
                 for col in pl_cols:
                     info = col_map.get(col)
                     if not info or info.get('metric') != 'pl':
@@ -303,6 +324,32 @@ def query_filter_options_api(request, query_id):
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
                         options[col] = vals
+
+                    # Gather school_codes from results for this assessment
+                    cursor.execute(
+                        "SELECT DISTINCT r.school_code, "
+                        "  COALESCE(sch.short_name, sch.school_name, r.school_code) AS school_label "
+                        "FROM results r "
+                        "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                        "LEFT JOIN school sch ON sch.assessment_school_code = r.school_code "
+                        "WHERE r.school_year = %s "
+                        "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                        f"{win_clause} "
+                        "AND r.school_code IS NOT NULL AND r.school_code != '' "
+                        "ORDER BY school_label LIMIT 100",
+                        [info['year'],
+                         f"%{info['test_name']}%",
+                         f"%{info['subject']}%",
+                         *win_params],
+                    )
+                    for code, label in cursor.fetchall():
+                        if code:
+                            tested_school_codes[str(code)] = str(label) if label else str(code)
+
+                if tested_school_codes:
+                    options['tested_school'] = list(tested_school_codes.keys())
+                    # Store display labels under special key for the frontend
+                    labels['__tested_school_labels__'] = tested_school_codes
 
             # ── Mark columns (mark_*) ──
             if mark_cols:
@@ -342,18 +389,26 @@ def query_filter_options_api(request, query_id):
     # Strip blank / placeholder values that aren't useful as filters
     _JUNK = frozenset({'', '-', '—', '–', 'N/A', 'n/a', 'None', 'null', 'NULL', '@ERR'})
     for col in list(options):
-        options[col] = [v for v in options[col] if v.strip() not in _JUNK]
+        if col == 'tested_school':
+            options[col] = [v for v in options[col] if v.strip() not in _JUNK]
+        else:
+            options[col] = [v for v in options[col] if v.strip() not in _JUNK]
         if not options[col]:
             del options[col]
 
     # Build human-readable labels for the filter columns
     # Use the saved query's col_defs first (always populated), then COLUMN_DEFINITIONS
     col_defs = config.get('col_defs', {})
-    labels: dict[str, str] = {}
+
+    # tested_school display labels may have been collected per-code
+    tested_school_labels = labels.pop('__tested_school_labels__', {})
+
     for col in options:
         defn = col_defs.get(col)
         if defn:
             labels[col] = str(defn).split('\n')[0].strip()
+        elif col == 'tested_school':
+            labels[col] = 'Tested School'
         elif col in _FILTERABLE_COLUMNS:
             labels[col] = col.replace('_', ' ').title()
         elif col.startswith('test_') and col.endswith('_PL'):
@@ -372,6 +427,9 @@ def query_filter_options_api(request, query_id):
         else:
             labels[col] = col.replace('_', ' ').title()
 
+    _inject_school_year_aliases(options, labels)
+    if tested_school_labels:
+        labels['__tested_school_labels__'] = tested_school_labels
     return JsonResponse({'filter_options': options, 'filter_labels': labels})
 
 
@@ -410,15 +468,19 @@ def column_structures_api(request):
 
     from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
     from dataexploration.column_utils import get_test_columns, get_mark_columns
+    from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
 
     test_structure = get_test_columns()
     mark_structure = get_mark_columns()
+    all_years = list(test_structure.keys()) + list(mark_structure.keys())
 
     return JsonResponse({
-        'categories':     COLUMN_CATEGORIES,
-        'definitions':    COLUMN_DEFINITIONS,
+        'categories':      COLUMN_CATEGORIES,
+        'definitions':     COLUMN_DEFINITIONS,
         'test_structure':  test_structure,
         'mark_structure':  mark_structure,
+        'year_labels':     get_year_labels_map(all_years),
+        'year_alias_map':  get_year_alias_map(),  # {'2025-2026': '__sy_this__', ...}
     })
 
 
@@ -470,6 +532,7 @@ def column_filter_options_api(request):
             if pl_cols:
                 from dataviz.utils.data_loader import _build_test_columns_from_db
                 _infos, col_map = _build_test_columns_from_db(cursor, pl_cols)
+                tested_school_codes: dict[str, str] = {}
                 for col in pl_cols:
                     info = col_map.get(col)
                     if not info or info.get('metric') != 'pl':
@@ -495,6 +558,29 @@ def column_filter_options_api(request):
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
                         options[col] = vals
+
+                    cursor.execute(
+                        "SELECT DISTINCT r.school_code, "
+                        "  COALESCE(sch.short_name, sch.school_name, r.school_code) AS school_label "
+                        "FROM results r "
+                        "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                        "LEFT JOIN school sch ON sch.assessment_school_code = r.school_code "
+                        "WHERE r.school_year = %s "
+                        "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                        f"{win_clause} "
+                        "AND r.school_code IS NOT NULL AND r.school_code != '' "
+                        "ORDER BY school_label LIMIT 100",
+                        [info['year'],
+                         f"%{info['test_name']}%",
+                         f"%{info['subject']}%",
+                         *win_params],
+                    )
+                    for code, label in cursor.fetchall():
+                        if code:
+                            tested_school_codes[str(code)] = str(label) if label else str(code)
+
+                if tested_school_codes:
+                    options['tested_school'] = list(tested_school_codes.keys())
 
             if mark_cols:
                 from dataviz.utils.data_loader import _build_mark_columns_from_db
@@ -537,10 +623,14 @@ def column_filter_options_api(request):
 
     from dataexploration.constants import COLUMN_DEFINITIONS
     labels: dict[str, str] = {}
+    # tested_school_codes populated inside the pl_cols block above (local scope)
+    _ts_codes: dict[str, str] = locals().get('tested_school_codes', {})
     for col in options:
         defn = COLUMN_DEFINITIONS.get(col)
         if defn:
             labels[col] = str(defn).split('\n')[0].strip()
+        elif col == 'tested_school':
+            labels[col] = 'Tested School'
         elif col in _FILTERABLE_COLUMNS:
             labels[col] = col.replace('_', ' ').title()
         elif col.startswith('test_') and col.endswith('_PL'):
@@ -556,4 +646,7 @@ def column_filter_options_api(request):
         else:
             labels[col] = col.replace('_', ' ').title()
 
+    _inject_school_year_aliases(options, labels)
+    if _ts_codes:
+        labels['__tested_school_labels__'] = _ts_codes
     return JsonResponse({'filter_options': options, 'filter_labels': labels})

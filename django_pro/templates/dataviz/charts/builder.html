@@ -388,7 +388,7 @@
         </div>
 
         {# ── Data Filters ──────────────────────────────────────── #}
-        <div x-show="filterCols.length > 0" class="mt-4 pt-3 border-t border-slate-100">
+        <div x-show="filterCols.length > 0 || filterOptions.tested_school" class="mt-4 pt-3 border-t border-slate-100">
           <div class="flex items-center justify-between mb-2">
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 flex items-center gap-1">
               <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
@@ -398,9 +398,62 @@
                     class="text-[9px] text-red-500 hover:text-red-700 font-semibold">Clear all</button>
           </div>
           <p x-show="filtersLoading" class="text-[10px] text-slate-400 py-2">Loading options…</p>
+
+          {# ── Tested School toggle (only when assessment columns present) ── #}
+          <template x-if="filterOptions.tested_school">
+            <div class="mb-2 rounded-md border border-indigo-200 bg-indigo-50 p-2">
+              <p class="text-[10px] font-semibold text-indigo-700 mb-1.5">School Filter Type</p>
+              <div class="flex gap-1">
+                <button type="button"
+                        :class="schoolFilterMode === 'enrolled' ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-600 border border-indigo-300'"
+                        class="flex-1 text-[10px] font-medium px-2 py-1 rounded transition"
+                        @click="schoolFilterMode = 'enrolled'; delete chartFilters.tested_school; chartFilters = {...chartFilters};">
+                  Enrolled School
+                </button>
+                <button type="button"
+                        :class="schoolFilterMode === 'tested' ? 'bg-indigo-600 text-white' : 'bg-white text-indigo-600 border border-indigo-300'"
+                        class="flex-1 text-[10px] font-medium px-2 py-1 rounded transition"
+                        @click="schoolFilterMode = 'tested'; delete chartFilters.school; chartFilters = {...chartFilters};">
+                  Tested School
+                </button>
+              </div>
+              {# Tested school multi-select #}
+              <template x-if="schoolFilterMode === 'tested'">
+                <div class="mt-2">
+                  <input type="text" placeholder="Search tested schools…" x-model="filterSearch['tested_school']"
+                         class="w-full text-[10px] border border-indigo-200 rounded px-2 py-1 mb-1 focus:ring-1 focus:ring-indigo-300 bg-white">
+                  <div class="max-h-32 overflow-y-auto space-y-0.5">
+                    <template x-for="code in (filterOptions.tested_school || []).filter(c => !filterSearch['tested_school'] || (testedSchoolNames[c] || c).toLowerCase().includes((filterSearch['tested_school'] || '').toLowerCase()))" :key="'ts_'+code">
+                      <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-indigo-100 cursor-pointer">
+                        <input type="checkbox" :value="code"
+                               :checked="(chartFilters.tested_school || []).includes(code)"
+                               @change="toggleFilterValue('tested_school', code)"
+                               class="rounded text-indigo-600 w-3 h-3 border-slate-300 focus:ring-indigo-200">
+                        <span class="truncate" x-text="testedSchoolNames[code] || code"></span>
+                      </label>
+                    </template>
+                    <p x-show="(filterOptions.tested_school || []).length === 0" class="text-[10px] text-slate-400 py-1 px-1">No tested school data</p>
+                  </div>
+                  {# Selected chips #}
+                  <div x-show="(chartFilters.tested_school || []).length > 0"
+                       class="flex flex-wrap gap-1 mt-1">
+                    <template x-for="code in (chartFilters.tested_school || [])" :key="'tsc_'+code">
+                      <span class="inline-flex items-center gap-0.5 text-[9px] bg-indigo-100 text-indigo-700 rounded-full px-2 py-0.5">
+                        <span class="truncate max-w-[80px]" x-text="testedSchoolNames[code] || code"></span>
+                        <button @click="removeFilterValue('tested_school', code)" class="hover:text-red-500 font-bold">&times;</button>
+                      </span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
           <div class="space-y-1">
             <template x-for="col in filterCols" :key="'fc_'+col">
-              <div class="rounded-md border border-slate-200 bg-white overflow-hidden">
+              {# Hide enrolled school filter when user switched to Tested School mode #}
+              <div x-show="!(col === 'school' && filterOptions.tested_school && schoolFilterMode === 'tested')"
+                   class="rounded-md border border-slate-200 bg-white overflow-hidden">
                 {# Filter header — click to expand #}
                 <button type="button" @click="toggleFilter(col)"
                         class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
@@ -1918,6 +1971,8 @@ function chartBuilder() {
     filterOptions:  {},               // { grade: ['K','1',...], school: [...] }
     filterLabels:   {},               // { grade: 'Grade', test_..._PL: 'Dibbles BOY PL', ... }
     yearAliasLabels: {},              // { '__sy_this__': 'This School Year', ... } — from API
+    testedSchoolNames: {},            // { 'SCH001': 'Lincoln Elementary', ... } — from API
+    schoolFilterMode: existing?.source_filters?.tested_school?.length ? 'tested' : 'enrolled',
     chartFilters:   existing?.source_filters ?? {},  // { grade: ['K','1'], school: ['Lincoln'] }
     filtersLoading: false,
     openFilter:     '',               // which filter dropdown is expanded
@@ -1947,7 +2002,7 @@ function chartBuilder() {
     },
     get hasData()      { return this.activeCols.length > 0; },
     get plCols()       { return this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_PL')); },
-    get filterCols()   { return Object.keys(this.filterOptions).sort(); },
+    get filterCols()   { return Object.keys(this.filterOptions).filter(k => k !== 'tested_school').sort(); },
     get activeFilterCount() {
       return Object.values(this.chartFilters).reduce((n, arr) => n + (arr?.length || 0), 0);
     },
@@ -2341,6 +2396,8 @@ function chartBuilder() {
         const labels = d.filter_labels || {};
         this.yearAliasLabels = labels.__school_year_alias_labels__ || {};
         delete labels.__school_year_alias_labels__;
+        this.testedSchoolNames = labels.__tested_school_labels__ || {};
+        delete labels.__tested_school_labels__;
         this.filterLabels = labels;
       } catch (e) { console.error('Filter options:', e); this.filterOptions = {}; this.filterLabels = {}; }
       this.filtersLoading = false;
@@ -2474,6 +2531,8 @@ function chartBuilder() {
         const labels = d.filter_labels || {};
         this.yearAliasLabels = labels.__school_year_alias_labels__ || {};
         delete labels.__school_year_alias_labels__;
+        this.testedSchoolNames = labels.__tested_school_labels__ || {};
+        delete labels.__tested_school_labels__;
         this.filterLabels = labels;
       } catch (e) { console.error('Explorer filters:', e); this.filterOptions = {}; this.filterLabels = {}; }
       this.filtersLoading = false;
