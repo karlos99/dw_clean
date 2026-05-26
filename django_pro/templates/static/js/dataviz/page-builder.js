@@ -41,6 +41,9 @@ function pageBuilder() {
     dragOverSectionId: null,
     dragSourceRowId: null,
 
+    /* Editor selection save (for toolbar controls that steal focus) */
+    _savedSel: null,
+
     rows: _ROWS_JSON.map(r => ({
       id:        r.id,
       label:     r.label || '',
@@ -193,7 +196,15 @@ function pageBuilder() {
 
     _buildSectionHtml(sec) {
       if (sec.element_type === 'html') {
-        return '<div class="p-4 text-sm text-slate-700 leading-relaxed">' + (sec.html_content || '<p class="text-slate-400 italic">Empty text block — click Edit Content to add text</p>') + '</div>';
+        const placeholder = '<p class="text-slate-400 italic">Empty text block — click Edit Content to add text</p>';
+        const content = sec.html_content || placeholder;
+        // Use default p-4 only when no explicit wrapper (avoids double-padding)
+        const hasPadWrapper = content.includes('data-pb-p=') || content.includes('data-pb-center=');
+        const padClass = hasPadWrapper ? '' : 'p-4 ';
+        const centerStyle = sec.center_content
+          ? 'display:flex;align-items:center;justify-content:center;height:100%;'
+          : 'height:100%;';
+        return `<div class="${padClass}text-sm text-slate-700 leading-relaxed overflow-y-auto" style="${centerStyle}">${content}</div>`;
       }
       const pageSlug = encodeURIComponent(this.pageSlug);
       const chartId = sec.chart_id;
@@ -609,11 +620,8 @@ function pageBuilder() {
       const sec = this.getSection(sectionId);
       if (!sec) return;
       sec.padding_px = px;
-      // Strip any existing padding wrapper then re-apply
-      let inner = sec.html_content.replace(/^<div[^>]*data-pb-p="\d+"[^>]*>([\s\S]*?)<\/div>$/, '$1');
-      sec.html_content = px > 0
-        ? `<div data-pb-p="${px}" style="padding:${px}px;box-sizing:border-box;">${inner}</div>`
-        : inner;
+      const { inner } = _parseHtmlWrapper(sec.html_content);
+      sec.html_content = _applyHtmlWrapper(inner, px, sec.center_content || false);
       sec.html_preview = sec.html_content.replace(/<[^>]*>/g, '').slice(0, 30);
       const row = this._findRowForSection(sectionId);
       if (row) this._rerenderSection(row.id, sec);
@@ -621,11 +629,60 @@ function pageBuilder() {
       this._post(url, { html_content: sec.html_content });
     },
 
+    setCenterContent(sectionId, center) {
+      const sec = this.getSection(sectionId);
+      if (!sec) return;
+      sec.center_content = center;
+      const { inner } = _parseHtmlWrapper(sec.html_content);
+      sec.html_content = _applyHtmlWrapper(inner, sec.padding_px || 0, center);
+      sec.html_preview = sec.html_content.replace(/<[^>]*>/g, '').slice(0, 30);
+      const row = this._findRowForSection(sectionId);
+      if (row) this._rerenderSection(row.id, sec);
+      const url = _SECTION_URL_TPL.replace('SECTIONID', sectionId);
+      this._post(url, { html_content: sec.html_content });
+    },
+
+    async updateSectionHeight(sectionId, h) {
+      const sec = this.getSection(sectionId);
+      if (!sec) return;
+      const row = this._findRowForSection(sectionId);
+      const grid = row ? this.grids[row.id] : null;
+      const widget = row ? document.querySelector('#row-grid-' + row.id + ' [gs-id="' + sectionId + '"]') : null;
+      if (h === 0) {
+        // 0 = auto-size to content
+        sec.gs_h = 2;
+        if (widget) { widget.setAttribute('gs-size-to-content', 'true'); }
+        if (grid && widget) this._fitHtmlWidget(grid, widget);
+      } else {
+        sec.gs_h = h;
+        if (widget) { widget.removeAttribute('gs-size-to-content'); }
+        if (grid && widget) grid.update(widget, { h });
+        await this._post(_SECTION_URL_TPL.replace('SECTIONID', sectionId), { gs_h: h });
+      }
+    },
+
     /* ── Rich text editor (modal) ───────────────────────────────── */
     richCmd(cmd, value) {
-      // @mousedown.prevent on toolbar buttons already keeps editor focus/selection intact.
-      // Do NOT call editor.focus() here – it would collapse the selection.
+      // @mousedown.prevent on toolbar buttons keeps editor focus/selection intact.
+      // formatBlock requires angle-bracket tag names across browsers.
+      if (cmd === 'formatBlock' && value && !value.startsWith('<')) value = '<' + value + '>';
       document.execCommand(cmd, false, value !== undefined ? value : null);
+    },
+
+    saveEditorSel() {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) this._savedSel = sel.getRangeAt(0).cloneRange();
+    },
+
+    restoreSelAndRichCmd(cmd, value) {
+      if (this._savedSel) {
+        const editor = document.getElementById('pb-rich-editor');
+        if (editor) editor.focus();
+        const sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(this._savedSel); }
+        this._savedSel = null;
+      }
+      this.richCmd(cmd, value);
     },
 
     initRichEditor(sectionId) {
@@ -633,17 +690,22 @@ function pageBuilder() {
         const editor = document.getElementById('pb-rich-editor');
         if (!editor) return;
         const sec = this.getSection(sectionId);
-        // Strip any padding wrapper so the editor shows clean inner content
-        let html = sec?.html_content || '<p></p>';
-        html = html.replace(/^<div[^>]*data-pb-p="\d+"[^>]*>([\s\S]*?)<\/div>$/, '$1');
-        editor.innerHTML = html;
+        // Strip any layout wrapper so editor shows clean inner content
+        const { inner } = _parseHtmlWrapper(sec?.html_content || '<p></p>');
+        editor.innerHTML = inner || '<p></p>';
         editor.focus();
       });
     },
 
     syncRichEditor(sectionId) {
+      // On blur: just save inner content without re-applying wrapper (modal close/save does that)
       const editor = document.getElementById('pb-rich-editor');
-      if (editor) this.updateHtmlContent(sectionId, editor.innerHTML);
+      if (!editor) return;
+      const sec = this.getSection(sectionId);
+      if (sec) {
+        const content = _applyHtmlWrapper(editor.innerHTML, sec.padding_px || 0, sec.center_content || false);
+        this.updateHtmlContent(sectionId, content);
+      }
     },
 
     switchEditorMode(mode, sectionId) {
@@ -652,23 +714,22 @@ function pageBuilder() {
       const sec = this.getSection(sectionId);
 
       if (mode === 'code') {
-        // Flush visual → code
+        // Flush visual → code (show inner HTML without wrapper in code view)
         if (richEl && sec) {
-          sec.html_content = richEl.innerHTML;
-          sec.html_preview = richEl.innerHTML.replace(/<[^>]*>/g, '').slice(0, 30);
+          const { inner } = _parseHtmlWrapper(sec.html_content);
+          this.$nextTick(() => { if (codeEl) codeEl.value = inner || richEl.innerHTML; });
         }
-        this.$nextTick(() => {
-          if (codeEl && sec) codeEl.value = sec.html_content || '';
-        });
       } else {
         // Flush code → visual
         if (codeEl && sec) {
-          sec.html_content = codeEl.value;
-          sec.html_preview = codeEl.value.replace(/<[^>]*>/g, '').slice(0, 30);
+          const inner = codeEl.value;
+          sec.html_content = _applyHtmlWrapper(inner, sec.padding_px || 0, sec.center_content || false);
+          sec.html_preview = inner.replace(/<[^>]*>/g, '').slice(0, 30);
         }
         this.$nextTick(() => {
           if (richEl && sec) {
-            richEl.innerHTML = sec.html_content || '<p></p>';
+            const { inner } = _parseHtmlWrapper(sec.html_content);
+            richEl.innerHTML = inner || '<p></p>';
             richEl.focus();
           }
         });
@@ -685,15 +746,11 @@ function pageBuilder() {
     },
 
     closeEditorModal() {
-      // Flush content before closing, re-wrapping with padding if needed
       if (this.editorSectionId) {
         const sec = this.getSection(this.editorSectionId);
         const editor = document.getElementById('pb-rich-editor');
         if (editor && this.htmlEditorMode === 'visual') {
-          let content = editor.innerHTML;
-          if (sec?.padding_px > 0) {
-            content = `<div data-pb-p="${sec.padding_px}" style="padding:${sec.padding_px}px;box-sizing:border-box;">${content}</div>`;
-          }
+          const content = _applyHtmlWrapper(editor.innerHTML, sec?.padding_px || 0, sec?.center_content || false);
           this.updateHtmlContent(this.editorSectionId, content);
         }
         const codeEl = document.getElementById('pb-code-editor');
@@ -708,14 +765,13 @@ function pageBuilder() {
     saveEditorModal(sectionId) {
       const editor = document.getElementById('pb-rich-editor');
       const codeEl = document.getElementById('pb-code-editor');
-      let content = this.htmlEditorMode === 'visual'
+      const sec = this.getSection(sectionId);
+      const rawContent = this.htmlEditorMode === 'visual'
         ? (editor ? editor.innerHTML : '')
         : (codeEl ? codeEl.value : '');
-      // Re-apply padding wrapper when saving
-      const sec = this.getSection(sectionId);
-      if (sec?.padding_px > 0) {
-        content = `<div data-pb-p="${sec.padding_px}" style="padding:${sec.padding_px}px;box-sizing:border-box;">${content}</div>`;
-      }
+      const content = this.htmlEditorMode === 'visual'
+        ? _applyHtmlWrapper(rawContent, sec?.padding_px || 0, sec?.center_content || false)
+        : rawContent;
       if (sectionId) this.updateHtmlContent(sectionId, content);
       this.editorModalOpen = false;
       this.editorSectionId = null;
@@ -821,10 +877,39 @@ function pageBuilder() {
   };
 }
 
+/* ── Layout wrapper helpers ──────────────────────────────────────── */
+function _parseHtmlWrapper(html) {
+  if (!html) return { inner: '', padding_px: 0, center_content: false };
+  if (!html.includes('data-pb-p') && !html.includes('data-pb-center')) {
+    return { inner: html, padding_px: 0, center_content: false };
+  }
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const w = doc.body.firstElementChild;
+    if (w && w.tagName === 'DIV' && (w.hasAttribute('data-pb-p') || w.hasAttribute('data-pb-center'))) {
+      return {
+        inner: w.innerHTML,
+        padding_px: parseInt(w.getAttribute('data-pb-p') || '0') || 0,
+        center_content: w.getAttribute('data-pb-center') === '1',
+      };
+    }
+  } catch (e) {}
+  return { inner: html, padding_px: 0, center_content: false };
+}
+
+function _applyHtmlWrapper(inner, padding_px, center_content) {
+  if (!padding_px && !center_content) return inner;
+  let attrs = '';
+  let style = 'box-sizing:border-box;';
+  if (padding_px) { attrs += ` data-pb-p="${padding_px}"`; style += `padding:${padding_px}px;`; }
+  if (center_content) { attrs += ' data-pb-center="1"'; style += 'display:flex;align-items:center;justify-content:center;min-height:100%;'; }
+  return `<div${attrs} style="${style}">${inner}</div>`;
+}
+
 /* ── Helper to map a section from JSON ──────────────────────────── */
 function _mapSection(s) {
   const html = s.html_content || '';
-  const padMatch = html.match(/data-pb-p="(\d+)"/);
+  const { padding_px, center_content } = _parseHtmlWrapper(html);
   return {
     id: s.id,
     row_id: s.row_id,
@@ -834,7 +919,8 @@ function _mapSection(s) {
     html_content: html,
     html_preview: html.replace(/<[^>]*>/g, '').slice(0, 30),
     show_title: s.show_title !== false,
-    padding_px: padMatch ? parseInt(padMatch[1]) : 0,
+    padding_px,
+    center_content,
     gs_x: s.gs_x ?? 0, gs_y: s.gs_y ?? 0,
     gs_w: s.gs_w ?? 6, gs_h: s.gs_h ?? 4,
   };

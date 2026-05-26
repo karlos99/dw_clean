@@ -354,6 +354,29 @@
                               <option value="32">Spacious (32px)</option>
                             </select>
                           </div>
+                          <!-- Height control -->
+                          <div>
+                            <div class="text-[9px] text-slate-500 mb-0.5 font-semibold uppercase tracking-wider">Height</div>
+                            <select :value="getSection(selectedSection)?.gs_h || 2"
+                                    @change="updateSectionHeight(selectedSection, parseInt($event.target.value))"
+                                    class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              <option value="0">Auto (fit content)</option>
+                              <option value="1">1 row (80px)</option>
+                              <option value="2">2 rows (160px)</option>
+                              <option value="3">3 rows (240px)</option>
+                              <option value="4">4 rows (320px)</option>
+                              <option value="6">6 rows (480px)</option>
+                              <option value="8">8 rows (640px)</option>
+                            </select>
+                          </div>
+                          <!-- Center toggle -->
+                          <label class="flex items-center gap-2 cursor-pointer text-[10px] text-slate-600">
+                            <input type="checkbox"
+                                   :checked="getSection(selectedSection)?.center_content"
+                                   @change="setCenterContent(selectedSection, $event.target.checked)"
+                                   class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3">
+                            Center content (H &amp; V)
+                          </label>
                         </div>
                       </template>
                     </div>
@@ -617,7 +640,8 @@
           </button>
           <div class="w-px h-5 bg-slate-300 mx-1"></div>
           <!-- Font size -->
-          <select @change="richCmd('fontSize', $event.target.value); $event.target.value = ''"
+          <select @mousedown="saveEditorSel()"
+                  @change="restoreSelAndRichCmd('fontSize', $event.target.value); $event.target.value = ''"
                   class="text-[10px] border border-slate-300 rounded-md px-1 py-0.5 bg-white focus:outline-none h-7">
             <option value="">Size</option>
             <option value="1">XS</option>
