@@ -470,6 +470,36 @@
       <div class="border-r border-slate-200 bg-white overflow-y-auto flex-shrink-0 transition-all duration-200"
            :class="configOpen ? 'w-[340px]' : 'w-0'"
            :style="configOpen ? '' : 'border:none; overflow:hidden'">
+      {# ── Tab bar ── #}
+      <div class="flex items-stretch border-b border-slate-200 bg-white sticky top-0 z-10">
+        <button type="button" @click="centerTab='type'"
+                :class="centerTab==='type' ? 'border-b-2 border-indigo-500 text-indigo-700 bg-white' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50 border-b-2 border-transparent'"
+                class="flex-1 flex flex-col items-center gap-0.5 py-2 text-[9px] font-bold uppercase tracking-wider transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          Type
+        </button>
+        <button type="button" @click="centerTab='map'"
+                :class="centerTab==='map' ? 'border-b-2 border-indigo-500 text-indigo-700 bg-white' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50 border-b-2 border-transparent'"
+                class="flex-1 flex flex-col items-center gap-0.5 py-2 text-[9px] font-bold uppercase tracking-wider transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          Map
+        </button>
+        <button type="button" @click="centerTab='style'"
+                :class="centerTab==='style' ? 'border-b-2 border-indigo-500 text-indigo-700 bg-white' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50 border-b-2 border-transparent'"
+                class="flex-1 flex flex-col items-center gap-0.5 py-2 text-[9px] font-bold uppercase tracking-wider transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+          Style
+        </button>
+        <button type="button" @click="centerTab='options'"
+                :class="centerTab==='options' ? 'border-b-2 border-indigo-500 text-indigo-700 bg-white' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50 border-b-2 border-transparent'"
+                class="flex-1 flex flex-col items-center gap-0.5 py-2 text-[9px] font-bold uppercase tracking-wider transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+          Options
+        </button>
+      </div>
+
+      {# ── Tab: Type ── #}
+      <div x-show="centerTab==='type'">
       {# Chart Type #}
       <section x-data="{ open: true }" class="border-b border-slate-100">
         <button type="button" @click="open=!open"
@@ -490,7 +520,7 @@
         <div x-show="open" x-collapse class="px-4 pb-3 border-t border-slate-50">
         <div class="grid grid-cols-5 gap-1.5 mt-3">
           {% for key, label, icon, group in chart_types_flat %}
-          <button type="button" @click="chartType='{{ key }}'"
+          <button type="button" @click="chartType='{{ key }}'; centerTab='map'"
                   :class="chartType==='{{ key }}' && 'active'"
                   class="ct-btn flex flex-col items-center text-[10px] border border-slate-200 rounded-lg p-1.5 cursor-pointer"
                   title="{{ label }} ({{ group }})">
@@ -503,7 +533,10 @@
            class="mt-2 text-[10px] text-blue-600 bg-blue-50 rounded px-2 py-1 leading-snug"></p>
         </div>{# /chart type collapse #}
       </section>
+      </div>{# /type tab #}
 
+      {# ── Tab: Map ── #}
+      <div x-show="centerTab==='map'">
       {# Column Mapping (drop zones) #}
       <section x-data="{ open: true }" class="border-b border-slate-100">
         <button type="button" @click="open=!open"
@@ -923,166 +956,466 @@
         </div>{# /agg collapse #}
       </section>
 
-      {# Visual options (collapsible) #}
-      <section x-data="{ open: true }" class="border-b border-slate-100">
-        <button type="button" @click="open=!open"
-                class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
-          <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42"/></svg>
-            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Visual Options</p>
-          </div>
-          <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
-               fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
-          </svg>
+      </div>{# /map tab #}
+
+      {# ── Tab: Style ── #}
+      <div x-show="centerTab==='style'">
+
+      {# COLOUR MAPPING #}
+      <div class="px-3 py-3 border-b border-slate-100">
+        <button type="button" @click="colorMapOpen = !colorMapOpen"
+                class="flex items-center gap-1.5 w-full text-[10px] font-semibold text-slate-500 hover:text-slate-700 uppercase tracking-widest transition">
+          <svg class="w-2.5 h-2.5 transition-transform" :class="colorMapOpen && 'rotate-90'" fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+          Colour Mapping
+          <span x-show="Object.keys(colorMap).length > 0"
+                class="text-[8px] bg-blue-100 text-blue-700 rounded-full px-1.5 font-bold ml-1"
+                x-text="Object.keys(colorMap).length + ' custom'"></span>
         </button>
-        <div x-show="open" x-collapse class="border-t border-slate-50">
-
-          {# Tip pointing to Style panel #}
-          <div class="px-4 py-3 bg-violet-50 border-b border-violet-100 flex items-start gap-2">
-            <svg class="w-3.5 h-3.5 text-violet-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            <p class="text-[10px] text-violet-600 leading-snug">
-              Colours, legend, labels, axis, and chart elements are in
-              <strong>Edit Layout → Style</strong>.
-            </p>
-          </div>
-
-          {# ════ COLOUR MAPPING ════ #}
-          <div class="px-4 py-3 border-b border-slate-100">
-            <button type="button" @click="colorMapOpen = !colorMapOpen"
-                    class="flex items-center gap-1.5 w-full text-[10px] font-semibold text-slate-500 hover:text-slate-700 uppercase tracking-widest transition">
-              <svg class="w-2.5 h-2.5 transition-transform" :class="colorMapOpen && 'rotate-90'" fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
-              Colour Mapping
-              <span x-show="Object.keys(colorMap).length > 0"
-                    class="text-[8px] bg-blue-100 text-blue-700 rounded-full px-1.5 font-bold ml-1"
-                    x-text="Object.keys(colorMap).length + ' custom'"></span>
-            </button>
-            <div x-show="colorMapOpen" x-collapse class="mt-2 space-y-2">
-              <p class="text-[10px] text-slate-400 leading-snug">Assign fixed colours to specific data values. Overrides palette.</p>
-              <template x-for="(color, key) in colorMap" :key="'cm_'+key">
-                <div class="flex items-center gap-1.5">
-                  <input type="color" :value="color"
-                         @input="colorMap[key]=$event.target.value;colorMap={...colorMap};_schedulePreview();"
-                         class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
-                  <span class="text-[11px] text-slate-700 truncate flex-1" x-text="key"></span>
-                  <button type="button" @click="delete colorMap[key];colorMap={...colorMap};_schedulePreview();"
-                          class="text-red-400 hover:text-red-600 text-xs font-bold px-1">&times;</button>
-                </div>
-              </template>
-              <div class="flex items-center gap-1">
-                <input type="color" x-model="colorMapNewColor" class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
-                <input type="text" x-model="colorMapNewKey" placeholder="Value name…"
-                       class="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-200">
-                <button type="button"
-                        @click="if(colorMapNewKey.trim()){colorMap[colorMapNewKey.trim()]=colorMapNewColor;colorMap={...colorMap};colorMapNewKey='';_schedulePreview();}"
-                        :disabled="!colorMapNewKey.trim()"
-                        class="text-[10px] bg-slate-800 text-white rounded px-2 py-1 hover:bg-slate-700 disabled:opacity-40 font-semibold">Add</button>
-              </div>
-              <button type="button" x-show="Object.keys(colorMap).length > 0"
-                      @click="colorMap={};_schedulePreview();"
-                      class="text-[9px] text-red-400 hover:text-red-600 font-semibold">Clear all</button>
-            </div>
-          </div>
-
-          {# ════ ASSESSMENT COMPARE FILTERS (only for that chart type) ════ #}
-          <template x-if="chartType === 'assessment_compare'">
-            <div class="px-4 py-3">
-              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Data Filters</p>
-
-              {# PL filter #}
-              <div x-show="acAvailPl.length > 0" class="mb-3">
-                <div class="flex items-center justify-between mb-1.5">
-                  <p class="text-[10px] font-semibold text-slate-500">Performance Levels (Results)</p>
-                  <div class="flex gap-2">
-                    <button type="button" @click="acIncludePl=[...acAvailPl];_schedulePreview();" class="text-[9px] text-blue-500 font-semibold">All</button>
-                    <button type="button" @click="acIncludePl=[];_schedulePreview();" class="text-[9px] text-slate-400 font-semibold">None</button>
-                  </div>
-                </div>
-
-                {# Selected PL Draggable List #}
-                <div x-show="acIncludePl.length > 0" class="flex flex-wrap gap-1 mb-2 p-1.5 bg-slate-50 rounded-lg border border-slate-100">
-                  <template x-for="(pv, i) in acIncludePl" :key="'acplsel_'+pv">
-                    <span class="inline-flex items-center gap-1 text-[10px] bg-white border border-amber-200 text-amber-700 rounded px-1.5 py-0.5 font-medium cursor-grab active:cursor-grabbing shadow-sm"
-                          draggable="true"
-                          @dragstart="_dragAcPlIdx = i"
-                          @dragend="_dragAcPlIdx = null"
-                          @dragover.prevent
-                          @drop.prevent="
-                            if (_dragAcPlIdx !== null && _dragAcPlIdx !== i) {
-                              const moved = acIncludePl.splice(_dragAcPlIdx, 1)[0];
-                              acIncludePl.splice(i, 0, moved);
-                              acIncludePl = [...acIncludePl];
-                              _dragAcPlIdx = null;
-                              _schedulePreview();
-                            }">
-                      <span x-text="pv"></span>
-                      <button @click="acIncludePl=acIncludePl.filter(v=>v!==pv);_schedulePreview();" class="text-amber-400 hover:text-red-500">&times;</button>
-                    </span>
-                  </template>
-                </div>
-
-                <div class="space-y-1 max-h-32 overflow-y-auto px-1">
-                  <template x-for="pv in acAvailPl" :key="'acpl_'+pv">
-                    <label class="flex items-center gap-2 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-amber-50">
-                      <input type="checkbox"
-                             :checked="acIncludePl.includes(pv)"
-                             @change="const i=acIncludePl.indexOf(pv);$event.target.checked?(i<0&&acIncludePl.push(pv)):(acIncludePl=acIncludePl.filter(v=>v!==pv));acIncludePl=[...acIncludePl];_schedulePreview();"
-                             class="rounded border-slate-300 text-amber-600 focus:ring-amber-300 w-3 h-3">
-                      <span x-text="pv"></span>
-                    </label>
-                  </template>
-                </div>
-              </div>
-
-              {# Category filter #}
-              <div x-show="acAvailCats.length > 0">
-                <div class="flex items-center justify-between mb-1.5">
-                  <p class="text-[10px] font-semibold text-slate-500">Categories (X-Axis)</p>
-                  <button type="button" @click="acIncludeCats=[];_schedulePreview();" class="text-[9px] text-blue-500 font-semibold">Reset to All</button>
-                </div>
-
-                {# Selected Categories Draggable List #}
-                <div x-show="acIncludeCats.length > 0" class="flex flex-wrap gap-1 mb-2 p-1.5 bg-slate-50 rounded-lg border border-slate-100">
-                  <template x-for="(cat, i) in acIncludeCats" :key="'accatsel_'+cat">
-                    <span class="inline-flex items-center gap-1 text-[10px] bg-white border border-blue-200 text-blue-700 rounded px-1.5 py-0.5 font-medium cursor-grab active:cursor-grabbing shadow-sm"
-                          draggable="true"
-                          @dragstart="_dragAcCatIdx = i"
-                          @dragend="_dragAcCatIdx = null"
-                          @dragover.prevent
-                          @drop.prevent="
-                            if (_dragAcCatIdx !== null && _dragAcCatIdx !== i) {
-                              const moved = acIncludeCats.splice(_dragAcCatIdx, 1)[0];
-                              acIncludeCats.splice(i, 0, moved);
-                              acIncludeCats = [...acIncludeCats];
-                              _dragAcCatIdx = null;
-                              _schedulePreview();
-                            }">
-                      <span x-text="cat" class="truncate max-w-[120px]"></span>
-                      <button @click="acIncludeCats=acIncludeCats.filter(v=>v!==cat);_schedulePreview();" class="text-blue-400 hover:text-red-500">&times;</button>
-                    </span>
-                  </template>
-                </div>
-
-                <div class="space-y-1 max-h-32 overflow-y-auto px-1">
-                  <template x-for="cat in acAvailCats" :key="'accat_'+cat">
-                    <label class="flex items-center gap-2 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-blue-50">
-                      <input type="checkbox"
-                             :checked="acIncludeCats.includes(cat)"
-                             @change="const i=acIncludeCats.indexOf(cat);$event.target.checked?(i<0&&acIncludeCats.push(cat)):(acIncludeCats=acIncludeCats.filter(v=>v!==cat));acIncludeCats=[...acIncludeCats];_schedulePreview();"
-                             class="rounded border-slate-300 text-blue-600 focus:ring-blue-200 w-3 h-3">
-                      <span x-text="cat" class="truncate"></span>
-                    </label>
-                  </template>
-                </div>
-              </div>
-
-              <p x-show="acAvailCats.length===0&&acAvailPl.length===0"
-                 class="text-[9px] text-slate-400 italic">Preview the chart first to load filter options.</p>
+        <div x-show="colorMapOpen" x-collapse class="mt-2 space-y-2">
+          <p class="text-[10px] text-slate-400 leading-snug">Assign fixed colours to specific data values. Overrides palette.</p>
+          <template x-for="(color, key) in colorMap" :key="'cm_'+key">
+            <div class="flex items-center gap-1.5">
+              <input type="color" :value="color"
+                     @input="colorMap[key]=$event.target.value;colorMap={...colorMap};_schedulePreview();"
+                     class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
+              <span class="text-[11px] text-slate-700 truncate flex-1" x-text="key"></span>
+              <button type="button" @click="delete colorMap[key];colorMap={...colorMap};_schedulePreview();"
+                      class="text-red-400 hover:text-red-600 text-xs font-bold px-1">&times;</button>
             </div>
           </template>
-
+          <div class="flex items-center gap-1">
+            <input type="color" x-model="colorMapNewColor" class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
+            <input type="text" x-model="colorMapNewKey" placeholder="Value name…"
+                   class="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-200">
+            <button type="button"
+                    @click="if(colorMapNewKey.trim()){colorMap[colorMapNewKey.trim()]=colorMapNewColor;colorMap={...colorMap};colorMapNewKey='';_schedulePreview();}"
+                    :disabled="!colorMapNewKey.trim()"
+                    class="text-[10px] bg-slate-800 text-white rounded px-2 py-1 hover:bg-slate-700 disabled:opacity-40 font-semibold">Add</button>
+          </div>
+          <button type="button" x-show="Object.keys(colorMap).length > 0"
+                  @click="colorMap={};_schedulePreview();"
+                  class="text-[9px] text-red-400 hover:text-red-600 font-semibold">Clear all</button>
         </div>
-      </section>
+      </div>
+
+      {# TITLE #}
+      <div class="px-3 py-3 border-b border-slate-100">
+        <label class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">Chart Title</label>
+        <input type="text" x-model="chartTitle" placeholder="e.g. Reading Scores by Grade"
+               class="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white">
+        <div class="mt-2.5 flex items-center gap-2">
+          <span class="text-[9px] text-slate-400 w-12 flex-shrink-0">Size</span>
+          <input type="range" min="8" max="48" step="1" x-model.number="titleFontSize"
+                 class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+          <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="titleFontSize+'px'"></span>
+        </div>
+      </div>
+
+      {# APPEARANCE #}
+      <div class="px-3 py-3 border-b border-slate-100 space-y-2.5">
+        <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Appearance</p>
+        <select x-model="palette" class="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white">
+          <option value="">Default Palette</option>
+          {% for p in palettes %}<option value="{{ p }}">{{ p|title }}</option>{% endfor %}
+        </select>
+        <div class="flex gap-1">
+          <template x-for="bg in ['white','light','dark']">
+            <button type="button" @click="background=bg"
+                    :class="background===bg?'ring-2 ring-indigo-400 border-indigo-400':'border-slate-200 hover:border-slate-400'"
+                    class="flex-1 text-[9px] font-semibold border rounded-lg py-1.5 transition"
+                    :style="{background:bg==='dark'?'#1e2432':bg==='light'?'#f0f4f8':'#fff',color:bg==='dark'?'#e5e7eb':'#374151'}"
+                    x-text="bg==='white'?'White':bg==='light'?'Light':'Dark'">
+            </button>
+          </template>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-[9px] text-slate-400 w-12 flex-shrink-0">Opacity</span>
+          <input type="range" min="0.1" max="1" step="0.1" x-model.number="opacity"
+                 class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+          <span class="text-[9px] font-mono text-slate-400 w-6 text-right" x-text="parseFloat(opacity).toFixed(1)"></span>
+        </div>
+      </div>
+
+      {# LEGEND #}
+      <div class="px-3 py-3 border-b border-slate-100 space-y-2">
+        <div class="flex items-center justify-between">
+          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Legend</p>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" x-model="showLegend" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+            <span class="text-[9px] text-slate-500">Show</span>
+          </label>
+        </div>
+        <div x-show="showLegend" class="space-y-2">
+          <div class="grid grid-cols-4 gap-0.5">
+            <template x-for="opt in [['top','▲'],['bottom','▼'],['left','◀'],['right','▶']]" :key="opt[0]">
+              <button type="button" @click="legendPos=opt[0];legendLeft=null;legendTop=null;_scheduleStylePreview();"
+                      :class="legendPos===opt[0]?'bg-indigo-600 text-white':'bg-slate-50 text-slate-500 hover:bg-indigo-50'"
+                      class="text-[10px] font-bold rounded py-1 transition" x-text="opt[1]">
+              </button>
+            </template>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Edge offset</span>
+            <input type="range" min="0" max="60" step="2" x-model.number="legendOffset"
+                   @input="legendLeft=null;legendTop=null;_scheduleStylePreview();"
+                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="legendOffset+'px'"></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Item gap</span>
+            <input type="range" min="2" max="40" step="2" x-model.number="legendItemGap"
+                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="legendItemGap+'px'"></span>
+          </div>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
+            <div>
+              <div class="flex justify-between"><span class="text-[9px] text-slate-400">Text</span><span class="text-[9px] font-mono text-slate-400" x-text="legendFontSize+'px'"></span></div>
+              <input type="range" min="8" max="16" step="1" x-model.number="legendFontSize"
+                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            </div>
+            <div>
+              <div class="flex justify-between"><span class="text-[9px] text-slate-400">Icon</span><span class="text-[9px] font-mono text-slate-400" x-text="legendIconSize+'px'"></span></div>
+              <input type="range" min="6" max="20" step="1" x-model.number="legendIconSize"
+                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            </div>
+          </div>
+          <p x-show="legendLeft!==null&&legendTop!==null"
+             class="text-[9px] text-indigo-500 bg-indigo-50 rounded px-2 py-1">
+            Drag position set on chart.
+            <button type="button" @click="legendLeft=null;legendTop=null;_scheduleStylePreview();" class="underline ml-1 hover:text-red-500">Reset</button>
+          </p>
+        </div>
+      </div>
+
+      {# DATA LABELS #}
+      <div class="px-3 py-3 border-b border-slate-100 space-y-2">
+        <div class="flex items-center justify-between">
+          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Data Labels</p>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" x-model="showLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+            <span class="text-[9px] text-slate-500">Show</span>
+          </label>
+        </div>
+        <div x-show="showLabels" class="space-y-1.5">
+          <select x-model="labelPosition" class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 bg-white">
+            <option value="top">Top</option>
+            <option value="inside">Inside centre</option>
+            <option value="insideTop">Inside top</option>
+            <option value="insideBottom">Inside bottom</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+          </select>
+        </div>
+      </div>
+
+      {# PERCENT FORMAT #}
+      <div class="px-3 py-3 border-b border-slate-100 space-y-2">
+        <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Percent Format</p>
+        <label class="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" x-model="showPercentSymbol" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+          <span class="text-[10px] text-slate-600">Show % symbol on percent values</span>
+        </label>
+        <div class="flex items-center gap-2">
+          <span class="text-[9px] text-slate-400 w-20 flex-shrink-0">Decimals</span>
+          <input type="range" min="0" max="4" step="1" x-model.number="percentDecimals"
+                 class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+          <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="percentDecimals"></span>
+        </div>
+      </div>
+
+      {# BAR STYLE (conditional) #}
+      <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
+        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
+          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Bar Style</p>
+          <template x-if="chartType === 'bar'">
+            <div class="space-y-2">
+              <div>
+                <p class="text-[9px] text-slate-400 mb-1">Layout</p>
+                <div class="grid grid-cols-2 gap-1">
+                  <button type="button" @click="barLayout='grouped'"
+                          :class="barLayout==='grouped' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Grouped</button>
+                  <button type="button" @click="barLayout='stacked'"
+                          :class="barLayout==='stacked' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Stacked</button>
+                </div>
+              </div>
+              <div>
+                <p class="text-[9px] text-slate-400 mb-1">Canvas</p>
+                <div class="grid grid-cols-3 gap-1">
+                  <button type="button" @click="barRadial=false; barPolar=false"
+                          :class="!barRadial && !barPolar ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Cartesian</button>
+                  <button type="button" @click="barRadial=true; barPolar=false"
+                          :class="barRadial ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Radial</button>
+                  <button type="button" @click="barPolar=true; barRadial=false"
+                          :class="barPolar ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Polar</button>
+                </div>
+              </div>
+              <div x-show="!barRadial && !barPolar">
+                <p class="text-[9px] text-slate-400 mb-1">Orientation</p>
+                <div class="grid grid-cols-2 gap-1">
+                  <button type="button" @click="barOrientation='vertical'"
+                          :class="barOrientation==='vertical' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Vertical</button>
+                  <button type="button" @click="barOrientation='horizontal'"
+                          :class="barOrientation==='horizontal' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Horizontal</button>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div class="flex items-center gap-2">
+            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Radius</span>
+            <input type="range" min="0" max="12" step="1" x-model.number="barBorderRadius"
+                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="barBorderRadius+'px'"></span>
+          </div>
+          <template x-if="(chartType === 'bar' && barLayout === 'stacked') || ['assessment_compare','progress_growth'].includes(chartType)">
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+              <span class="text-[10px] text-slate-600">100% stacked</span>
+            </label>
+          </template>
+        </div>
+      </template>
+
+      {# COMPARE LAYOUT (conditional) #}
+      <template x-if="chartType === 'assessment_compare'">
+        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
+          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Compare Layout</p>
+          <div class="flex items-center gap-2">
+            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Cat. gap</span>
+            <input type="range" min="0" max="150" step="5" x-model.number="compareGap"
+                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            <span class="text-[9px] font-mono text-slate-400 w-8 text-right" x-text="compareGap+'%'"></span>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <div class="flex justify-between"><span class="text-[9px] text-slate-400">Font</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatFontSize+'px'"></span></div>
+              <input type="range" min="8" max="18" step="1" x-model.number="compareCatFontSize"
+                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            </div>
+            <div>
+              <div class="flex justify-between"><span class="text-[9px] text-slate-400">Rotation</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatRotation+'°'"></span></div>
+              <input type="range" min="0" max="90" step="5" x-model.number="compareCatRotation"
+                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            </div>
+          </div>
+        </div>
+      </template>
+
+      {# LINE STYLE (conditional) #}
+      <template x-if="['line','spline','area','areaspline','stacked_area'].includes(chartType)">
+        <div class="px-3 py-3 border-b border-slate-100 space-y-1.5">
+          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Line Style</p>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" x-model="smooth" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+              <span class="text-[10px] text-slate-600">Smooth</span>
+            </label>
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" x-model="showPoints" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+              <span class="text-[10px] text-slate-600">Points</span>
+            </label>
+          </div>
+        </div>
+      </template>
+
+      {# AXIS & LAYOUT (conditional) #}
+      <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
+        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
+          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Axis &amp; Layout</p>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <div class="flex justify-between"><span class="text-[9px] text-slate-400">X rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
+              <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
+                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            </div>
+            <div>
+              <div class="flex justify-between"><span class="text-[9px] text-slate-400">X font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
+              <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
+                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Truncate</span>
+            <input type="range" min="0" max="30" step="1" x-model.number="xLabelMaxLength"
+                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            <span class="text-[9px] font-mono text-slate-400 w-12 text-right"
+                  x-text="xLabelMaxLength>0?xLabelMaxLength+'ch':'Off'"></span>
+          </div>
+          <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
+            <div class="flex items-center gap-2">
+              <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Bar gap</span>
+              <input type="range" min="0" max="80" step="5" x-model.number="barCategoryGap"
+                     class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+              <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="barCategoryGap+'%'"></span>
+            </div>
+          </template>
+          <template x-if="!['heatmap','box','scatter','bubble'].includes(chartType)">
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-[9px] text-slate-400 block mb-0.5">Y Min</label>
+                <input type="number" x-model="yAxisMin" placeholder="Auto"
+                       class="w-full text-xs border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-300">
+              </div>
+              <div>
+                <label class="text-[9px] text-slate-400 block mb-0.5">Y Max</label>
+                <input type="number" x-model="yAxisMax" placeholder="Auto"
+                       class="w-full text-xs border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-300">
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      {# CHART ELEMENTS #}
+      <div class="px-3 py-3">
+        <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Chart Elements</p>
+        <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" x-model="showTooltip" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+            <span class="text-[10px] text-slate-600">Tooltip</span>
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" x-model="enableAnimation" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+            <span class="text-[10px] text-slate-600">Animation</span>
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" x-model="showToolbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+            <span class="text-[10px] text-slate-600">Toolbox</span>
+          </label>
+          <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
+            <div class="contents">
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model="showZoom" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                <span class="text-[10px] text-slate-600">Zoom</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model="showGrid" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                <span class="text-[10px] text-slate-600">Grid lines</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model="showAxisLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                <span class="text-[10px] text-slate-600">Axis labels</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model="showCategories" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                <span class="text-[10px] text-slate-600">Categories</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model="showAxisTitles" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                <span class="text-[10px] text-slate-600">Axis titles</span>
+              </label>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      </div>{# /style tab #}
+
+      {# ── Tab: Options ── #}
+      <div x-show="centerTab==='options'">
+
+      {# Assessment Compare Data Filters #}
+      <template x-if="chartType === 'assessment_compare'">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Data Filters</p>
+
+          {# PL filter #}
+          <div x-show="acAvailPl.length > 0" class="mb-3">
+            <div class="flex items-center justify-between mb-1.5">
+              <p class="text-[10px] font-semibold text-slate-500">Performance Levels (Results)</p>
+              <div class="flex gap-2">
+                <button type="button" @click="acIncludePl=[...acAvailPl];_schedulePreview();" class="text-[9px] text-blue-500 font-semibold">All</button>
+                <button type="button" @click="acIncludePl=[];_schedulePreview();" class="text-[9px] text-slate-400 font-semibold">None</button>
+              </div>
+            </div>
+
+            {# Selected PL Draggable List #}
+            <div x-show="acIncludePl.length > 0" class="flex flex-wrap gap-1 mb-2 p-1.5 bg-slate-50 rounded-lg border border-slate-100">
+              <template x-for="(pv, i) in acIncludePl" :key="'acplsel_'+pv">
+                <span class="inline-flex items-center gap-1 text-[10px] bg-white border border-amber-200 text-amber-700 rounded px-1.5 py-0.5 font-medium cursor-grab active:cursor-grabbing shadow-sm"
+                      draggable="true"
+                      @dragstart="_dragAcPlIdx = i"
+                      @dragend="_dragAcPlIdx = null"
+                      @dragover.prevent
+                      @drop.prevent="
+                        if (_dragAcPlIdx !== null && _dragAcPlIdx !== i) {
+                          const moved = acIncludePl.splice(_dragAcPlIdx, 1)[0];
+                          acIncludePl.splice(i, 0, moved);
+                          acIncludePl = [...acIncludePl];
+                          _dragAcPlIdx = null;
+                          _schedulePreview();
+                        }">
+                  <span x-text="pv"></span>
+                  <button @click="acIncludePl=acIncludePl.filter(v=>v!==pv);_schedulePreview();" class="text-amber-400 hover:text-red-500">&times;</button>
+                </span>
+              </template>
+            </div>
+
+            <div class="space-y-1 max-h-32 overflow-y-auto px-1">
+              <template x-for="pv in acAvailPl" :key="'acpl_'+pv">
+                <label class="flex items-center gap-2 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-amber-50">
+                  <input type="checkbox"
+                         :checked="acIncludePl.includes(pv)"
+                         @change="const i=acIncludePl.indexOf(pv);$event.target.checked?(i<0&&acIncludePl.push(pv)):(acIncludePl=acIncludePl.filter(v=>v!==pv));acIncludePl=[...acIncludePl];_schedulePreview();"
+                         class="rounded border-slate-300 text-amber-600 focus:ring-amber-300 w-3 h-3">
+                  <span x-text="pv"></span>
+                </label>
+              </template>
+            </div>
+          </div>
+
+          {# Category filter #}
+          <div x-show="acAvailCats.length > 0">
+            <div class="flex items-center justify-between mb-1.5">
+              <p class="text-[10px] font-semibold text-slate-500">Categories (X-Axis)</p>
+              <button type="button" @click="acIncludeCats=[];_schedulePreview();" class="text-[9px] text-blue-500 font-semibold">Reset to All</button>
+            </div>
+
+            {# Selected Categories Draggable List #}
+            <div x-show="acIncludeCats.length > 0" class="flex flex-wrap gap-1 mb-2 p-1.5 bg-slate-50 rounded-lg border border-slate-100">
+              <template x-for="(cat, i) in acIncludeCats" :key="'accatsel_'+cat">
+                <span class="inline-flex items-center gap-1 text-[10px] bg-white border border-blue-200 text-blue-700 rounded px-1.5 py-0.5 font-medium cursor-grab active:cursor-grabbing shadow-sm"
+                      draggable="true"
+                      @dragstart="_dragAcCatIdx = i"
+                      @dragend="_dragAcCatIdx = null"
+                      @dragover.prevent
+                      @drop.prevent="
+                        if (_dragAcCatIdx !== null && _dragAcCatIdx !== i) {
+                          const moved = acIncludeCats.splice(_dragAcCatIdx, 1)[0];
+                          acIncludeCats.splice(i, 0, moved);
+                          acIncludeCats = [...acIncludeCats];
+                          _dragAcCatIdx = null;
+                          _schedulePreview();
+                        }">
+                  <span x-text="cat" class="truncate max-w-[120px]"></span>
+                  <button @click="acIncludeCats=acIncludeCats.filter(v=>v!==cat);_schedulePreview();" class="text-blue-400 hover:text-red-500">&times;</button>
+                </span>
+              </template>
+            </div>
+
+            <div class="space-y-1 max-h-32 overflow-y-auto px-1">
+              <template x-for="cat in acAvailCats" :key="'accat_'+cat">
+                <label class="flex items-center gap-2 text-xs cursor-pointer px-1 py-0.5 rounded hover:bg-blue-50">
+                  <input type="checkbox"
+                         :checked="acIncludeCats.includes(cat)"
+                         @change="const i=acIncludeCats.indexOf(cat);$event.target.checked?(i<0&&acIncludeCats.push(cat)):(acIncludeCats=acIncludeCats.filter(v=>v!==cat));acIncludeCats=[...acIncludeCats];_schedulePreview();"
+                         class="rounded border-slate-300 text-blue-600 focus:ring-blue-200 w-3 h-3">
+                  <span x-text="cat" class="truncate"></span>
+                </label>
+              </template>
+            </div>
+          </div>
+
+          <p x-show="acAvailCats.length===0&&acAvailPl.length===0"
+             class="text-[9px] text-slate-400 italic">Preview the chart first to load filter options.</p>
+        </div>
+      </template>
 
       {# Drill-through (collapsible) #}
       <section x-data="{ open: false }" class="border-b border-slate-100">
@@ -1230,6 +1563,7 @@
           </p>
         </div>
       </section>
+      </div>{# /options tab #}
       </div>
     </div>
 
@@ -1276,23 +1610,9 @@
             <span x-text="editMode ? 'Editing Layout' : 'Edit Layout'"></span>
           </button>
 
-          {# Style Panel toggle — only in edit mode #}
-          <button type="button" x-show="editMode" @click="showStylePanel = !showStylePanel"
-                  :class="showStylePanel
-                    ? 'bg-violet-600 text-white border-violet-700'
-                    : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'"
-                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider border rounded shadow-sm transition-all">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
-              <path stroke-linecap="round" d="M12 8v4l3 3"/>
-              <circle cx="12" cy="12" r="3" fill="currentColor" opacity=".4"/>
-            </svg>
-            Style
-          </button>
-
           {# Hint text #}
-          <span x-show="editMode && !showStylePanel" class="text-[10px] text-indigo-400 font-medium">
-            Drag handles &amp; badges · use Style panel for colours &amp; legend
+          <span x-show="editMode" class="text-[10px] text-indigo-400 font-medium">
+            Drag handles &amp; badges to reposition chart elements
           </span>
           <div class="ml-auto flex items-center gap-2">
             <span x-show="!editMode && (gridLeft || gridRight || gridTop || gridBottom)"
@@ -1304,347 +1624,8 @@
           </div>
         </div>
 
-        {# ── Main area: chart + optional side-panel ── #}
+        {# ── Main area: chart ── #}
         <div class="flex flex-1 min-h-0 overflow-hidden">
-
-          {# ── Style side-panel ── #}
-          <div x-show="editMode && showStylePanel"
-               x-transition:enter="transition ease-out duration-150"
-               x-transition:enter-start="opacity-0 -translate-x-4"
-               x-transition:enter-end="opacity-100 translate-x-0"
-               x-transition:leave="transition ease-in duration-100"
-               x-transition:leave-start="opacity-100 translate-x-0"
-               x-transition:leave-end="opacity-0 -translate-x-4"
-               class="w-64 flex-shrink-0 bg-white border-r border-slate-200 overflow-y-auto flex flex-col shadow-xl z-10">
-
-            {# Header #}
-            <div class="flex items-center justify-between px-3 py-2.5 bg-violet-600 text-white flex-shrink-0 sticky top-0 z-20">
-              <div class="flex items-center gap-1.5">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
-                <span class="text-[10px] font-bold uppercase tracking-widest">Style</span>
-              </div>
-              <button type="button" @click="showStylePanel=false" class="text-violet-200 hover:text-white p-0.5 rounded">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
-              </button>
-            </div>
-
-            {# ── TITLE ── #}
-            <div class="px-3 py-3 border-b border-slate-100">
-              <label class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">Chart Title</label>
-              <input type="text" x-model="chartTitle" placeholder="e.g. Reading Scores by Grade"
-                     class="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400 bg-white">
-              <div class="mt-2.5 flex items-center gap-2">
-                <span class="text-[9px] text-slate-400 w-12 flex-shrink-0">Size</span>
-                <input type="range" min="8" max="48" step="1" x-model.number="titleFontSize"
-                       class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="titleFontSize+'px'"></span>
-              </div>
-            </div>
-
-            {# ── APPEARANCE ── #}
-            <div class="px-3 py-3 border-b border-slate-100 space-y-2.5">
-              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Appearance</p>
-              <select x-model="palette" class="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-violet-400 bg-white">
-                <option value="">Default Palette</option>
-                {% for p in palettes %}<option value="{{ p }}">{{ p|title }}</option>{% endfor %}
-              </select>
-              <div class="flex gap-1">
-                <template x-for="bg in ['white','light','dark']">
-                  <button type="button" @click="background=bg"
-                          :class="background===bg?'ring-2 ring-violet-400 border-violet-400':'border-slate-200 hover:border-slate-400'"
-                          class="flex-1 text-[9px] font-semibold border rounded-lg py-1.5 transition"
-                          :style="{background:bg==='dark'?'#1e2432':bg==='light'?'#f0f4f8':'#fff',color:bg==='dark'?'#e5e7eb':'#374151'}"
-                          x-text="bg==='white'?'White':bg==='light'?'Light':'Dark'">
-                  </button>
-                </template>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-[9px] text-slate-400 w-12 flex-shrink-0">Opacity</span>
-                <input type="range" min="0.1" max="1" step="0.1" x-model.number="opacity"
-                       class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                <span class="text-[9px] font-mono text-slate-400 w-6 text-right" x-text="parseFloat(opacity).toFixed(1)"></span>
-              </div>
-            </div>
-
-            {# ── LEGEND ── #}
-            <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-              <div class="flex items-center justify-between">
-                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Legend</p>
-                <label class="flex items-center gap-1 cursor-pointer">
-                  <input type="checkbox" x-model="showLegend" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                  <span class="text-[9px] text-slate-500">Show</span>
-                </label>
-              </div>
-              <div x-show="showLegend" class="space-y-2">
-                <div class="grid grid-cols-4 gap-0.5">
-                  <template x-for="opt in [['top','▲'],['bottom','▼'],['left','◀'],['right','▶']]" :key="opt[0]">
-                    <button type="button" @click="legendPos=opt[0];legendLeft=null;legendTop=null;_scheduleStylePreview();"
-                            :class="legendPos===opt[0]?'bg-violet-600 text-white':'bg-slate-50 text-slate-500 hover:bg-violet-50'"
-                            class="text-[10px] font-bold rounded py-1 transition" x-text="opt[1]">
-                    </button>
-                  </template>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Edge offset</span>
-                  <input type="range" min="0" max="60" step="2" x-model.number="legendOffset"
-                         @input="legendLeft=null;legendTop=null;_scheduleStylePreview();"
-                         class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="legendOffset+'px'"></span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Item gap</span>
-                  <input type="range" min="2" max="40" step="2" x-model.number="legendItemGap"
-                         class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="legendItemGap+'px'"></span>
-                </div>
-                <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
-                  <div>
-                    <div class="flex justify-between"><span class="text-[9px] text-slate-400">Text</span><span class="text-[9px] font-mono text-slate-400" x-text="legendFontSize+'px'"></span></div>
-                    <input type="range" min="8" max="16" step="1" x-model.number="legendFontSize"
-                           class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  </div>
-                  <div>
-                    <div class="flex justify-between"><span class="text-[9px] text-slate-400">Icon</span><span class="text-[9px] font-mono text-slate-400" x-text="legendIconSize+'px'"></span></div>
-                    <input type="range" min="6" max="20" step="1" x-model.number="legendIconSize"
-                           class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  </div>
-                </div>
-                <p x-show="legendLeft!==null&&legendTop!==null"
-                   class="text-[9px] text-indigo-500 bg-indigo-50 rounded px-2 py-1">
-                  Drag position set on chart.
-                  <button type="button" @click="legendLeft=null;legendTop=null;_scheduleStylePreview();" class="underline ml-1 hover:text-red-500">Reset</button>
-                </p>
-              </div>
-            </div>
-
-            {# ── DATA LABELS ── #}
-            <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-              <div class="flex items-center justify-between">
-                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Data Labels</p>
-                <label class="flex items-center gap-1 cursor-pointer">
-                  <input type="checkbox" x-model="showLabels" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                  <span class="text-[9px] text-slate-500">Show</span>
-                </label>
-              </div>
-              <div x-show="showLabels" class="space-y-1.5">
-                <select x-model="labelPosition" class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 bg-white">
-                  <option value="top">Top</option>
-                  <option value="inside">Inside centre</option>
-                  <option value="insideTop">Inside top</option>
-                  <option value="insideBottom">Inside bottom</option>
-                  <option value="left">Left</option>
-                  <option value="right">Right</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Percent Format</p>
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" x-model="showPercentSymbol" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                <span class="text-[10px] text-slate-600">Show % symbol on percent values</span>
-              </label>
-              <div class="flex items-center gap-2">
-                <span class="text-[9px] text-slate-400 w-20 flex-shrink-0">Decimals</span>
-                <input type="range" min="0" max="4" step="1" x-model.number="percentDecimals"
-                       class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="percentDecimals"></span>
-              </div>
-            </div>
-
-            {# ── BAR OPTIONS (conditional) ── #}
-            <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
-              <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Bar Style</p>
-                <template x-if="chartType === 'bar'">
-                  <div class="space-y-2">
-                    <div>
-                      <p class="text-[9px] text-slate-400 mb-1">Layout</p>
-                      <div class="grid grid-cols-2 gap-1">
-                        <button type="button" @click="barLayout='grouped'"
-                                :class="barLayout==='grouped' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Grouped</button>
-                        <button type="button" @click="barLayout='stacked'"
-                                :class="barLayout==='stacked' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Stacked</button>
-                      </div>
-                    </div>
-                      <div>
-                        <p class="text-[9px] text-slate-400 mb-1">Canvas</p>
-                        <div class="grid grid-cols-3 gap-1">
-                          <button type="button" @click="barRadial=false; barPolar=false"
-                                  :class="!barRadial && !barPolar ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                  class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Cartesian</button>
-                          <button type="button" @click="barRadial=true; barPolar=false"
-                                  :class="barRadial ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                  class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Radial</button>
-                          <button type="button" @click="barPolar=true; barRadial=false"
-                                  :class="barPolar ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                  class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Polar</button>
-                        </div>
-                      </div>
-                    <div x-show="!barRadial && !barPolar">
-                      <p class="text-[9px] text-slate-400 mb-1">Orientation</p>
-                      <div class="grid grid-cols-2 gap-1">
-                        <button type="button" @click="barOrientation='vertical'"
-                                :class="barOrientation==='vertical' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Vertical</button>
-                        <button type="button" @click="barOrientation='horizontal'"
-                                :class="barOrientation==='horizontal' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                                class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Horizontal</button>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-                <div class="flex items-center gap-2">
-                  <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Radius</span>
-                  <input type="range" min="0" max="12" step="1" x-model.number="barBorderRadius"
-                         class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="barBorderRadius+'px'"></span>
-                </div>
-                <template x-if="(chartType === 'bar' && barLayout === 'stacked') || ['assessment_compare','progress_growth'].includes(chartType)">
-                  <label class="flex items-center gap-1.5 cursor-pointer">
-                    <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                    <span class="text-[10px] text-slate-600">100% stacked</span>
-                  </label>
-                </template>
-              </div>
-            </template>
-
-            {# ── COMPARE LAYOUT (conditional) ── #}
-            <template x-if="chartType === 'assessment_compare'">
-              <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Compare Layout</p>
-                <div class="flex items-center gap-2">
-                  <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Cat. gap</span>
-                  <input type="range" min="0" max="150" step="5" x-model.number="compareGap"
-                         class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  <span class="text-[9px] font-mono text-slate-400 w-8 text-right" x-text="compareGap+'%'"></span>
-                </div>
-                <div class="grid grid-cols-2 gap-2">
-                  <div>
-                    <div class="flex justify-between"><span class="text-[9px] text-slate-400">Font</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatFontSize+'px'"></span></div>
-                    <input type="range" min="8" max="18" step="1" x-model.number="compareCatFontSize"
-                           class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  </div>
-                  <div>
-                    <div class="flex justify-between"><span class="text-[9px] text-slate-400">Rotation</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatRotation+'°'"></span></div>
-                    <input type="range" min="0" max="90" step="5" x-model.number="compareCatRotation"
-                           class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  </div>
-                </div>
-              </div>
-            </template>
-
-            {# ── LINE OPTIONS (conditional) ── #}
-            <template x-if="['line','spline','area','areaspline','stacked_area'].includes(chartType)">
-              <div class="px-3 py-3 border-b border-slate-100 space-y-1.5">
-                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Line Style</p>
-                <div class="grid grid-cols-2 gap-2">
-                  <label class="flex items-center gap-1.5 cursor-pointer">
-                    <input type="checkbox" x-model="smooth" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                    <span class="text-[10px] text-slate-600">Smooth</span>
-                  </label>
-                  <label class="flex items-center gap-1.5 cursor-pointer">
-                    <input type="checkbox" x-model="showPoints" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                    <span class="text-[10px] text-slate-600">Points</span>
-                  </label>
-                </div>
-              </div>
-            </template>
-
-            {# ── AXIS & LAYOUT (conditional) ── #}
-            <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
-              <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Axis &amp; Layout</p>
-                <div class="grid grid-cols-2 gap-2">
-                  <div>
-                    <div class="flex justify-between"><span class="text-[9px] text-slate-400">X rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
-                    <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
-                           class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  </div>
-                  <div>
-                    <div class="flex justify-between"><span class="text-[9px] text-slate-400">X font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
-                    <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
-                           class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  </div>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Truncate</span>
-                  <input type="range" min="0" max="30" step="1" x-model.number="xLabelMaxLength"
-                         class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                  <span class="text-[9px] font-mono text-slate-400 w-12 text-right"
-                        x-text="xLabelMaxLength>0?xLabelMaxLength+'ch':'Off'"></span>
-                </div>
-                <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
-                  <div class="flex items-center gap-2">
-                    <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Bar gap</span>
-                    <input type="range" min="0" max="80" step="5" x-model.number="barCategoryGap"
-                           class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-violet-500">
-                    <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="barCategoryGap+'%'"></span>
-                  </div>
-                </template>
-                <template x-if="!['heatmap','box','scatter','bubble'].includes(chartType)">
-                  <div class="grid grid-cols-2 gap-2">
-                    <div>
-                      <label class="text-[9px] text-slate-400 block mb-0.5">Y Min</label>
-                      <input type="number" x-model="yAxisMin" placeholder="Auto"
-                             class="w-full text-xs border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-violet-300">
-                    </div>
-                    <div>
-                      <label class="text-[9px] text-slate-400 block mb-0.5">Y Max</label>
-                      <input type="number" x-model="yAxisMax" placeholder="Auto"
-                             class="w-full text-xs border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-violet-300">
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </template>
-
-            {# ── CHART ELEMENTS ── #}
-            <div class="px-3 py-3">
-              <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Chart Elements</p>
-              <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
-                <label class="flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" x-model="showTooltip" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                  <span class="text-[10px] text-slate-600">Tooltip</span>
-                </label>
-                <label class="flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" x-model="enableAnimation" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                  <span class="text-[10px] text-slate-600">Animation</span>
-                </label>
-                <label class="flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" x-model="showToolbox" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                  <span class="text-[10px] text-slate-600">Toolbox</span>
-                </label>
-                <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
-                  <div class="contents">
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input type="checkbox" x-model="showZoom" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                      <span class="text-[10px] text-slate-600">Zoom</span>
-                    </label>
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input type="checkbox" x-model="showGrid" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                      <span class="text-[10px] text-slate-600">Grid lines</span>
-                    </label>
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input type="checkbox" x-model="showAxisLabels" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                      <span class="text-[10px] text-slate-600">Axis labels</span>
-                    </label>
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input type="checkbox" x-model="showCategories" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                      <span class="text-[10px] text-slate-600">Categories</span>
-                    </label>
-                    <label class="flex items-center gap-1.5 cursor-pointer">
-                      <input type="checkbox" x-model="showAxisTitles" class="rounded border-slate-300 text-violet-600 focus:ring-violet-200 w-3 h-3">
-                      <span class="text-[10px] text-slate-600">Axis titles</span>
-                    </label>
-                  </div>
-                </template>
-              </div>
-            </div>
-
-          </div>
 
           {# ── Chart container ── #}
           <div x-ref="previewContainer" class="flex-1 p-5 min-h-[400px] overflow-auto"></div>
@@ -1792,6 +1773,7 @@ function chartBuilder() {
 
   return {
     /* ─── State ──────────────────────────────────────────── */
+    centerTab:    'type',
     chartId:      existing?.id ?? {{ chart_id|default:"null" }},
     name:         existing?.name ?? '',
     chartTitle:   existing?.config?.chart_title ?? '',
