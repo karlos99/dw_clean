@@ -14,6 +14,7 @@ from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
 from dataexploration.models import SavedQuery
 from dataexploration.utils import can_user_view_query
 from dataexploration.view_modules.column_management import get_saved_default_columns
+from dataexploration.school_year_utils import get_year_labels_map
 
 from .mixins import ProjectAdminMixin, is_project_admin
 
@@ -151,6 +152,7 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             ('min', 'Min'), ('max', 'Max'), ('median', 'Median'),
         ]
 
+        all_years = list(test_structure.keys()) + list(marks_structure.keys())
         context.update({
             'chart_id':             chart_id,
             'existing_chart':       existing_chart,
@@ -167,6 +169,8 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             'chart_types_flat':     chart_types_flat,
             'agg_choices':          agg_choices,
             'palettes':             list(PALETTES.keys()),
+            'year_labels':          get_year_labels_map(all_years),
+            'year_labels_json':     json.dumps(get_year_labels_map(all_years)),
         })
         return context
 

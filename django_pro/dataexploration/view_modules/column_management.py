@@ -13,11 +13,58 @@ from ..utils import get_user_roles
 
 
 def get_saved_default_columns():
-    """Get saved default columns or fall back to constants."""
+    """
+    Return the active default column list, with three-level fallback:
+      1. ProjectConfig.default_columns  (project-admin-controlled)
+      2. DefaultColumnSelection table   (legacy)
+      3. DEFAULT_COLUMNS constant       (hard-coded safe default)
+    """
+    try:
+        from landing.utils import get_project_config
+        cfg = get_project_config()
+        if cfg.default_columns:
+            return cfg.default_columns
+    except Exception:
+        pass
+
     selection = DefaultColumnSelection.objects.order_by('-updated_at', '-id').first()
     if selection and selection.columns:
         return selection.columns
     return DEFAULT_COLUMNS
+
+
+def get_enabled_columns():
+    """
+    Return (definitions, categories) filtered against ProjectConfig.enabled_columns.
+
+    If ProjectConfig.enabled_columns is None or empty, returns the full
+    COLUMN_DEFINITIONS and COLUMN_CATEGORIES unchanged (safe default — no
+    disruption to existing behaviour).
+
+    Returns:
+        tuple[dict, dict]: (filtered_definitions, filtered_categories)
+    """
+    try:
+        from landing.utils import get_project_config
+        cfg = get_project_config()
+        allowlist = cfg.enabled_columns  # list of keys or None
+    except Exception:
+        allowlist = None
+
+    if not allowlist:
+        return COLUMN_DEFINITIONS, COLUMN_CATEGORIES
+
+    allowed_set = set(allowlist)
+
+    filtered_defs = {k: v for k, v in COLUMN_DEFINITIONS.items() if k in allowed_set}
+
+    filtered_cats = {}
+    for cat_key, cat in COLUMN_CATEGORIES.items():
+        cols = [c for c in cat['columns'] if c in allowed_set]
+        if cols:
+            filtered_cats[cat_key] = {**cat, 'columns': cols}
+
+    return filtered_defs, filtered_cats
 
 
 def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False, use_students=False, use_eht=False):
@@ -153,11 +200,16 @@ def load_column_structures(request):
     )
     survey_structure = get_survey_columns()
     
+    from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+
+    all_years = list(test_structure.keys()) + list(marks_structure.keys())
     context = {
         'test_structure': test_structure,
         'marks_structure': marks_structure,
         'survey_structure': survey_structure.get('structure', {}),
         'column_definitions': COLUMN_DEFINITIONS,
+        'year_labels': get_year_labels_map(all_years),
+        'year_to_alias': get_year_alias_map(),
     }
     
     return render(request, 'dataexploration/partials/column_structures.html', context)

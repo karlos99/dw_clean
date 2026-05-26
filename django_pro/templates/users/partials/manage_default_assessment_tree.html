@@ -4,7 +4,7 @@
     {% for year, assessments in test_structure.items %}
     <details class="group bg-white border border-slate-200 rounded-lg">
         <summary class="list-none cursor-pointer select-none flex items-center justify-between p-3 hover:bg-slate-50">
-            <span class="text-sm font-semibold text-slate-800">{{ year }}</span>
+            <span class="text-sm font-semibold text-slate-800">{{ year_labels|get_item:year|default:year }}</span>
             <span class="text-xs text-slate-500 group-open:hidden">▶</span>
             <span class="text-xs text-slate-500 hidden group-open:inline">▼</span>
         </summary>

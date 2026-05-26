@@ -59,6 +59,13 @@ def export_students_csv(request):
     # Get filters - URL params take precedence over saved config
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
     school_year = request.GET.get('school_year', '') or saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+    # Resolve school-year aliases (e.g. '__sy_this__') to concrete year strings
+    try:
+        from dataexploration.school_year_utils import resolve_school_year
+        if school_year:
+            school_year = resolve_school_year(school_year)
+    except Exception:
+        pass
     grade = request.GET.get('grade', '') or saved_filters.get('grade', '') or saved_config.get('grade', '')
     
     status_param = request.GET.get('status')

@@ -117,10 +117,28 @@ function pageBuilder() {
           animate: true,
           margin: 8,
           disableOneColumnMode: true,
-          resizable: { handles: 'se,sw,e,w' },
+          resizable: { handles: 'se,s,sw,e,w,n,nw,ne' },
           float: false,
         }, el);
         this.grids[row.id] = grid;
+
+        // Auto-persist layout changes (resize or drag) immediately
+        grid.on('resizestop dragstop', (_event, gsEl) => {
+          const secId = parseInt(gsEl.getAttribute('gs-id') || '0', 10);
+          if (!secId) return;
+          const node = gsEl.gridstackNode || {};
+          const sec = this.getSection(secId);
+          if (sec) {
+            sec.gs_x = node.x ?? sec.gs_x;
+            sec.gs_y = node.y ?? sec.gs_y;
+            sec.gs_w = node.w ?? sec.gs_w;
+            sec.gs_h = node.h ?? sec.gs_h;
+          }
+          const url = _SECTION_URL_TPL.replace('SECTIONID', String(secId));
+          this._post(url, {
+            gs_x: node.x, gs_y: node.y, gs_w: node.w, gs_h: node.h,
+          });
+        });
 
         if (row.sections.length > 0) {
           grid.batchUpdate(true);
@@ -155,15 +173,13 @@ function pageBuilder() {
       item.setAttribute('gs-y', String(y));
       item.setAttribute('gs-w', String(w));
       item.setAttribute('gs-h', String(h));
-      // HTML sections auto-size to their content
-      if (sec.element_type === 'html') {
-        item.setAttribute('gs-size-to-content', 'true');
-      }
 
       const content = document.createElement('div');
+      // HTML sections need overflow-y scroll; charts clip content
+      const overflowCls = sec.element_type === 'html' ? 'pb-html-block' : 'overflow-hidden';
       content.classList.add('grid-stack-item-content',
         'bg-white', 'border', 'border-slate-200', 'rounded-xl',
-        'overflow-hidden', 'shadow-sm', 'flex', 'flex-col');
+        overflowCls, 'shadow-sm', 'flex', 'flex-col');
       content.innerHTML = this._buildSectionHtml(sec);
       item.appendChild(content);
 
@@ -178,20 +194,33 @@ function pageBuilder() {
     },
 
     _fitHtmlWidget(grid, item) {
-      // Prefer GridStack's built-in resizeToContent if available
+      const secId = parseInt(item.getAttribute('gs-id') || '0', 10);
+      const saveHeight = (h) => {
+        if (!secId || !h) return;
+        const sec = this.getSection(secId);
+        if (sec) sec.gs_h = h;
+        this._post(_SECTION_URL_TPL.replace('SECTIONID', String(secId)), { gs_h: h });
+      };
+
       if (typeof grid.resizeToContent === 'function') {
         grid.resizeToContent(item);
+        // Read settled height from node and persist
+        this.$nextTick(() => {
+          const node = item.gridstackNode;
+          const h = node?.h || parseInt(item.getAttribute('data-gs-h') || item.getAttribute('gs-h') || '2');
+          saveHeight(h);
+        });
         return;
       }
-      // Fallback: measure inner content and update height
+      // Fallback: measure scrollHeight and update
       const inner = item.querySelector('.grid-stack-item-content > div');
       if (!inner) return;
       const cellPx = grid.getCellHeight(true) || 80;
       const needed = Math.max(1, Math.ceil((inner.scrollHeight + 16) / cellPx));
       const current = parseInt(item.getAttribute('gs-h') || '2');
-      if (needed > current) {
-        grid.update(item, { h: needed });
-      }
+      const h = needed > current ? needed : current;
+      if (needed > current) grid.update(item, { h: needed });
+      saveHeight(h);
     },
 
     _buildSectionHtml(sec) {
@@ -649,9 +678,7 @@ function pageBuilder() {
       const grid = row ? this.grids[row.id] : null;
       const widget = row ? document.querySelector('#row-grid-' + row.id + ' [gs-id="' + sectionId + '"]') : null;
       if (h === 0) {
-        // 0 = auto-size to content
-        sec.gs_h = 2;
-        if (widget) { widget.setAttribute('gs-size-to-content', 'true'); }
+        // 0 = auto-fit to content; _fitHtmlWidget will persist the result
         if (grid && widget) this._fitHtmlWidget(grid, widget);
       } else {
         sec.gs_h = h;

@@ -24,7 +24,7 @@
       } catch (e) { /* ignore bad formatter */ }
       delete option.tooltip.__formatter_js__;
     }
-    ['xAxis', 'yAxis'].forEach(function(axKey) {
+    ['xAxis', 'yAxis', 'angleAxis', 'radiusAxis'].forEach(function(axKey) {
       var axes = option[axKey];
       if (!axes) return;
       // Normalise to array so we handle both single-axis and multi-axis configs

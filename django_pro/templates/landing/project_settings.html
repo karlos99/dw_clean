@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% load static %}
+{% load dataexploration_tags %}
+
+{% block title %}Project Settings{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Project Settings</h1>
+            <p class="text-sm text-slate-500 mt-1">Configure site-wide defaults for school year and data explorer columns.</p>
+        </div>
+        <a href="{% url 'landing:index' %}"
+           class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm transition-colors">
+            ← Back
+        </a>
+    </div>
+
+    <!-- Flash messages -->
+    {% if messages %}
+    <div class="mb-6 space-y-2">
+        {% for msg in messages %}
+        <div class="flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium
+                    {% if msg.tags == 'success' %}bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200
+                    {% else %}bg-red-50 text-red-800 ring-1 ring-red-200{% endif %}">
+            {{ msg }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post" id="settings-form">
+        {% csrf_token %}
+        <!-- Hidden JSON fields populated by JS -->
+        <input type="hidden" name="default_columns_json" id="default_columns_json">
+        <input type="hidden" name="enabled_columns_json" id="enabled_columns_json">
+
+        <div class="space-y-8">
+
+            <!-- ── Section 1: School Year ─────────────────────────────────── -->
+            <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6">
+                <h2 class="text-base font-semibold text-slate-900 mb-1">Default School Year</h2>
+                <p class="text-sm text-slate-500 mb-4">
+                    This is the reference year used by school-year aliases
+                    (<em>This School Year</em>, <em>Last School Year</em>, <em>Two Years Prior</em>).
+                </p>
+
+                <div class="max-w-xs">
+                    <label for="default_school_year" class="block text-sm font-medium text-slate-700 mb-1">
+                        Current Default
+                    </label>
+                    <select id="default_school_year" name="default_school_year"
+                            class="block w-full rounded-md border-slate-300 shadow-sm text-sm
+                                   focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">— Not Set —</option>
+                        {% for sy in school_years %}
+                        <option value="{{ sy }}" {% if sy == cfg.default_school_year %}selected{% endif %}>
+                            {{ sy }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                {% if cfg.updated_by %}
+                <p class="mt-3 text-xs text-slate-400">
+                    Last updated by {{ cfg.updated_by.get_full_name|default:cfg.updated_by.email }}
+                    on {{ cfg.updated_at|date:"N j, Y, g:i a" }}
+                </p>
+                {% endif %}
+            </div>
+
+            <!-- ── Section 2: Default Columns ─────────────────────────────── -->
+            <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6"
+                 x-data="defaultColumnManager()">
+                <h2 class="text-base font-semibold text-slate-900 mb-1">Default Visible Columns</h2>
+                <p class="text-sm text-slate-500 mb-4">
+                    Columns pre-selected when a user opens the Data Explorer.
+                    Overrides the per-user saved selection.
+                </p>
+
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-6">
+                    {% for cat_key, cat in column_categories.items %}
+                    <div>
+                        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                            {{ cat.title }}
+                        </h3>
+                        <div class="space-y-1.5">
+                            {% for col in cat.columns %}
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox"
+                                       x-model="defaultCols"
+                                       value="{{ col }}"
+                                       class="rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- ── Section 3: Enabled Columns ─────────────────────────────── -->
+            <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6"
+                 x-data="enabledColumnManager()">
+                <h2 class="text-base font-semibold text-slate-900 mb-1">Column Availability</h2>
+                <p class="text-sm text-slate-500 mb-4">
+                    Control which columns users can ever add to a data explorer view.
+                    Unchecking a column hides it from the column picker entirely.
+                    Leave <strong>all checked</strong> (or clear all) to allow every column.
+                </p>
+
+                <div class="flex gap-2 mb-4">
+                    <button type="button" @click="enableAll()"
+                            class="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm">
+                        Enable All
+                    </button>
+                    <button type="button" @click="disableAll()"
+                            class="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm">
+                        Disable All
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-6">
+                    {% for cat_key, cat in column_categories.items %}
+                    <div>
+                        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                            {{ cat.title }}
+                        </h3>
+                        <div class="space-y-1.5">
+                            {% for col in cat.columns %}
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox"
+                                       x-model="enabledCols"
+                                       value="{{ col }}"
+                                       class="rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- ── Submit ───────────────────────────────────────────────── -->
+            <div class="flex justify-end">
+                <button type="submit"
+                        class="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-md
+                               hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500
+                               focus:ring-offset-2 shadow-sm transition-colors">
+                    Save Settings
+                </button>
+            </div>
+
+        </div>
+    </form>
+</div>
+
+<script>
+// Data injected as proper JSON from the view — no Python-repr edge cases
+const ACTIVE_DEFAULT = {{ active_default_columns_json|safe }};
+const ACTIVE_ENABLED = {{ active_enabled_columns_json|safe }};
+const ALL_COLS       = {{ all_column_keys_json|safe }};
+
+function defaultColumnManager() {
+    return {
+        defaultCols: ACTIVE_DEFAULT.slice(),
+        init() {
+            this.$watch('defaultCols', cols => {
+                document.getElementById('default_columns_json').value = JSON.stringify(cols);
+            });
+            document.getElementById('default_columns_json').value = JSON.stringify(this.defaultCols);
+        }
+    };
+}
+
+function enabledColumnManager() {
+    return {
+        // null = all enabled; represent as full list on client side
+        enabledCols: ACTIVE_ENABLED ? ACTIVE_ENABLED.slice() : ALL_COLS.slice(),
+        init() {
+            this.$watch('enabledCols', cols => {
+                // Send empty string (= null in view) when all cols are selected
+                const allSelected = cols.length === ALL_COLS.length;
+                document.getElementById('enabled_columns_json').value =
+                    allSelected ? '' : JSON.stringify(cols);
+            });
+            // Seed the hidden field on page load
+            document.getElementById('enabled_columns_json').value =
+                ACTIVE_ENABLED ? JSON.stringify(ACTIVE_ENABLED) : '';
+        },
+        enableAll()  { this.enabledCols = ALL_COLS.slice(); },
+        disableAll() { this.enabledCols = []; }
+    };
+}
+</script>
+{% endblock %}

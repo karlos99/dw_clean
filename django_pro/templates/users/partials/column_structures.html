@@ -13,7 +13,7 @@
         <div class="mt-2">
             <button data-toggle-category="tests_{{ year|slugify }}"
                 class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
-                <span class="text-sm font-medium text-slate-700">{{ year }}</span>
+                <span class="text-sm font-medium text-slate-700">{{ year_labels|get_item:year|default:year }}</span>
                 <span class="text-xs text-slate-400" data-caret="closed">▶</span>
                 <span class="text-xs hidden text-slate-400" data-caret="open">▼</span>
             </button>
@@ -120,7 +120,7 @@
         <div class="mt-2">
             <button data-toggle-category="marks_{{ year|slugify }}"
                 class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
-                <span class="text-sm font-medium text-slate-700">{{ year }}</span>
+                <span class="text-sm font-medium text-slate-700">{{ year_labels|get_item:year|default:year }}</span>
                 <span data-caret="closed" class="text-slate-400">▶</span>
                 <span data-caret="open" class="hidden text-slate-400">▼</span>
             </button>

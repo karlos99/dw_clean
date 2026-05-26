@@ -163,8 +163,8 @@
 
       <div class="page-grid">
         {% for section in row.sections.all %}
-        <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; min-height: {% widthratio section.gs_h 1 80 %}px;"
-             class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+        <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; height: {% widthratio section.gs_h 1 80 %}px;"
+             class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto{% else %}overflow-hidden{% endif %} flex flex-col">
 
           {% if section.element_type == 'chart' and section.chart %}
             {% if section.show_title %}
@@ -172,7 +172,7 @@
               <span class="text-xs font-semibold text-slate-600 truncate">{{ section.chart.name }}</span>
             </div>
             {% endif %}
-            <div class="flex-1 min-h-[12rem] page-chart-slot"
+            <div class="flex-1 min-h-0 page-chart-slot"
                  data-chart-base-url="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
                  hx-get="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
                  hx-trigger="intersect once"
@@ -194,7 +194,10 @@
             </div>
 
           {% elif section.element_type == 'html' %}
-            <div class="p-4 text-sm text-slate-600 prose max-w-none">{{ section.html_content|safe }}</div>
+            {# Render html_content directly — padding/centering is stored inside the content wrapper #}
+            <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %}">
+              {{ section.html_content|safe }}
+            </div>
           {% endif %}
         </div>
         {% endfor %}

@@ -25,7 +25,8 @@
     data-share-modal-url="{% url 'dataexploration:share_modal' %}"
     data-create-folder-modal-url="{% url 'dataexploration:create_folder_modal' %}"
     data-default-columns="{{ default_columns_json|escapejs }}"
-    data-column-definitions="{{ column_definitions_json|escapejs }}" style="display:none;"></div>
+    data-column-definitions="{{ column_definitions_json|escapejs }}"
+    data-year-alias-map="{{ year_alias_map_json|escapejs }}" style="display:none;"></div>
 <div class="h-screen flex flex-col bg-slate-50" id="student-tests-app">
 
     <!-- Layout: Sidebar + Main Content -->
@@ -294,9 +295,12 @@
                         <select id="school_year" name="school_year" @change="loadData()"
                             class="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
                             <option value="">All Years</option>
-                            {% for year in school_years %}
-                            <option value="{{ year }}" {% if selected_school_year == year %}selected{% endif %}>{{ year }}
-                            </option>
+                            {% for group_label, group_choices in school_year_choices %}
+                            <optgroup label="{{ group_label }}">
+                                {% for val, label in group_choices %}
+                                <option value="{{ val }}" {% if selected_school_year == val %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </optgroup>
                             {% endfor %}
                         </select>
                     </div>

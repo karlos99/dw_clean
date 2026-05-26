@@ -22,6 +22,7 @@ from users.decorators import page_access_required
 
 from dataexploration.models import SavedQuery, StudentList
 from dataexploration.column_utils import get_test_columns, get_mark_columns
+from dataexploration.school_year_utils import get_year_labels_map
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
@@ -137,6 +138,7 @@ class NextYearListView(LoginRequiredMixin, ListView):
                 cache.set(grades_key, grades, 3600)
 
         context['school_years'] = school_years
+        context['year_labels'] = get_year_labels_map(list(test_structure.keys()) + list(marks_structure.keys()))
         context['grades'] = grades
         context['test_structure'] = test_structure
         context['marks_structure'] = marks_structure

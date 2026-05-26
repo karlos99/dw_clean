@@ -12,6 +12,7 @@ from .models import Role
 from dataexploration.models import DefaultColumnSelection
 from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
 from dataexploration.column_utils import get_test_columns
+from dataexploration.school_year_utils import get_year_labels_map
 
 
 def _build_parent_page_options():
@@ -411,6 +412,7 @@ def manage_default_columns(request):
         'column_definitions': COLUMN_DEFINITIONS,
         'test_structure': test_structure,
         'selected_columns': default_columns,
+        'year_labels': get_year_labels_map(list(test_structure.keys())),
     }
 
     return render(request, 'users/manage_default_columns.html', context)

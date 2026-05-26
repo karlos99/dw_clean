@@ -11,6 +11,8 @@
 <style>
   .grid-stack { min-height: 80px !important; }
   .grid-stack-item-content { overflow: hidden; }
+  /* HTML/text sections scroll rather than clip */
+  .grid-stack-item-content.pb-html-block { overflow-y: auto; overflow-x: hidden; }
   .row-container { transition: box-shadow 0.15s, border-color 0.15s; }
   .row-lbl { background:transparent; border:none; outline:none; font-weight:700;
              font-size:.7rem; letter-spacing:.07em; text-transform:uppercase;
