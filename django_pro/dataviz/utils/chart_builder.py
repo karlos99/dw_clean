@@ -476,15 +476,20 @@ def _axis_style(cfg: dict) -> dict:
 
 
 def _x_axis_label_style(cfg: dict) -> dict:
-    """Return axisLabel overrides for x-axis based on user config."""
+    """Return axisLabel overrides for the category axis.
+
+    ``show_categories`` controls whether category text labels are visible.
+    It is intentionally independent of ``show_axis_labels`` (which controls
+    the value-axis numbers).  The axis line/tick/grid remain visible
+    regardless of either setting.
+    """
     t = _theme(cfg)
-    show_labels = cfg.get('show_axis_labels', True) is not False
     show_categories = cfg.get('show_categories', True) is not False
     rotation    = int(cfg.get('x_label_rotation', 0) or 0)
     font_size   = int(cfg.get('x_label_font_size', 11) or 11)
     max_len     = int(cfg.get('x_label_max_length', 0) or 0)
 
-    lbl: dict = {'show': show_labels and show_categories, 'color': t['text'], 'fontSize': font_size}
+    lbl: dict = {'show': show_categories, 'color': t['text'], 'fontSize': font_size}
     if rotation:
         lbl['rotate'] = rotation
     if max_len > 0:
@@ -1636,7 +1641,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             **ax.get('axisLabel', {}),
             'interval': 0,
             'fontSize': 10,
-            'show': cfg.get('show_categories', True) is not False and cfg.get('show_axis_labels', True) is not False,
+            'show': cfg.get('show_categories', True) is not False,
         },
         'axisTick': {'show': False},
         'axisLine': {'show': False},
@@ -1664,7 +1669,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             'color': ax.get('axisLabel', {}).get('color', '#475569'),
             'rotate': cat_rotation,
             'margin': 4,
-            'show': cfg.get('show_categories', True) is not False and cfg.get('show_axis_labels', True) is not False,
+            'show': cfg.get('show_categories', True) is not False,
             '__formatter_js__': cat_formatter_js,
         },
         'axisTick': {'show': False},
