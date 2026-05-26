@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let columnDefinitions = {};
     let yearAliasMap = {}; // {'2024_2025': '__sy_this__', ...} — underscore-format keys
     let yearMode = localStorage.getItem('dwYearMode') || 'specific';
+    let page = 1;
     let sortBy = '';
     let sortDir = 'asc';
     let filters = {};
