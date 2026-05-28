@@ -234,7 +234,7 @@
                  class="rounded-md border border-slate-200 bg-white overflow-hidden">
               <button type="button" @click="explorerOpenNode = explorerOpenNode === 'test_'+year ? '' : 'test_'+year"
                       class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
-                <span class="font-medium text-slate-700"><span class="text-[9px] text-blue-500 font-bold mr-1">TEST</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
+                <span class="font-medium text-slate-700"><span class="text-[9px] text-blue-500 font-bold mr-1">TEST</span><span x-text="dvYearMode === 'relative' ? (explorerStructure?.year_labels?.[year] || year) : year"></span></span>
                 <svg class="w-3 h-3 text-slate-400 transition-transform"
                      :class="explorerOpenNode === 'test_'+year && 'rotate-180'"
                      fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -282,7 +282,7 @@
             <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]" class="rounded-md border border-slate-200 bg-white overflow-hidden">
               <button type="button" @click="explorerOpenNode = explorerOpenNode === 'mark_'+year ? '' : 'mark_'+year"
                       class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
-                <span class="font-medium text-slate-700"><span class="text-[9px] text-emerald-500 font-bold mr-1">MARK</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
+                <span class="font-medium text-slate-700"><span class="text-[9px] text-emerald-500 font-bold mr-1">MARK</span><span x-text="dvYearMode === 'relative' ? (explorerStructure?.year_labels?.[year] || year) : year"></span></span>
                 <svg class="w-3 h-3 text-slate-400 transition-transform"
                      :class="explorerOpenNode === 'mark_'+year && 'rotate-180'"
                      fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -2164,7 +2164,14 @@ function chartBuilder() {
     /* ─── Filter helpers ─────────────────────────────────── */
     toggleFilter(col) { this.openFilter = this.openFilter === col ? '' : col; },
     filteredFilterValues(col) {
-      const vals = this.filterOptions[col] || [];
+      let vals = this.filterOptions[col] || [];
+      if (col === 'school_year') {
+        if (this.dvYearMode === 'relative') {
+          vals = vals.filter(v => (v || '').startsWith('__sy_'));
+        } else {
+          vals = vals.filter(v => !(v || '').startsWith('__sy_'));
+        }
+      }
       const q = (this.filterSearch[col] || '').toLowerCase().trim();
       return q ? vals.filter(v => (v || '').toLowerCase().includes(q)) : vals;
     },
@@ -2583,9 +2590,25 @@ function chartBuilder() {
         mode === 'relative' ? this._dvColKeyForMode(this._dvNormaliseKey(key), 'relative')
                             : this._dvNormaliseKey(key)
       ))];
+      if (this.chartFilters.school_year) {
+        this.chartFilters.school_year = this.chartFilters.school_year.map(val => {
+          if (mode === 'relative') {
+            const key_us = val.replace('-', '_');
+            return this.dvYearAliasMap[key_us] || val;
+          } else {
+            for (const [yearUs, alias] of Object.entries(this.dvYearAliasMap)) {
+              if (alias === val) {
+                return yearUs.replace('_', '-');
+              }
+            }
+            return val;
+          }
+        });
+      }
       this.dvYearMode = mode;
       localStorage.setItem('dwYearMode', mode);
       this._syncExplorerCols();
+      this._schedulePreview();
     },
     toggleDrillCol(col) {
       const idx = this.drillSelected.indexOf(col);

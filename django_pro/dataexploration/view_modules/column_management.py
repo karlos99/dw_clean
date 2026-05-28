@@ -125,32 +125,48 @@ def manage_default_columns(request):
         import json
         columns_json = request.POST.get('columns', '[]')
         try:
-            columns = json.loads(columns_json)
+            try:
+                columns = json.loads(columns_json)
+                if isinstance(columns, str):
+                    columns = [columns]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                columns = request.POST.getlist('columns')
+
             selection, created = DefaultColumnSelection.objects.update_or_create(
                 id=1,
                 defaults={'columns': columns}
             )
+            
+            from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
             return render(request, 'dataexploration/manage_default_columns.html', {
                 'column_categories': COLUMN_CATEGORIES,
                 'column_definitions': COLUMN_DEFINITIONS,
                 'test_structure': test_structure,
                 'selected_columns': columns,
+                'year_labels': get_year_labels_map(list(test_structure.keys())),
+                'year_to_alias': get_year_alias_map(),
                 'success': True,
             })
         except Exception as e:
+            from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
             return render(request, 'dataexploration/manage_default_columns.html', {
                 'column_categories': COLUMN_CATEGORIES,
                 'column_definitions': COLUMN_DEFINITIONS,
                 'test_structure': test_structure,
                 'selected_columns': default_columns,
+                'year_labels': get_year_labels_map(list(test_structure.keys())),
+                'year_to_alias': get_year_alias_map(),
                 'error': str(e),
             })
 
+    from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
     context = {
         'column_categories': COLUMN_CATEGORIES,
         'column_definitions': COLUMN_DEFINITIONS,
         'test_structure': test_structure,
         'selected_columns': default_columns,
+        'year_labels': get_year_labels_map(list(test_structure.keys())),
+        'year_to_alias': get_year_alias_map(),
     }
 
     return render(request, 'dataexploration/manage_default_columns.html', context)

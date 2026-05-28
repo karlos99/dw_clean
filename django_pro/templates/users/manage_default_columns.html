@@ -87,4 +87,93 @@
         </div>
     </form>
 </div>
+
+<script id="selected-columns-data" type="application/json">
+    {{ selected_columns|safe }}
+</script>
+
+<script>
+(function() {
+    const yearAliasMap = {{ year_to_alias|default:'{}'|safe }};
+    let yearMode = localStorage.getItem('dwYearMode') || 'specific';
+
+    function toRelativeKey(col) {
+        for (const [year, alias] of Object.entries(yearAliasMap)) {
+            const yearUs = year.replace('-', '_');
+            if (col.includes(yearUs)) {
+                return col.replace(yearUs, alias);
+            }
+        }
+        return col;
+    }
+
+    function toSpecificKey(col) {
+        for (const [year, alias] of Object.entries(yearAliasMap)) {
+            const yearUs = year.replace('-', '_');
+            if (col.includes(alias)) {
+                return col.replace(alias, yearUs);
+            }
+        }
+        return col;
+    }
+
+    function updateYearDisplay() {
+        // Update toggle buttons classes
+        document.querySelectorAll('[data-year-mode-btn]').forEach(btn => {
+            const isActive = btn.dataset.yearModeBtn === yearMode;
+            btn.classList.toggle('bg-blue-600', isActive);
+            btn.classList.toggle('text-white', isActive);
+            btn.classList.toggle('font-medium', isActive);
+            btn.classList.toggle('bg-white', !isActive);
+            btn.classList.toggle('text-slate-500', !isActive);
+        });
+
+        // Hide/show year group details: in relative mode hide years without an alias
+        document.querySelectorAll('[data-year-group]').forEach(el => {
+            const alias = el.dataset.yearAlias || '';
+            if (yearMode === 'relative') {
+                el.style.display = alias ? '' : 'none';
+            } else {
+                el.style.display = '';
+            }
+        });
+
+        // Update year header label texts
+        document.querySelectorAll('[data-year-header-label]').forEach(el => {
+            const specific = el.dataset.specificLabel || '';
+            const relative = el.dataset.relativeLabel || '';
+            el.textContent = yearMode === 'relative' ? relative : specific;
+        });
+
+        // Update checkbox values to match the current mode
+        document.querySelectorAll('input[name="columns"]').forEach(checkbox => {
+            const currentVal = checkbox.value;
+            const norm = toSpecificKey(currentVal);
+            checkbox.value = yearMode === 'relative' ? toRelativeKey(norm) : norm;
+        });
+    }
+
+    // Bind click events to year mode toggle buttons
+    document.addEventListener('click', e => {
+        const btn = e.target.closest('[data-year-mode-btn]');
+        if (btn) {
+            yearMode = btn.dataset.yearModeBtn;
+            localStorage.setItem('dwYearMode', yearMode);
+            updateYearDisplay();
+        }
+    });
+
+    // Handle initial checkbox checked states based on selected_columns data
+    const selectedColumns = JSON.parse(document.getElementById('selected-columns-data')?.textContent || '[]');
+    document.querySelectorAll('input[name="columns"]').forEach(checkbox => {
+        const val = checkbox.value;
+        const norm = toSpecificKey(val);
+        const rel = toRelativeKey(norm);
+        checkbox.checked = selectedColumns.includes(norm) || selectedColumns.includes(rel);
+    });
+
+    // Initial run
+    updateYearDisplay();
+})();
+</script>
 {% endblock %}

@@ -268,6 +268,12 @@ def load_students(request):
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
     
+    # Resolve any relative column keys in sort_by and filters keys
+    if sort_by:
+        sort_by = resolve_relative_column_key(sort_by)
+    if isinstance(filters, dict):
+        filters = {resolve_relative_column_key(k): v for k, v in filters.items()}
+    
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
         """Append SQL filter clauses + params for the provided filters dict."""
         if not isinstance(filters_to_apply, dict):

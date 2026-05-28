@@ -296,7 +296,7 @@
                             class="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
                             <option value="">All Years</option>
                             {% for group_label, group_choices in school_year_choices %}
-                            <optgroup label="{{ group_label }}">
+                            <optgroup label="{{ group_label }}" data-school-year-group="{% if 'References' in group_label %}relative{% else %}specific{% endif %}">
                                 {% for val, label in group_choices %}
                                 <option value="{{ val }}" {% if selected_school_year == val %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}

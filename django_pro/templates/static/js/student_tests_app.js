@@ -178,6 +178,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Year Mode Helpers ---
+    const aliasLabelMap = {
+        '__sy_this__': 'This School Year',
+        '__sy_prev1__': 'Last School Year',
+        '__sy_prev2__': 'Two Years Prior'
+    };
 
     /** Convert a column key with a real year segment to its relative alias equivalent. */
     function toRelativeKey(col) {
@@ -210,6 +215,26 @@ document.addEventListener('DOMContentLoaded', () => {
         return yearMode === 'relative' ? toRelativeKey(spec) : spec;
     }
 
+    /** Get the display label for a column, dynamically translating to relative if active. */
+    function getColumnLabel(col) {
+        if (!col) return '';
+        let label = columnDefinitions[col] || columnDefinitions[normaliseKey(col)] || col;
+        if (yearMode === 'relative') {
+            for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
+                const hyphenatedYear = yearUs.replace('_', '-');
+                const relLabel = aliasLabelMap[alias];
+                if (relLabel) {
+                    if (label.includes(`(${hyphenatedYear})`)) {
+                        label = label.replace(`(${hyphenatedYear})`, `(${relLabel})`);
+                    } else if (label.includes(hyphenatedYear)) {
+                        label = label.replace(hyphenatedYear, relLabel);
+                    }
+                }
+            }
+        }
+        return label;
+    }
+
     function updateYearModeButtons() {
         document.querySelectorAll('[data-year-mode-btn]').forEach(btn => {
             const isActive = btn.dataset.yearModeBtn === yearMode;
@@ -228,6 +253,58 @@ document.addEventListener('DOMContentLoaded', () => {
                 el.style.display = '';
             }
         });
+        // Update year header label texts
+        document.querySelectorAll('[data-year-header-label]').forEach(el => {
+            const specific = el.dataset.specificLabel || '';
+            const relative = el.dataset.relativeLabel || '';
+            el.textContent = yearMode === 'relative' ? relative : specific;
+        });
+
+        // Filter the school_year dropdown's optgroups based on yearMode
+        const schoolYearSelect = document.getElementById('school_year');
+        if (schoolYearSelect) {
+            let currentVal = schoolYearSelect.value;
+            let changed = false;
+
+            const optGroups = schoolYearSelect.querySelectorAll('optgroup[data-school-year-group]');
+            optGroups.forEach(group => {
+                const groupMode = group.dataset.schoolYearGroup;
+                if (groupMode === yearMode) {
+                    group.style.display = '';
+                    group.disabled = false;
+                } else {
+                    group.style.display = 'none';
+                    group.disabled = true;
+                }
+            });
+
+            // Convert currently selected school year between specific and relative
+            const selectedOpt = schoolYearSelect.querySelector(`option[value="${currentVal}"]`);
+            if (selectedOpt && selectedOpt.parentElement && selectedOpt.parentElement.disabled) {
+                let newVal = '';
+                if (yearMode === 'relative') {
+                    const key_us = currentVal.replace('-', '_');
+                    const alias = yearAliasMap[key_us];
+                    if (alias) newVal = alias;
+                } else {
+                    for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
+                        if (alias === currentVal) {
+                            newVal = yearUs.replace('_', '-');
+                            break;
+                        }
+                    }
+                }
+
+                if (newVal && schoolYearSelect.querySelector(`option[value="${newVal}"]`)) {
+                    schoolYearSelect.value = newVal;
+                    changed = true;
+                } else {
+                    const firstEnabled = schoolYearSelect.querySelector('optgroup:not([disabled]) option, option:not(optgroup option)');
+                    schoolYearSelect.value = firstEnabled ? firstEnabled.value : '';
+                    changed = true;
+                }
+            }
+        }
     }
 
     function setYearMode(mode) {
@@ -477,7 +554,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = String(selectedColumns.length);
         const selectedLabels = selectedColumns
             .map((col) => {
-                const label = columnDefinitions[col] || col;
+                const label = getColumnLabel(col);
                 return label.includes('\n') ? label.split('\n')[0] : label;
             })
             .join(', ');
@@ -742,8 +819,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const vals = filters[col];
                 if (Array.isArray(vals) && vals.length > 0) {
                     hasActiveFilters = true;
-                    // Get first line of label for brevity
-                    let colLabel = columnDefinitions[col] || col;
+                    let colLabel = getColumnLabel(col);
                     if (colLabel.includes('\n')) colLabel = colLabel.split('\n')[0];
 
                     const chip = document.createElement('span');
@@ -783,7 +859,7 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '</th>';
 
         columns.forEach((col, index) => {
-            const label = columnDefinitions[col] || col;
+            const label = getColumnLabel(col);
             const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
             const hasActiveFilter = Array.isArray(filters[col]) && filters[col].length > 0;
             const hasFilter = optionsForCol.length > 0 || hasActiveFilter;

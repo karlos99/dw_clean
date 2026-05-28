@@ -114,7 +114,7 @@ def manage_users(request):
     
     if not (is_proj or is_school):
         messages.error(request, 'You do not have permission to access this page.')
-        return redirect('index')
+        return redirect('landing:index')
 
     users_qs = get_filtered_users_queryset(request)
     
@@ -249,14 +249,14 @@ def usage_report(request):
     if usage_page:
         if not user_can_access_page(request.user, usage_page):
             messages.error(request, 'You do not have permission to access this page.')
-            return redirect('index')
+            return redirect('landing:index')
     else:
         is_project_admin = request.user.is_superuser or request.user.is_project_admin
         if hasattr(request.user, 'active_role') and request.user.active_role:
             is_project_admin = is_project_admin or request.user.active_role.name == 'Project Admin'
         if not is_project_admin:
             messages.error(request, 'You do not have permission to access this page.')
-            return redirect('index')
+            return redirect('landing:index')
 
     pacific_tz = ZoneInfo('America/Los_Angeles')
     now = timezone.now()
@@ -573,7 +573,7 @@ def user_detail(request, user_id):
 
     if not (is_proj or is_school):
         messages.error(request, 'You do not have permission to access this page.')
-        return redirect('index')
+        return redirect('landing:index')
     
     user_obj = get_object_or_404(User, id=user_id)
     
@@ -854,7 +854,7 @@ def impersonate_user(request, user_id):
     # Only project admins can start impersonation
     if not (request.user.is_superuser or user_is_project_admin(request.user)):
         messages.error(request, "Permission denied.")
-        return redirect('index')
+        return redirect('landing:index')
 
     target_user = get_object_or_404(User, id=user_id)
     
@@ -876,14 +876,14 @@ def impersonate_user(request, user_id):
     request.session['impersonator_id'] = original_user_id
     
     messages.success(request, f"Now impersonating {target_user.name or target_user.email}")
-    return redirect('index')
+    return redirect('landing:index')
 
 
 @login_required
 def stop_impersonating(request):
     impersonator_id = request.session.get('impersonator_id')
     if not impersonator_id:
-        return redirect('index')
+        return redirect('landing:index')
         
     try:
         original_user = User.objects.get(id=impersonator_id)

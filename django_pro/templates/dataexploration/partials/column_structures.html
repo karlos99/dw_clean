@@ -25,7 +25,12 @@
         <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
             <button data-toggle-category="tests_{{ year|slugify }}"
                 class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
-                <span class="text-sm font-medium text-slate-700">{{ year_labels|get_item:year|default:year }}</span>
+                <span class="text-sm font-medium text-slate-700"
+                      data-year-header-label="{{ year }}"
+                      data-specific-label="{{ year }}"
+                      data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                    {{ year_labels|get_item:year|default:year }}
+                </span>
                 <span class="text-xs text-slate-400" data-caret="closed">▶</span>
                 <span class="text-xs hidden text-slate-400" data-caret="open">▼</span>
             </button>
@@ -134,7 +139,12 @@
         <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
             <button data-toggle-category="marks_{{ year|slugify }}"
                 class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
-                <span class="text-sm font-medium text-slate-700">{{ year_labels|get_item:year|default:year }}</span>
+                <span class="text-sm font-medium text-slate-700"
+                      data-year-header-label="{{ year }}"
+                      data-specific-label="{{ year }}"
+                      data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                    {{ year_labels|get_item:year|default:year }}
+                </span>
                 <span data-caret="closed" class="text-slate-400">▶</span>
                 <span data-caret="open" class="hidden text-slate-400">▼</span>
             </button>
@@ -190,10 +200,16 @@
 
     <div data-category="surveys" class="ml-4 mt-1 space-y-1 pl-3 border-l-2 border-purple-200 hidden">
         {% for year, survey_types in survey_structure.items %}
-        <div class="mt-2">
+        {% with alias=year_to_alias|get_item:year|default:'' %}
+        <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
             <button data-toggle-category="surveys_{{ year|slugify }}"
                 class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
-                <span class="text-sm font-medium text-slate-700">{{ year }}</span>
+                <span class="text-sm font-medium text-slate-700"
+                      data-year-header-label="{{ year }}"
+                      data-specific-label="{{ year }}"
+                      data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                    {{ year_labels|get_item:year|default:year }}
+                </span>
                 <span data-caret="closed" class="text-slate-400">▶</span>
                 <span data-caret="open" class="hidden text-slate-400">▼</span>
             </button>
@@ -266,6 +282,7 @@
                 {% endfor %}
             </div>
         </div>
+        {% endwith %}
         {% empty %}
         <div class="text-xs text-slate-500 italic p-2">No published survey data available</div>
         {% endfor %}
