@@ -193,7 +193,7 @@ class Result(models.Model):
 
 
 class Schedule(models.Model):
-    """Model for student course schedules"""
+    """Model for student course schedules - backed by schedule_list view over schedule_table_alt"""
     schedule_id = models.CharField(max_length=255, primary_key=True, db_index=True)
     stu_annual_key = models.CharField(max_length=255, db_index=True)
     ssid = models.CharField(max_length=50, db_index=True)
@@ -201,6 +201,7 @@ class Schedule(models.Model):
     student_id = models.CharField(max_length=50, blank=True, null=True)
     school_name = models.CharField(max_length=255, blank=True, null=True)
     state_school_id = models.CharField(max_length=50, blank=True, null=True)
+    school_type = models.CharField(max_length=255, blank=True, null=True)
     course_state_equivalence_code = models.CharField(max_length=50, blank=True, null=True)
     course_code = models.CharField(max_length=50, blank=True, null=True)
     course_key = models.CharField(max_length=255, blank=True, null=True)
@@ -211,28 +212,23 @@ class Schedule(models.Model):
     staff_email = models.EmailField(blank=True, null=True)
     staff_employee_id = models.CharField(max_length=50, blank=True, null=True, db_index=True)
     schedule_status = models.CharField(max_length=50, blank=True, null=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'schedule_list'
+        managed = False
         verbose_name = 'Schedule'
         verbose_name_plural = 'Schedules'
-        indexes = [
-            models.Index(fields=['ssid', 'school_year']),
-            models.Index(fields=['staff_employee_id', 'school_year']),
-            models.Index(fields=['state_school_id']),
-            models.Index(fields=['period', 'state_school_id']),
-            models.Index(fields=['staff_name']),
-        ]
 
     def __str__(self):
         return f"{self.schedule_id} - {self.student_id} - {self.course_name}"
 
 
 class StudentMarks(models.Model):
-    """Model for student marks/grades"""
+    """Model for student marks - backed by student_marks_list view over student_marks_table_alt.
+    The view unnests mark_data JSON so each (course, period) pair becomes its own row,
+    preserving the original flat schema expected by all existing queries."""
     marks_id = models.CharField(max_length=255, primary_key=True, db_index=True)
     stu_annual_key = models.CharField(max_length=255, db_index=True)
     ssid = models.CharField(max_length=50, db_index=True)
@@ -240,34 +236,60 @@ class StudentMarks(models.Model):
     student_id = models.CharField(max_length=50, blank=True, null=True)
     school_name = models.CharField(max_length=255, blank=True, null=True)
     state_school_id = models.CharField(max_length=50, blank=True, null=True)
+    school_type = models.CharField(max_length=255, blank=True, null=True)
     subject = models.CharField(max_length=255, blank=True, null=True)
     course_name = models.CharField(max_length=255, blank=True, null=True)
     staff_name = models.CharField(max_length=255, blank=True, null=True)
+    staff_email = models.EmailField(blank=True, null=True)
     staff_employee_id = models.CharField(max_length=50, blank=True, null=True, db_index=True)
     mark_period = models.CharField(max_length=50, blank=True, null=True)
     mark = models.CharField(max_length=10, blank=True, null=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'student_marks_list'
+        managed = False
         verbose_name = 'Student Mark'
         verbose_name_plural = 'Student Marks'
-        indexes = [
-            models.Index(fields=['ssid', 'school_year']),
-            models.Index(fields=['staff_employee_id', 'school_year']),
-            models.Index(fields=['mark_period']),
-            models.Index(fields=['stu_annual_key', 'school_year']),
-            models.Index(fields=['subject', 'course_name']),
-        ]
 
     def __str__(self):
         return f"{self.marks_id} - {self.student_id} - {self.mark}"
 
 
+class StudentMarksAlt(models.Model):
+    """Direct model for student_marks_table_alt.
+    Marks are stored as JSON in mark_data: {"current_grade": "A", "marks": [{"period": "P1", "mark": "A"}, ...]}
+    course_info stores course identifiers: [{"state_course_code": "9243", "course_ids": [...]}]
+    Use this model when you need access to the full JSON structure or current_grade."""
+    marks_id = models.CharField(max_length=255, primary_key=True, db_index=True)
+    stu_annual_key = models.CharField(max_length=255, db_index=True)
+    ssid = models.CharField(max_length=50, db_index=True)
+    school_year = models.CharField(max_length=20)
+    student_id = models.CharField(max_length=50, blank=True, null=True)
+    school_name = models.CharField(max_length=255, blank=True, null=True)
+    state_school_id = models.CharField(max_length=50, blank=True, null=True)
+    school_type = models.CharField(max_length=255, blank=True, null=True)
+    subject = models.CharField(max_length=255, blank=True, null=True)
+    course_name = models.CharField(max_length=255, blank=True, null=True)
+    staff_name = models.CharField(max_length=255, blank=True, null=True)
+    staff_email = models.EmailField(blank=True, null=True)
+    staff_employee_id = models.CharField(max_length=50, blank=True, null=True, db_index=True)
+    mark_data = models.JSONField(blank=True, null=True)
+    course_info = models.JSONField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'student_marks_table_alt'
+        managed = False
+        verbose_name = 'Student Mark (Alt)'
+        verbose_name_plural = 'Student Marks (Alt)'
+
+    def __str__(self):
+        return f"{self.marks_id} - {self.student_id}"
+
+
 class TeacherAccess(models.Model):
-    """Model for teacher access to student records"""
+    """Model for teacher access to student records - backed by teacher_access_list view over teacher_access_table_alt"""
     access_id = models.CharField(max_length=255, primary_key=True, db_index=True)
     schedule_id = models.CharField(max_length=255, db_index=True)
     stu_annual_key = models.CharField(max_length=255, db_index=True)
@@ -279,19 +301,14 @@ class TeacherAccess(models.Model):
     staff_name = models.CharField(max_length=255, blank=True, null=True)
     staff_email = models.EmailField(blank=True, null=True)
     staff_employee_id = models.CharField(max_length=50, blank=True, null=True, db_index=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'teacher_access_list'
+        managed = False
         verbose_name = 'Teacher Access'
         verbose_name_plural = 'Teacher Accesses'
-        indexes = [
-            models.Index(fields=['schedule_id']),
-            models.Index(fields=['staff_employee_id', 'school_year']),
-            models.Index(fields=['ssid', 'school_year']),
-        ]
 
     def __str__(self):
         return f"{self.access_id} - {self.staff_name} - {self.student_id}"
