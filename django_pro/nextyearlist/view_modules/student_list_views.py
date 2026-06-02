@@ -163,11 +163,32 @@ class NextYearListView(LoginRequiredMixin, ListView):
 
         filters = query_config.get('filters', {})
 
+        _project_default_year = ''
+        try:
+            from landing.utils import get_project_config
+            _cfg = get_project_config()
+            _project_default_year = _cfg.default_school_year or ''
+        except Exception:
+            pass
+
         def get_param(name, default=''):
             return self.request.GET.get(name) or filters.get(name, default)
 
         context['search_query'] = get_param('search')
-        context['selected_school_year'] = get_param('school_year')
+        if 'school_year' in self.request.GET:
+            selected_year = self.request.GET.get('school_year')
+        elif _project_default_year:
+            selected_year = _project_default_year
+        else:
+            selected_year = filters.get('school_year', '')
+
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            if selected_year:
+                selected_year = resolve_school_year(selected_year)
+        except Exception:
+            pass
+        context['selected_school_year'] = selected_year
         context['selected_grade'] = get_param('grade')
         context['selected_status'] = get_param('status', 'Active')
         return context
@@ -223,7 +244,26 @@ def load_students(request):
         return val_str if val_str else fallback
 
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
-    school_year = _parse_multi(request.GET.get('school_year', ''), _parse_multi(saved_filters.get('school_year', ''), _parse_multi(saved_config.get('school_year', ''), '')))
+    
+    _project_default_year = ''
+    try:
+        from landing.utils import get_project_config
+        _cfg = get_project_config()
+        _project_default_year = _cfg.default_school_year or ''
+    except Exception:
+        pass
+
+    _sy_in_url = 'school_year' in request.GET
+    if _sy_in_url:
+        school_year = _parse_multi(request.GET.get('school_year', ''), '')
+    elif _project_default_year:
+        school_year = _project_default_year
+    else:
+        school_year = _parse_multi(
+            saved_filters.get('school_year', ''),
+            _parse_multi(saved_config.get('school_year', ''), '')
+        )
+
     grade = _parse_multi(request.GET.get('grade', ''), _parse_multi(saved_filters.get('grade', ''), _parse_multi(saved_config.get('grade', ''), '')))
 
     status_param = request.GET.get('status')

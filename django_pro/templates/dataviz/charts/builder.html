@@ -51,6 +51,11 @@
              class="text-xs text-slate-600 bg-transparent border-0 border-b border-transparent
                     hover:border-slate-300 focus:border-slate-500 focus:ring-0 px-1 py-0.5 w-52 transition"
              :class="!chartTitle && 'text-slate-400 italic'">
+      {# Cross-navigation #}
+      <div class="flex items-center gap-1 ml-3">
+        <a href="{% url 'dataviz:index' %}" class="text-[9px] font-semibold text-slate-400 hover:text-slate-700 px-2 py-1 rounded transition uppercase tracking-wide">Charts</a>
+        <a href="{% url 'dataviz:page_index' %}" class="text-[9px] font-semibold text-slate-400 hover:text-slate-700 px-2 py-1 rounded transition uppercase tracking-wide">Pages</a>
+      </div>
     </div>
     {# Step indicators #}
     <div class="hidden md:flex items-center gap-1.5 text-[10px]">
@@ -77,6 +82,12 @@
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M5 13l4 4L19 7"/></svg>
         <span x-text="saving ? 'Saving…' : 'Save Chart'"></span>
       </button>
+      <button @click="saveAndAttachOpen = true" :disabled="!canPreview"
+              class="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 rounded shadow-sm hover:bg-blue-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Save chart and add it to a page">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 4v16m8-8H4"/></svg>
+        <span>Save &amp; Add to Page</span>
+      </button>
     </div>
   </header>
 
@@ -96,11 +107,11 @@
           <path stroke-linecap="round" d="M15 19l-7-7 7-7"/>
         </svg>
       </button>
-      <aside class="border-r border-slate-200 bg-white flex flex-col flex-shrink-0 overflow-hidden transition-all duration-200"
+      <aside class="border-r border-slate-200 bg-white flex flex-col flex-shrink-0 overflow-y-auto transition-all duration-200"
              :class="colsOpen ? 'w-72' : 'w-0'"
              :style="colsOpen ? '' : 'border:none'"
              x-show="colsOpen || true"
-             style="overflow:hidden">
+             style="overflow-y:auto">
       {# ── Data Source (collapsible) ── #}
       <div x-data="{ srcOpen: true }" class="border-b border-slate-100 flex-shrink-0">
         <button type="button" @click="srcOpen = !srcOpen"
@@ -110,24 +121,7 @@
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Data Source</p>
           </div>
           <div class="flex items-center gap-1.5">
-            <template x-if="sourceType === 'query' && savedQueryId">
-              <a :href="`{% url 'dataexploration:student_tests_list' %}?saved_query=${savedQueryId}`" 
-                 target="_blank"
-                 class="text-[9px] font-bold text-blue-500 hover:text-blue-700 uppercase tracking-tight flex items-center gap-0.5"
-                 title="Open this query in Explorer">
-                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                Go to Source
-              </a>
-            </template>
-            <template x-if="sourceType === 'columns'">
-              <a href="{% url 'dataexploration:student_tests_list' %}" 
-                 target="_blank"
-                 class="text-[9px] font-bold text-blue-500 hover:text-blue-700 uppercase tracking-tight flex items-center gap-0.5"
-                 title="Open Student Explorer">
-                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-                Go to Source
-              </a>
-            </template>
+            <span class="step-dot" :class="guidedStep === 1 ? 'current' : (hasData ? 'done' : 'pending')" x-text="hasData ? '✓' : '1'"></span>
             <span x-show="!srcOpen" class="text-[9px] font-semibold text-blue-600 uppercase tracking-wide" x-text="sourceType === 'query' ? 'Saved Query' : sourceType === 'sql' ? 'SQL' : 'Explorer'"></span>
             <svg class="w-3 h-3 text-slate-400 transition-transform" :class="srcOpen && 'rotate-180'"
                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -136,32 +130,142 @@
           </div>
         </button>
         <div x-show="srcOpen" x-collapse>
-          <div class="px-4 pb-3 border-t border-slate-100">
-            <div class="flex rounded overflow-hidden border border-slate-200 bg-slate-50 mt-3">
-              <button type="button" @click="setSource('query')"
-                      :class="sourceType==='query' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'"
-                      class="flex-1 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all">Query</button>
-              <button type="button" @click="setSource('sql')"
-                      :class="sourceType==='sql' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'"
-                      class="flex-1 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all">SQL</button>
-              <button type="button" @click="setSource('columns')"
-                      :class="sourceType==='columns' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'"
-                      class="flex-1 py-1.5 text-xs font-semibold uppercase tracking-wide transition-all">Explorer</button>
+          {# ── SCHOOL YEAR CONTEXT (prominent dropdown at top) ── #}
+          <div class="px-4 pb-2 border-t border-slate-100">
+            <div class="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-2.5">
+              <label class="text-[10px] font-semibold uppercase tracking-wider text-blue-700 block mb-1.5">School Year Context</label>
+              <select x-model="yearContext" @change="onYearContextChange()"
+                      class="w-full text-xs border border-blue-300 rounded px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="{{ sy_this_year }}" x-text="aliasResolvedLabels['{{ sy_this_year }}'] || 'This School Year'"></option>
+                <option value="{{ sy_last_year }}" x-text="aliasResolvedLabels['{{ sy_last_year }}'] || 'Last School Year'"></option>
+                <option value="{{ sy_two_prior }}" x-text="aliasResolvedLabels['{{ sy_two_prior }}'] || 'Two Years Prior'"></option>
+                <option disabled>──────────────</option>
+                <option value="">Custom selection…</option>
+              </select>
+              {# Custom year multi-select (shown when "Custom" is selected) #}
+              <div x-show="yearContext === ''" x-transition class="mt-2 bg-white border border-blue-200 rounded-lg p-2">
+                <p class="text-[9px] font-semibold text-slate-600 mb-1.5">Pick specific school years:</p>
+                <div class="max-h-28 overflow-y-auto space-y-0.5">
+                  {% for sy in school_years %}
+                  <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                    <input type="checkbox" value="{{ sy }}"
+                           :checked="(chartFilters._custom_years || []).includes('{{ sy }}')"
+                           @change="toggleCustomYear('{{ sy }}')"
+                           class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                    <span>{{ sy }}</span>
+                  </label>
+                  {% endfor %}
+                </div>
+                <p x-show="(chartFilters._custom_years || []).length > 0" class="text-[9px] text-blue-600 mt-1">
+                  <span x-text="(chartFilters._custom_years || []).length"></span> year(s) selected
+                </p>
+              </div>
+              <p class="text-[9px] text-blue-600 mt-1.5 leading-snug">
+                Students enrolled in the selected year. Assessment results are matched per year automatically.
+              </p>
             </div>
           </div>
-      {# Saved query picker #}
-      <div x-show="sourceType==='query'" class="px-4 py-3 border-t border-slate-100">
-        <select x-model="savedQueryId" @change="loadColumns()"
-                class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white
-                       focus:outline-none focus:ring-2 focus:ring-blue-500">
+
+          {# ── Source Type selector (radio cards with guidance) ── #}
+          <div class="px-4 pb-1">
+            <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1.5 mt-2">Source Type</label>
+            <div class="space-y-1.5">
+              {# Saved Query [Recommended] #}
+              <label @click="setSource('query')" class="flex items-start gap-2 p-2 rounded-lg border-2 cursor-pointer transition-all"
+                     :class="sourceType==='query' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'">
+                <input type="radio" name="source_type_radio" value="query" :checked="sourceType==='query'" class="mt-0.5 w-3 h-3 text-blue-600">
+                <div class="flex-1 min-w-0">
+                  <span class="text-xs font-semibold text-slate-700">Saved Query</span>
+                  <span class="ml-1 text-[9px] font-bold text-blue-600 bg-blue-100 rounded-full px-1.5 py-0.5">Recommended</span>
+                  <p class="text-[9px] text-slate-400 mt-0.5">Use a pre-built query from Data Explorer. Best for most users.</p>
+                </div>
+              </label>
+              {# Simple Column Picker #}
+              <label @click="setSource('columns')" class="flex items-start gap-2 p-2 rounded-lg border-2 cursor-pointer transition-all"
+                     :class="sourceType==='columns' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'">
+                <input type="radio" name="source_type_radio" value="columns" :checked="sourceType==='columns'" class="mt-0.5 w-3 h-3 text-blue-600">
+                <div class="flex-1 min-w-0">
+                  <span class="text-xs font-semibold text-slate-700">Pick Columns</span>
+                  <span class="ml-1 text-[9px] font-bold text-slate-500 bg-slate-100 rounded-full px-1.5 py-0.5">Simple</span>
+                  <p class="text-[9px] text-slate-400 mt-0.5">Pick student info and assessment columns directly without saving a query first.</p>
+                </div>
+              </label>
+              {# Custom SQL [Advanced] #}
+              <label @click="setSource('sql')" class="flex items-start gap-2 p-2 rounded-lg border-2 cursor-pointer transition-all"
+                     :class="sourceType==='sql' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'">
+                <input type="radio" name="source_type_radio" value="sql" :checked="sourceType==='sql'" class="mt-0.5 w-3 h-3 text-blue-600">
+                <div class="flex-1 min-w-0">
+                  <span class="text-xs font-semibold text-slate-700">Custom SQL</span>
+                  <span class="ml-1 text-[9px] font-bold text-amber-600 bg-amber-100 rounded-full px-1.5 py-0.5">Advanced</span>
+                  <p class="text-[9px] text-slate-400 mt-0.5">Write raw SQL directly. For power users who need full control.</p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+      {# Saved query picker (searchable + preview) #}
+      <div x-show="sourceType==='query'" class="px-4 py-3 border-t border-slate-100 mt-1">
+        <div class="relative">
+          <input type="text" x-model="querySearch" placeholder="Search queries…"
+                 class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white
+                        focus:outline-none focus:ring-2 focus:ring-blue-500 pl-8">
+          <svg class="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        </div>
+        <select x-model="savedQueryId" @change="loadColumns()" size="6"
+                class="w-full text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 mt-1.5">
           <option value="">— choose a saved query —</option>
           {% for q in saved_queries %}
-          <option value="{{ q.id }}">{{ q.name }}</option>
+          <option value="{{ q.id }}" :class="querySearch && !'{{ q.name|escapejs }}'.toLowerCase().includes(querySearch.toLowerCase()) && 'hidden'">
+            {{ q.name }}
+          </option>
           {% endfor %}
         </select>
+        {# Action buttons row #}
+        <div class="flex gap-1.5 mt-1.5" x-show="savedQueryId">
+          <a :href="`{% url 'dataexploration:student_tests_list' %}?saved_query=${savedQueryId}`"
+             target="_blank"
+             class="flex-1 text-center text-[9px] py-1.5 font-semibold bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition flex items-center justify-center gap-0.5">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            Open in Explorer
+          </a>
+          <button @click="previewQuery()" :disabled="queryPreviewLoading"
+                  class="flex-1 text-center text-[9px] py-1.5 font-semibold bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition disabled:opacity-50 flex items-center justify-center gap-0.5">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+            <span x-text="queryPreviewLoading ? 'Loading…' : 'Preview Data'"></span>
+          </button>
+        </div>
+        {# Query preview results #}
+        <div x-show="queryPreviewData" class="mt-2 border border-blue-200 rounded-lg bg-blue-50 overflow-hidden" x-transition>
+          <div class="flex items-center justify-between px-2.5 py-1.5 bg-blue-100 border-b border-blue-200">
+            <span class="text-[9px] font-bold text-blue-700 uppercase">Preview (first 5 rows)</span>
+            <button @click="queryPreviewData=null" class="text-blue-400 hover:text-blue-600">&times;</button>
+          </div>
+          <div class="overflow-x-auto max-h-32 p-1.5">
+            <table class="w-full text-[9px]">
+              <thead>
+                <tr>
+                  <template x-for="col in queryPreviewData?.columns" :key="col">
+                    <th class="text-left px-1 py-0.5 text-slate-500 font-semibold whitespace-nowrap" x-text="col"></th>
+                  </template>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="row in queryPreviewData?.rows" :key="row">
+                  <tr class="border-t border-blue-100">
+                    <template x-for="col in queryPreviewData?.columns" :key="col">
+                      <td class="px-1 py-0.5 text-slate-600 whitespace-nowrap" x-text="row[col] ?? ''"></td>
+                    </template>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
+
       {# SQL Lab input #}
-      <div x-show="sourceType==='sql'" class="px-4 py-3 border-t border-slate-100 space-y-2">
+      <div x-show="sourceType==='sql'" class="px-4 py-3 border-t border-slate-100 space-y-2 mt-1">
         <textarea x-model="rawSql" rows="5"
                   class="w-full text-xs font-mono border border-slate-300 rounded px-3 py-2
                          bg-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -174,7 +278,7 @@
       </div>
 
       {# Explorer column picker #}
-      <div x-show="sourceType==='columns'" class="px-3 py-3 border-t border-slate-100 max-h-[50%] overflow-y-auto">
+      <div x-show="sourceType==='columns'" class="px-3 py-3 border-t border-slate-100 max-h-[50%] overflow-y-auto mt-1">
         {# Loading state #}
         <div x-show="explorerLoading" class="flex items-center gap-2 py-6 justify-center text-slate-400">
           <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
@@ -182,8 +286,9 @@
         </div>
 
         <div x-show="!explorerLoading && explorerStructure" class="space-y-1">
-          {# ── Year Mode Toggle ── #}
-          <div class="flex items-center justify-between px-1 py-1 mb-1.5 bg-slate-50 rounded border border-slate-200">
+          {# ── Year Mode Toggle — hidden when multiple custom years are active ── #}
+          <div x-show="!multiYearSelected"
+               class="flex items-center justify-between px-1 py-1 mb-1.5 bg-slate-50 rounded border border-slate-200">
             <span class="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Year:</span>
             <div class="flex rounded overflow-hidden border border-slate-200 text-[10px]">
               <button type="button" @click="setDvYearMode('specific')"
@@ -193,6 +298,11 @@
                       :class="dvYearMode === 'relative' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-100'"
                       class="px-2.5 py-0.5 transition-colors">Relative</button>
             </div>
+          </div>
+          {# Multi-year: show a contextual note instead of the year toggle #}
+          <div x-show="multiYearSelected"
+               class="text-[9px] text-blue-600 bg-blue-50 border border-blue-200 rounded px-2 py-1 mb-1.5 leading-snug">
+            Showing results for all selected school years. PL / SS columns include data from each selected year automatically.
           </div>
 
           {# Search within column picker #}
@@ -228,97 +338,277 @@
             </div>
           </template>
 
-          {# ── Test columns tree ── #}
-          <template x-for="(yearObj, year) in (explorerStructure?.test_structure || {})" :key="'ty_'+year">
-            <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]"
-                 class="rounded-md border border-slate-200 bg-white overflow-hidden">
-              <button type="button" @click="explorerOpenNode = explorerOpenNode === 'test_'+year ? '' : 'test_'+year"
-                      class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
-                <span class="font-medium text-slate-700"><span class="text-[9px] text-blue-500 font-bold mr-1">TEST</span><span x-text="dvYearMode === 'relative' ? (explorerStructure?.year_labels?.[year] || year) : year"></span></span>
-                <svg class="w-3 h-3 text-slate-400 transition-transform"
-                     :class="explorerOpenNode === 'test_'+year && 'rotate-180'"
-                     fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
-                </svg>
-              </button>
-              <div x-show="explorerOpenNode === 'test_'+year" x-collapse class="border-t border-slate-100">
-                <template x-for="(assessObj, assessName) in yearObj" :key="'ta_'+year+'_'+assessName">
-                  <div class="px-2 py-1">
-                    <button type="button" @click="explorerOpenSub = explorerOpenSub === 'ta_'+year+'_'+assessName ? '' : 'ta_'+year+'_'+assessName"
-                            class="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-blue-600 w-full">
-                      <svg class="w-2.5 h-2.5 transition-transform" :class="explorerOpenSub === 'ta_'+year+'_'+assessName && 'rotate-90'"
-                           fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
-                      <span class="truncate" x-text="assessName"></span>
-                    </button>
-                    <div x-show="explorerOpenSub === 'ta_'+year+'_'+assessName" x-collapse class="pl-3 mt-1 space-y-0.5">
-                      <template x-for="(winObj, winName) in (assessObj.windows || {})" :key="'tw_'+year+'_'+assessName+'_'+winName">
-                        <div>
-                          <p x-show="winName" class="text-[9px] font-bold text-slate-400 uppercase mt-1 mb-0.5" x-text="winName"></p>
-                          <template x-for="(metrics, testingName) in winObj" :key="'tt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
-                            <div class="space-y-0.5">
-                              <p class="text-[10px] text-slate-500 font-medium" x-text="testingName"></p>
-                              <template x-for="mKey in ['SS','PL']" :key="'tm_'+metrics[mKey]">
-                                <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
-                                  <input type="checkbox"
-                                         :checked="_dvIsColSelected(metrics[mKey])"
-                                         @change="toggleExplorerCol(metrics[mKey])"
-                                         class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
-                                  <span x-text="mKey" class="font-mono text-[10px]"></span>
-                                </label>
-                              </template>
-                            </div>
-                          </template>
-                        </div>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </template>
+          {# ── Picker layout toggle — By Year hidden in multi-year mode ── #}
+          <div class="flex items-center gap-1 mb-1.5 px-1">
+            <span class="text-[9px] text-slate-400 uppercase tracking-wide">View:</span>
+            <button @click="pickerLayout = 'assessment_first'; localStorage.setItem('dwPickerLayout', 'assessment_first')"
+                    :class="pickerLayout === 'assessment_first' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-100'"
+                    class="text-[9px] px-2 py-0.5 rounded transition font-medium">By Assessment</button>
+            <button x-show="!multiYearSelected"
+                    @click="pickerLayout = 'year_first'; localStorage.setItem('dwPickerLayout', 'year_first')"
+                    :class="pickerLayout === 'year_first' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-100'"
+                    class="text-[9px] px-2 py-0.5 rounded transition font-medium">By Year</button>
+          </div>
 
-          {# ── Mark columns tree ── #}
-          <template x-for="(yearObj, year) in (explorerStructure?.mark_structure || {})" :key="'my_'+year">
-            <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]" class="rounded-md border border-slate-200 bg-white overflow-hidden">
-              <button type="button" @click="explorerOpenNode = explorerOpenNode === 'mark_'+year ? '' : 'mark_'+year"
-                      class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
-                <span class="font-medium text-slate-700"><span class="text-[9px] text-emerald-500 font-bold mr-1">MARK</span><span x-text="dvYearMode === 'relative' ? (explorerStructure?.year_labels?.[year] || year) : year"></span></span>
-                <svg class="w-3 h-3 text-slate-400 transition-transform"
-                     :class="explorerOpenNode === 'mark_'+year && 'rotate-180'"
-                     fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
-                </svg>
-              </button>
-              <div x-show="explorerOpenNode === 'mark_'+year" x-collapse class="border-t border-slate-100">
-                <template x-for="(subjObj, subjName) in yearObj" :key="'ms_'+year+'_'+subjName">
-                  <div class="px-2 py-1">
-                    <button type="button" @click="explorerOpenSub = explorerOpenSub === 'ms_'+year+'_'+subjName ? '' : 'ms_'+year+'_'+subjName"
-                            class="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-blue-600 w-full">
-                      <svg class="w-2.5 h-2.5 transition-transform" :class="explorerOpenSub === 'ms_'+year+'_'+subjName && 'rotate-90'"
-                           fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
-                      <span class="truncate" x-text="subjName"></span>
-                    </button>
-                    <div x-show="explorerOpenSub === 'ms_'+year+'_'+subjName" x-collapse class="pl-3 mt-1 space-y-0.5">
-                      <template x-for="(courseObj, courseName) in subjObj" :key="'mc_'+year+'_'+subjName+'_'+courseName">
-                        <div>
-                          <p class="text-[10px] text-slate-500 font-medium" x-text="courseName"></p>
-                          <template x-for="(colKey, period) in courseObj" :key="'mp_'+colKey">
-                            <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
-                              <input type="checkbox"
-                                     :checked="_dvIsColSelected(colKey)"
-                                     @change="toggleExplorerCol(colKey)"
-                                     class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
-                              <span class="truncate" x-text="period"></span>
-                            </label>
-                          </template>
-                        </div>
-                      </template>
+          {# ═══════════════ ASSESSMENT-FIRST TEST COLUMNS ═══════════════ #}
+          <div x-show="pickerLayout === 'assessment_first'">
+            <template x-for="(subjects, assessName) in (explorerStructure?.assessment_structure || {})" :key="'assess_'+assessName">
+              <div class="rounded-md border border-slate-200 bg-white overflow-hidden mb-1"
+                   x-show="!explorerSearch || assessName.toLowerCase().includes(explorerSearch.toLowerCase())">
+                {# Assessment header #}
+                <button type="button" @click="explorerOpenNode = explorerOpenNode === 'assess_'+assessName ? '' : 'assess_'+assessName"
+                        class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
+                  <span class="font-medium text-slate-700 truncate">
+                    <span class="text-[9px] text-blue-500 font-bold mr-1">TEST</span>
+                    <span x-text="assessName"></span>
+                  </span>
+                  <svg class="w-3 h-3 text-slate-400 transition-transform shrink-0"
+                       :class="explorerOpenNode === 'assess_'+assessName && 'rotate-180'"
+                       fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </button>
+                {# Subjects under this assessment #}
+                <div x-show="explorerOpenNode === 'assess_'+assessName" x-collapse class="border-t border-slate-100">
+                  <template x-for="(subjData, subjectName) in subjects" :key="'subj_'+assessName+'_'+subjectName">
+                    <div class="px-2 py-1 border-b border-slate-50 last:border-b-0">
+                      <button type="button"
+                              @click="explorerOpenSub = explorerOpenSub === 'subj_'+assessName+'_'+subjectName ? '' : 'subj_'+assessName+'_'+subjectName"
+                              class="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-blue-600 w-full">
+                        <svg class="w-2.5 h-2.5 transition-transform shrink-0"
+                             :class="explorerOpenSub === 'subj_'+assessName+'_'+subjectName && 'rotate-90'"
+                             fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+                        <span class="truncate" x-text="subjectName"></span>
+                      </button>
+                      {# Years for this subject #}
+                      <div x-show="explorerOpenSub === 'subj_'+assessName+'_'+subjectName" x-collapse class="pl-3 mt-1 space-y-1">
+                        {# Multi-year: flatten — no year grouping #}
+                        <template x-if="multiYearSelected">
+                          <div class="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                            <template x-for="(winObj, winName) in (Object.values(subjData?.years || {})[0]?.windows || {})" :key="'aw_flat_'+assessName+'_'+subjectName+'_'+winName">
+                              <div>
+                                <p x-show="winName" class="text-[8px] font-bold text-slate-400 uppercase mb-0.5" x-text="winName"></p>
+                                <template x-for="(metrics, testName) in winObj" :key="'am_flat_'+assessName+'_'+subjectName+'_'+winName+'_'+testName">
+                                  <div class="space-y-0.5">
+                                    <p x-show="testName && testName !== subjectName" class="text-[10px] text-slate-500 font-medium" x-text="testName"></p>
+                                    <template x-for="mKey in ['SS','PL']" :key="'amk_flat_'+metrics[mKey]">
+                                      <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                                        <input type="checkbox"
+                                               :checked="_dvIsColSelected(metrics[mKey])"
+                                               @change="toggleExplorerCol(metrics[mKey])"
+                                               class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                                        <span x-text="mKey" class="font-mono text-[10px]"></span>
+                                      </label>
+                                    </template>
+                                  </div>
+                                </template>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+                        {# Single year: keep year grouping #}
+                        <template x-if="!multiYearSelected">
+                          <div>
+                            <template x-for="(yearObj, year) in (subjData?.years || {})" :key="'yr_'+assessName+'_'+subjectName+'_'+year">
+                              <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]"
+                                   class="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                <p class="text-[10px] font-semibold text-slate-500 mb-1"
+                                   x-text="dvYearMode === 'relative' ? (explorerStructure?.year_labels?.[year] || year) : year"></p>
+                                {# Windows → testing_name → Metrics (SS/PL) #}
+                                <template x-for="(winObj, winName) in (yearObj.windows || {})" :key="'aw_'+assessName+'_'+subjectName+'_'+year+'_'+winName">
+                                  <div>
+                                    <p x-show="winName" class="text-[8px] font-bold text-slate-400 uppercase mb-0.5" x-text="winName"></p>
+                                    <template x-for="(metrics, testName) in winObj" :key="'am_'+assessName+'_'+subjectName+'_'+year+'_'+winName+'_'+testName">
+                                      <div class="space-y-0.5">
+                                        <p x-show="testName && testName !== subjectName" class="text-[10px] text-slate-500 font-medium" x-text="testName"></p>
+                                        <template x-for="mKey in ['SS','PL']" :key="'amk_'+metrics[mKey]">
+                                          <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                                            <input type="checkbox"
+                                                   :checked="_dvIsColSelected(metrics[mKey])"
+                                                   @change="toggleExplorerCol(metrics[mKey])"
+                                                   class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                                            <span x-text="mKey" class="font-mono text-[10px]"></span>
+                                          </label>
+                                        </template>
+                                      </div>
+                                    </template>
+                                  </div>
+                                </template>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
                     </div>
-                  </div>
-                </template>
+                  </template>
+                </div>
               </div>
-            </div>
-          </template>
+            </template>
+
+            {# ═══════════════ ASSESSMENT-FIRST MARK COLUMNS ═══════════════ #}
+            <template x-for="(courses, subject) in (explorerStructure?.mark_assessment_structure || {})" :key="'mas_'+subject">
+              <div class="rounded-md border border-slate-200 bg-white overflow-hidden mb-1"
+                   x-show="!explorerSearch || subject.toLowerCase().includes(explorerSearch.toLowerCase())">
+                <button type="button" @click="explorerOpenNode = explorerOpenNode === 'marksubj_'+subject ? '' : 'marksubj_'+subject"
+                        class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
+                  <span class="font-medium text-slate-700 truncate">
+                    <span class="text-[9px] text-emerald-500 font-bold mr-1">MARK</span>
+                    <span x-text="subject"></span>
+                  </span>
+                  <svg class="w-3 h-3 text-slate-400 transition-transform shrink-0"
+                       :class="explorerOpenNode === 'marksubj_'+subject && 'rotate-180'"
+                       fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </button>
+                <div x-show="explorerOpenNode === 'marksubj_'+subject" x-collapse class="border-t border-slate-100">
+                  <template x-for="(courseData, courseName) in courses" :key="'mc_'+subject+'_'+courseName">
+                    <div class="px-2 py-1 border-b border-slate-50 last:border-b-0">
+                      <button type="button"
+                              @click="explorerOpenSub = explorerOpenSub === 'mcsub_'+subject+'_'+courseName ? '' : 'mcsub_'+subject+'_'+courseName"
+                              class="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-emerald-600 w-full">
+                        <svg class="w-2.5 h-2.5 transition-transform shrink-0"
+                             :class="explorerOpenSub === 'mcsub_'+subject+'_'+courseName && 'rotate-90'"
+                             fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+                        <span class="truncate" x-text="courseName"></span>
+                      </button>
+                      <div x-show="explorerOpenSub === 'mcsub_'+subject+'_'+courseName" x-collapse class="pl-3 mt-1 space-y-1">
+                        {# Multi-year: flatten — no year grouping #}
+                        <template x-if="multiYearSelected">
+                          <div class="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                            <template x-for="(colKey, period) in (Object.values(courseData?.years || {})[0] || {})" :key="'mk_flat_'+colKey">
+                              <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                                <input type="checkbox"
+                                       :checked="_dvIsColSelected(colKey)"
+                                       @change="toggleExplorerCol(colKey)"
+                                       class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                                <span class="truncate" x-text="period"></span>
+                              </label>
+                            </template>
+                          </div>
+                        </template>
+                        {# Single year: keep year grouping #}
+                        <template x-if="!multiYearSelected">
+                          <div>
+                            <template x-for="(yearObj, year) in (courseData?.years || {})" :key="'myr_'+subject+'_'+courseName+'_'+year">
+                              <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]"
+                                   class="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                <p class="text-[10px] font-semibold text-slate-500 mb-1"
+                                   x-text="dvYearMode === 'relative' ? (explorerStructure?.year_labels?.[year] || year) : year"></p>
+                                <template x-for="(colKey, period) in yearObj" :key="'mk_'+colKey">
+                                  <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                                    <input type="checkbox"
+                                           :checked="_dvIsColSelected(colKey)"
+                                           @change="toggleExplorerCol(colKey)"
+                                           class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                                    <span class="truncate" x-text="period"></span>
+                                  </label>
+                                </template>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          {# ═══════════════ YEAR-FIRST (legacy, toggleable) ═══════════════ #}
+          <div x-show="pickerLayout === 'year_first'">
+            <template x-for="(yearObj, year) in (explorerStructure?.test_structure || {})" :key="'ty_'+year">
+              <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]"
+                   class="rounded-md border border-slate-200 bg-white overflow-hidden mb-1">
+                <button type="button" @click="explorerOpenNode = explorerOpenNode === 'test_'+year ? '' : 'test_'+year"
+                        class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
+                  <span class="font-medium text-slate-700"><span class="text-[9px] text-blue-500 font-bold mr-1">TEST</span><span x-text="dvYearMode === 'relative' ? (explorerStructure?.year_labels?.[year] || year) : year"></span></span>
+                  <svg class="w-3 h-3 text-slate-400 transition-transform"
+                       :class="explorerOpenNode === 'test_'+year && 'rotate-180'"
+                       fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </button>
+                <div x-show="explorerOpenNode === 'test_'+year" x-collapse class="border-t border-slate-100">
+                  <template x-for="(assessObj, assessName) in yearObj" :key="'ta_'+year+'_'+assessName">
+                    <div class="px-2 py-1">
+                      <button type="button" @click="explorerOpenSub = explorerOpenSub === 'ta_'+year+'_'+assessName ? '' : 'ta_'+year+'_'+assessName"
+                              class="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-blue-600 w-full">
+                        <svg class="w-2.5 h-2.5 transition-transform" :class="explorerOpenSub === 'ta_'+year+'_'+assessName && 'rotate-90'"
+                             fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+                        <span class="truncate" x-text="assessName"></span>
+                      </button>
+                      <div x-show="explorerOpenSub === 'ta_'+year+'_'+assessName" x-collapse class="pl-3 mt-1 space-y-0.5">
+                        <template x-for="(winObj, winName) in (assessObj.windows || {})" :key="'tw_'+year+'_'+assessName+'_'+winName">
+                          <div>
+                            <p x-show="winName" class="text-[9px] font-bold text-slate-400 uppercase mt-1 mb-0.5" x-text="winName"></p>
+                            <template x-for="(metrics, testingName) in winObj" :key="'tt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
+                              <div class="space-y-0.5">
+                                <p class="text-[10px] text-slate-500 font-medium" x-text="testingName"></p>
+                                <template x-for="mKey in ['SS','PL']" :key="'tm_'+metrics[mKey]">
+                                  <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                                    <input type="checkbox"
+                                           :checked="_dvIsColSelected(metrics[mKey])"
+                                           @change="toggleExplorerCol(metrics[mKey])"
+                                           class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                                    <span x-text="mKey" class="font-mono text-[10px]"></span>
+                                  </label>
+                                </template>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            {# Year-first mark columns #}
+            <template x-for="(yearObj, year) in (explorerStructure?.mark_structure || {})" :key="'my_'+year">
+              <div x-show="dvYearMode === 'specific' || dvYearAliasMap[year.replaceAll('-','_')]" class="rounded-md border border-slate-200 bg-white overflow-hidden mb-1">
+                <button type="button" @click="explorerOpenNode = explorerOpenNode === 'mark_'+year ? '' : 'mark_'+year"
+                        class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
+                  <span class="font-medium text-slate-700"><span class="text-[9px] text-emerald-500 font-bold mr-1">MARK</span><span x-text="dvYearMode === 'relative' ? (explorerStructure?.year_labels?.[year] || year) : year"></span></span>
+                  <svg class="w-3 h-3 text-slate-400 transition-transform"
+                       :class="explorerOpenNode === 'mark_'+year && 'rotate-180'"
+                       fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </button>
+                <div x-show="explorerOpenNode === 'mark_'+year" x-collapse class="border-t border-slate-100">
+                  <template x-for="(subjObj, subjName) in yearObj" :key="'ms_'+year+'_'+subjName">
+                    <div class="px-2 py-1">
+                      <button type="button" @click="explorerOpenSub = explorerOpenSub === 'ms_'+year+'_'+subjName ? '' : 'ms_'+year+'_'+subjName"
+                              class="flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-blue-600 w-full">
+                        <svg class="w-2.5 h-2.5 transition-transform" :class="explorerOpenSub === 'ms_'+year+'_'+subjName && 'rotate-90'"
+                             fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+                        <span class="truncate" x-text="subjName"></span>
+                      </button>
+                      <div x-show="explorerOpenSub === 'ms_'+year+'_'+subjName" x-collapse class="pl-3 mt-1 space-y-0.5">
+                        <template x-for="(courseObj, courseName) in subjObj" :key="'mc_'+year+'_'+subjName+'_'+courseName">
+                          <div>
+                            <p class="text-[10px] text-slate-500 font-medium" x-text="courseName"></p>
+                            <template x-for="(colKey, period) in courseObj" :key="'mp_'+colKey">
+                              <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                                <input type="checkbox"
+                                       :checked="_dvIsColSelected(colKey)"
+                                       @change="toggleExplorerCol(colKey)"
+                                       class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                                <span class="truncate" x-text="period"></span>
+                              </label>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
 
           {# Selected columns count #}
           <div x-show="explorerSelected.length > 0" class="mt-2 pt-2 border-t border-slate-100">
@@ -330,11 +620,62 @@
           </div>
         </div>
       </div>
+
+      {# ── Query Summary Box ── #}
+      <div x-show="(sourceType==='query' && savedQueryId) || (sourceType==='sql' && rawSqlColumns.length) || (sourceType==='columns' && explorerCols.length)"
+           class="px-4 py-2.5 border-t border-slate-100 bg-amber-50" x-transition>
+        <div class="flex items-start gap-1.5">
+          <svg class="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          <div>
+            <p class="text-[9px] font-bold text-amber-700 uppercase tracking-wide mb-0.5">Query Summary</p>
+            <p class="text-[9px] text-amber-800 leading-snug" x-text="buildQuerySummary()"></p>
+          </div>
+        </div>
+      </div>
+
+      {# ── School Scope (prominent toggle) ── #}
+      <div x-show="hasData" class="px-4 py-3 border-t border-slate-100" x-transition>
+        <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-1.5">
+          <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 21v-4a2 2 0 012-2h4a2 2 0 012 2v4M3 21h18M21 21v-4a2 2 0 00-2-2h-4a2 2 0 00-2 2v4M21 21H3"/></svg>
+          School Scope
+        </p>
+        <div class="rounded-lg border-2 p-2.5"
+             :class="schoolFilterMode === 'enrolled' ? 'border-emerald-200 bg-emerald-50' : 'border-indigo-200 bg-indigo-50'">
+          <div class="space-y-1.5">
+            <label @click="schoolFilterMode = 'enrolled'; delete chartFilters.tested_school; chartFilters = {...chartFilters}"
+                   class="flex items-start gap-2 p-1.5 rounded-md cursor-pointer transition-all"
+                   :class="schoolFilterMode==='enrolled' ? 'bg-emerald-100 border border-emerald-300' : 'hover:bg-white/50'">
+              <input type="radio" name="school_scope" value="enrolled" :checked="schoolFilterMode==='enrolled'" class="mt-0.5 w-3 h-3 text-emerald-600">
+              <div class="flex-1 min-w-0">
+                <span class="text-xs font-semibold text-slate-700">Enrolled School</span>
+                <span x-show="schoolFilterMode==='enrolled'" class="ml-1 text-[8px] font-bold bg-emerald-200 text-emerald-700 rounded px-1 py-0.5">ACTIVE</span>
+                <p class="text-[9px] text-slate-500">School where the student is/was enrolled</p>
+              </div>
+            </label>
+            <label @click="schoolFilterMode = 'tested'; delete chartFilters.school; chartFilters = {...chartFilters}"
+                   class="flex items-start gap-2 p-1.5 rounded-md cursor-pointer transition-all"
+                   :class="schoolFilterMode==='tested' ? 'bg-indigo-100 border border-indigo-300' : 'hover:bg-white/50'">
+              <input type="radio" name="school_scope" value="tested" :checked="schoolFilterMode==='tested'" class="mt-0.5 w-3 h-3 text-indigo-600">
+              <div class="flex-1 min-w-0">
+                <span class="text-xs font-semibold text-slate-700">Tested School</span>
+                <span x-show="schoolFilterMode==='tested'" class="ml-1 text-[8px] font-bold bg-indigo-200 text-indigo-700 rounded px-1 py-0.5">ACTIVE</span>
+                <p class="text-[9px] text-slate-500">School where the assessment was taken (may differ from enrollment)</p>
+              </div>
+            </label>
+          </div>
+          <details class="mt-1.5">
+            <summary class="text-[9px] text-slate-500 cursor-pointer hover:text-slate-700">Why does this matter?</summary>
+            <p class="text-[9px] text-slate-500 mt-1 leading-snug">
+              Assessment results show the school where each test was administered. A student enrolled at Lincoln may have test results from Washington. Choose which school to filter by.
+            </p>
+          </details>
+        </div>
+      </div>
         </div>{# /srcOpen collapse #}
       </div>{# /x-data srcOpen #}
 
       {# Column list #}
-      <div class="flex-1 overflow-y-auto px-3 py-3">
+      <div class="flex-1 min-h-0 px-3 py-3">
         {# Loading spinner #}
         <div x-show="columnsLoading" class="flex items-center gap-2 py-6 justify-center text-slate-400">
           <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
@@ -737,6 +1078,39 @@
 
         </div>
 
+        {# Group-by drop well — visible for bar charts when Series is also set #}
+        <div x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType) && seriesCol" x-transition>
+          <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+            <span class="w-4 h-4 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex items-center justify-center">G</span>
+            <span>Group By</span>
+            <span class="font-normal text-slate-400 text-[10px] ml-0.5">optional — adds outer grouping</span>
+          </label>
+          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 flex items-center"
+               :class="dragTarget==='groupCol' && 'accept'"
+               @dragover.prevent="dragTarget='groupCol'"
+               @dragleave.self="dragTarget=''"
+               @drop.prevent="doDrop('groupCol')">
+            <div x-show="!groupCol" class="flex items-center justify-between w-full">
+              <span class="text-xs text-slate-400 italic">Drag a column here</span>
+              <select @change="groupCol=$event.target.value; $event.target.selectedIndex=0"
+                      class="text-[11px] border-0 bg-transparent text-amber-600 cursor-pointer p-0 focus:ring-0">
+                <option value="">or pick…</option>
+                <template x-for="c in activeCols" :key="'gp_'+c"><option :value="c" x-text="c"></option></template>
+              </select>
+            </div>
+            <div x-show="groupCol" class="flex items-center gap-2 w-full">
+              <span class="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
+                <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-.293.707L13 10.414V15a1 1 0 01-.553.894l-4 2A1 1 0 017 17v-6.586L3.293 6.707A1 1 0 013 6V4z"/></svg>
+                <span x-text="groupCol" class="truncate"></span>
+              </span>
+              <button @click="groupCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
+            </div>
+          </div>
+          <p class="text-[9px] text-amber-600 mt-1 leading-snug">
+            Each group value gets its own stacked bar cluster side by side — e.g. set <em>School Year</em> here, <em>Grade</em> on X, and a metric on Series.
+          </p>
+        </div>
+
         {# PL Column Picker — visible only for assessment_compare type #}
         <div x-show="chartType==='assessment_compare'" x-transition>
           <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
@@ -1039,7 +1413,7 @@
           <template x-for="(color, key) in colorMap" :key="'cm_'+key">
             <div class="flex items-center gap-1.5">
               <input type="color" :value="color"
-                     @input="colorMap[key]=$event.target.value;colorMap={...colorMap};_schedulePreview();"
+                     @input="colorMap[key]=$event.target.value;colorMap={...colorMap};_editorFiring=true;clearTimeout(_editorTimer);_editorTimer=setTimeout(()=>{_editorFiring=false;_schedulePreview();},500);"
                      class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
               <span class="text-[11px] text-slate-700 truncate flex-1" x-text="key"></span>
               <button type="button" @click="delete colorMap[key];colorMap={...colorMap};_schedulePreview();"
@@ -1787,6 +2161,7 @@
     <input type="hidden" name="x_col"          x-bind:value="xCol">
     <input type="hidden" name="y_col"          x-bind:value="yCol">
     <input type="hidden" name="series_col"     x-bind:value="seriesCol">
+    <input type="hidden" name="group_col"      x-bind:value="groupCol">
     <input type="hidden" name="compare_pl_cols"  x-bind:value="JSON.stringify(comparePlCols)">
     <input type="hidden" name="ac_include_cats"  x-bind:value="JSON.stringify(acIncludeCats)">
     <input type="hidden" name="ac_include_pl"    x-bind:value="JSON.stringify(acIncludePl)">
@@ -1858,12 +2233,93 @@
     <input type="hidden" name="st_col_col"     x-bind:value="stColCol">
     <input type="hidden" name="stack_order"     x-bind:value="JSON.stringify(stackOrder)">
     <input type="hidden" name="drill_through_columns_str" x-bind:value="drillColumns">
-    <input type="hidden" name="source_filters" x-bind:value="JSON.stringify(chartFilters)">
+    <input type="hidden" name="source_filters" x-bind:value="JSON.stringify(cleanSourceFilters())">
+    <input type="hidden" name="school_filter_mode" x-bind:value="schoolFilterMode">
     <input type="hidden" name="parliament_dot_scale" x-bind:value="parliamentDotScale">
     <input type="hidden" name="parliament_shape"     x-bind:value="parliamentShape">
     <input type="hidden" name="parliament_rows"      x-bind:value="parliamentRowsAuto ? '' : parliamentRows">
     <input type="hidden" name="parliament_show_ss"   x-bind:value="parliamentShowSS ? '1' : ''">
   </form>
+
+  {# ── Save & Add to Page modal ── #}
+  <div x-show="saveAndAttachOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto" @click.self="saveAndAttachOpen = false">
+    <div class="min-h-screen px-4 flex items-center justify-center">
+      <div class="fixed inset-0 bg-black/30" @click="saveAndAttachOpen = false"></div>
+      <div class="relative bg-white rounded-xl shadow-2xl max-w-md w-full p-6 z-10">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-bold text-slate-800 uppercase tracking-wide">Save &amp; Add to Page</h3>
+          <button @click="saveAndAttachOpen = false" class="text-slate-400 hover:text-slate-600">&times;</button>
+        </div>
+        <p class="text-xs text-slate-500 mb-4">Save this chart and attach it to one of your pages.</p>
+        <div class="mb-4">
+          <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 block mb-1">Target Page</label>
+          <select x-model="targetPageId" class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">— choose a page —</option>
+            <template x-for="p in availablePages" :key="p.id">
+              <option :value="p.id" x-text="p.title"></option>
+            </template>
+          </select>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="doSaveAndAttach()" :disabled="saving || !targetPageId"
+                  class="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 transition">
+            <span x-text="saving ? 'Saving…' : 'Save & Attach'"></span>
+          </button>
+          <button @click="saveAndAttachOpen = false"
+                  class="flex-1 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition">
+            Cancel
+          </button>
+        </div>
+        <p class="text-[9px] text-slate-400 mt-3 text-center" x-show="!targetPageId">Select a target page to enable</p>
+      </div>
+    </div>
+  </div>
+
+  {# ── Guided Mode banner ── #}
+  <div x-show="!guidedMode" x-transition
+       class="fixed bottom-4 right-4 z-40 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl shadow-xl p-4 max-w-xs"
+       x-cloak>
+    <div class="flex items-start gap-2">
+      <svg class="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+      <div>
+        <p class="text-xs font-bold">New to charts?</p>
+        <p class="text-[10px] opacity-90 mt-0.5">Guided mode walks you through each step.</p>
+        <button @click="guidedMode = true; localStorage.setItem('datavizGuidedMode','true'); guidedStep=1"
+                class="mt-2 text-[9px] font-bold bg-white/20 hover:bg-white/30 rounded-lg px-2.5 py-1 transition">
+          Start Guided Mode
+        </button>
+      </div>
+      <button @click="guidedMode = true; localStorage.setItem('datavizGuidedMode','true')" class="text-white/60 hover:text-white">&times;</button>
+    </div>
+  </div>
+
+  {# ── Chart Recommendations panel (shown after column load) ── #}
+  <div x-show="recommendedCharts.length > 0 && centerTab === 'type'" x-transition
+       class="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+    <p class="text-[9px] font-bold text-blue-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+      <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+      Recommended for your data
+    </p>
+    <div class="flex flex-wrap gap-1">
+      <template x-for="rec in recommendedCharts" :key="rec.chart_type">
+        <button @click="chartType = rec.chart_type; centerTab = 'map'"
+                class="text-[10px] font-semibold px-2 py-1 rounded-full border transition whitespace-nowrap"
+                :class="chartType === rec.chart_type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-100'"
+                :title="rec.reason">
+          <span x-text="rec.label"></span>
+          <span class="text-[8px] ml-0.5 opacity-60" x-text="'(' + rec.score + ')'"></span>
+        </button>
+      </template>
+    </div>
+    <p x-show="recommendedCharts.length === 0 && recommendationsLoading" class="text-[9px] text-slate-400">Analyzing columns…</p>
+  </div>
+
+  {# ── Auto Description (below chart preview) ── #}
+  <div x-show="autoDescription && previewHtml" x-transition
+       class="px-4 py-2 text-[10px] text-slate-500 italic bg-slate-50 border-t border-slate-200">
+    <span x-text="autoDescription"></span>
+  </div>
+
 </div>
 
 <script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
@@ -1933,6 +2389,7 @@ function chartBuilder() {
     xCol:         existing?.config?.x_col ?? '',
     yCol:         existing?.config?.y_col ?? '',
     seriesCol:    existing?.config?.stack_col ?? existing?.config?.series_col ?? '',
+    groupCol:     existing?.config?.group_col ?? '',
     comparePlCols: existing?.config?.compare_pl_cols ?? [],
     /* Progress Growth */
     pgBeforeCol:      existing?.config?.pg_before_col ?? '',
@@ -2057,9 +2514,8 @@ function chartBuilder() {
     /* ─── Filter state ───────────────────────────────────── */
     filterOptions:  {},               // { grade: ['K','1',...], school: [...] }
     filterLabels:   {},               // { grade: 'Grade', test_..._PL: 'Dibbles BOY PL', ... }
-    yearAliasLabels: {},              // { '__sy_this__': 'This School Year', ... } — from API
     testedSchoolNames: {},            // { 'SCH001': 'Lincoln Elementary', ... } — from API
-    schoolFilterMode: existing?.source_filters?.tested_school?.length ? 'tested' : 'enrolled',
+    schoolFilterMode: existing?.school_filter_mode || (existing?.source_filters?.tested_school?.length ? 'tested' : 'enrolled'),
     chartFilters:   existing?.source_filters ?? {},  // { grade: ['K','1'], school: ['Lincoln'] }
     filtersLoading: false,
     openFilter:     '',               // which filter dropdown is expanded
@@ -2073,8 +2529,34 @@ function chartBuilder() {
     explorerSearch:    '',
     explorerOpenNode:  '',            // currently expanded top-level tree node
     explorerOpenSub:   '',            // currently expanded sub-level tree node
-    dvYearMode:        localStorage.getItem('dwYearMode') || 'specific',  // 'specific' | 'relative'
+    dvYearMode:        localStorage.getItem('dwYearMode') || 'relative',  // 'relative' | 'specific'
     dvYearAliasMap:    {},            // underscore-keyed: {'2025_2026': '__sy_this__', ...}
+    pickerLayout:      localStorage.getItem('dwPickerLayout') || 'assessment_first',  // 'assessment_first' | 'year_first'
+
+    /* ─── Phase 2-6 new state ─────────────────────────────── */
+    // School Year Context (prominent dropdown at top of source panel)
+    yearContext:       Array.isArray(existing?.source_filters?.school_year) ? '' : (existing?.source_filters?.school_year || '{{ sy_this_year }}'),
+    yearAliasLabels:   JSON.parse('{{ year_alias_labels_json|escapejs }}'),
+    aliasResolvedLabels: JSON.parse('{{ alias_resolved_labels_json|escapejs }}'),
+    // Searchable query picker
+    querySearch:       '',
+    queryPreviewData:  null,           // { columns, rows } from preview API
+    queryPreviewLoading: false,
+    queryPreviewOpen:  false,
+    // Save + Add to Page
+    saveAndAttachOpen: false,
+    targetPageId:      '',
+    availablePages:    JSON.parse('{{ available_pages_json|escapejs }}'),
+    // Guided mode
+    guidedMode:        localStorage.getItem('datavizGuidedMode') === 'true',
+    guidedStep:        1,              // 1=Source, 2=Type, 3=Map, 4=Preview
+    // Chart recommendations
+    recommendedCharts: [],
+    recommendationsLoading: false,
+    // Auto description
+    autoDescription:   '',
+    // Cross-nav
+    showCrossNav:      false,
 
     /* ─── Computed ───────────────────────────────────────── */
     get activeCols()   {
@@ -2088,6 +2570,9 @@ function chartBuilder() {
       return this.activeCols.filter(c => c.toLowerCase().includes(q));
     },
     get hasData()      { return this.activeCols.length > 0; },
+    get multiYearSelected() {
+      return this.yearContext === '' && (this.chartFilters._custom_years || []).length > 1;
+    },
     get plCols()       { return this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_PL')); },
     get filterCols()   { return Object.keys(this.filterOptions).filter(k => k !== 'tested_school').sort(); },
     get activeFilterCount() {
@@ -2157,8 +2642,23 @@ function chartBuilder() {
     setSource(type) {
       this.sourceType = type;
       this.columns = []; this.rawSqlColumns = []; this.explorerCols = []; this.colSearch = '';
-      this.filterOptions = {}; this.filterLabels = {}; this.chartFilters = {}; this.openFilter = '';
+      this.filterOptions = {}; this.filterLabels = {}; this.openFilter = '';
+      // Preserve year context and school filter mode across source switches
+      const yearCtx = this.yearContext;
+      const schoolMode = this.schoolFilterMode;
+      const customYears = this.chartFilters._custom_years;
+      this.chartFilters = {};
+      if (yearCtx) {
+        this.chartFilters.school_year = yearCtx;
+      } else if (customYears && customYears.length > 0) {
+        // Custom mode — restore the user's checked school years
+        this.chartFilters._custom_years = [...customYears];
+        this.chartFilters.school_year = [...customYears];
+      }
+      this.schoolFilterMode = schoolMode;
       if (type === 'columns' && !Object.keys(this.explorerStructure?.definitions || {}).length) this.loadExplorerStructure();
+      // Update guided step
+      if (this.guidedMode) this.guidedStep = 1;
     },
 
     /* ─── Filter helpers ─────────────────────────────────── */
@@ -2202,12 +2702,16 @@ function chartBuilder() {
     /* ─── Init ───────────────────────────────────────────── */
     _autoTimer: null,
     init() {
+      // If existing chart has multi-year school_year, sync to _custom_years for the checkbox UI
+      if (Array.isArray(this.chartFilters.school_year)) {
+        this.chartFilters = { ...this.chartFilters, _custom_years: [...this.chartFilters.school_year] };
+      }
       if (this.savedQueryId) this.loadColumns();
       if (this.sourceType === 'columns') this.loadExplorerStructure();
 
       // Data props — changing these requires a full server re-render
-      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','xCol','yCol','seriesCol','comparePlCols','aggFunc','aggDecimals',
-                         'sortCol','sortDir','categoryOrder','limit','palette','colorMap','showPercent','showPercentSymbol','percentDecimals','stackOrder',
+      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','xCol','yCol','seriesCol','groupCol','comparePlCols','aggFunc','aggDecimals',
+                         'sortCol','sortDir','categoryOrder','limit','palette','showPercent','showPercentSymbol','percentDecimals','stackOrder',
                          'stRowCol','stColCol','explorerSelected',
                          'acIncludeCats','acIncludePl','acColFilters',
                          'compareGap','compareCatFontSize','compareCatRotation','showCategories','showAxisTitles',
@@ -2219,7 +2723,8 @@ function chartBuilder() {
                           'labelPosition','background','opacity',
                           'barBorderRadius','showPoints','smooth',
                           'showZoom','showToolbox','showGrid','showAxisLabels','enableAnimation','showTooltip',
-                          'xLabelRotation','xLabelFontSize','xLabelMaxLength','barCategoryGap','yAxisMin','yAxisMax'];
+                          'xLabelRotation','xLabelFontSize','xLabelMaxLength','barCategoryGap','yAxisMin','yAxisMax',
+                          'colorMap'];
       dataProps.forEach(prop => {
         this.$watch(prop, () => this._scheduleDataPreview());
       });
@@ -2227,7 +2732,15 @@ function chartBuilder() {
         this.$watch(prop, () => this._scheduleStylePreview());
       });
     },
-    _schedulePreview() { this._scheduleDataPreview(); },
+    _schedulePreview() {
+      // When chart is already rendered, try live style update first (no server round-trip).
+      // Data changes are also watched separately and will trigger _scheduleDataPreview.
+      if (this.previewHtml) {
+        this._scheduleStylePreview();
+      } else {
+        this._scheduleDataPreview();
+      }
+    },
     _scheduleStylePreview() {
       if (this._editorFiring) return;
       // If a chart is already rendered, apply style changes live — no server round-trip
@@ -2247,7 +2760,7 @@ function chartBuilder() {
       clearTimeout(this._autoTimer);
       this._autoTimer = setTimeout(() => {
         if (this.canPreview && !this.previewLoading) this.doPreview();
-      }, 400);
+      }, 600);
     },
 
     _applyStyleLive() {
@@ -2478,6 +2991,9 @@ function chartBuilder() {
 
       // Load filter options in parallel (non-blocking)
       this.loadFilterOptions();
+
+      // Fetch chart type recommendations based on loaded columns
+      this.fetchRecommendations();
     },
 
     async loadFilterOptions() {
@@ -2522,11 +3038,13 @@ function chartBuilder() {
           definitions: data?.definitions || {},
           test_structure: data?.test_structure || {},
           mark_structure: data?.mark_structure || {},
+          assessment_structure: data?.assessment_structure || {},
+          mark_assessment_structure: data?.mark_assessment_structure || {},
           year_labels: data?.year_labels || {},
         };
       } catch (e) {
         console.error('Explorer structure:', e);
-        this.explorerStructure = { categories: {}, definitions: {}, test_structure: {}, mark_structure: {}, year_labels: {} };
+        this.explorerStructure = { categories: {}, definitions: {}, test_structure: {}, mark_structure: {}, assessment_structure: {}, mark_assessment_structure: {}, year_labels: {} };
       }
       this.explorerLoading = false;
       // If editing an existing columns-source chart, rebuild explorerCols
@@ -2591,7 +3109,11 @@ function chartBuilder() {
                             : this._dvNormaliseKey(key)
       ))];
       if (this.chartFilters.school_year) {
-        this.chartFilters.school_year = this.chartFilters.school_year.map(val => {
+        // school_year can be a single string (from year context dropdown) or an array of strings
+        const yearVals = Array.isArray(this.chartFilters.school_year)
+          ? this.chartFilters.school_year
+          : [this.chartFilters.school_year];
+        this.chartFilters.school_year = yearVals.map(val => {
           if (mode === 'relative') {
             const key_us = val.replace('-', '_');
             return this.dvYearAliasMap[key_us] || val;
@@ -2623,6 +3145,8 @@ function chartBuilder() {
       this.explorerCols = this.explorerSelected.map(c => c);
       // Load filter options for the selected columns
       this._loadExplorerFilterOptions();
+      // Fetch chart type recommendations based on selected columns
+      this.fetchRecommendations();
     },
 
     async _loadExplorerFilterOptions() {
@@ -2761,8 +3285,20 @@ function chartBuilder() {
     },
 
     /* ─── Preview ────────────────────────────────────────── */
+    _lastPreviewTime: 0,
     async doPreview() {
       if (!this.canPreview) return;
+      // Throttle: max 1 preview per 1.5s to prevent rapid-fire server calls
+      const now = Date.now();
+      if (now - this._lastPreviewTime < 1500) {
+        // Re-schedule for after the throttle window
+        clearTimeout(this._autoTimer);
+        this._autoTimer = setTimeout(() => {
+          if (this.canPreview && !this.previewLoading) this.doPreview();
+        }, 1500 - (now - this._lastPreviewTime) + 50);
+        return;
+      }
+      this._lastPreviewTime = now;
       this.previewLoading = true;
       this.previewHtml = '';
       try {
@@ -2819,6 +3355,8 @@ function chartBuilder() {
             }
           }
         });
+        // Fetch auto-description after preview renders
+        this.fetchAutoDescription();
         return;
       } catch (e) {
         const msg = `<div class="text-red-600 text-sm p-4">Preview failed: ${e.message}</div>`;
@@ -2858,6 +3396,285 @@ function chartBuilder() {
         }
       } catch (e) { this._flash('Error: ' + e.message, true); }
       this.saving = false;
+    },
+
+    /* ─── Query Preview (Phase 2) ────────────────────────── */
+    async previewQuery() {
+      if (!this.savedQueryId) return;
+      this.queryPreviewLoading = true;
+      this.queryPreviewData = null;
+      try {
+        const r = await fetch(`/dataviz/api/query/${this.savedQueryId}/preview/`);
+        const data = await r.json();
+        if (data.success) {
+          this.queryPreviewData = { columns: data.columns, rows: data.rows };
+        } else {
+          this._flash(data.error || 'Preview failed', true);
+        }
+      } catch (e) {
+        this._flash('Preview error: ' + e.message, true);
+      }
+      this.queryPreviewLoading = false;
+    },
+
+    /* ─── Year Context Change (Phase 4) ────────────────────── */
+    onYearContextChange() {
+      // Store yearContext in source_filters so it's sent on save/preview
+      if (this.yearContext) {
+        // Clear any custom years when switching to a preset alias
+        const f = { ...this.chartFilters, school_year: this.yearContext };
+        delete f._custom_years;
+        this.chartFilters = f;
+      } else {
+        // Custom mode — keep any existing _custom_years or clear school_year
+        const f = { ...this.chartFilters };
+        delete f.school_year;
+        this.chartFilters = f;
+      }
+      // Reload columns if using a saved query
+      if (this.sourceType === 'query' && this.savedQueryId) {
+        this.loadColumns();
+      }
+    },
+
+    /* ─── Custom Year multi-select (Phase 4) ──────────────────── */
+    toggleCustomYear(year) {
+      let years = this.chartFilters._custom_years || [];
+      if (years.includes(year)) {
+        years = years.filter(y => y !== year);
+      } else {
+        years = [...years, year];
+      }
+      if (years.length > 0) {
+        this.chartFilters = { ...this.chartFilters, _custom_years: years, school_year: years };
+        // Multi-year: year-first view is hidden, switch to assessment-first automatically
+        if (years.length > 1 && this.pickerLayout === 'year_first') {
+          this.pickerLayout = 'assessment_first';
+          localStorage.setItem('dwPickerLayout', 'assessment_first');
+        }
+      } else {
+        const f = { ...this.chartFilters };
+        delete f._custom_years;
+        delete f.school_year;
+        this.chartFilters = f;
+      }
+      this._schedulePreview();
+    },
+
+    /* ─── Query Summary Builder (Phase 2) ──────────────────── */
+    buildQuerySummary() {
+      const parts = [];
+      // Source type
+      if (this.sourceType === 'query') {
+        const sel = document.querySelector(`[x-model="savedQueryId"]`);
+        const qName = sel?.selectedOptions?.[0]?.textContent || 'a saved query';
+        parts.push(`From: ${qName}`);
+      } else if (this.sourceType === 'sql') {
+        parts.push('From: custom SQL query');
+      } else if (this.sourceType === 'columns') {
+        parts.push(`${this.explorerCols.length} columns selected`);
+      }
+      // School year context
+      if (this.yearContext) {
+        const label = this.aliasResolvedLabels[this.yearContext] || this.yearContext;
+        parts.push(`Year: ${label}`);
+      }
+      // School filter mode
+      parts.push(`School: ${this.schoolFilterMode === 'tested' ? 'Tested/Assessment' : 'Enrolled'}`);
+      // Assessment columns
+      if (this.activeCols.length) {
+        const plCount = this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_PL')).length;
+        const ssCount = this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_SS')).length;
+        if (plCount || ssCount) parts.push(`Assessments: ${ssCount} SS, ${plCount} PL columns`);
+      }
+      return parts.join(' | ') || 'Configure a data source to see summary';
+    },
+
+    /* ─── Save & Add to Page (Phase 5) ─────────────────────── */
+    async doSaveAndAttach() {
+      if (!this.name.trim()) { this._flash('Enter a chart name first', true); return; }
+      if (!this.targetPageId) { this._flash('Select a target page', true); return; }
+      this.saving = true;
+      try {
+        const fd = new FormData(document.getElementById('chart-form'));
+        const payload = Object.fromEntries(fd.entries());
+        // Convert form values to proper JSON for the API
+        payload.target_page_id = this.targetPageId;
+        payload.chart_type = this.chartType;
+        payload.config = this._buildConfig();
+        payload.school_filter_mode = this.schoolFilterMode;
+        payload.source_filters = this.cleanSourceFilters();
+        payload.source_type = this.sourceType;
+        if (this.sourceType === 'columns') {
+          payload.selected_columns = this.explorerSelected;
+        }
+        if (this.chartId) payload.id = this.chartId;
+
+        const r = await fetch('{% url "dataviz:chart_save_and_attach" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken,
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = await r.json();
+        if (data.success) {
+          this._flash(`Chart saved and added to page!`, false);
+          this.saveAndAttachOpen = false;
+          this.targetPageId = '';
+          if (data.chart?.id) {
+            this.chartId = data.chart.id;
+            if (!window.location.href.includes('/edit/')) {
+              history.replaceState(null, '', `/dataviz/charts/${data.chart.id}/edit/`);
+            }
+          }
+        } else {
+          this._flash(data.error || 'Save failed', true);
+        }
+      } catch (e) {
+        this._flash('Error: ' + e.message, true);
+      }
+      this.saving = false;
+    },
+
+    /* ─── Chart Recommendations (Phase 6) ──────────────────── */
+    async fetchRecommendations() {
+      if (!this.hasData) return;
+      this.recommendationsLoading = true;
+      try {
+        const r = await fetch('{% url "dataviz:chart_recommend" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken,
+          },
+          body: JSON.stringify({ columns: this.activeCols, column_definitions: {} }),
+        });
+        const data = await r.json();
+        if (data.success) {
+          this.recommendedCharts = data.recommendations || [];
+        }
+      } catch (_) { /* silently fail for recommendations */ }
+      this.recommendationsLoading = false;
+    },
+
+    /* ─── Auto Description (Phase 6) ───────────────────────── */
+    async fetchAutoDescription() {
+      if (!this.chartType) return;
+      try {
+        const cfg = this._buildConfig();
+        const r = await fetch('{% url "dataviz:chart_describe" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken,
+          },
+          body: JSON.stringify({ chart_config: cfg, column_definitions: {} }),
+        });
+        const data = await r.json();
+        if (data.success) {
+          this.autoDescription = data.description;
+        }
+      } catch (_) { /* silently fail */ }
+    },
+
+    /* ─── Clean source_filters for save (strip UI-only keys) ── */
+    cleanSourceFilters() {
+      // Strip _custom_years (UI-only checkbox tracking) before saving
+      if (!this.chartFilters || typeof this.chartFilters !== 'object') return {};
+      const { _custom_years, ...clean } = this.chartFilters;
+      return clean;
+    },
+
+    /* ─── Build config helper ───────────────────────────────── */
+    _buildConfig() {
+      return {
+        chart_type: this.chartType,
+        x_col: this.xCol,
+        y_col: this.yCol,
+        series_col: this.seriesCol,
+        stack_col: this.seriesCol,
+        group_col: this.groupCol,
+        compare_pl_cols: this.comparePlCols,
+        ac_include_cats: this.acIncludeCats,
+        ac_include_pl: this.acIncludePl,
+        ac_col_filters: this.acColFilters,
+        agg: this.aggFunc,
+        agg_decimals: this.aggDecimals,
+        pg_before_col: this.pgBeforeCol,
+        pg_after_col: this.pgAfterCol,
+        pl_scale: this.pgScaleParsed,
+        pg_display: this.pgDisplay,
+        st_row_col: this.stRowCol,
+        st_col_col: this.stColCol,
+        sort_col: this.sortCol,
+        sort_dir: this.sortDir,
+        limit: this.limit,
+        palette: this.palette,
+        legend_pos: this.showLegend ? this.legendPos : 'hidden',
+        legend_item_gap: this.legendItemGap,
+        legend_font_size: this.legendFontSize,
+        legend_icon_size: this.legendIconSize,
+        legend_offset: this.legendOffset,
+        legend_left: this.legendLeft,
+        legend_top: this.legendTop,
+        show_legend: this.showLegend,
+        data_labels: this.showLabels,
+        label_position: this.labelPosition,
+        background: this.background,
+        opacity: this.opacity,
+        bar_border_radius: this.barBorderRadius,
+        show_points: this.showPoints,
+        smooth: this.smooth,
+        color_map: this.colorMap,
+        show_zoom: this.showZoom,
+        show_toolbox: this.showToolbox,
+        show_grid: this.showGrid,
+        show_axis_labels: this.showAxisLabels,
+        show_categories: this.showCategories,
+        show_axis_titles: this.showAxisTitles,
+        animation: this.enableAnimation,
+        show_tooltip: this.showTooltip,
+        tooltip_show_pct: this.tooltipShowPct,
+        tooltip_show_count: this.tooltipShowCount,
+        tooltip_value_pct: this.tooltipValuePct,
+        show_percent: this.showPercent,
+        show_percent_symbol: this.showPercentSymbol,
+        percent_decimals: this.percentDecimals,
+        category_order: this.categoryOrder,
+        bar_layout: this.barLayout,
+        bar_orientation: this.barOrientation,
+        bar_radial: this.barRadial,
+        bar_polar: this.barPolar,
+        compare_gap: this.compareGap,
+        compare_cat_font_size: this.compareCatFontSize,
+        compare_cat_rotation: this.compareCatRotation,
+        x_label_rotation: this.xLabelRotation,
+        x_label_font_size: this.xLabelFontSize,
+        x_label_max_length: this.xLabelMaxLength,
+        bar_category_gap: this.barCategoryGap,
+        y_axis_min: this.yAxisMin,
+        y_axis_max: this.yAxisMax,
+        grid_left: this.gridLeft,
+        grid_right: this.gridRight,
+        grid_top: this.gridTop,
+        grid_bottom: this.gridBottom,
+        title_left: this.titleLeft,
+        title_top: this.titleTop,
+        title_font_size: this.titleFontSize,
+        label_distance: this.labelDistance,
+        container_width: this.containerWidth,
+        container_height: this.containerHeight,
+        chart_title: this.chartTitle,
+        stack_order: this.stackOrder,
+        parliament_dot_scale: this.parliamentDotScale,
+        parliament_shape: this.parliamentShape,
+        parliament_rows: this.parliamentRowsAuto ? null : this.parliamentRows,
+        parliament_show_ss: this.parliamentShowSS,
+        school_filter_mode: this.schoolFilterMode,
+        source_filters: this.cleanSourceFilters(),
+      };
     },
 
     _flash(msg, isError) {

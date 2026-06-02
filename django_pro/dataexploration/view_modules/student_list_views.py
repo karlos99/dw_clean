@@ -27,6 +27,7 @@ from .column_management import (
     get_column_expression,
 )
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
+from landing.utils import get_project_config
 
 class StudentWithTestsListView(LoginRequiredMixin, ListView):
     """Display list of students with their test results (one row per student)."""
@@ -134,13 +135,35 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
 
         filters = query_config.get('filters', {})
 
+        # Resolve the project default school year for the initial page load
+        _project_default_year = ''
+        try:
+            _cfg = get_project_config()
+            _project_default_year = _cfg.default_school_year or ''
+        except Exception:
+            pass
+
         def get_param(name, default=''):
             # URL param takes precedence over saved query, which takes precedence over default
             return self.request.GET.get(name) or filters.get(name, default)
 
         # Current filter values
         context['search_query'] = get_param('search')
-        context['selected_school_year'] = get_param('school_year')
+        if 'school_year' in self.request.GET:
+            selected_year = self.request.GET.get('school_year')
+        elif _project_default_year:
+            selected_year = _project_default_year
+        else:
+            selected_year = filters.get('school_year', '')
+
+        # Resolve selected_school_year to concrete school year if it is an alias
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            if selected_year:
+                selected_year = resolve_school_year(selected_year)
+        except Exception:
+            pass
+        context['selected_school_year'] = selected_year
         context['selected_grade'] = get_param('grade')
         context['selected_status'] = get_param('status', 'Active')
         
@@ -221,12 +244,25 @@ def load_students(request):
     # Get filters - URL params take precedence over saved config
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
     
-    _sy_raw = request.GET.get('school_year', '')
-    school_year = _parse_multi(
-        _sy_raw,
-        _parse_multi(saved_filters.get('school_year', ''),
-                     _parse_multi(saved_config.get('school_year', ''), ''))
-    )
+    _project_default_year = ''
+    try:
+        _cfg = get_project_config()
+        _project_default_year = _cfg.default_school_year or ''
+    except Exception:
+        pass
+
+    _sy_in_url = 'school_year' in request.GET
+    if _sy_in_url:
+        _sy_raw = request.GET.get('school_year', '')
+        school_year = _parse_multi(_sy_raw, '')
+    elif _project_default_year:
+        school_year = _project_default_year
+    else:
+        school_year = _parse_multi(
+            saved_filters.get('school_year', ''),
+            _parse_multi(saved_config.get('school_year', ''), '')
+        )
+
     # Resolve school-year aliases to concrete year strings
     try:
         from dataexploration.school_year_utils import resolve_school_year

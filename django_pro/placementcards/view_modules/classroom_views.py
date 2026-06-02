@@ -35,11 +35,45 @@ _GRADES_LIST = [
 
 
 def _classroom_list_context(school, school_year: str | None):
+    classroom_years = list(NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).distinct())
+
+    project_default_year = None
+    try:
+        from landing.utils import get_project_config
+        project_default_year = get_project_config().default_school_year
+    except Exception:
+        pass
+
+    default_placement_year = None
+    if project_default_year:
+        try:
+            start, end = map(int, project_default_year.split('-'))
+            default_placement_year = f"{start+1}-{end+1}"
+        except ValueError:
+            default_placement_year = project_default_year
+
+    extra_years = []
+    if project_default_year:
+        extra_years.append(project_default_year)
+    if default_placement_year:
+        extra_years.append(default_placement_year)
+
+    available_years = sorted(list(set(classroom_years + extra_years)), reverse=True)
+
+    if not school_year:
+        latest_classroom_year = NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).order_by('-school_year').first()
+        school_year = latest_classroom_year or default_placement_year or project_default_year
+
     classrooms = NextYearClassroom.objects.filter(school=school)
     if school_year:
         classrooms = classrooms.filter(school_year=school_year)
     classrooms = classrooms.annotate(assignment_count=Count('placements')).order_by('school_year', 'grade', 'classroom_name')
-    return {'school': school, 'classrooms': classrooms, 'school_year': school_year}
+    return {
+        'school': school,
+        'classrooms': classrooms,
+        'school_year': school_year,
+        'available_years': available_years,
+    }
 
 
 def _render_classroom_list(request: HttpRequest, school, school_year: str | None):
@@ -67,6 +101,26 @@ def placement_configuration(request: HttpRequest):
         return HttpResponse('Forbidden', status=403)
 
     school_year = request.GET.get('school_year')
+    
+    project_default_year = None
+    try:
+        from landing.utils import get_project_config
+        project_default_year = get_project_config().default_school_year
+    except Exception:
+        pass
+
+    default_placement_year = None
+    if project_default_year:
+        try:
+            start, end = map(int, project_default_year.split('-'))
+            default_placement_year = f"{start+1}-{end+1}"
+        except ValueError:
+            default_placement_year = project_default_year
+
+    if not school_year:
+        latest_classroom_year = NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).order_by('-school_year').first()
+        school_year = latest_classroom_year or default_placement_year or project_default_year
+
     classrooms = NextYearClassroom.objects.filter(school=school)
     if school_year:
         classrooms = classrooms.filter(school_year=school_year)
@@ -85,6 +139,14 @@ def placement_configuration(request: HttpRequest):
     )
     can_manage_tags = can_user_manage_tags(request.user, school)
 
+    classroom_years = list(NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).distinct())
+    extra_years = []
+    if project_default_year:
+        extra_years.append(project_default_year)
+    if default_placement_year:
+        extra_years.append(default_placement_year)
+    available_years = sorted(list(set(classroom_years + extra_years)), reverse=True)
+
     context = {
         'school': school,
         'school_year': school_year,
@@ -97,6 +159,7 @@ def placement_configuration(request: HttpRequest):
         'question': None,
         'options_value': '',
         'can_manage_tags': can_manage_tags,
+        'available_years': available_years,
     }
     return render(request, 'placementcards/placement_configuration.html', context)
 

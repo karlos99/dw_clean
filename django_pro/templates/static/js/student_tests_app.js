@@ -215,6 +215,19 @@ document.addEventListener('DOMContentLoaded', () => {
         return yearMode === 'relative' ? toRelativeKey(spec) : spec;
     }
 
+    /** Resolve relative school year alias to its specific concrete year. */
+    function resolveRelativeSchoolYear(val) {
+        if (!val) return '';
+        if (val.startsWith('__sy_')) {
+            for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
+                if (alias === val) {
+                    return yearUs.replace('_', '-');
+                }
+            }
+        }
+        return val;
+    }
+
     /** Get the display label for a column, dynamically translating to relative if active. */
     function getColumnLabel(col) {
         if (!col) return '';
@@ -260,16 +273,13 @@ document.addEventListener('DOMContentLoaded', () => {
             el.textContent = yearMode === 'relative' ? relative : specific;
         });
 
-        // Filter the school_year dropdown's optgroups based on yearMode
+        // Filter the school_year dropdown's optgroups to always show the specific school year instead of relative names
         const schoolYearSelect = document.getElementById('school_year');
         if (schoolYearSelect) {
-            let currentVal = schoolYearSelect.value;
-            let changed = false;
-
             const optGroups = schoolYearSelect.querySelectorAll('optgroup[data-school-year-group]');
             optGroups.forEach(group => {
                 const groupMode = group.dataset.schoolYearGroup;
-                if (groupMode === yearMode) {
+                if (groupMode === 'specific') {
                     group.style.display = '';
                     group.disabled = false;
                 } else {
@@ -277,33 +287,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     group.disabled = true;
                 }
             });
-
-            // Convert currently selected school year between specific and relative
-            const selectedOpt = schoolYearSelect.querySelector(`option[value="${currentVal}"]`);
-            if (selectedOpt && selectedOpt.parentElement && selectedOpt.parentElement.disabled) {
-                let newVal = '';
-                if (yearMode === 'relative') {
-                    const key_us = currentVal.replace('-', '_');
-                    const alias = yearAliasMap[key_us];
-                    if (alias) newVal = alias;
-                } else {
-                    for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
-                        if (alias === currentVal) {
-                            newVal = yearUs.replace('_', '-');
-                            break;
-                        }
-                    }
-                }
-
-                if (newVal && schoolYearSelect.querySelector(`option[value="${newVal}"]`)) {
-                    schoolYearSelect.value = newVal;
-                    changed = true;
-                } else {
-                    const firstEnabled = schoolYearSelect.querySelector('optgroup:not([disabled]) option, option:not(optgroup option)');
-                    schoolYearSelect.value = firstEnabled ? firstEnabled.value : '';
-                    changed = true;
-                }
-            }
         }
     }
 
@@ -408,7 +391,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusInput = document.getElementById('status');
 
             if (searchInput && stored.search !== undefined) searchInput.value = stored.search || '';
-            if (schoolYearSelect && stored.school_year !== undefined) schoolYearSelect.value = stored.school_year || '';
+            if (schoolYearSelect && stored.school_year !== undefined) schoolYearSelect.value = resolveRelativeSchoolYear(stored.school_year || '');
             if (gradeSelect && stored.grade !== undefined) gradeSelect.value = stored.grade || '';
             if (statusInput && stored.status !== undefined) statusInput.value = stored.status || '';
         } catch (e) {
@@ -791,7 +774,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusInput = document.getElementById('status');
 
         if (payload.search !== undefined && searchInput) searchInput.value = payload.search || '';
-        if (payload.school_year !== undefined && schoolYearSelect) schoolYearSelect.value = payload.school_year || '';
+        if (payload.school_year !== undefined && schoolYearSelect) schoolYearSelect.value = resolveRelativeSchoolYear(payload.school_year || '');
         if (payload.grade !== undefined && gradeSelect) gradeSelect.value = payload.grade || '';
         if (payload.status !== undefined && statusInput) statusInput.value = payload.status || '';
 
@@ -1175,7 +1158,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (searchInput && searchInput.value) {
                 url.searchParams.set('search', searchInput.value);
             }
-            if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
+            if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
             if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
             if (statusInput) url.searchParams.set('status', statusInput.value);
         }
@@ -1680,7 +1663,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (searchInput && searchInput.value) {
                 url.searchParams.set('search', searchInput.value);
             }
-            if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
+            if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
             if (statusInput) url.searchParams.set('status', statusInput.value);
 
             window.location.href = url.toString();

@@ -156,6 +156,12 @@ def navigation_pages(request):
     Add navigation pages to template context.
     Only shows pages the current user has access to.
     """
+    from landing.utils import get_project_config
+    try:
+        default_school_year = get_project_config().default_school_year
+    except Exception:
+        default_school_year = ''
+
     usage_page = Page.objects.filter(slug='usage').first()
     usage_page_access = False
     if usage_page and request.user.is_authenticated:
@@ -193,6 +199,7 @@ def navigation_pages(request):
             'usage_page_url': usage_page.url_path if usage_page else '/users/usage/',
             'is_school_admin': False,
             'placement_cards_access': False,
+            'default_school_year': default_school_year,
         }
 
     user_roles = _user_roles(request.user)
@@ -256,6 +263,7 @@ def navigation_pages(request):
         'usage_page_url': usage_page.url_path if usage_page else '/users/usage/',
         'is_school_admin': _is_school_admin_user(request.user),
         'placement_cards_access': placement_cards_access,
+        'default_school_year': default_school_year,
     }
 
 

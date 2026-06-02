@@ -43,7 +43,11 @@
         <form id="teacher-notes-filter-form" method="get" class="grid md:grid-cols-4 gap-4 items-end" hx-get="{% url 'placementcards:teacher_notes' %}" hx-target="#students-table-content" hx-swap="innerHTML">
             <div>
                 <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">School Year</label>
-                <input type="text" name="school_year" value="{{ school_year }}" class="w-full border border-slate-300 px-3 py-2 text-sm">
+                <select name="school_year" onchange="this.form.dispatchEvent(new Event('submit', {bubbles: true}))" class="w-full border border-slate-300 px-3 py-2 text-sm bg-white">
+                    {% for yr in available_years %}
+                    <option value="{{ yr }}" {% if school_year == yr %}selected{% endif %}>{{ yr }}</option>
+                    {% endfor %}
+                </select>
             </div>
             <div class="md:col-span-2">
                 <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Tag Filters</label>

@@ -18,7 +18,15 @@ from mathr.models import MathRecommendation
 # ---------------------------------------------------------------------------
 
 def get_current_school_year() -> str:
-    """Return the latest school_year from student_enroll."""
+    """Return the default school_year from ProjectConfig, falling back to student_enroll."""
+    try:
+        from landing.utils import get_project_config
+        val = get_project_config().default_school_year
+        if val:
+            return val
+    except Exception:
+        pass
+
     cache_key = 'mathr:current_school_year'
     val = cache.get(cache_key)
     if val:

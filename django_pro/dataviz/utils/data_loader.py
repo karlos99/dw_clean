@@ -278,7 +278,19 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     if not test_cols_info or not student_ids:
         return
 
-    student_map = {s.get('student_id'): s for s in students if s.get('student_id')}
+    # Compound key: (student_id, school_year) — a student may appear in
+    # multiple rows when multi-year enrollment is queried. Each key maps to a
+    # LIST so that all enrollment rows for the same (student, year) get data
+    # (e.g. a student who transferred mid-year has two rows, same year).
+    # Test results only populate rows whose school_year equals the result's year,
+    # preventing 2023-2024 results from appearing on 2024-2025 rows and vice versa.
+    student_map: dict[tuple, list] = {}
+    for s in students:
+        sid = s.get('student_id')
+        sy = s.get('school_year')
+        if sid and sy:
+            key = (str(sid).strip(), str(sy).strip())
+            student_map.setdefault(key, []).append(s)
     where_parts = []
     params = []
     for info in test_cols_info:
@@ -313,10 +325,14 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     
     for row in cursor.fetchall():
         sid, ss, pl, oi, ry, rt, rs, rw = row
-        s_obj = student_map.get(sid)
-        if not s_obj: continue
+        # Look up by compound (student_id, result_school_year). Result can only
+        # populate enrollment rows for the exact same year \u2014 no cross-year bleed.
+        lookup_key = (str(sid).strip(), str(ry).strip())
+        s_objs = student_map.get(lookup_key)
+        if not s_objs:
+            continue
         for info in test_cols_info:
-            if (info['year'] == ry and info['test_name'].lower() in rt.lower() and 
+            if (info['year'] == ry and info['test_name'].lower() in rt.lower() and
                 info['subject'].lower() in rs.lower()):
                 # Window match
                 iw = info.get('test_window')
@@ -326,17 +342,22 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
 
                 metric = info['metric']
                 col_name = info['col_name']
-                if metric == 'ss': 
-                    s_obj[col_name] = (str(ss).strip() if ss is not None else '\u2014')
-                elif metric == 'pl': 
-                    s_obj[col_name] = (str(pl).strip() if pl else '\u2014')
+                if metric == 'ss':
+                    val = str(ss).strip() if ss is not None else '\u2014'
+                elif metric == 'pl':
+                    val = str(pl).strip() if pl else '\u2014'
                 elif metric == 'oi':
-                    key = info.get('other_info_key')
-                    if key and isinstance(oi, dict):
-                        v = oi.get(key)
-                        s_obj[col_name] = (str(v).strip() if v is not None else '\u2014')
+                    oi_key = info.get('other_info_key')
+                    if oi_key and isinstance(oi, dict):
+                        v = oi.get(oi_key)
+                        val = str(v).strip() if v is not None else '\u2014'
                     else:
-                        s_obj[col_name] = '\u2014'
+                        val = '\u2014'
+                else:
+                    continue
+                # Write to ALL enrollment rows for this (student, year) pair
+                for s_obj in s_objs:
+                    s_obj[col_name] = val
 
 
 def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str], students: list[dict]):
@@ -382,6 +403,48 @@ def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str]
 
 
 # ── Public entry points ──────────────────────────────────────────────────────
+
+def run_saved_query_preview(saved_query) -> dict:
+    """Return the first 5 rows + column list for a SavedQuery for preview.
+
+    Reuses the existing query SQL from the config but limits to 5 rows.
+    Does NOT apply user filters — this is a schema-only preview.
+    """
+    config = dict(saved_query.config or {})
+    columns = config.get('columns', [])
+    if not columns:
+        return {'error': 'No columns configured in saved query', 'rows': [], 'columns': []}
+
+    # Build a minimal SELECT from current_student for preview
+    base_cols = [c for c in columns if c in _CS_COLUMNS and _SAFE_IDENT_RE.match(c)]
+    if not base_cols:
+        base_cols = ['student_id', 'student_name', 'grade', 'school', 'school_year']
+
+    select_exprs = [f'cs.{c}' for c in base_cols]
+    col_sql = ', '.join(select_exprs)
+    sql = f'SELECT {col_sql} FROM current_student cs WHERE cs.status = %s LIMIT 5'
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("BEGIN READ ONLY")
+            try:
+                cursor.execute(sql, ['Active'])
+                if cursor.description is None:
+                    return {'columns': base_cols, 'rows': [], 'row_count': 0}
+                db_cols = [col[0] for col in cursor.description]
+                raw = cursor.fetchmany(5)
+                rows = [dict(zip(db_cols, row)) for row in raw]
+            finally:
+                cursor.execute("ROLLBACK")
+
+        return {
+            'columns': base_cols,
+            'rows': rows,
+            'row_count': len(rows),
+        }
+    except Exception as exc:
+        return {'error': str(exc), 'rows': [], 'columns': []}
+
 
 def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: list | None = None, apply_user_filters: bool = False) -> dict:
     """
@@ -518,6 +581,8 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     need_mark = bool(mark_cols)
     if need_test and 'student_id' not in base_cols:
         base_cols.append('student_id')
+    if need_test and 'school_year' not in base_cols:
+        base_cols.append('school_year')
     if need_mark and 'stu_annual_key' not in base_cols:
         base_cols.append('stu_annual_key')
 
@@ -584,8 +649,26 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     # Fields that live in student_enroll (not current_student)
     _ENROLL_FIELDS = {'ell': 'se.ell_status', 'birth_date': 'se.birth_date',
                       'us_enter_date': 'se.us_enter_date', 'fep_date': 'se.fep_date',
-                      'migrant': 'se.migrant'}
+                      'migrant': 'se.migrant', 'grade': 'se.grade'}
     needs_enroll = False
+
+    # When a school_year filter is present (especially multi-year or past),
+    # force the enroll join so grade comes from the enrollment record for that year.
+    _needs_year_grade = False
+    if 'school_year' in filters:
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            default_sy = resolve_school_year('__sy_this__')
+            sy_val = filters['school_year']
+            if isinstance(sy_val, list):
+                if len(sy_val) > 1 or (len(sy_val) == 1 and sy_val[0] != default_sy):
+                    _needs_year_grade = True
+            elif isinstance(sy_val, str) and sy_val and sy_val != default_sy:
+                _needs_year_grade = True
+        except Exception:
+            pass
+    if _needs_year_grade:
+        needs_enroll = True
 
     def _add_filter(expr: str, value):
         """Add an IN / = filter using the given SQL expression."""
@@ -685,11 +768,13 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             " ) se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
         )
 
-    # Build SELECT expressions — ell comes from COALESCE(cs.ell, se.ell_status) when enroll is joined
+    # Build SELECT expressions — use enrollment values when join is active
     select_exprs = []
     for c in base_cols:
         if c == 'ell' and needs_enroll:
             select_exprs.append('COALESCE(cs.ell, se.ell_status) AS ell')
+        elif c == 'grade' and needs_enroll:
+            select_exprs.append('COALESCE(se.grade, cs.grade) AS grade')
         else:
             select_exprs.append(f'cs.{c}')
 
@@ -709,14 +794,40 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
 
             # Phase 2: resolve test/mark column metadata & bulk-fetch
             if rows and (need_test or need_mark):
+                # When multiple school years are selected, the column key encodes only
+                # the year that was visible in the picker (usually the most recent).
+                # Expand infos to cover all selected years so each enrolled-year row
+                # gets its matching assessment/mark data via the (student_id, year) key.
+                _multi_years = filters.get('school_year') if isinstance(filters.get('school_year'), list) and len(filters.get('school_year', [])) > 1 else None
+
                 if need_test:
                     test_infos, _ = _build_test_columns_from_db(cursor, test_cols)
+                    if _multi_years and test_infos:
+                        _seen = set()
+                        _expanded = []
+                        for _info in test_infos:
+                            for _yr in _multi_years:
+                                _key = (_yr, _info['test_name'], _info['subject'], _info.get('test_window'), _info['metric'])
+                                if _key not in _seen:
+                                    _seen.add(_key)
+                                    _expanded.append({**_info, 'year': _yr})
+                        test_infos = _expanded
                     student_ids = [r['student_id'] for r in rows if r.get('student_id')]
                     _fetch_test_data(cursor, test_infos, student_ids, rows,
                                      tested_school_codes=tested_school_filter)
 
                 if need_mark:
                     mark_infos, _ = _build_mark_columns_from_db(cursor, mark_cols)
+                    if _multi_years and mark_infos:
+                        _seen = set()
+                        _expanded = []
+                        for _info in mark_infos:
+                            for _yr in _multi_years:
+                                _key = (_yr, _info['subject'], _info['course_name'], _info.get('mark_period'))
+                                if _key not in _seen:
+                                    _seen.add(_key)
+                                    _expanded.append({**_info, 'year': _yr})
+                        mark_infos = _expanded
                     student_keys = [r['stu_annual_key'] for r in rows if r.get('stu_annual_key')]
                     _fetch_mark_data(cursor, mark_infos, student_keys, rows)
 

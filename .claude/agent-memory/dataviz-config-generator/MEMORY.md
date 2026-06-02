@@ -1,0 +1,3 @@
+- [dataviz-ux-overhaul](dataviz-ux-overhaul.md) — All 6 phases of the Dataviz App UX Overhaul implemented on 2026-06-01
+- [echarts-alpine-stack](echarts-alpine-stack.md) — Reference: Alpine.js + ECharts 6 frontend stack with Django backend for chart/page builders
+- [multi-year-enrollment-review](multi-year-enrollment-review.md) — Review of multi-year enrollment selection implementation; 3 bugs found and fixed on 2026-06-02

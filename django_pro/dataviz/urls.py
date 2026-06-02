@@ -7,8 +7,9 @@ from .views import (
     drill_table,
     # Chart API
     chart_preview_api, chart_save_api, chart_detail_api, chart_duplicate_api, chart_move_api, chart_render_api, chart_list_partial,
+    chart_save_and_attach_api, chart_recommend_api, chart_describe_api,
     # Query / SQL API
-    query_run_api, query_columns_api, query_filter_options_api, sql_lab_api, sql_schema_api,
+    query_run_api, query_columns_api, query_filter_options_api, query_preview_api, sql_lab_api, sql_schema_api,
     # Column Picker (Explorer) API
     column_structures_api, column_filter_options_api,
     # Page API
@@ -44,6 +45,9 @@ urlpatterns = [
     # ── Chart API ────────────────────────────────────────────────────────
     path('api/charts/preview/',          chart_preview_api,  name='chart_preview'),
     path('api/charts/save/',             chart_save_api,     name='chart_save'),
+    path('api/charts/save-and-attach/',  chart_save_and_attach_api, name='chart_save_and_attach'),
+    path('api/charts/recommend/',        chart_recommend_api,      name='chart_recommend'),
+    path('api/charts/describe/',         chart_describe_api,       name='chart_describe'),
     path('api/charts/list/',             chart_list_partial, name='chart_list'),
     path('api/charts/<int:chart_id>/duplicate/', chart_duplicate_api, name='chart_duplicate'),
     path('api/charts/<int:chart_id>/move/',      chart_move_api,      name='chart_move'),
@@ -54,6 +58,7 @@ urlpatterns = [
     path('api/query/run/',                     query_run_api,      name='query_run'),
     path('api/query/<int:query_id>/columns/',   query_columns_api,  name='query_columns'),
     path('api/query/<int:query_id>/filter-options/', query_filter_options_api, name='query_filter_options'),
+    path('api/query/<int:query_id>/preview/',   query_preview_api,  name='query_preview'),
     path('api/query/sql/',                      sql_lab_api,        name='sql_lab'),
     path('api/schema/',                         sql_schema_api,     name='sql_schema'),
 

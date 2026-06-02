@@ -9,6 +9,9 @@ from .drill_views import drill_table
 from .api.chart_api import (
     chart_preview_api,
     chart_save_api,
+    chart_save_and_attach_api,
+    chart_recommend_api,
+    chart_describe_api,
     chart_detail_api,
     chart_duplicate_api,
     chart_move_api,
@@ -17,7 +20,7 @@ from .api.chart_api import (
 )
 from .api.query_api import (
     query_run_api, query_columns_api, query_filter_options_api, sql_lab_api, sql_schema_api,
-    column_structures_api, column_filter_options_api,
+    column_structures_api, column_filter_options_api, query_preview_api,
 )
 from .api.page_api import (
     page_save_api,
@@ -37,9 +40,11 @@ __all__ = [
     'chart_index', 'chart_builder',
     'page_index', 'page_builder', 'page_view',
     'drill_table',
-    'chart_preview_api', 'chart_save_api', 'chart_detail_api', 'chart_duplicate_api', 'chart_move_api', 'chart_render_api', 'chart_list_partial',
+    'chart_preview_api', 'chart_save_api', 'chart_save_and_attach_api', 'chart_recommend_api',
+    'chart_describe_api', 'chart_detail_api', 'chart_duplicate_api', 'chart_move_api',
+    'chart_render_api', 'chart_list_partial',
     'query_run_api', 'query_columns_api', 'query_filter_options_api', 'sql_lab_api', 'sql_schema_api',
-    'column_structures_api', 'column_filter_options_api',
+    'column_structures_api', 'column_filter_options_api', 'query_preview_api',
     'page_save_api', 'page_delete_api', 'page_sections_api', 'page_filter_options_api',
     'page_filter_columns_api', 'section_detail_api', 'row_detail_api',
     'drill_rows_api', 'drill_columns_api', 'drill_filter_values_api',

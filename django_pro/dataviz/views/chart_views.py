@@ -14,7 +14,8 @@ from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
 from dataexploration.models import SavedQuery
 from dataexploration.utils import can_user_view_query
 from dataexploration.view_modules.column_management import get_saved_default_columns
-from dataexploration.school_year_utils import get_year_labels_map
+from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+from dataexploration.constants import SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR
 
 from .mixins import ProjectAdminMixin, is_project_admin
 
@@ -153,6 +154,31 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
         ]
 
         all_years = list(test_structure.keys()) + list(marks_structure.keys())
+        year_labels_map = get_year_labels_map(all_years)
+        year_alias_map = get_year_alias_map()
+
+        # Build year alias labels for the "School Year Context" dropdown:
+        # This Year → 2025-2026, Last Year → 2024-2025, Two Prior → 2023-2024
+        year_alias_labels = {
+            SY_THIS_YEAR: 'This School Year',
+            SY_LAST_YEAR: 'Last School Year',
+            SY_TWO_PRIOR: 'Two Years Prior',
+        }
+
+        # Build the resolved labels: show which concrete year each alias resolves to
+        alias_resolved_labels = {}
+        from dataexploration.school_year_utils import resolve_school_year
+        for alias_key, alias_label in year_alias_labels.items():
+            try:
+                resolved = resolve_school_year(alias_key)
+                alias_resolved_labels[alias_key] = f'{alias_label} ({resolved})'
+            except Exception:
+                alias_resolved_labels[alias_key] = alias_label
+
+        # Build pages list for save-and-add-to-page dropdown
+        from dataviz.models import DataVizPage
+        available_pages = list(DataVizPage.objects.order_by('title').values('id', 'title', 'slug'))
+
         context.update({
             'chart_id':             chart_id,
             'existing_chart':       existing_chart,
@@ -169,8 +195,14 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             'chart_types_flat':     chart_types_flat,
             'agg_choices':          agg_choices,
             'palettes':             list(PALETTES.keys()),
-            'year_labels':          get_year_labels_map(all_years),
-            'year_labels_json':     json.dumps(get_year_labels_map(all_years)),
+            'year_labels':          year_labels_map,
+            'year_labels_json':     json.dumps(year_labels_map),
+            'year_alias_labels_json': json.dumps(year_alias_labels),
+            'alias_resolved_labels_json': json.dumps(alias_resolved_labels),
+            'sy_this_year':         SY_THIS_YEAR,
+            'sy_last_year':         SY_LAST_YEAR,
+            'sy_two_prior':         SY_TWO_PRIOR,
+            'available_pages_json': json.dumps(available_pages),
         })
         return context
 

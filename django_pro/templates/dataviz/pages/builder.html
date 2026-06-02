@@ -76,6 +76,12 @@
           <path d="M15 19l-7-7 7-7"/>
         </svg>
       </a>
+      <!-- Cross-navigation -->
+      <div class="flex items-center gap-1">
+        <a href="{% url 'dataviz:index' %}" class="text-[9px] font-semibold text-slate-400 hover:text-slate-700 px-2 py-1 rounded transition uppercase tracking-wide">Charts</a>
+        <a href="{% url 'dataviz:page_index' %}" class="text-[9px] font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded uppercase tracking-wide">Pages</a>
+      </div>
+      <span class="text-slate-300 text-xs">|</span>
       <!-- Title edit -->
       <div class="min-w-0">
         <input type="text" x-model="title" placeholder="Page title…"
@@ -90,6 +96,13 @@
     </div>
 
     <div class="flex items-center gap-2 flex-shrink-0">
+      <a href="{% url 'dataviz:chart_new' %}" target="_blank"
+         class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 rounded-lg shadow-sm hover:bg-blue-100 transition-all">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        New Chart
+      </a>
       <button @click="addRow()"
               :disabled="!pageId"
               :class="{'opacity-40 cursor-not-allowed': !pageId}"

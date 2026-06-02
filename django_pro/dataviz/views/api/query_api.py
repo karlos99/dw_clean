@@ -1,5 +1,6 @@
 """Query execution API views: run saved queries, SQL lab, schema browser."""
 import json
+import re
 
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
@@ -148,6 +149,36 @@ def sql_lab_api(request):
 
 
 @login_required
+def query_preview_api(request, query_id):
+    """Return first 5 rows + column list for a SavedQuery without full execution.
+
+    GET /dataviz/api/queries/<id>/preview/
+    """
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    from dataexploration.models import SavedQuery
+    from dataexploration.utils import can_user_view_query
+    try:
+        sq = SavedQuery.objects.get(pk=query_id)
+    except SavedQuery.DoesNotExist:
+        return JsonResponse({'error': 'Not found'}, status=404)
+    if not can_user_view_query(request.user, sq):
+        return JsonResponse({'error': 'Access denied'}, status=403)
+
+    from dataviz.utils.data_loader import run_saved_query_preview
+    result = run_saved_query_preview(sq)
+    if result.get('error'):
+        return JsonResponse({'error': result['error']}, status=400)
+
+    return JsonResponse({
+        'columns': result.get('columns', []),
+        'rows': result.get('rows', []),
+        'row_count': result.get('row_count', 0),
+        'success': True,
+    })
+
+
+@login_required
 def query_columns_api(request, query_id):
     """Return column names for a SavedQuery config (no query execution).
 
@@ -257,6 +288,7 @@ def query_filter_options_api(request, query_id):
     needs_enroll = any(c in _ENROLL_FILTER_EXPRS for c in filter_cols)
 
     # Build a minimal WHERE clause from the query's own school_year filter
+    # for base demographic columns (existing behaviour).
     where_parts, params = [], []
     sy = filters.get('school_year')
     if sy:
@@ -268,6 +300,56 @@ def query_filter_options_api(request, query_id):
 
     where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
     join_sql  = _ENROLL_JOIN if needs_enroll else ''
+
+    # ── Build comprehensive demographic filters for PL / mark scoping ──────────
+    # These replicate the same filter logic as _run_saved_query_sql so that PL
+    # and mark filter options are scoped by the same demographic context.
+    _SAFE_COL_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+    _enroll_keys = set(_ENROLL_FILTER_EXPRS.keys())
+    demo_where_parts: list[str] = []
+    demo_params: list = []
+
+    for fkey, fval in filters.items():
+        if fkey == 'search' or fkey.startswith(('test_', 'mark_')):
+            continue
+        if fkey not in _FILTERABLE_COLUMNS:
+            continue
+        if fkey in _enroll_keys:
+            expr = _ENROLL_FILTER_EXPRS[fkey]
+        elif _SAFE_COL_RE.match(fkey):
+            expr = f'cs.{fkey}'
+        else:
+            continue
+        if not fval:
+            continue
+        if isinstance(fval, list):
+            vals = [v for v in fval if v]
+            if not vals:
+                continue
+            has_blank = '(Blank)' in vals
+            others = [v for v in vals if v != '(Blank)']
+            parts = []
+            if others:
+                ph = ', '.join(['%s'] * len(others))
+                parts.append(f'{expr} IN ({ph})')
+                demo_params.extend(others)
+            if has_blank:
+                parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
+            if len(parts) > 1:
+                demo_where_parts.append(f"({' OR '.join(parts)})")
+            elif parts:
+                demo_where_parts.append(parts[0])
+        else:
+            if fval == '(Blank)':
+                demo_where_parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
+            else:
+                demo_where_parts.append(f'{expr} = %s')
+                demo_params.append(fval)
+
+    demo_where_sql = ('WHERE ' + ' AND '.join(demo_where_parts)) if demo_where_parts else ''
+    # cs join fragment for scoping PL / mark queries against current_student
+    _CS_JOIN = ' INNER JOIN current_student cs ON cs.student_id = r.local_student_id AND cs.school_year = r.school_year'
+    _CS_JOIN_MARK = ' INNER JOIN current_student cs ON cs.stu_annual_key = sm.stu_annual_key'
 
     options: dict[str, list] = {}
     labels: dict[str, str] = {}
@@ -307,41 +389,83 @@ def query_filter_options_api(request, query_id):
                     if info.get('test_window'):
                         win_clause = 'AND t.test_window ILIKE %s'
                         win_params = [info['test_window']]
-                    cursor.execute(
-                        f"SELECT DISTINCT r.pl AS val "
-                        f"FROM results r "
-                        f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                        f"WHERE r.school_year = %s "
-                        f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
-                        f"{win_clause} "
-                        f"AND r.pl IS NOT NULL AND r.pl != '' "
-                        f"ORDER BY val LIMIT 30",
-                        [info['year'],
-                         f"%{info['test_name']}%",
-                         f"%{info['subject']}%",
-                         *win_params],
-                    )
+
+                    # PL values — scoped by demographic filters via current_student join
+                    if demo_where_sql:
+                        pl_sql = (
+                            f"SELECT DISTINCT r.pl AS val "
+                            f"FROM results r "
+                            f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                            f"{_CS_JOIN} "
+                            f"{demo_where_sql} "
+                            f"AND r.school_year = %s "
+                            f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                            f"{win_clause} "
+                            f"AND r.pl IS NOT NULL AND r.pl != '' "
+                            f"ORDER BY val LIMIT 30"
+                        )
+                        pl_params = [*demo_params, info['year'],
+                                     f"%{info['test_name']}%",
+                                     f"%{info['subject']}%",
+                                     *win_params]
+                    else:
+                        pl_sql = (
+                            f"SELECT DISTINCT r.pl AS val "
+                            f"FROM results r "
+                            f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                            f"WHERE r.school_year = %s "
+                            f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                            f"{win_clause} "
+                            f"AND r.pl IS NOT NULL AND r.pl != '' "
+                            f"ORDER BY val LIMIT 30"
+                        )
+                        pl_params = [info['year'],
+                                     f"%{info['test_name']}%",
+                                     f"%{info['subject']}%",
+                                     *win_params]
+                    cursor.execute(pl_sql, pl_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
                         options[col] = vals
 
                     # Gather school_codes from results for this assessment
-                    cursor.execute(
-                        "SELECT DISTINCT r.school_code, "
-                        "  COALESCE(sch.short_name, sch.school_name, r.school_code) AS school_label "
-                        "FROM results r "
-                        "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                        "LEFT JOIN school sch ON sch.assessment_school_code = r.school_code "
-                        "WHERE r.school_year = %s "
-                        "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
-                        f"{win_clause} "
-                        "AND r.school_code IS NOT NULL AND r.school_code != '' "
-                        "ORDER BY school_label LIMIT 100",
-                        [info['year'],
-                         f"%{info['test_name']}%",
-                         f"%{info['subject']}%",
-                         *win_params],
-                    )
+                    if demo_where_sql:
+                        ts_sql = (
+                            "SELECT DISTINCT r.school_code, "
+                            "  COALESCE(sch.short_name, sch.school_name, r.school_code) AS school_label "
+                            "FROM results r "
+                            "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                            f"{_CS_JOIN} "
+                            "LEFT JOIN school sch ON sch.assessment_school_code = r.school_code "
+                            f"{demo_where_sql} "
+                            "AND r.school_year = %s "
+                            "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                            f"{win_clause} "
+                            "AND r.school_code IS NOT NULL AND r.school_code != '' "
+                            "ORDER BY school_label LIMIT 100"
+                        )
+                        ts_params = [*demo_params, info['year'],
+                                     f"%{info['test_name']}%",
+                                     f"%{info['subject']}%",
+                                     *win_params]
+                    else:
+                        ts_sql = (
+                            "SELECT DISTINCT r.school_code, "
+                            "  COALESCE(sch.short_name, sch.school_name, r.school_code) AS school_label "
+                            "FROM results r "
+                            "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                            "LEFT JOIN school sch ON sch.assessment_school_code = r.school_code "
+                            "WHERE r.school_year = %s "
+                            "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                            f"{win_clause} "
+                            "AND r.school_code IS NOT NULL AND r.school_code != '' "
+                            "ORDER BY school_label LIMIT 100"
+                        )
+                        ts_params = [info['year'],
+                                     f"%{info['test_name']}%",
+                                     f"%{info['subject']}%",
+                                     *win_params]
+                    cursor.execute(ts_sql, ts_params)
                     for code, label in cursor.fetchall():
                         if code:
                             tested_school_codes[str(code)] = str(label) if label else str(code)
@@ -366,19 +490,38 @@ def query_filter_options_api(request, query_id):
                         per_params = [info['mark_period']]
                     else:
                         per_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
-                    cursor.execute(
-                        f"SELECT DISTINCT sm.mark AS val "
-                        f"FROM student_marks_list sm "
-                        f"WHERE sm.school_year = %s "
-                        f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
-                        f"{per_clause} "
-                        f"AND sm.mark IS NOT NULL AND sm.mark != '' "
-                        f"ORDER BY val LIMIT 30",
-                        [info['year'],
-                         f"%{info['subject']}%",
-                         f"%{info['course_name']}%",
-                         *per_params],
-                    )
+
+                    if demo_where_sql:
+                        mark_sql = (
+                            f"SELECT DISTINCT sm.mark AS val "
+                            f"FROM student_marks_list sm "
+                            f"{_CS_JOIN_MARK} "
+                            f"{demo_where_sql} "
+                            f"AND sm.school_year = %s "
+                            f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
+                            f"{per_clause} "
+                            f"AND sm.mark IS NOT NULL AND sm.mark != '' "
+                            f"ORDER BY val LIMIT 30"
+                        )
+                        mark_params = [*demo_params, info['year'],
+                                       f"%{info['subject']}%",
+                                       f"%{info['course_name']}%",
+                                       *per_params]
+                    else:
+                        mark_sql = (
+                            f"SELECT DISTINCT sm.mark AS val "
+                            f"FROM student_marks_list sm "
+                            f"WHERE sm.school_year = %s "
+                            f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
+                            f"{per_clause} "
+                            f"AND sm.mark IS NOT NULL AND sm.mark != '' "
+                            f"ORDER BY val LIMIT 30"
+                        )
+                        mark_params = [info['year'],
+                                       f"%{info['subject']}%",
+                                       f"%{info['course_name']}%",
+                                       *per_params]
+                    cursor.execute(mark_sql, mark_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
                         options[col] = vals
@@ -467,20 +610,29 @@ def column_structures_api(request):
         return FORBIDDEN
 
     from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
-    from dataexploration.column_utils import get_test_columns, get_mark_columns
+    from dataexploration.column_utils import (
+        get_test_columns, get_mark_columns,
+        invert_test_to_assessment_first, invert_marks_to_assessment_first,
+    )
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
 
     test_structure = get_test_columns()
     mark_structure = get_mark_columns()
     all_years = list(test_structure.keys()) + list(mark_structure.keys())
 
+    # Build assessment-first views for the new assessment-centric picker UI
+    assessment_structure = invert_test_to_assessment_first(test_structure)
+    mark_assessment_structure = invert_marks_to_assessment_first(mark_structure)
+
     return JsonResponse({
-        'categories':      COLUMN_CATEGORIES,
-        'definitions':     COLUMN_DEFINITIONS,
-        'test_structure':  test_structure,
-        'mark_structure':  mark_structure,
-        'year_labels':     get_year_labels_map(all_years),
-        'year_alias_map':  get_year_alias_map(),  # {'2025-2026': '__sy_this__', ...}
+        'categories':              COLUMN_CATEGORIES,
+        'definitions':             COLUMN_DEFINITIONS,
+        'test_structure':          test_structure,
+        'mark_structure':          mark_structure,
+        'assessment_structure':    assessment_structure,
+        'mark_assessment_structure': mark_assessment_structure,
+        'year_labels':             get_year_labels_map(all_years),
+        'year_alias_map':          get_year_alias_map(),
     })
 
 
@@ -488,7 +640,12 @@ def column_structures_api(request):
 def column_filter_options_api(request):
     """Return distinct filter values for a set of selected columns (no SavedQuery needed).
 
-    Accepts POST JSON: ``{ "columns": ["grade", "school", "test_..._PL", ...] }``
+    Accepts POST JSON: ``{ "columns": ["grade", "school", "test_..._PL", ...],
+                          "filters": {"school_year": "2024_2025", "school": [...], ...} }``
+
+    When ``filters`` is provided, PL and mark filter values are scoped by those
+    demographic filters (joined through ``current_student``).  Base column filter
+    options are always unfiltered (all distinct values).
     Returns same shape as ``query_filter_options_api``.
     """
     if not is_project_admin(request.user):
@@ -512,6 +669,54 @@ def column_filter_options_api(request):
 
     needs_enroll = any(c in _ENROLL_FILTER_EXPRS for c in filter_cols)
     join_sql = _ENROLL_JOIN if needs_enroll else ''
+
+    # ── Build demographic filter context from optional request filters ─────────
+    req_filters: dict = body.get('filters', {})
+    _SAFE_COL_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+    _enroll_keys = set(_ENROLL_FILTER_EXPRS.keys())
+    demo_where_parts: list[str] = []
+    demo_params: list = []
+
+    for fkey, fval in req_filters.items():
+        if fkey == 'search' or fkey.startswith(('test_', 'mark_')):
+            continue
+        if fkey not in _FILTERABLE_COLUMNS:
+            continue
+        if fkey in _enroll_keys:
+            expr = _ENROLL_FILTER_EXPRS[fkey]
+        elif _SAFE_COL_RE.match(fkey):
+            expr = f'cs.{fkey}'
+        else:
+            continue
+        if not fval:
+            continue
+        if isinstance(fval, list):
+            vals = [v for v in fval if v]
+            if not vals:
+                continue
+            has_blank = '(Blank)' in vals
+            others = [v for v in vals if v != '(Blank)']
+            parts = []
+            if others:
+                ph = ', '.join(['%s'] * len(others))
+                parts.append(f'{expr} IN ({ph})')
+                demo_params.extend(others)
+            if has_blank:
+                parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
+            if len(parts) > 1:
+                demo_where_parts.append(f"({' OR '.join(parts)})")
+            elif parts:
+                demo_where_parts.append(parts[0])
+        else:
+            if fval == '(Blank)':
+                demo_where_parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
+            else:
+                demo_where_parts.append(f'{expr} = %s')
+                demo_params.append(fval)
+
+    demo_where_sql = ('WHERE ' + ' AND '.join(demo_where_parts)) if demo_where_parts else ''
+    _CS_JOIN = ' INNER JOIN current_student cs ON cs.student_id = r.local_student_id AND cs.school_year = r.school_year'
+    _CS_JOIN_MARK = ' INNER JOIN current_student cs ON cs.stu_annual_key = sm.stu_annual_key'
 
     options: dict[str, list] = {}
     from django.db import connection
@@ -541,40 +746,81 @@ def column_filter_options_api(request):
                     if info.get('test_window'):
                         win_clause = 'AND t.test_window ILIKE %s'
                         win_params = [info['test_window']]
-                    cursor.execute(
-                        f"SELECT DISTINCT r.pl AS val "
-                        f"FROM results r "
-                        f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                        f"WHERE r.school_year = %s "
-                        f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
-                        f"{win_clause} "
-                        f"AND r.pl IS NOT NULL AND r.pl != '' "
-                        f"ORDER BY val LIMIT 30",
-                        [info['year'],
-                         f"%{info['test_name']}%",
-                         f"%{info['subject']}%",
-                         *win_params],
-                    )
+
+                    if demo_where_sql:
+                        pl_sql = (
+                            f"SELECT DISTINCT r.pl AS val "
+                            f"FROM results r "
+                            f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                            f"{_CS_JOIN} "
+                            f"{demo_where_sql} "
+                            f"AND r.school_year = %s "
+                            f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                            f"{win_clause} "
+                            f"AND r.pl IS NOT NULL AND r.pl != '' "
+                            f"ORDER BY val LIMIT 30"
+                        )
+                        pl_params = [*demo_params, info['year'],
+                                     f"%{info['test_name']}%",
+                                     f"%{info['subject']}%",
+                                     *win_params]
+                    else:
+                        pl_sql = (
+                            f"SELECT DISTINCT r.pl AS val "
+                            f"FROM results r "
+                            f"INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                            f"WHERE r.school_year = %s "
+                            f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                            f"{win_clause} "
+                            f"AND r.pl IS NOT NULL AND r.pl != '' "
+                            f"ORDER BY val LIMIT 30"
+                        )
+                        pl_params = [info['year'],
+                                     f"%{info['test_name']}%",
+                                     f"%{info['subject']}%",
+                                     *win_params]
+                    cursor.execute(pl_sql, pl_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
                         options[col] = vals
 
-                    cursor.execute(
-                        "SELECT DISTINCT r.school_code, "
-                        "  COALESCE(sch.short_name, sch.school_name, r.school_code) AS school_label "
-                        "FROM results r "
-                        "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                        "LEFT JOIN school sch ON sch.assessment_school_code = r.school_code "
-                        "WHERE r.school_year = %s "
-                        "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
-                        f"{win_clause} "
-                        "AND r.school_code IS NOT NULL AND r.school_code != '' "
-                        "ORDER BY school_label LIMIT 100",
-                        [info['year'],
-                         f"%{info['test_name']}%",
-                         f"%{info['subject']}%",
-                         *win_params],
-                    )
+                    if demo_where_sql:
+                        ts_sql = (
+                            "SELECT DISTINCT r.school_code, "
+                            "  COALESCE(sch.short_name, sch.school_name, r.school_code) AS school_label "
+                            "FROM results r "
+                            "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                            f"{_CS_JOIN} "
+                            "LEFT JOIN school sch ON sch.assessment_school_code = r.school_code "
+                            f"{demo_where_sql} "
+                            "AND r.school_year = %s "
+                            "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                            f"{win_clause} "
+                            "AND r.school_code IS NOT NULL AND r.school_code != '' "
+                            "ORDER BY school_label LIMIT 100"
+                        )
+                        ts_params = [*demo_params, info['year'],
+                                     f"%{info['test_name']}%",
+                                     f"%{info['subject']}%",
+                                     *win_params]
+                    else:
+                        ts_sql = (
+                            "SELECT DISTINCT r.school_code, "
+                            "  COALESCE(sch.short_name, sch.school_name, r.school_code) AS school_label "
+                            "FROM results r "
+                            "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                            "LEFT JOIN school sch ON sch.assessment_school_code = r.school_code "
+                            "WHERE r.school_year = %s "
+                            "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
+                            f"{win_clause} "
+                            "AND r.school_code IS NOT NULL AND r.school_code != '' "
+                            "ORDER BY school_label LIMIT 100"
+                        )
+                        ts_params = [info['year'],
+                                     f"%{info['test_name']}%",
+                                     f"%{info['subject']}%",
+                                     *win_params]
+                    cursor.execute(ts_sql, ts_params)
                     for code, label in cursor.fetchall():
                         if code:
                             tested_school_codes[str(code)] = str(label) if label else str(code)
@@ -595,19 +841,38 @@ def column_filter_options_api(request):
                         per_params = [info['mark_period']]
                     else:
                         per_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
-                    cursor.execute(
-                        f"SELECT DISTINCT sm.mark AS val "
-                        f"FROM student_marks_list sm "
-                        f"WHERE sm.school_year = %s "
-                        f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
-                        f"{per_clause} "
-                        f"AND sm.mark IS NOT NULL AND sm.mark != '' "
-                        f"ORDER BY val LIMIT 30",
-                        [info['year'],
-                         f"%{info['subject']}%",
-                         f"%{info['course_name']}%",
-                         *per_params],
-                    )
+
+                    if demo_where_sql:
+                        mark_sql = (
+                            f"SELECT DISTINCT sm.mark AS val "
+                            f"FROM student_marks_list sm "
+                            f"{_CS_JOIN_MARK} "
+                            f"{demo_where_sql} "
+                            f"AND sm.school_year = %s "
+                            f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
+                            f"{per_clause} "
+                            f"AND sm.mark IS NOT NULL AND sm.mark != '' "
+                            f"ORDER BY val LIMIT 30"
+                        )
+                        mark_params = [*demo_params, info['year'],
+                                       f"%{info['subject']}%",
+                                       f"%{info['course_name']}%",
+                                       *per_params]
+                    else:
+                        mark_sql = (
+                            f"SELECT DISTINCT sm.mark AS val "
+                            f"FROM student_marks_list sm "
+                            f"WHERE sm.school_year = %s "
+                            f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
+                            f"{per_clause} "
+                            f"AND sm.mark IS NOT NULL AND sm.mark != '' "
+                            f"ORDER BY val LIMIT 30"
+                        )
+                        mark_params = [info['year'],
+                                       f"%{info['subject']}%",
+                                       f"%{info['course_name']}%",
+                                       *per_params]
+                    cursor.execute(mark_sql, mark_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
                         options[col] = vals

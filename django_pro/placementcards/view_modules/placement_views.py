@@ -237,13 +237,40 @@ def _student_conflicts_for_classroom(
 
 def _build_placement_context(request: HttpRequest, school, data):
     students_base = get_accessible_students(request, for_placement=True)
-    student_year = data.get('student_year') or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
+
+    project_default_year = None
+    try:
+        from landing.utils import get_project_config
+        project_default_year = get_project_config().default_school_year
+    except Exception:
+        pass
+
+    student_year = data.get('student_year') or project_default_year or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
     latest_classroom_year = (
         NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).order_by('-school_year').first()
         if school
         else None
     )
-    placement_year = data.get('placement_year') or latest_classroom_year or student_year
+
+    default_placement_year = None
+    if student_year:
+        try:
+            start, end = map(int, student_year.split('-'))
+            default_placement_year = f"{start+1}-{end+1}"
+        except ValueError:
+            pass
+
+    placement_year = data.get('placement_year') or latest_classroom_year or default_placement_year or student_year
+
+    available_student_years = sorted(list(set(students_base.values_list('school_year', flat=True).distinct())), reverse=True)
+    if project_default_year and project_default_year not in available_student_years:
+        available_student_years.insert(0, project_default_year)
+
+    classroom_years = list(NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).distinct()) if school else []
+    placement_extra_years = [placement_year]
+    if default_placement_year:
+        placement_extra_years.append(default_placement_year)
+    available_placement_years = sorted(list(set(classroom_years + placement_extra_years)), reverse=True)
 
     selected_tag_ids = [int(tag_id) for tag_id in _getlist(data, 'tag_ids') if str(tag_id).isdigit()]
 
@@ -571,6 +598,8 @@ def _build_placement_context(request: HttpRequest, school, data):
         'teacher_note_questions': teacher_note_questions,
         'selected_teacher_note_filters': selected_teacher_note_filters,
         'selected_teacher_note_filters_flat': selected_teacher_note_filters_flat,
+        'available_student_years': available_student_years,
+        'available_placement_years': available_placement_years,
     }
 
 
@@ -594,13 +623,30 @@ def export_classrooms_csv(request: HttpRequest):
         return HttpResponse('Forbidden', status=403)
 
     students_base = get_accessible_students(request, for_placement=True)
-    student_year = request.GET.get('student_year') or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
+    
+    project_default_year = None
+    try:
+        from landing.utils import get_project_config
+        project_default_year = get_project_config().default_school_year
+    except Exception:
+        pass
+
+    student_year = request.GET.get('student_year') or project_default_year or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
     latest_classroom_year = (
         NextYearClassroom.objects.filter(school=school).values_list('school_year', flat=True).order_by('-school_year').first()
         if school
         else None
     )
-    placement_year = request.GET.get('placement_year') or latest_classroom_year or student_year
+    
+    default_placement_year = None
+    if student_year:
+        try:
+            start, end = map(int, student_year.split('-'))
+            default_placement_year = f"{start+1}-{end+1}"
+        except ValueError:
+            pass
+
+    placement_year = request.GET.get('placement_year') or latest_classroom_year or default_placement_year or student_year
 
     selected_classroom_ids = [int(value) for value in request.GET.getlist('classroom_ids') if value.isdigit()]
     scope = request.GET.get('scope', 'all').strip().lower()

@@ -24,6 +24,13 @@ class SavedChart(models.Model):
     source_sql   = models.TextField(blank=True)                 # raw SQL when source_type=sql
     source_filters = models.JSONField(default=dict)             # saved load-dataset filters
     column_defs  = models.JSONField(default=dict)               # snapshot of column_definitions
+    # School filter mode: whether to filter by enrollment school or assessment/tested school
+    school_filter_mode = models.CharField(
+        max_length=10,
+        default='enrolled',
+        choices=[('enrolled', 'Enrolled School'), ('tested', 'Tested School')],
+        blank=True,
+    )
     # Drill-through config
     drill_through_columns    = models.JSONField(default=list, blank=True)  # column keys to show in drill table
     drill_through_filter_map = models.JSONField(default=dict, blank=True)  # {x_col: 'grade', series_col: 'race'}
@@ -53,6 +60,7 @@ class SavedChart(models.Model):
             'source_sql':  self.source_sql,
             'source_filters': self.source_filters,
             'column_defs': self.column_defs,
+            'school_filter_mode': self.school_filter_mode,
             'drill_through_columns':    self.drill_through_columns,
             'drill_through_filter_map': self.drill_through_filter_map,
             'created_at':  self.created_at.isoformat(),

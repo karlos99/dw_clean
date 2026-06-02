@@ -97,6 +97,7 @@ def _cfg_from_post(post):
         'y_col':             post.get('y_col', ''),
         'series_col':        post.get('series_col', ''),
         'stack_col':         post.get('series_col', ''),
+        'group_col':         post.get('group_col', ''),
         'compare_pl_cols':   compare_pl_cols,
         'ac_include_cats':   ac_include_cats,
         'ac_include_pl':     ac_include_pl,
@@ -338,6 +339,7 @@ def chart_save_api(request):
         description    = body.get('description', '')
         drill_columns  = body.get('drill_through_columns', [])
         drill_fm       = body.get('drill_through_filter_map', {})
+        school_filter_mode = body.get('school_filter_mode', 'enrolled')
     else:
         name           = request.POST.get('name', '').strip()
         chart_id       = request.POST.get('chart_id') or None
@@ -355,6 +357,7 @@ def chart_save_api(request):
         dt_str         = request.POST.get('drill_through_columns_str', '')
         drill_columns  = [c.strip() for c in dt_str.split(',') if c.strip()] if dt_str else []
         drill_fm       = {}
+        school_filter_mode = request.POST.get('school_filter_mode', 'enrolled')
 
     if not name:
         msg = 'Chart name is required'
@@ -375,6 +378,7 @@ def chart_save_api(request):
     chart.source_id                = source_id or None
     chart.source_sql               = source_sql
     chart.source_filters           = source_filters
+    chart.school_filter_mode       = school_filter_mode
     chart.drill_through_columns    = drill_columns
     chart.drill_through_filter_map = drill_fm
 
@@ -560,6 +564,169 @@ def chart_render_api(request, chart_id):
     resp = HttpResponse(html, content_type='text/html')
     resp['X-Chart-Cache'] = 'MISS'
     return resp
+
+
+@login_required
+@require_POST
+def chart_save_and_attach_api(request):
+    """Save a chart AND attach it as a section to a target page in one call.
+
+    Accepts JSON: the full chart save payload plus:
+      - target_page_id: int — the DataVizPage to attach to
+      - target_row_id: int (optional) — the DataVizPageRow to place the section in
+      - section_gs_w: int (default 6), section_gs_h: int (default 4)
+      - section_show_title: bool (default True)
+    """
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    target_page_id = body.get('target_page_id')
+    if not target_page_id:
+        return JsonResponse({'error': 'target_page_id is required'}, status=400)
+
+    from dataviz.models import SavedChart, DataVizPage, DataVizPageRow, DataVizPageSection
+
+    try:
+        page = DataVizPage.objects.get(pk=target_page_id)
+    except DataVizPage.DoesNotExist:
+        return JsonResponse({'error': 'Page not found'}, status=404)
+
+    # ── Save the chart (reuse existing save logic) ──
+    name = (body.get('name') or 'Untitled').strip()
+    chart_id = body.get('id')
+    chart_type = body.get('chart_type', 'bar')
+    config = body.get('config', {})
+    source_type = body.get('source_type', SavedChart.SOURCE_QUERY)
+    source_id = body.get('source_id')
+    source_sql = body.get('source_sql', '')
+    source_filters = body.get('source_filters', {})
+    description = body.get('description', '')
+    drill_columns = body.get('drill_through_columns', [])
+    drill_fm = body.get('drill_through_filter_map', {})
+    school_filter_mode = body.get('school_filter_mode', 'enrolled')
+
+    if not name:
+        return JsonResponse({'error': 'Chart name is required'}, status=400)
+
+    if chart_id:
+        chart = get_object_or_404(SavedChart, pk=chart_id)
+    else:
+        chart = SavedChart(owner=request.user)
+
+    chart.name = name
+    chart.description = description
+    chart.chart_type = chart_type
+    chart.config = config
+    chart.source_type = source_type
+    chart.source_id = source_id or None
+    chart.source_sql = source_sql
+    chart.source_filters = source_filters
+    chart.school_filter_mode = school_filter_mode
+    chart.drill_through_columns = drill_columns
+    chart.drill_through_filter_map = drill_fm
+
+    if source_type == 'columns':
+        sel_cols = body.get('selected_columns', [])
+        chart.config['selected_columns'] = sel_cols if isinstance(sel_cols, list) else []
+
+    chart.save()
+
+    # ── Attach chart to the target page ──
+    target_row_id = body.get('target_row_id')
+    if target_row_id:
+        try:
+            row = DataVizPageRow.objects.get(pk=target_row_id, page=page)
+        except DataVizPageRow.DoesNotExist:
+            row = None
+    else:
+        row = None
+
+    # If no row specified or invalid, use the first row of the page, creating one if needed
+    if not row:
+        row = page.rows.order_by('position').first()
+        if not row:
+            row = DataVizPageRow.objects.create(
+                page=page,
+                label='',
+                position=0,
+            )
+
+    # Determine position for the new section
+    last_pos = DataVizPageSection.objects.filter(row=row).order_by('-position').first()
+    new_position = (last_pos.position + 1) if last_pos else 0
+
+    section = DataVizPageSection.objects.create(
+        page=page,
+        row=row,
+        element_type='chart',
+        chart=chart,
+        position=new_position,
+        show_title=body.get('section_show_title', True),
+        gs_w=body.get('section_gs_w', 6),
+        gs_h=body.get('section_gs_h', 4),
+    )
+
+    return JsonResponse({
+        'chart': chart.to_dict(),
+        'section': section.to_dict(),
+        'page': page.to_dict(include_sections=False),
+        'success': True,
+    })
+
+
+@login_required
+@require_POST
+def chart_recommend_api(request):
+    """Recommend chart types based on selected column names.
+
+    Accepts JSON: { columns: [...], column_definitions: {...} }
+    Returns: { recommendations: [{ chart_type, label, icon, reason, score }] }
+    """
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    columns = body.get('columns', [])
+    column_defs = body.get('column_definitions', {})
+
+    from dataviz.utils.chart_builder import recommend_chart_types
+    recommendations = recommend_chart_types(columns, column_defs)
+
+    return JsonResponse({'recommendations': recommendations, 'success': True})
+
+
+@login_required
+@require_POST
+def chart_describe_api(request):
+    """Generate a plain-English description of a chart configuration.
+
+    Accepts JSON: { chart_config: {...}, column_definitions: {...} }
+    Returns: { description: '...' }
+    """
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    cfg = body.get('chart_config', {})
+    column_defs = body.get('column_definitions', {})
+
+    from dataviz.utils.chart_builder import auto_describe_chart
+    description = auto_describe_chart(cfg, column_defs)
+
+    return JsonResponse({'description': description, 'success': True})
 
 
 @login_required
