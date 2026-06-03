@@ -33,6 +33,8 @@ COLUMN_DEFINITIONS = {
     "migrant": "Migrant",
     "atendace_rate": "Attendance Rate",
     "suspension_indicator": "Suspension",
+    "avid": "AVID",
+    "avid_type": "AVID Type",
 }
 
 # Static column categories (non-test columns)
@@ -51,7 +53,7 @@ COLUMN_CATEGORIES = {
     },
     "programs": {
         "title": "Programs & Services",
-        "columns": ["ell", "sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant"]
+        "columns": ["ell", "sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant", "avid", "avid_type"]
     },
     "performance": {
         "title": "Performance & Behavior",
