@@ -11,7 +11,6 @@ urlpatterns = [
     path('nextyearlist/', include('nextyearlist.urls')),
     path('api/cards/save/', save_placement_card, name='save_card_root'),
     path('api/cards/status/', update_card_status, name='update_card_status_root'),
-    path('dataviz/', include('dataviz.urls')),
     path('placementcards/', include('placementcards.urls')),
     path('mathr/', include('mathr.urls')),
     path('dataloader/', include('dataLoader.urls')),
