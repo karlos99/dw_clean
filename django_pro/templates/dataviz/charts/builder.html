@@ -1,0 +1,994 @@
+{% extends 'base.html' %}
+{% block title %}{% if chart %}Edit Chart - {{ chart.name }}{% else %}New Chart{% endif %} - DS Data{% endblock %}
+
+{% block extra_head %}
+<!-- Apache ECharts -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<!-- Sortable.js for drag-and-drop -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="w-full h-screen flex flex-col bg-white" x-data="chartBuilder()">
+    <!-- Header -->
+    <div class="flex items-center justify-between bg-white border-b border-slate-200 px-6 py-4 flex-shrink-0">
+        <div>
+            <h1 class="text-lg font-bold text-slate-900">
+                {% if chart %}{{ chart.name }}{% else %}New Chart{% endif %}
+            </h1>
+            <p class="text-xs text-slate-500 mt-0.5">Visual chart builder</p>
+        </div>
+        <div class="flex space-x-2">
+            <a href="{% url 'dataviz:chart_list' %}" class="px-3 py-1.5 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-slate-50 transition">
+                Cancel
+            </a>
+            <button @click="saveChart()" class="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 text-white hover:bg-indigo-700 transition">
+                Save
+            </button>
+        </div>
+    </div>
+
+    <!-- Error Alert -->
+    <div class="bg-red-50 border-l-4 border-red-400 px-4 py-3 text-sm text-red-700" x-show="errorMessage" style="display: none;" x-text="errorMessage"></div>
+
+    <!-- Main Workspace Grid -->
+    <div class="flex flex-1 overflow-hidden gap-0 bg-slate-50">
+        <!-- Left Panel: Configuration Controls with Tabs -->
+        <div class="w-96 bg-white border-r border-slate-200 overflow-hidden flex flex-col">
+            <!-- Tab Navigation -->
+            <div class="border-b border-slate-200 bg-slate-50 flex overflow-x-auto sticky top-0 z-10">
+                <button type="button" @click="activeTab = 'basic'" :class="{'border-b-2 border-indigo-600 text-indigo-600': activeTab === 'basic', 'text-slate-600': activeTab !== 'basic'}" class="flex-1 text-center py-3 text-xs font-semibold uppercase whitespace-nowrap transition">
+                    Basic
+                </button>
+                <button type="button" @click="activeTab = 'axes'" :class="{'border-b-2 border-indigo-600 text-indigo-600': activeTab === 'axes', 'text-slate-600': activeTab !== 'axes'}" class="flex-1 text-center py-3 text-xs font-semibold uppercase whitespace-nowrap transition" x-show="hasSourceSelected">
+                    Axes
+                </button>
+                <button type="button" @click="activeTab = 'display'" :class="{'border-b-2 border-indigo-600 text-indigo-600': activeTab === 'display', 'text-slate-600': activeTab !== 'display'}" class="flex-1 text-center py-3 text-xs font-semibold uppercase whitespace-nowrap transition" x-show="hasSourceSelected">
+                    Display
+                </button>
+                <button type="button" @click="activeTab = 'advanced'" :class="{'border-b-2 border-indigo-600 text-indigo-600': activeTab === 'advanced', 'text-slate-600': activeTab !== 'advanced'}" class="flex-1 text-center py-3 text-xs font-semibold uppercase whitespace-nowrap transition" x-show="hasSourceSelected">
+                    Advanced
+                </button>
+            </div>
+
+            <!-- Tab Content -->
+            <div class="flex-1 overflow-y-auto p-4 space-y-4">
+
+                <!-- TAB 1: BASIC -->
+                <div x-show="activeTab === 'basic'" class="space-y-4">
+                    <!-- Chart Details -->
+                    <div class="bg-white border border-slate-200 p-4 rounded">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide mb-3">Chart Settings</h3>
+                        <div class="space-y-2">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Name</label>
+                                <input type="text" x-model="name" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" placeholder="Chart name">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Type</label>
+                                <select x-model="chartType" @change="onChartTypeChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500">
+                                    <option value="bar">Bar Chart</option>
+                                    <option value="line">Line Chart</option>
+                                    <option value="pie">Pie Chart</option>
+                                    <option value="doughnut">Doughnut Chart</option>
+                                    <option value="funnel">Funnel Chart</option>
+                                    <option value="gauge">Gauge Chart</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Variation</label>
+                                <select x-model="config.variation" @change="onConfigChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500">
+                                    <template x-for="v in getVariations()" :key="v.value">
+                                        <option :value="v.value" x-text="v.label" :selected="v.value === config.variation"></option>
+                                    </template>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Data Source Selection -->
+                    <div class="bg-white border border-slate-200 p-4 rounded">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide mb-3">Data Source</h3>
+                        <div class="space-y-2">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Type</label>
+                                <div class="flex gap-2">
+                                    <label class="flex items-center text-xs text-slate-700 cursor-pointer">
+                                        <input type="radio" value="dataset" x-model="sourceType" @change="onSourceTypeChange()" class="mr-1 accent-indigo-500"> Dataset
+                                    </label>
+                                    <label class="flex items-center text-xs text-slate-700 cursor-pointer">
+                                        <input type="radio" value="query" x-model="sourceType" @change="onSourceTypeChange()" class="mr-1 accent-indigo-500"> Query
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- Dataset List -->
+                            <div x-show="sourceType === 'dataset'">
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Select</label>
+                                <select x-model="datasetId" @change="onSourceIdChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500">
+                                    <option value="">-- Choose Dataset --</option>
+                                    {% for ds in datasets %}
+                                    <option value="{{ ds.pk }}">{{ ds.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <!-- Saved Queries List -->
+                            <div x-show="sourceType === 'query'">
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Select</label>
+                                <select x-model="queryId" @change="onSourceIdChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500">
+                                    <option value="">-- Choose Query --</option>
+                                    {% for q in queries %}
+                                    <option value="{{ q.pk }}">{{ q.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- /TAB 1 -->
+
+                <!-- TAB 2: AXES -->
+                <div x-show="activeTab === 'axes'" class="space-y-4">
+                    <!-- Dimensions Mapping -->
+                    <div class="bg-white border border-slate-200 p-4 rounded space-y-3" x-show="hasSourceSelected">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Data Mapping</h3>
+                        <div class="space-y-2">
+                            <div x-show="chartType !== 'gauge'" class="space-y-2">
+                                <label class="block text-xs font-medium text-slate-700 mb-1">X-Axis Columns (Multiple Allowed)</label>
+                                <div class="space-y-2">
+                                    <template x-for="(col, idx) in config.x_axis_columns" :key="idx">
+                                        <div class="flex items-center space-x-2">
+                                            <select :value="col" @change="updateXAxisColumn(idx, $event.target.value)" class="flex-grow border border-slate-300 rounded text-xs py-1.5 px-2 bg-white focus:border-indigo-500">
+                                                <option value="">-- Select Column --</option>
+                                                <template x-for="c in availableColumns" :key="c">
+                                                    <option :value="c" x-text="c" :selected="c === col"></option>
+                                                </template>
+                                            </select>
+                                            <button type="button" @click="removeXAxisColumn(idx)" class="text-red-500 hover:text-red-700 text-sm font-bold px-2 py-1 focus:outline-none" title="Remove column">
+                                                &times;
+                                            </button>
+                                        </div>
+                                    </template>
+                                    <button type="button" @click="addXAxisColumn()" class="inline-flex items-center px-3 py-1.5 border border-slate-300 text-xs font-medium rounded text-slate-700 bg-white hover:bg-slate-50 transition focus:outline-none w-full justify-center">
+                                        <svg class="h-3 w-3 text-slate-500 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+                                        </svg>
+                                        Add X-Axis Column
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-700 mb-1">Y-Axis</label>
+                                    <select x-model="config.y_axis_column" @change="onConfigChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500">
+                                        <option value="">-- Select Col --</option>
+                                        <template x-for="col in availableColumns" :key="col">
+                                            <option :value="col" x-text="col"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-700 mb-1">Aggregation</label>
+                                    <select x-model="config.y_axis_aggregation" @change="onConfigChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500">
+                                        <option value="count">Count (Rows)</option>
+                                        <option value="sum">Sum</option>
+                                        <option value="avg">Average</option>
+                                        <option value="min">Minimum</option>
+                                        <option value="max">Maximum</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Series Grouping -->
+                    <div x-show="['bar', 'line'].includes(chartType)" class="bg-white border border-slate-200 p-4 rounded space-y-3">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Series Grouping</h3>
+                        <div class="space-y-2">
+                            <template x-for="(col, idx) in config.series_columns" :key="idx">
+                                <div class="flex items-center space-x-2">
+                                    <select :value="col" @change="updateSeriesColumn(idx, $event.target.value)" class="flex-grow border-slate-300 rounded text-xs py-1.5 px-2 border bg-white focus:border-indigo-500">
+                                        <option value="">-- Select Column --</option>
+                                        <template x-for="c in availableColumns" :key="c">
+                                            <option :value="c" x-text="c" :selected="c === col"></option>
+                                        </template>
+                                    </select>
+                                    <button type="button" @click="removeSeriesColumn(idx)" class="text-red-500 hover:text-red-700 text-sm font-bold px-2 py-1 focus:outline-none" title="Remove grouping">
+                                        &times;
+                                    </button>
+                                </div>
+                            </template>
+                            <button type="button" @click="addSeriesColumn()" class="inline-flex items-center px-3 py-1.5 border border-slate-300 text-xs font-medium rounded text-slate-700 bg-white hover:bg-slate-50 transition focus:outline-none w-full justify-center">
+                                <svg class="h-3 w-3 text-slate-500 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+                                </svg>
+                                Add Grouping Column
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Value Sorting -->
+                    <div class="bg-white border border-slate-200 p-4 rounded space-y-3" x-show="!isPieOrGauge">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Sort Order</h3>
+                        <select x-model="config.sort_order" @change="setSortOrder(config.sort_order)" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500">
+                            <option value="asc">A → Z (Alphabetical)</option>
+                            <option value="desc">Z → A (Reverse Alpha)</option>
+                            <option value="value_desc">Most → Least (by Value)</option>
+                            <option value="value_asc">Least → Most (by Value)</option>
+                            <option value="custom">Custom Order</option>
+                        </select>
+                        
+                        <!-- Drag and drop reordering -->
+                        <div x-show="config.sort_order === 'custom'" class="space-y-2">
+                            <div class="max-h-48 overflow-y-auto space-y-1 bg-slate-50 p-2 rounded border border-slate-200" x-ref="customOrderList">
+                                <template x-for="(val, idx) in valuesList" :key="idx">
+                                    <div class="flex items-center gap-2 cursor-move bg-white border border-slate-200 hover:bg-slate-50 p-1.5 rounded transition" :data-value="val">
+                                        <span class="text-slate-400 text-xs font-medium">☰</span>
+                                        <span class="flex-1 text-xs text-slate-700 truncate font-mono" x-text="val"></span>
+                                    </div>
+                                </template>
+                                <div x-show="valuesList.length === 0" class="text-xs text-slate-400 italic py-2 text-center">No categories available</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- /TAB 2 -->
+
+                <!-- TAB 3: DISPLAY -->
+                <div x-show="activeTab === 'display'" class="space-y-4">
+                    <!-- Titles & Labels -->
+                    <div class="bg-white border border-slate-200 p-4 rounded space-y-3">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Titles & Labels</h3>
+                        <div class="space-y-2">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Custom Chart Title</label>
+                                <input type="text" x-model="config.title_custom" @input="onConfigChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500" placeholder="Auto-generated if empty">
+                            </div>
+                            <div class="grid grid-cols-2 gap-2" x-show="['bar', 'line'].includes(chartType) && config.variation !== 'polar'">
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-700 mb-1">X-Axis Label</label>
+                                    <input type="text" x-model="config.x_title" @input="onConfigChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500" placeholder="X-axis title">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-slate-700 mb-1">Y-Axis Label</label>
+                                    <input type="text" x-model="config.y_title" @input="onConfigChange()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500" placeholder="Y-axis title">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Legend & Grid -->
+                    <div class="bg-white border border-slate-200 p-4 rounded space-y-3">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Legend & Grid</h3>
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between" x-show="chartType !== 'gauge'">
+                                <label class="flex items-center text-xs text-slate-700 cursor-pointer">
+                                    <input type="checkbox" x-model="config.show_legend" @change="onConfigChange()" class="text-indigo-600 focus:ring-indigo-500 rounded mr-2"> Show Legend
+                                </label>
+                                <div x-show="config.show_legend">
+                                    <select x-model="config.legend_position" @change="onConfigChange()" class="border-slate-300 rounded text-xs py-1 px-2 border bg-white focus:border-indigo-500">
+                                        <option value="horizontal">Bottom Horizontal</option>
+                                        <option value="right">Right Vertical</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div x-show="['bar', 'line'].includes(chartType) && config.variation !== 'polar'">
+                                <label class="flex items-center text-xs text-slate-700 cursor-pointer">
+                                    <input type="checkbox" x-model="config.show_gridlines" @change="onConfigChange()" class="text-indigo-600 focus:ring-indigo-500 rounded mr-2"> Show Gridlines
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tooltip Options -->
+                    <div class="bg-white border border-slate-200 p-4 rounded space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Tooltip Settings</h3>
+                            <input type="checkbox" x-model="config.show_tooltip" @change="debouncedUpdatePreview()" class="rounded text-indigo-600 focus:ring-indigo-500">
+                        </div>
+
+                        <div x-show="config.show_tooltip" class="space-y-3">
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="text-[10px] font-medium text-slate-600 block mb-1">Value Prefix</label>
+                                    <input type="text" x-model="config.value_prefix" @input="debouncedUpdatePreview()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500" placeholder="$" maxlength="5">
+                                </div>
+                                <div>
+                                    <label class="text-[10px] font-medium text-slate-600 block mb-1">Value Suffix</label>
+                                    <input type="text" x-model="config.value_suffix" @input="debouncedUpdatePreview()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500" placeholder="%" maxlength="5">
+                                </div>
+                            </div>
+
+                            <div x-show="['stacked', 'horizontal_stacked'].includes(config.variation)">
+                                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                    <input type="checkbox" x-model="config.tooltip_show_percent" @change="debouncedUpdatePreview()" class="rounded text-indigo-600 focus:ring-indigo-500">
+                                    <span>Show % in tooltips</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Colors & Category Labels -->
+                    <div class="bg-white border border-slate-200 p-4 rounded space-y-3">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Colors & Custom Labels</h3>
+                        
+                        <div class="space-y-2">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Color Palette (Comma-separated Hex)</label>
+                                <input type="text" x-model="colorsInput" @input="onColorsInput()" class="w-full bg-white border border-slate-300 text-slate-900 text-xs py-1.5 px-2 rounded focus:border-indigo-500" placeholder="E.g., #3b82f6, #6366f1, #10b981">
+                            </div>
+
+                            <div class="space-y-2 pt-2 border-t border-slate-100">
+                                <div class="flex items-center justify-between">
+                                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Value-Specific Styling</label>
+                                    <span class="text-[10px] text-slate-400 font-mono" x-text="`${valuesList.length} values`"></span>
+                                </div>
+
+                                <div class="max-h-56 overflow-y-auto space-y-2 bg-slate-50 p-2 rounded border border-slate-200">
+                                    <template x-for="(val, idx) in valuesList" :key="idx">
+                                        <div class="flex items-center gap-2 bg-white border border-slate-200 p-2 rounded shadow-sm">
+                                            <input type="color" @input="assignValueColor(val, $event.target.value)" :value="getValueColor(val)" class="w-6 h-6 rounded cursor-pointer border border-slate-300 flex-shrink-0" />
+                                            <div class="flex-1 min-w-0">
+                                                <span class="block text-[10px] text-slate-500 font-mono truncate mb-0.5" x-text="val"></span>
+                                                <input type="text" :placeholder="val" :value="config.value_labels[val] || ''" @input="assignValueLabel(val, $event.target.value)" class="w-full bg-white border border-slate-200 text-slate-900 text-[10px] py-0.5 px-1.5 rounded focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" />
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <div x-show="valuesList.length === 0" class="text-xs text-slate-400 italic py-2 text-center">No categories available</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- /TAB 3 -->
+
+                <!-- TAB 4: ADVANCED -->
+                <div x-show="activeTab === 'advanced'" class="space-y-4">
+                    <!-- Stacking Settings -->
+                    <div class="bg-white border border-slate-200 p-4 rounded space-y-2" x-show="chartType === 'bar'">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Stacking Options</h3>
+                        <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input type="checkbox" x-model="config.stacked_percent" @change="onConfigChange()" class="rounded text-indigo-600 focus:ring-indigo-500">
+                            <span class="font-medium">100% Stacked Chart</span>
+                        </label>
+                    </div>
+
+                    <!-- Bar Spacing -->
+                    <div class="bg-white border border-slate-200 p-4 rounded space-y-3" x-show="chartType === 'bar'">
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Bar Spacing</h3>
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <label class="text-xs font-medium text-slate-700">Group Gap (between bars)</label>
+                                <span class="text-xs font-mono text-indigo-600" x-text="config.bar_gap_pct + '%'"></span>
+                            </div>
+                            <input type="range" min="0" max="100" step="5" x-model.number="config.bar_gap_pct" @input="onConfigChange()" class="w-full accent-indigo-600">
+                            <div class="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                                <span>0% (touching)</span><span>100% (wide)</span>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <label class="text-xs font-medium text-slate-700">Category Gap (between groups)</label>
+                                <span class="text-xs font-mono text-indigo-600" x-text="config.bar_category_gap_pct + '%'"></span>
+                            </div>
+                            <input type="range" min="0" max="100" step="5" x-model.number="config.bar_category_gap_pct" @input="onConfigChange()" class="w-full accent-indigo-600">
+                            <div class="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                                <span>0% (tight)</span><span>100% (spacious)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div x-show="chartType !== 'bar'" class="text-xs text-slate-400 italic text-center py-8">
+                        No advanced settings available for this chart type
+                    </div>
+                </div>
+                <!-- /TAB 4 -->
+
+            </div>
+        </div>
+
+        <!-- Right Panel: Preview Only -->
+        <div class="flex-1 flex flex-col overflow-visible">
+            <!-- Preview Section -->
+            <div class="flex-1 flex flex-col bg-white overflow-visible">
+                <div class="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between flex-shrink-0">
+                    <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wide">Preview</h3>
+                    <button @click="debouncedUpdatePreview()" :disabled="previewLoading" :class="{'opacity-50 cursor-not-allowed': previewLoading}" class="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded transition disabled:bg-indigo-600">
+                        <span x-show="!previewLoading">Render</span>
+                        <span x-show="previewLoading">...</span>
+                    </button>
+                </div>
+
+                <div class="flex-1 relative bg-slate-50">
+                    <div x-show="previewLoading" class="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+                        <div class="text-center">
+                            <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500 mb-2"></div>
+                            <p class="text-xs text-slate-500">Rendering...</p>
+                        </div>
+                    </div>
+                    <div id="echarts-container" class="w-full h-full" x-show="hasRenderedChart"></div>
+                    <div x-show="!hasRenderedChart" class="flex flex-col items-center justify-center h-full text-center p-6 text-slate-400">
+                        <svg class="h-16 w-16 text-slate-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                        </svg>
+                        <p class="text-sm font-medium text-slate-500">Configure data source and axes to preview</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if chart and chart.config %}
+    {{ chart.config|json_script:"chart-config-data" }}
+{% endif %}
+
+<script>
+    function chartBuilder() {
+        return {
+            // Initial model variables
+            name: "{% if chart %}{{ chart.name|escapejs }}{% else %}{% endif %}",
+            description: "{% if chart %}{{ chart.description|escapejs }}{% else %}{% endif %}",
+            chartType: "{% if chart %}{{ chart.chart_type|escapejs }}{% else %}bar{% endif %}",
+            sourceType: "{% if chart %}{{ chart.source_type|escapejs }}{% else %}dataset{% endif %}",
+            activeTab: 'basic',
+            
+            datasetId: "{% if chart and chart.dataset %}{{ chart.dataset.pk }}{% else %}{% endif %}",
+            queryId: "{% if chart and chart.query_id %}{{ chart.query_id }}{% else %}{% endif %}",
+            
+            config: {
+                x_axis_column: '',
+                x_axis_columns: [],
+                y_axis_column: '',
+                y_axis_aggregation: 'count',
+                series_column: '',
+                series_columns: [],
+                variation: 'standard',
+                title_custom: '',
+                x_title: '',
+                y_title: '',
+                show_legend: true,
+                legend_position: 'horizontal',
+                show_gridlines: true,
+                stacked: false,
+                colors: [],
+                sort_order: 'asc',
+                custom_order: [],
+                value_colors: {},
+                value_labels: {},
+                value_prefix: '',
+                value_suffix: '',
+                show_tooltip: true,
+                tooltip_show_percent: false,
+                stacked_percent: false,
+                bar_gap_pct: 30,
+                bar_category_gap_pct: 20
+            },
+            
+            // UI helper variables
+            availableColumns: [],
+            previewLoading: false,
+            errorMessage: '',
+            hasRenderedChart: false,
+            colorsInput: '',
+            valuesList: [],
+            previewTimeout: null,
+            cachedRowData: null,
+
+            chartInstance: null,
+            
+            init() {
+                // Initialize config from saved chart if it exists
+                if (document.getElementById('chart-config-data')) {
+                    try {
+                        const savedConfig = JSON.parse(document.getElementById('chart-config-data').textContent);
+                        this.config = Object.assign(this.config, savedConfig);
+                        if (this.config.colors && this.config.colors.length > 0) {
+                            this.colorsInput = this.config.colors.join(', ');
+                        }
+                        // Restore bar gap values from legacy string format if saved
+                        if (typeof this.config.bar_gap_pct === 'undefined') {
+                            this.config.bar_gap_pct = 30;
+                        }
+                        if (typeof this.config.bar_category_gap_pct === 'undefined') {
+                            this.config.bar_category_gap_pct = 20;
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse saved chart configuration", e);
+                    }
+                }
+
+                // Initialize default variation, series columns and X-axis columns
+                if (!this.config.variation) {
+                    this.config.variation = 'standard';
+                }
+                if (this.config.series_column) {
+                    this.config.series_columns = this.config.series_column.split(',').map(s => s.trim()).filter(s => s);
+                } else {
+                    this.config.series_columns = [];
+                }
+                if (this.config.x_axis_column) {
+                    this.config.x_axis_columns = this.config.x_axis_column.split(',').map(s => s.trim()).filter(s => s);
+                } else {
+                    this.config.x_axis_columns = [];
+                }
+
+                // Fetch columns list immediately if there's a saved source
+                if (this.hasSourceSelected) {
+                    this.fetchColumns().then(() => {
+                        this.updatePreview();
+                    });
+                }
+
+                // Resize chart on window resize
+                window.addEventListener('resize', () => {
+                    if (this.chartInstance) {
+                        this.chartInstance.resize();
+                    }
+                });
+
+                // Initialize sortable for custom ordering
+                this.$watch('config.sort_order', (newVal) => {
+                    if (newVal === 'custom') {
+                        this.$nextTick(() => {
+                            this.initSortable();
+                        });
+                    }
+                });
+
+                // Re-initialize sortable when switching back to Axes tab with custom sorting active
+                this.$watch('activeTab', (newVal) => {
+                    if (newVal === 'axes' && this.config.sort_order === 'custom') {
+                        this.$nextTick(() => {
+                            this.initSortable();
+                        });
+                    }
+                });
+            },
+
+            initSortable() {
+                const el = this.$refs.customOrderList;
+                if (!el) return;
+
+                // Remove existing sortable instance
+                if (el.sortableInstance) {
+                    el.sortableInstance.destroy();
+                }
+
+                el.sortableInstance = Sortable.create(el, {
+                    animation: 150,
+                    handle: ':scope > div:nth-child(n) > .text-slate-400',
+                    ghostClass: 'opacity-50',
+                    onEnd: () => {
+                        // Collect new order from DOM
+                        const items = el.querySelectorAll('[data-value]');
+                        this.config.custom_order = Array.from(items).map(el => el.getAttribute('data-value'));
+                        this.debouncedUpdatePreview();
+                    }
+                });
+            },
+            
+            get hasSourceSelected() {
+                return (this.sourceType === 'dataset' && this.datasetId) || (this.sourceType === 'query' && this.queryId);
+            },
+            
+            get isPieOrGauge() {
+                return ['pie', 'doughnut', 'gauge', 'funnel'].includes(this.chartType);
+            },
+            
+            onSourceTypeChange() {
+                this.datasetId = '';
+                this.queryId = '';
+                this.availableColumns = [];
+                this.config.x_axis_column = '';
+                this.config.x_axis_columns = [];
+                this.config.y_axis_column = '';
+                this.config.series_column = '';
+                this.config.series_columns = [];
+                this.hasRenderedChart = false;
+                if (this.chartInstance) {
+                    this.chartInstance.dispose();
+                    this.chartInstance = null;
+                }
+            },
+
+            onSourceIdChange() {
+                this.availableColumns = [];
+                this.config.x_axis_column = '';
+                this.config.x_axis_columns = [];
+                this.config.y_axis_column = '';
+                this.config.series_column = '';
+                this.config.series_columns = [];
+                this.hasRenderedChart = false;
+                if (this.chartInstance) {
+                    this.chartInstance.dispose();
+                    this.chartInstance = null;
+                }
+
+                if (this.hasSourceSelected) {
+                    this.fetchColumns();
+                }
+            },
+
+            onChartTypeChange() {
+                this.config.variation = 'standard';
+                this.config.series_column = '';
+                this.config.series_columns = [];
+                if (this.chartInstance) {
+                    this.chartInstance.dispose();
+                    this.chartInstance = null;
+                }
+                this.onConfigChange();
+            },
+
+            getVariations() {
+                const type = this.chartType;
+                if (type === 'bar') {
+                    return [
+                        { value: 'standard', label: 'Standard / Grouped' },
+                        { value: 'stacked', label: 'Stacked' },
+                        { value: 'horizontal', label: 'Horizontal' },
+                        { value: 'horizontal_stacked', label: 'Horizontal Stacked' },
+                        { value: 'polar', label: 'Polar Radial' }
+                    ];
+                } else if (type === 'line') {
+                    return [
+                        { value: 'standard', label: 'Standard' },
+                        { value: 'stacked', label: 'Stacked' },
+                        { value: 'stacked_area', label: 'Stacked Area' },
+                        { value: 'polar', label: 'Polar Radial' }
+                    ];
+                } else if (type === 'pie') {
+                    return [
+                        { value: 'standard', label: 'Standard' },
+                        { value: 'rose', label: 'Nightingale Rose' }
+                    ];
+                } else if (type === 'doughnut') {
+                    return [
+                        { value: 'standard', label: 'Standard' },
+                        { value: 'rose', label: 'Nightingale Rose' },
+                        { value: 'semi_circle', label: 'Semi-Circle' }
+                    ];
+                } else if (type === 'funnel') {
+                    return [
+                        { value: 'standard', label: 'Standard' }
+                    ];
+                } else if (type === 'gauge') {
+                    return [
+                        { value: 'standard', label: 'Standard' }
+                    ];
+                }
+                return [{ value: 'standard', label: 'Standard' }];
+            },
+
+            addSeriesColumn() {
+                if (!this.config.series_columns) {
+                    this.config.series_columns = [];
+                }
+                this.config.series_columns.push('');
+            },
+
+            removeSeriesColumn(idx) {
+                this.config.series_columns.splice(idx, 1);
+                this.syncSeriesColumn();
+                this.onConfigChange();
+            },
+
+            updateSeriesColumn(idx, val) {
+                this.config.series_columns[idx] = val;
+                this.syncSeriesColumn();
+                this.onConfigChange();
+            },
+
+            syncSeriesColumn() {
+                if (this.config.series_columns) {
+                    this.config.series_column = this.config.series_columns.filter(c => c).join(',');
+                } else {
+                    this.config.series_column = '';
+                }
+            },
+
+            addXAxisColumn() {
+                if (!this.config.x_axis_columns) {
+                    this.config.x_axis_columns = [];
+                }
+                this.config.x_axis_columns.push('');
+            },
+
+            removeXAxisColumn(idx) {
+                this.config.x_axis_columns.splice(idx, 1);
+                this.syncXAxisColumn();
+                this.onConfigChange();
+            },
+
+            updateXAxisColumn(idx, val) {
+                this.config.x_axis_columns[idx] = val;
+                this.syncXAxisColumn();
+                this.onConfigChange();
+            },
+
+            syncXAxisColumn() {
+                if (this.config.x_axis_columns) {
+                    this.config.x_axis_column = this.config.x_axis_columns.filter(c => c).join(',');
+                } else {
+                    this.config.x_axis_column = '';
+                }
+            },
+
+            setSortOrder(order) {
+                this.config.sort_order = order;
+                this.debouncedUpdatePreview();
+            },
+
+            assignValueColor(value, color) {
+                if (!this.config.value_colors) {
+                    this.config.value_colors = {};
+                }
+                this.config.value_colors[value] = color;
+                this.debouncedUpdatePreview();
+            },
+
+            getValueColor(value) {
+                if (!this.config.value_colors) {
+                    this.config.value_colors = {};
+                }
+                return this.config.value_colors[value] || '#e5e7eb';
+            },
+
+            assignValueLabel(value, label) {
+                if (!this.config.value_labels) {
+                    this.config.value_labels = {};
+                }
+                if (label === '') {
+                    delete this.config.value_labels[value];
+                } else {
+                    this.config.value_labels[value] = label;
+                }
+                this.debouncedUpdatePreview();
+            },
+
+            debouncedUpdatePreview() {
+                clearTimeout(this.previewTimeout);
+                this.previewTimeout = setTimeout(() => {
+                    this.updatePreview();
+                }, 300);
+            },
+
+            extractValuesFromRows(rows, columnName) {
+                const values = new Set();
+                rows.forEach(row => {
+                    let val = row[columnName];
+                    if (val === null || val === '') {
+                        val = '(Blank)';
+                    } else {
+                        val = String(val);
+                    }
+                    values.add(val);
+                });
+                return Array.from(values).sort();
+            },
+            
+            onConfigChange() {
+                // Config changed: auto-render if we have axes selected (or gauge without x axis)
+                if ((this.config.x_axis_column || this.chartType === 'gauge') && this.config.y_axis_column) {
+                    this.debouncedUpdatePreview();
+                }
+            },
+            
+            onColorsInput() {
+                // Parse hex colors from comma separated list
+                const colors = this.colorsInput.split(',').map(c => c.trim()).filter(c => c.startsWith('#') && c.length >= 4);
+                this.config.colors = colors;
+                this.onConfigChange();
+            },
+            
+            fetchColumns() {
+                const sourceId = this.sourceType === 'dataset' ? this.datasetId : this.queryId;
+                const url = `{% url 'dataviz:api_chart_columns' %}?source_type=${this.sourceType}&source_id=${sourceId}`;
+                
+                return fetch(url)
+                    .then(res => res.json())
+                    .then(data => {
+                        this.availableColumns = data.columns || [];
+                    })
+                    .catch(err => {
+                        console.error("Error fetching source columns:", err);
+                        this.errorMessage = "Failed to load columns: " + err;
+                    });
+            },
+            
+            updatePreview() {
+                if (!this.hasSourceSelected || (!this.config.x_axis_column && this.chartType !== 'gauge') || !this.config.y_axis_column) {
+                    return;
+                }
+
+                this.errorMessage = "";
+                this.previewLoading = true;
+
+                const sourceId = this.sourceType === 'dataset' ? this.datasetId : this.queryId;
+
+                const params = new URLSearchParams({
+                    source_type: this.sourceType,
+                    source_id: sourceId,
+                    chart_type: this.chartType,
+                    x_col: this.config.x_axis_column || '',
+                    y_col: this.config.y_axis_column,
+                    aggregation: this.config.y_axis_aggregation,
+                    series_col: this.config.series_column || '',
+                    variation: this.config.variation || 'standard',
+                    title_custom: this.config.title_custom || '',
+                    x_title: this.config.x_title || '',
+                    y_title: this.config.y_title || '',
+                    show_legend: this.config.show_legend,
+                    legend_position: this.config.legend_position,
+                    show_gridlines: this.config.show_gridlines,
+                    stacked: this.config.stacked,
+                    colors: this.config.colors.join(','),
+                    sort_order: this.config.sort_order || 'asc',
+                    custom_order: JSON.stringify(this.config.custom_order || []),
+                    value_colors: JSON.stringify(this.config.value_colors || {}),
+                    value_labels: JSON.stringify(this.config.value_labels || {}),
+                    value_prefix: this.config.value_prefix || '',
+                    value_suffix: this.config.value_suffix || '',
+                    show_tooltip: this.config.show_tooltip,
+                    tooltip_show_percent: this.config.tooltip_show_percent,
+                    stacked_percent: this.config.stacked_percent,
+                    bar_gap: (this.config.bar_gap_pct || 0) + '%',
+                    bar_category_gap: (this.config.bar_category_gap_pct || 0) + '%'
+                });
+
+                fetch(`{% url 'dataviz:api_chart_preview' %}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: params.toString()
+                }).then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json() })
+                    .then(option => {
+                        if (option.error) {
+                            this.errorMessage = option.error;
+                            this.hasRenderedChart = false;
+                            return;
+                        }
+
+                        this.hasRenderedChart = true;
+
+                        // Extract available values from chart option for color assignment
+                        let extractedValues = [];
+
+                        if (['pie', 'doughnut', 'funnel'].includes(this.chartType)) {
+                            if (option.series && option.series.length > 0 && Array.isArray(option.series[0].data)) {
+                                option.series[0].data.forEach(item => {
+                                    if (typeof item === 'object' && item.name) {
+                                        extractedValues.push(item.name);
+                                    } else if (typeof item === 'string') {
+                                        extractedValues.push(item);
+                                    }
+                                });
+                            }
+                        } else if (option.legend && option.legend.data && Array.isArray(option.legend.data) && option.legend.data.length > 0 && this.config.series_columns && this.config.series_columns.length > 0) {
+                            // Cartesian chart WITH grouping: color the grouping values (series names)
+                            extractedValues = option.legend.data.filter(v => v !== 'Total');
+                        } else if (option.xAxis && option.xAxis.data && Array.isArray(option.xAxis.data)) {
+                            // Cartesian chart WITHOUT grouping: color the X-axis categories
+                            extractedValues = option.xAxis.data.filter(v => v);
+                        }
+
+                        // Remove duplicates and sort
+                        this.valuesList = [...new Set(extractedValues)].sort();
+
+                        this.$nextTick(() => {
+                            const container = document.getElementById('echarts-container');
+                            if (!container) return;
+
+                            // Extract formatting hints before overwriting tooltip config
+                            const savedTooltip = option.tooltip || {};
+                            const prefix = savedTooltip._prefix || '';
+                            const suffix = savedTooltip._suffix || '';
+                            const showPercent = savedTooltip._show_percent || false;
+                            const triggerType = savedTooltip.trigger || 'axis';
+
+                            // Rebuild tooltip from scratch — clean, no appendToBody quirks
+                            option.tooltip = {
+                                show: true,
+                                trigger: triggerType,
+                                confine: false,
+                                transitionDuration: 0.2,
+                                backgroundColor: 'rgba(15, 23, 42, 0.92)',
+                                borderColor: '#334155',
+                                borderWidth: 1,
+                                padding: [8, 12],
+                                textStyle: { color: '#f1f5f9', fontSize: 12 },
+                                extraCssText: 'border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.35); pointer-events: none;',
+                                axisPointer: savedTooltip.axisPointer || { type: 'shadow' }
+                            };
+
+                            // Only attach a formatter when custom prefix/suffix/percent is needed
+                            if (prefix || suffix || showPercent) {
+                                option.tooltip.formatter = function(params) {
+                                    const items = Array.isArray(params) ? params : [params];
+                                    const lines = items.map(function(p) {
+                                        if (!p || p.value == null) return '';
+                                        const val = prefix + String(p.value) + suffix + (showPercent && typeof p.value === 'number' ? ' (' + p.value.toFixed(1) + '%)' : '');
+                                        return (p.marker || '') + (p.seriesName || p.name || '') + ': <b>' + val + '</b>';
+                                    }).filter(function(s) { return s; });
+                                    return lines.join('<br/>') || 'No data';
+                                };
+                            }
+
+                            // Always dispose and reinit — ECharts can corrupt its internal
+                            // model tree when axis/coordinate shapes differ between renders
+                            // (e.g. horizontal↔standard, cartesian↔polar). setOption with
+                            // notMerge=true is insufficient for clean axis replacement.
+                            if (this.chartInstance) {
+                                this.chartInstance.dispose();
+                            }
+                            this.chartInstance = echarts.init(container, null, { renderer: 'canvas' });
+                            this.chartInstance.setOption(option, true);
+                            this.chartInstance.resize();
+                        });
+                    })
+                    .catch(err => {
+                        console.error("Error loading chart preview:", err);
+                        this.errorMessage = "Error generating preview: " + err;
+                        this.hasRenderedChart = false;
+                    })
+                    .finally(() => {
+                        this.previewLoading = false;
+                    });
+            },
+            
+            saveChart() {
+                if (!this.name) {
+                    this.errorMessage = "Please enter a Chart Name.";
+                    window.scrollTo({top: 0, behavior: 'smooth'});
+                    return;
+                }
+                if (!this.hasSourceSelected || !this.config.x_axis_column || !this.config.y_axis_column) {
+                    this.errorMessage = "Please configure a Data Source, X-Axis, and Y-Axis columns.";
+                    window.scrollTo({top: 0, behavior: 'smooth'});
+                    return;
+                }
+                
+                const payload = {
+                    name: this.name,
+                    description: this.description,
+                    chart_type: this.chartType,
+                    source_type: this.sourceType,
+                    dataset_id: this.sourceType === 'dataset' ? this.datasetId : null,
+                    query_id: this.sourceType === 'query' ? this.queryId : null,
+                    config: this.config
+                };
+                
+                const url = "{% if chart %}{% url 'dataviz:chart_save_id' chart.pk %}{% else %}{% url 'dataviz:chart_save' %}{% endif %}";
+                
+                fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify(payload)
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.href = "{% url 'dataviz:chart_list' %}";
+                    } else {
+                        this.errorMessage = data.error;
+                        window.scrollTo({top: 0, behavior: 'smooth'});
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    this.errorMessage = "Failed to save: " + err;
+                    window.scrollTo({top: 0, behavior: 'smooth'});
+                });
+            }
+        };
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,626 @@
+{% extends 'base.html' %}
+{% block title %}{% if page %}Edit Layout - {{ page.title }}{% else %}New Layout Page{% endif %} - DS Data{% endblock %}
+
+{% block extra_head %}
+<!-- Apache ECharts -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<!-- GridStack.js Styles -->
+<link href="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack.min.css" rel="stylesheet" />
+<!-- GridStack.js Script -->
+<script src="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack-all.js"></script>
+
+<style>
+    .grid-stack {
+        background: #f8fafc;
+        min-height: 500px;
+    }
+    .grid-stack-item-content {
+        background: white;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" x-data="pageBuilder()">
+    <!-- Header -->
+    <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-6">
+        <div>
+            <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">
+                {% if page %}Edit Layout: {{ page.title }}{% else %}Layout Page Builder{% endif %}
+            </h1>
+            <p class="mt-1 text-sm text-slate-500">Drag widgets onto the grid canvas, resize them, and design your report structure.</p>
+        </div>
+        <div class="mt-4 sm:mt-0 flex space-x-3">
+            <a href="{% url 'dataviz:page_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition">
+                Cancel
+            </a>
+            <button @click="savePage()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none transition">
+                <span x-text="pageId ? 'Save Page' : 'Create Page'"></span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Error Alert -->
+    <div class="mb-6 bg-red-50 border-l-4 border-red-400 p-4" x-show="errorMessage" style="display: none;">
+        <div class="flex">
+            <div class="ml-3">
+                <p class="text-sm font-semibold text-red-700" x-text="errorMessage"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Page Details Form (Must save page before layout works) -->
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8">
+        <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Page Configuration</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Page Title</label>
+                <input type="text" x-model="title" class="w-full border-slate-300 rounded-none shadow-sm focus:ring-emerald-500 text-sm py-2 px-3 border" placeholder="E.g., Student Overview">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Description</label>
+                <input type="text" x-model="description" class="w-full border-slate-300 rounded-none shadow-sm focus:ring-emerald-500 text-sm py-2 px-3 border" placeholder="E.g., General student demographics.">
+            </div>
+            <!-- Page level dynamic filters configuration -->
+            <div>
+                <div class="flex justify-between items-center mb-1">
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Page Filters</label>
+                    <button @click="addPageFilter()" class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 uppercase tracking-wider">+ Add Filter</button>
+                </div>
+                <div class="space-y-2 max-h-32 overflow-y-auto pr-1">
+                    <template x-for="(pf, index) in pageFilters" :key="index">
+                        <div class="flex items-center space-x-2 bg-slate-50 p-2 border border-slate-200">
+                            <input type="text" x-model="pf.label" placeholder="Label" class="w-1/3 border-slate-300 text-xs py-1 px-1.5 border">
+                            <select x-model="pf.column" class="w-1/2 border-slate-300 text-xs py-1 px-1.5 border bg-white">
+                                <option value="">-- Col --</option>
+                                <template x-for="tbl in Object.keys(schema)" :key="tbl">
+                                    <optgroup :label="tbl">
+                                        <template x-for="col in schema[tbl]" :key="col">
+                                            <option :value="tbl + '.' + col" x-text="col"></option>
+                                        </template>
+                                    </optgroup>
+                                </template>
+                            </select>
+                            <button @click="removePageFilter(index)" class="text-slate-400 hover:text-red-500">
+                                <svg class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Workspace Grid Stack (Only active if Page exists) -->
+    <div x-show="pageId">
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
+            <!-- Sidebar Widgets -->
+            <div class="lg:col-span-1 space-y-6">
+                <!-- Add text block -->
+                <div class="bg-white border border-slate-200 shadow p-6 rounded-none">
+                    <h4 class="text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Report Elements</h4>
+                    <div class="space-y-2">
+                        <button @click="addTextBlockWidget()" class="w-full flex items-center justify-center px-4 py-2 border border-slate-300 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition rounded-none">
+                            + Add Text / Note Block
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Saved Charts -->
+                <div class="bg-white border border-slate-200 shadow p-6 rounded-none">
+                    <h4 class="text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Saved Charts</h4>
+                    <div class="space-y-2 max-h-96 overflow-y-auto pr-1">
+                        {% for chart in charts %}
+                        <div class="flex items-center justify-between p-3 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition">
+                            <div>
+                                <p class="text-xs font-bold text-slate-900">{{ chart.name }}</p>
+                                <p class="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5">{{ chart.chart_type }} chart</p>
+                            </div>
+                            <button @click="addChartWidget({{ chart.pk }}, '{{ chart.name|escapejs }}')" class="text-xs font-semibold text-emerald-600 hover:text-emerald-800 uppercase tracking-wider pl-2">
+                                Add
+                            </button>
+                        </div>
+                        {% empty %}
+                        <p class="text-xs text-slate-400 text-center py-4">No charts configured yet.</p>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Canvas Grid Stack -->
+            <div class="lg:col-span-3">
+                <div class="bg-white border border-slate-200 shadow p-6 rounded-none">
+                    <h4 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Layout Canvas</h4>
+                    <div class="grid-stack min-h-[550px] border-2 border-dashed border-slate-200 p-4 bg-slate-50">
+                        <!-- GridStack items rendered dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Text Modal -->
+    <div class="fixed z-50 inset-0 overflow-y-auto" x-show="textModalOpen" style="display: none;">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="textModalOpen = false">
+                <div class="absolute inset-0 bg-slate-500 opacity-75"></div>
+            </div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div class="inline-block align-middle bg-white border border-slate-200 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full rounded-none">
+                <div class="bg-white px-6 py-6 border-b border-slate-100 flex justify-between items-center">
+                    <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Edit Text Content</h3>
+                    <button @click="textModalOpen = false" class="text-slate-400 hover:text-slate-500">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                </div>
+                <div class="bg-white px-6 py-6 space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">HTML/Text Content</label>
+                        <textarea x-model="editingTextContent" rows="12" class="w-full border-slate-300 font-mono text-xs p-3 border rounded-none focus:ring-emerald-500 focus:border-emerald-500" placeholder="Use HTML markup for formatting. E.g. <h2 class='text-lg font-bold'>Section Title</h2><p class='text-xs text-slate-500'>Paragraph notes.</p>"></textarea>
+                    </div>
+                </div>
+                <div class="bg-slate-50 px-6 py-4 border-t border-slate-100 flex justify-end space-x-3">
+                    <button @click="textModalOpen = false" class="px-4 py-2 border border-slate-300 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 rounded-none transition">Cancel</button>
+                    <button @click="saveTextWidgetContent()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-none transition">Update Content</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script id="charts-data" type="application/json">
+    {{ charts_json|safe }}
+</script>
+{% if page %}
+    {{ page.page_filters|json_script:"page-filters-data" }}
+    <script id="sections-data" type="application/json">
+        {{ sections_json|safe }}
+    </script>
+{% endif %}
+
+<script>
+    function pageBuilder() {
+        return {
+            pageId: "{% if page %}{{ page.pk }}{% else %}{% endif %}",
+            title: "{% if page %}{{ page.title|escapejs }}{% else %}{% endif %}",
+            description: "{% if page %}{{ page.description|escapejs }}{% else %}{% endif %}",
+            pageFilters: [],
+            
+            // System schema metadata for filters dropdown
+            schema: {{ schema_json|safe }},
+            
+            grid: null,
+            errorMessage: '',
+            
+            // Modal Edit Text state
+            textModalOpen: false,
+            editingGridItemId: null,
+            editingTextContent: '',
+            
+            chartInstances: {},
+            availableCharts: [],
+            
+            init() {
+                if (document.getElementById('page-filters-data')) {
+                    this.pageFilters = JSON.parse(document.getElementById('page-filters-data').textContent);
+                }
+                if (document.getElementById('charts-data')) {
+                    this.availableCharts = JSON.parse(document.getElementById('charts-data').textContent);
+                }
+                
+                if (this.pageId) {
+                    this.$nextTick(() => {
+                        this.initGridStack();
+                        this.loadLayout();
+                    });
+                }
+                
+                // Handle resize
+                window.addEventListener('resize', () => {
+                    Object.values(this.chartInstances).forEach(chart => {
+                        chart.resize();
+                    });
+                });
+            },
+            
+            addPageFilter() {
+                this.pageFilters.push({
+                    label: '',
+                    column: ''
+                });
+            },
+            
+            removePageFilter(index) {
+                this.pageFilters.splice(index, 1);
+            },
+            
+            initGridStack() {
+                this.grid = GridStack.init({
+                    column: 12,
+                    cellHeight: 80,
+                    margin: 8,
+                    acceptWidgets: true,
+                    alwaysShowResizeHandle: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
+                    resizable: { handles: 'e, se, s, w, sw' }
+                });
+            },
+            
+            addChartWidget(chartId, chartName) {
+                const id = 'w_' + Math.random().toString(36).substr(2, 9);
+                const widgetEl = this.createWidgetHTML({
+                    element_type: 'chart',
+                    chart_id: chartId,
+                    chart_name: chartName,
+                    gs_x: 0,
+                    gs_y: 0,
+                    gs_w: 6,
+                    gs_h: 4
+                }, id);
+                this.grid.addWidget(widgetEl, { w: 6, h: 4, autoPosition: true });
+                this.$nextTick(() => {
+                    this.loadChart(id, chartId);
+                });
+            },
+            
+            addTextBlockWidget() {
+                const id = 'w_' + Math.random().toString(36).substr(2, 9);
+                const widgetEl = this.createWidgetHTML({
+                    element_type: 'html',
+                    html_content: "<h3 class='text-sm font-bold text-slate-800'>Custom Heading</h3><p class='text-xs text-slate-400 mt-1'>Double-click to edit this text content and add reports explanation.</p>",
+                    gs_x: 0,
+                    gs_y: 0,
+                    gs_w: 6,
+                    gs_h: 2
+                }, id);
+                this.grid.addWidget(widgetEl, { w: 6, h: 2, autoPosition: true });
+            },
+            
+            createWidgetHTML(w, id) {
+                const div = document.createElement('div');
+                div.className = 'grid-stack-item';
+                div.setAttribute('gs-x', w.gs_x);
+                div.setAttribute('gs-y', w.gs_y);
+                div.setAttribute('gs-w', w.gs_w);
+                div.setAttribute('gs-h', w.gs_h);
+                
+                if (!id) {
+                    id = 'w_' + Math.random().toString(36).substr(2, 9);
+                }
+                div.setAttribute('data-id', id);
+                div.setAttribute('data-type', w.element_type);
+                if (w.chart_id) {
+                    div.setAttribute('data-chart-id', w.chart_id);
+                }
+                
+                let innerContent = '';
+                if (w.element_type === 'chart') {
+                    innerContent = `
+                        <div class="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50 shrink-0">
+                            <span class="text-xs font-bold text-slate-700 uppercase tracking-wider truncate">${w.chart_name}</span>
+                            <button class="delete-btn text-slate-400 hover:text-red-500 font-bold text-xs">&times;</button>
+                        </div>
+                        <div class="flex-grow p-4 relative min-h-0 min-w-0">
+                            <div id="chart-canvas-${id}" class="w-full h-full min-h-[220px]"></div>
+                            <div class="absolute inset-0 bg-white/70 flex items-center justify-center text-xs text-slate-500 font-sans z-10 chart-loader" style="display: none;">
+                                Loading chart options...
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    innerContent = `
+                        <div class="absolute top-2 right-2 flex space-x-2 z-10">
+                            <button class="edit-btn text-[10px] font-bold text-slate-400 hover:text-blue-600 bg-white border px-1.5 py-0.5 shadow-sm uppercase">Edit</button>
+                            <button class="delete-btn text-[10px] font-bold text-slate-400 hover:text-red-600 bg-white border px-1.5 py-0.5 shadow-sm uppercase">Delete</button>
+                        </div>
+                        <div class="p-4 text-container h-full overflow-y-auto text-xs text-slate-600">${w.html_content}</div>
+                    `;
+                }
+                
+                div.innerHTML = `<div class="grid-stack-item-content flex flex-col justify-between h-full relative overflow-hidden">${innerContent}</div>`;
+                
+                // Add event listeners directly to avoid relying on obsolete global window functions
+                if (w.element_type === 'chart') {
+                    const deleteBtn = div.querySelector('.delete-btn');
+                    if (deleteBtn) {
+                        deleteBtn.addEventListener('click', () => {
+                            this.grid.removeWidget(div);
+                            if (this.chartInstances[id]) {
+                                this.chartInstances[id].dispose();
+                                delete this.chartInstances[id];
+                            }
+                        });
+                    }
+                } else {
+                    const editBtn = div.querySelector('.edit-btn');
+                    if (editBtn) {
+                        editBtn.addEventListener('click', () => {
+                            this.editTextWidget(div);
+                        });
+                    }
+                    const deleteBtn = div.querySelector('.delete-btn');
+                    if (deleteBtn) {
+                        deleteBtn.addEventListener('click', () => {
+                            this.grid.removeWidget(div);
+                        });
+                    }
+                    const textContainer = div.querySelector('.text-container');
+                    if (textContainer) {
+                        textContainer.addEventListener('dblclick', () => {
+                            this.editTextWidget(div);
+                        });
+                    }
+                }
+                
+                return div;
+            },
+            
+            loadLayout() {
+                // Fetch saved sections from DB if editing
+                let sections = [];
+                const sectionsEl = document.getElementById('sections-data');
+                if (sectionsEl) {
+                    try {
+                        sections = JSON.parse(sectionsEl.textContent);
+                    } catch(e) {
+                        console.error("Failed to parse sections data", e);
+                    }
+                }
+                
+                sections.forEach(s => {
+                    const id = 'w_' + Math.random().toString(36).substr(2, 9);
+                    const el = this.createWidgetHTML({
+                        element_type: s.element_type,
+                        chart_id: s.chart ? s.chart.id : null,
+                        chart_name: s.chart ? s.chart.name : '',
+                        html_content: s.html_content,
+                        gs_x: s.gs_x,
+                        gs_y: s.gs_y,
+                        gs_w: s.gs_w,
+                        gs_h: s.gs_h
+                    }, id);
+                    this.grid.addWidget(el, {
+                        x: s.gs_x,
+                        y: s.gs_y,
+                        w: s.gs_w,
+                        h: s.gs_h
+                    });
+                    if (s.element_type === 'chart' && s.chart) {
+                        this.$nextTick(() => {
+                            this.loadChart(id, s.chart.id);
+                        });
+                    }
+                });
+            },
+            
+            loadChart(id, chartId) {
+                const chartInfo = this.availableCharts.find(c => c.id == chartId);
+                if (!chartInfo) return;
+                
+                const canvas = document.getElementById(`chart-canvas-${id}`);
+                if (!canvas) return;
+                const loader = canvas.parentElement.querySelector('.chart-loader');
+                if (loader) loader.style.display = 'flex';
+                
+                const config = chartInfo.config || {};
+                const sourceId = chartInfo.source_type === 'dataset' ? chartInfo.dataset_id : chartInfo.query_id;
+                
+                const params = new URLSearchParams({
+                    source_type: chartInfo.source_type,
+                    source_id: sourceId,
+                    chart_type: chartInfo.chart_type,
+                    x_col: config.x_axis_column || '',
+                    y_col: config.y_axis_column || '',
+                    aggregation: config.y_axis_aggregation || '',
+                    series_col: config.series_column || '',
+                    variation: config.variation || 'standard',
+                    value_colors: JSON.stringify(config.value_colors || {}),
+                    value_labels: JSON.stringify(config.value_labels || {}),
+                    value_prefix: config.value_prefix || '',
+                    value_suffix: config.value_suffix || '',
+                    show_tooltip: config.show_tooltip !== undefined ? config.show_tooltip : true,
+                    tooltip_show_percent: config.tooltip_show_percent !== undefined ? config.tooltip_show_percent : false,
+                    stacked_percent: config.stacked_percent !== undefined ? config.stacked_percent : false,
+                    title_custom: config.title_custom || '',
+                    x_title: config.x_title || '',
+                    y_title: config.y_title || '',
+                    show_legend: config.show_legend !== undefined ? config.show_legend : true,
+                    legend_position: config.legend_position || 'horizontal',
+                    show_gridlines: config.show_gridlines !== undefined ? config.show_gridlines : true,
+                    stacked: config.stacked !== undefined ? config.stacked : false,
+                    colors: (config.colors || []).join(','),
+                    extra_filters: JSON.stringify({})
+                });
+                
+                fetch(`{% url 'dataviz:api_chart_preview' %}?${params.toString()}`)
+                    .then(res => res.json())
+                    .then(option => {
+                        if (option.error) {
+                            canvas.innerHTML = `<div class="flex items-center justify-center h-full text-center text-xs text-red-500 font-sans p-4">${option.error}</div>`;
+                            return;
+                        }
+                        
+                        // Ensure tooltip is configured properly
+                        if (!option.tooltip) {
+                            option.tooltip = {};
+                        }
+
+                        // Apply tooltip visibility & confinement (matching view.html)
+                        option.tooltip.show = config.show_tooltip !== undefined ? config.show_tooltip : true;
+                        option.tooltip.confine = true;
+                        option.tooltip.appendToBody = true;
+                        if (!option.tooltip.trigger) {
+                            option.tooltip.trigger = 'axis';
+                        }
+
+                        // Apply tooltip formatting if needed
+                        const prefix = option.tooltip._prefix || '';
+                        const suffix = option.tooltip._suffix || '';
+                        const showPercent = option.tooltip._show_percent || false;
+
+                        option.tooltip.formatter = (params) => {
+                            if (Array.isArray(params)) {
+                                const title = params[0] ? `<span style="font-weight: 600; color: #1e293b; margin-bottom: 4px; display: inline-block;">${params[0].name}</span><br/>` : '';
+                                const rows = params.map(p => {
+                                    if (!p || p.value === undefined || p.value === null) return '';
+                                    let val = String(p.value);
+                                    if (prefix || suffix) {
+                                        val = prefix + val + suffix;
+                                    }
+                                    if (showPercent && typeof p.value === 'number') {
+                                        val += ` (${p.value.toFixed(1)}%)`;
+                                    }
+                                    const marker = p.marker || '';
+                                    const seriesName = p.seriesName || '';
+                                    return `<span style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                                        <span style="display: flex; align-items: center; gap: 6px; color: #64748b;">${marker} ${seriesName}</span>
+                                        <span style="font-weight: 600; color: #0f172a;">${val}</span>
+                                    </span>`;
+                                }).filter(s => s).join('');
+                                return `<div style="font-family: Inter, sans-serif; font-size: 12px; line-height: 1.5;">${title}${rows}</div>`;
+                            }
+                            if (!params || params.value === undefined || params.value === null) return '';
+                            let val = String(params.value);
+                            if (prefix || suffix) {
+                                val = prefix + val + suffix;
+                            }
+                            if (showPercent && typeof params.value === 'number') {
+                                val += ` (${params.value.toFixed(1)}%)`;
+                            }
+                            const name = params.name || '';
+                            const seriesName = params.seriesName || '';
+                            const marker = params.marker || '';
+                            return `<div style="font-family: Inter, sans-serif; font-size: 12px; line-height: 1.5;">
+                                ${name ? `<span style="font-weight: 600; color: #1e293b; margin-bottom: 4px; display: inline-block;">${name}</span><br/>` : ''}
+                                <span style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                                    <span style="display: flex; align-items: center; gap: 6px; color: #64748b;">${marker} ${seriesName}</span>
+                                    <span style="font-weight: 600; color: #0f172a;">${val}</span>
+                                </span>
+                            </div>`;
+                        };
+
+                        // Clean up internal properties
+                        delete option.tooltip._prefix;
+                        delete option.tooltip._suffix;
+                        delete option.tooltip._show_percent;
+
+                        let chart = this.chartInstances[id];
+                        if (!chart) {
+                            chart = echarts.init(canvas);
+                            this.chartInstances[id] = chart;
+                        }
+                        
+                        chart.setOption(option, true);
+                        chart.resize();
+                    })
+                    .catch(err => {
+                        console.error("Error loading layout chart:", err);
+                        canvas.innerHTML = `<div class="flex items-center justify-center h-full text-center text-xs text-red-500 font-sans p-4">Error loading visualization data</div>`;
+                    })
+                    .finally(() => {
+                        if (loader) loader.style.display = 'none';
+                    });
+            },
+            
+            async savePage() {
+                if (!this.title) {
+                    this.errorMessage = "Please provide a Page Title.";
+                    return;
+                }
+                this.errorMessage = "";
+                
+                const payload = {
+                    title: this.title,
+                    description: this.description,
+                    page_filters: this.pageFilters
+                };
+                
+                const url = this.pageId 
+                    ? "{% url 'dataviz:page_save_id' 0 %}".replace('0', this.pageId) 
+                    : "{% url 'dataviz:page_save' %}";
+                
+                try {
+                    let res = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': '{{ csrf_token }}'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    let data = await res.json();
+                    if (!data.success) {
+                        this.errorMessage = data.error;
+                        return;
+                    }
+                    
+                    const newPageId = data.id || this.pageId;
+                    
+                    if (!this.pageId) {
+                        // First save: redirect to the edit page for this new page id
+                        window.location.href = "{% url 'dataviz:page_edit' 0 %}".replace('0', newPageId);
+                        return;
+                    }
+                    
+                    // If page already exists, also save the layout
+                    if (this.grid) {
+                        const items = this.grid.getGridItems();
+                        const sections = items.map(item => {
+                            const el = item.el || item;
+                            const node = el.gridstackNode || {};
+                            return {
+                                element_type: el.getAttribute('data-type'),
+                                chart_id: el.getAttribute('data-chart-id') || null,
+                                html_content: el.getAttribute('data-type') === 'html' ? el.querySelector('.text-container').innerHTML : '',
+                                gs_x: node.x !== undefined ? node.x : parseInt(el.getAttribute('gs-x') || 0),
+                                gs_y: node.y !== undefined ? node.y : parseInt(el.getAttribute('gs-y') || 0),
+                                gs_w: node.w !== undefined ? node.w : parseInt(el.getAttribute('gs-w') || 6),
+                                gs_h: node.h !== undefined ? node.h : parseInt(el.getAttribute('gs-h') || 4)
+                            };
+                        });
+                        
+                        let layoutRes = await fetch("{% url 'dataviz:page_layout_save' 0 %}".replace('0', this.pageId), {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': '{{ csrf_token }}'
+                            },
+                            body: JSON.stringify({ sections: sections })
+                        });
+                        let layoutData = await layoutRes.json();
+                        if (!layoutData.success) {
+                            this.errorMessage = "Details saved, but layout failed: " + layoutData.error;
+                            return;
+                        }
+                    }
+                    
+                    alert("Page saved successfully.");
+                } catch (err) {
+                    console.error(err);
+                    this.errorMessage = "Failed to save page: " + err;
+                }
+            },
+            
+            editTextWidget(itemEl) {
+                this.editingGridItemId = itemEl.getAttribute('data-id');
+                const textContainer = itemEl.querySelector('.text-container');
+                this.editingTextContent = textContainer.innerHTML;
+                this.textModalOpen = true;
+            },
+            
+            saveTextWidgetContent() {
+                if (!this.editingGridItemId) return;
+                
+                const itemEl = document.querySelector(`.grid-stack-item[data-id="${this.editingGridItemId}"]`);
+                if (itemEl) {
+                    const textContainer = itemEl.querySelector('.text-container');
+                    textContainer.innerHTML = this.editingTextContent;
+                }
+                this.textModalOpen = false;
+                this.editingGridItemId = null;
+                this.editingTextContent = '';
+            }
+        };
+    }
+</script>
+{% endblock %}

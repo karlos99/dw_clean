@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% load cache %}
+{% block title %}Charts - DS Data{% endblock %}
+
+{% block content %}
+{% cache 300 charts_list user.pk %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    <!-- Header -->
+    <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">Saved Charts</h1>
+            <p class="mt-1 text-sm text-slate-500">Configure visual ECharts analytics plots backed by visual datasets or explore queries.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <a href="{% url 'dataviz:chart_create' %}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-300">
+                + Configure Chart
+            </a>
+        </div>
+    </div>
+
+    <!-- Charts Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% if charts %}
+            {% for chart in charts %}
+            <div class="bg-white border border-slate-200 shadow rounded-none overflow-hidden flex flex-col justify-between hover:shadow-md transition duration-300">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-none text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200 uppercase tracking-widest">
+                            {{ chart.chart_type }}
+                        </span>
+                        <span class="text-xs text-slate-400">
+                            Source: {{ chart.get_source_type_display }}
+                        </span>
+                    </div>
+                    <h3 class="text-lg font-bold text-slate-900 mb-2">{{ chart.name }}</h3>
+                    <p class="text-sm text-slate-500 leading-relaxed">{{ chart.description|truncatechars:100 }}</p>
+                </div>
+                <div class="bg-slate-50 px-6 py-4 border-t border-slate-100 flex justify-between items-center text-sm">
+                    <span class="text-xs text-slate-400">Owner: {{ chart.owner.name|default:chart.owner.email }}</span>
+                    <div class="flex space-x-3">
+                        <a href="{% url 'dataviz:chart_edit' chart.pk %}" class="text-indigo-600 hover:text-indigo-900 font-semibold transition">Edit</a>
+                        <form action="{% url 'dataviz:chart_delete' chart.pk %}" method="POST" onsubmit="return confirm('Are you sure you want to delete this chart?');" class="inline">
+                            {% csrf_token %}
+                            <button type="submit" class="text-red-600 hover:text-red-900 font-semibold transition">Delete</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="col-span-full bg-white border border-slate-200 p-12 text-center shadow rounded-none">
+                <svg class="mx-auto h-12 w-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                </svg>
+                <h3 class="mt-2 text-sm font-bold text-slate-900">No Charts</h3>
+                <p class="mt-1 text-sm text-slate-500">Configure visual analytics charts to represent your datasets.</p>
+                <div class="mt-6">
+                    <a href="{% url 'dataviz:chart_create' %}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none transition duration-300">
+                        + Configure Chart
+                    </a>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endcache %}
+{% endblock %}

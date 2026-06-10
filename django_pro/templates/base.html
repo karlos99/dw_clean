@@ -141,6 +141,7 @@
                                     {% if user.is_superuser or user.active_role and user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
                                     <a href="{% url 'users:manage_pages' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Pages</a>
                                     <a href="{% url 'dataLoader:dashboard' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Data Loader</a>
+                                    <a href="{% url 'dataviz:dashboard_home' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Visualizer</a>
                                     {% endif %}
                                     {% if usage_page_access %}
                                     <a href="{{ usage_page_url }}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Usage</a>

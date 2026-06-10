@@ -14,5 +14,6 @@ urlpatterns = [
     path('placementcards/', include('placementcards.urls')),
     path('mathr/', include('mathr.urls')),
     path('dataloader/', include('dataLoader.urls')),
+    path('dataviz/', include('dataviz.urls')),
     path('', include('landing.urls')),
 ]

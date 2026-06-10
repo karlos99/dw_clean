@@ -7,6 +7,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('dataexploration', '0009_alter_savedquery_options_alter_studentlist_options_and_more'),
+        ('studata', '0008_schedule_studentmarks_teacheraccess'),
     ]
 
     operations = [

@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% load cache %}
+{% block title %}Datasets - DS Data{% endblock %}
+
+{% block content %}
+{% cache 300 datasets_list user.pk %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    <!-- Header -->
+    <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">Visual Datasets</h1>
+            <p class="mt-1 text-sm text-slate-500">Configure visual joins and database queries to feed chart visuals.</p>
+        </div>
+        <div class="mt-4 sm:mt-0">
+            <a href="{% url 'dataviz:dataset_create' %}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-300">
+                + Build Dataset
+            </a>
+        </div>
+    </div>
+
+    <!-- Datasets Table -->
+    <div class="bg-white border border-slate-200 shadow rounded-none overflow-hidden">
+        {% if datasets %}
+        <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+                <tr>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Name</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Base Table</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Joins</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Created By</th>
+                    <th scope="col" class="px-6 py-3 class=text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Last Modified</th>
+                    <th scope="col" class="relative px-6 py-3">
+                        <span class="sr-only">Actions</span>
+                    </th>
+                </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-slate-200">
+                {% for ds in datasets %}
+                <tr class="hover:bg-slate-50 transition">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-bold text-slate-900">{{ ds.name }}</div>
+                        <div class="text-xs text-slate-500">{{ ds.description|truncatechars:50 }}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-none text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200">
+                            {{ ds.base_table }}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                        {{ ds.joins|length }} Joins
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                        {{ ds.owner.name|default:ds.owner.email }}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                        {{ ds.updated_at|date:"M d, Y H:i" }}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div class="flex justify-end space-x-3">
+                            <a href="{% url 'dataviz:dataset_edit' ds.pk %}" class="text-blue-600 hover:text-blue-900 font-semibold transition">Edit</a>
+                            <form action="{% url 'dataviz:dataset_delete' ds.pk %}" method="POST" onsubmit="return confirm('Are you sure you want to delete this dataset?');" class="inline">
+                                {% csrf_token %}
+                                <button type="submit" class="text-red-600 hover:text-red-900 font-semibold transition">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="text-center py-12">
+            <svg class="mx-auto h-12 w-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m-9 1V4a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+            </svg>
+            <h3 class="mt-2 text-sm font-bold text-slate-900">No Datasets</h3>
+            <p class="mt-1 text-sm text-slate-500">Get started by creating a new database query configuration.</p>
+            <div class="mt-6">
+                <a href="{% url 'dataviz:dataset_create' %}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-300">
+                    + Build Dataset
+                </a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endcache %}
+{% endblock %}

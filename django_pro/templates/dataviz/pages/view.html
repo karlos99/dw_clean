@@ -1,0 +1,360 @@
+{% extends 'base.html' %}
+{% block title %}{{ page.title }} - Reports Dashboard - DS Data{% endblock %}
+
+{% block extra_head %}
+<!-- Apache ECharts -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<!-- GridStack Styles -->
+<link href="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack.min.css" rel="stylesheet" />
+<!-- GridStack Script -->
+<script src="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack-all.js"></script>
+
+<style>
+    .grid-stack {
+        background: transparent;
+    }
+    .grid-stack-item-content {
+        background: white;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" x-data="pageViewer()">
+    <!-- Header -->
+    <div class="mb-8 border-b border-slate-200 pb-6 flex flex-col md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">{{ page.title }}</h1>
+            <p class="mt-2 text-sm text-slate-500">{{ page.description }}</p>
+        </div>
+        {% if user.is_staff or user.active_role.name == 'Project Admin' %}
+        <div class="mt-4 md:mt-0">
+            <a href="{% url 'dataviz:page_edit' page.pk %}" class="inline-flex items-center px-4 py-2 border border-slate-300 text-xs font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition">
+                Edit Layout
+            </a>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Global Page Filters -->
+    {% if page.page_filters %}
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8">
+        <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-2">
+            <h3 class="text-xs font-bold text-slate-900 uppercase tracking-widest flex items-center">
+                <svg class="h-4 w-4 text-slate-500 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 8.293A1 1 0 013 7.586V4z" /></svg>
+                Filter Dashboard
+            </h3>
+            <div class="flex space-x-2">
+                <button @click="clearFilters()" class="text-xs font-semibold text-slate-500 hover:text-slate-700 uppercase tracking-wider">Clear</button>
+                <button @click="applyFilters()" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs uppercase tracking-widest transition rounded-none">Apply Filters</button>
+            </div>
+        </div>
+        
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            {% for f in page.page_filters %}
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">{{ f.label }}</label>
+                <select x-model="filters['{{ f.column }}']" class="w-full border-slate-300 rounded-none text-xs py-1.5 px-2 border bg-white focus:ring-slate-500 focus:border-slate-500">
+                    <option value="">All {{ f.label }}s</option>
+                    {% with opts=filter_options|get_item:f.column %}
+                        {% for opt in opts %}
+                        <option value="{{ opt }}">{{ opt }}</option>
+                        {% endfor %}
+                    {% endwith %}
+                </select>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- GridStack Layout -->
+    <div class="grid-stack min-h-[500px]">
+        {% for section in sections %}
+        <div class="grid-stack-item" 
+             gs-x="{{ section.gs_x }}" 
+             gs-y="{{ section.gs_y }}" 
+             gs-w="{{ section.gs_w }}" 
+             gs-h="{{ section.gs_h }}"
+             data-type="{{ section.element_type }}"
+             {% if section.chart %}
+             data-chart-id="{{ section.chart.pk }}"
+             data-source-type="{{ section.chart.source_type }}"
+             data-source-id="{% if section.chart.source_type == 'dataset' %}{{ section.chart.dataset.pk }}{% else %}{{ section.chart.query_id }}{% endif %}"
+             data-chart-type="{{ section.chart.chart_type }}"
+             data-x-col="{{ section.chart.config.x_axis_column }}"
+             data-y-col="{{ section.chart.config.y_axis_column }}"
+             data-agg="{{ section.chart.config.y_axis_aggregation }}"
+             data-series-col="{{ section.chart.config.series_column }}"
+             {% endif %}>
+            {% if section.chart %}
+            {{ section.chart.config|json_script:section.pk }}
+            {% endif %}
+            
+            <div class="grid-stack-item-content flex flex-col justify-between h-full overflow-hidden">
+                {% if section.element_type == 'chart' %}
+                    <!-- Chart Header -->
+                    <div class="px-4 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between shrink-0">
+                        <span class="text-xs font-bold text-slate-700 uppercase tracking-wider truncate">
+                            {{ section.chart.name }}
+                        </span>
+                        <div class="flex items-center space-x-2">
+                            <span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" title="Live connection"></span>
+                        </div>
+                    </div>
+                    <!-- Chart Canvas -->
+                    <div class="flex-grow p-4 relative min-h-0 min-w-0">
+                        <div id="chart-canvas-{{ section.pk }}" class="w-full h-full min-h-[220px]"></div>
+                        <!-- Inner loading spinner -->
+                        <div class="absolute inset-0 bg-white/70 flex items-center justify-center text-xs text-slate-500 font-sans z-10 chart-loader" style="display: none;">
+                            Loading chart options...
+                        </div>
+                    </div>
+                {% else %}
+                    <!-- Text Section -->
+                    <div class="p-6 text-slate-700 overflow-y-auto h-full text-xs leading-relaxed">
+                        {{ section.html_content|safe }}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+    function pageViewer() {
+        return {
+            filters: {},
+            chartInstances: {},
+            grid: null,
+            chartObserver: null,
+            loadedCharts: new Set(),
+            
+            get filtersJson() {
+                return JSON.stringify(this.filters);
+            },
+
+            init() {
+                // Initialize default filter states
+                {% for f in page.page_filters %}
+                this.filters['{{ f.column }}'] = '';
+                {% endfor %}
+                
+                this.$nextTick(() => {
+                    this.initGridStack();
+                    this.lazyRenderCharts();
+                });
+                
+                // Handle resize
+                window.addEventListener('resize', () => {
+                    Object.values(this.chartInstances).forEach(chart => {
+                        chart.resize();
+                    });
+                });
+            },
+            
+            initGridStack() {
+                this.grid = GridStack.init({
+                    column: 12,
+                    margin: 8,
+                    staticGrid: true // Static read-only mode
+                });
+            },
+            
+            clearFilters() {
+                Object.keys(this.filters).forEach(k => {
+                    this.filters[k] = '';
+                });
+                this.applyFilters();
+            },
+            
+            applyFilters() {
+                // On filter change, reload ALL charts (data changed)
+                this.loadedCharts.clear();
+                this.renderAllCharts();
+            },
+            
+            lazyRenderCharts() {
+                const items = document.querySelectorAll('.grid-stack-item[data-type="chart"]');
+                if (!items.length) return;
+                
+                // IntersectionObserver: load charts as they scroll into view
+                this.chartObserver = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (!entry.isIntersecting) return;
+                        const item = entry.target;
+                        this.loadChartFromItem(item);
+                        this.chartObserver.unobserve(item);
+                    });
+                }, { rootMargin: '200px' });
+                
+                items.forEach(item => this.chartObserver.observe(item));
+            },
+            
+            loadChartFromItem(item) {
+                const canvas = item.querySelector('[id^="chart-canvas-"]');
+                if (!canvas) return;
+                const pk = canvas.id.split('-').pop();
+                if (this.loadedCharts.has(pk)) return;
+                this.loadedCharts.add(pk);
+                
+                const sourceType = item.getAttribute('data-source-type');
+                const sourceId = item.getAttribute('data-source-id');
+                const chartType = item.getAttribute('data-chart-type');
+                const xCol = item.getAttribute('data-x-col');
+                const yCol = item.getAttribute('data-y-col');
+                const aggregation = item.getAttribute('data-agg');
+                const seriesCol = item.getAttribute('data-series-col') || '';
+                
+                let config = {};
+                const configScript = document.getElementById(pk);
+                if (configScript) {
+                    try { config = JSON.parse(configScript.textContent); } catch(e) {}
+                }
+                
+                this.loadChart(pk, sourceType, sourceId, chartType, xCol, yCol, aggregation, seriesCol, config);
+            },
+            
+            renderAllCharts() {
+                // Non-lazy: render every chart immediately (used after filter change)
+                const items = document.querySelectorAll('.grid-stack-item[data-type="chart"]');
+                items.forEach(item => this.loadChartFromItem(item));
+            },
+            
+            loadChart(pk, sourceType, sourceId, chartType, xCol, yCol, aggregation, seriesCol, config) {
+                const canvas = document.getElementById(`chart-canvas-${pk}`);
+                const loader = canvas.parentElement.querySelector('.chart-loader');
+                if (!canvas) return;
+                
+                if (loader) loader.style.display = 'flex';
+                
+                // Merge current page dynamic filters
+                const params = new URLSearchParams({
+                    source_type: sourceType,
+                    source_id: sourceId,
+                    chart_type: chartType,
+                    x_col: xCol,
+                    y_col: yCol,
+                    aggregation: aggregation,
+                    series_col: seriesCol,
+                    variation: config.variation || 'standard',
+                    value_colors: JSON.stringify(config.value_colors || {}),
+                    value_labels: JSON.stringify(config.value_labels || {}),
+                    value_prefix: config.value_prefix || '',
+                    value_suffix: config.value_suffix || '',
+                    show_tooltip: config.show_tooltip !== undefined ? config.show_tooltip : true,
+                    tooltip_show_percent: config.tooltip_show_percent !== undefined ? config.tooltip_show_percent : false,
+                    stacked_percent: config.stacked_percent !== undefined ? config.stacked_percent : false,
+                    title_custom: config.title_custom || '',
+                    x_title: config.x_title || '',
+                    y_title: config.y_title || '',
+                    show_legend: config.show_legend !== undefined ? config.show_legend : true,
+                    legend_position: config.legend_position || 'horizontal',
+                    show_gridlines: config.show_gridlines !== undefined ? config.show_gridlines : true,
+                    stacked: config.stacked !== undefined ? config.stacked : false,
+                    colors: (config.colors || []).join(','),
+                    extra_filters: this.filtersJson
+                });
+                
+                fetch(`{% url 'dataviz:api_chart_preview' %}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: params.toString()
+                }).then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json() })
+                    .then(option => {
+                        if (option.error) {
+                            canvas.innerHTML = `<div class="flex items-center justify-center h-full text-center text-xs text-red-500 font-sans p-4">${option.error}</div>`;
+                            return;
+                        }
+                        
+                        // Ensure tooltip is configured properly
+                        if (!option.tooltip) {
+                            option.tooltip = {};
+                        }
+
+                        // Apply tooltip visibility & boundary confinement
+                        option.tooltip.show = config.show_tooltip !== undefined ? config.show_tooltip : true;
+                        option.tooltip.confine = true;
+                        option.tooltip.appendToBody = true;
+                        if (!option.tooltip.trigger) {
+                            option.tooltip.trigger = 'axis';
+                        }
+
+                        // Apply tooltip formatting if needed
+                        const prefix = option.tooltip._prefix || '';
+                        const suffix = option.tooltip._suffix || '';
+                        const showPercent = option.tooltip._show_percent || false;
+
+                        option.tooltip.formatter = (params) => {
+                            if (Array.isArray(params)) {
+                                const title = params[0] ? `<span style="font-weight: 600; color: #1e293b; margin-bottom: 4px; display: inline-block;">${params[0].name}</span><br/>` : '';
+                                const rows = params.map(p => {
+                                    if (!p || p.value === undefined || p.value === null) return '';
+                                    let val = String(p.value);
+                                    if (prefix || suffix) {
+                                        val = prefix + val + suffix;
+                                    }
+                                    if (showPercent && typeof p.value === 'number') {
+                                        val += ` (${p.value.toFixed(1)}%)`;
+                                    }
+                                    const marker = p.marker || '';
+                                    const seriesName = p.seriesName || '';
+                                    return `<span style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                                        <span style="display: flex; align-items: center; gap: 6px; color: #64748b;">${marker} ${seriesName}</span>
+                                        <span style="font-weight: 600; color: #0f172a;">${val}</span>
+                                    </span>`;
+                                }).filter(s => s).join('');
+                                return `<div style="font-family: Inter, sans-serif; font-size: 12px; line-height: 1.5;">${title}${rows}</div>`;
+                            }
+                            if (!params || params.value === undefined || params.value === null) return '';
+                            let val = String(params.value);
+                            if (prefix || suffix) {
+                                val = prefix + val + suffix;
+                            }
+                            if (showPercent && typeof params.value === 'number') {
+                                val += ` (${params.value.toFixed(1)}%)`;
+                            }
+                            const name = params.name || '';
+                            const seriesName = params.seriesName || '';
+                            const marker = params.marker || '';
+                            return `<div style="font-family: Inter, sans-serif; font-size: 12px; line-height: 1.5;">
+                                ${name ? `<span style="font-weight: 600; color: #1e293b; margin-bottom: 4px; display: inline-block;">${name}</span><br/>` : ''}
+                                <span style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                                    <span style="display: flex; align-items: center; gap: 6px; color: #64748b;">${marker} ${seriesName}</span>
+                                    <span style="font-weight: 600; color: #0f172a;">${val}</span>
+                                </span>
+                            </div>`;
+                        };
+
+                        // Clean up internal properties
+                        delete option.tooltip._prefix;
+                        delete option.tooltip._suffix;
+                        delete option.tooltip._show_percent;
+
+                        let chart = this.chartInstances[pk];
+                        if (!chart) {
+                            chart = echarts.init(canvas);
+                            this.chartInstances[pk] = chart;
+                        }
+                        
+                        chart.setOption(option, true);
+                        chart.resize();
+                    })
+                    .catch(err => {
+                        console.error("Error loading layout chart:", err);
+                        canvas.innerHTML = `<div class="flex items-center justify-center h-full text-center text-xs text-red-500 font-sans p-4">Error loading visualization data</div>`;
+                    })
+                    .finally(() => {
+                        if (loader) loader.style.display = 'none';
+                    });
+            }
+        };
+    }
+</script>
+{% endblock %}
