@@ -217,8 +217,10 @@ def page_filter_options_api(request, slug, filter_id):
     """
     Return distinct values for a page filter's source column.
     Used by HTMX to populate <select> widgets on page view.
+    Results are cached for 5 minutes per (slug, filter_id) pair.
     """
     from django.db import connections
+    from django.core.cache import cache
 
     page = get_object_or_404(DataVizPage, slug=slug)
 
@@ -232,14 +234,20 @@ def page_filter_options_api(request, slug, filter_id):
     if not col:
         return JsonResponse({'values': []})
 
-    try:
-        with connections['default'].cursor() as cursor:
-            cursor.execute(
-                f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}" LIMIT 500'
-            )
-            values = [row[0] for row in cursor.fetchall()]
-    except Exception as exc:
-        return JsonResponse({'error': str(exc)}, status=500)
+    cache_key = f"dv_page_filter:{slug}:{filter_id}:{table}:{col}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        values = cached
+    else:
+        try:
+            with connections['default'].cursor() as cursor:
+                cursor.execute(
+                    f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}" LIMIT 500'
+                )
+                values = [row[0] for row in cursor.fetchall()]
+            cache.set(cache_key, values, 300)
+        except Exception as exc:
+            return JsonResponse({'error': str(exc)}, status=500)
 
     if request.headers.get('HX-Request'):
         return render(request, 'dataviz/partials/page_filter_options.html', {

@@ -97,6 +97,10 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
         if use_enroll and enroll_columns and col in enroll_columns:
             return "se.migrant", "migrant"
         return None, None
+    if col == 'avid':
+        return "(cs.add_data::jsonb->>'AVID')", "avid"
+    if col == 'avid_type':
+        return "(cs.add_data::jsonb->>'AVID_type')", "avid_type"
     if col in db_columns:
         return f"cs.{col}", col
     return None, None

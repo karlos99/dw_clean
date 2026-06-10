@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover - keep chart builder usable in isolated co
 _YEAR_RE         = re.compile(r'^(?:test|mark)_(\d{4})_(\d{4})_')
 _META_DIM_COLS   = {'_assessment', '_test_school_year', '_test_window', '_test_pl', '_mark_school_year', '_mark_period'}
 _META_SCORE_COLS = {'_test_score', '_mark_score'}
+_MELT_MAX_ROWS   = 200000  # safety cap: refuse melt if result would exceed this many rows
 
 _META_LABEL_MAP = {
     '_assessment':       'Assessment',
@@ -211,6 +212,12 @@ def _maybe_melt_for_meta(df, x_col, stack_col, y_col, y_cols, col_defs):
         if not frames:
             return df, y_col, y_cols
 
+        total_melt_rows = len(df) * len(frames)
+        if total_melt_rows > _MELT_MAX_ROWS:
+            raise RuntimeError(
+                f'Melt would produce {total_melt_rows:,} rows (> {_MELT_MAX_ROWS:,} limit). '
+                'Select fewer assessment/mark columns.'
+            )
         melted = pd.concat(frames, ignore_index=True)
         # Strip blank PL values
         melted = melted[melted['_test_pl'].astype(str).str.strip().ne('')]
@@ -224,6 +231,12 @@ def _maybe_melt_for_meta(df, x_col, stack_col, y_col, y_cols, col_defs):
         return df, y_col, y_cols
 
     id_cols = [c for c in df.columns if c not in score_cols]
+    total_melt_rows = len(df) * len(score_cols)
+    if total_melt_rows > _MELT_MAX_ROWS:
+        raise RuntimeError(
+            f'Melt would produce {total_melt_rows:,} rows (> {_MELT_MAX_ROWS:,} limit). '
+            'Select fewer assessment/mark columns.'
+        )
     melted = df.melt(id_vars=id_cols, value_vars=score_cols, var_name='_source_col', value_name='_test_score')
     melted['_test_score'] = pd.to_numeric(melted['_test_score'], errors='coerce')
     melted = melted.dropna(subset=['_test_score'])
@@ -273,29 +286,23 @@ def _agg(df, x_col, y_col, agg, stack_col='', agg_decimals=None, cfg=None):
     if x_col not in df.columns:
         return pd.DataFrame()
     
-    # Filter out rows where x_col or stack_col are NaN/None before aggregation
     group_cols = [x_col]
     if stack_col and stack_col in df.columns:
         group_cols.append(stack_col)
     
-    # Strictly drop rows with NaN in grouping columns
     df = df.dropna(subset=group_cols)
     
     try:
         if agg in ('sum', 'avg', 'min', 'max', 'median') and y_col and y_col in df.columns:
-            dfc = df.copy()
-            dfc[y_col] = pd.to_numeric(dfc[y_col], errors='coerce')
-            # dropna=True (default) ensures NaNs in group_cols don't create a group
+            dfc = df.assign(**{y_col: pd.to_numeric(df[y_col], errors='coerce')})
             grp = dfc.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
             result = {
                 'sum': grp.sum(), 'avg': grp.mean(),
                 'min': grp.min(), 'max': grp.max(), 'median': grp.median(),
             }.get(agg, grp.size()).reset_index().rename(columns={y_col: '_value'})
-            # Apply decimal rounding for avg (or any numeric agg when decimals set)
             if agg_decimals is not None and '_value' in result.columns:
                 result['_value'] = result['_value'].round(agg_decimals)
         else:
-            # For 'count', we count rows where y_col is not NaN if provided
             if y_col and y_col in df.columns:
                 result = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True).size().reset_index(name='_value')
             else:
@@ -2350,6 +2357,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'waterfall':    lambda: _waterfall_option(df, x_col, y_col, agg, cfg, labels),
         'line':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, False, False, y_cols, col_defs),
         'spline':       lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
+        'parliament':   lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
         'area':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  False, y_cols, col_defs),
         'areaspline':   lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  False, y_cols, col_defs, smooth=True),
         'stacked_area': lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  True,  y_cols, col_defs),
@@ -2453,7 +2461,8 @@ CHART_TYPES = [
     ('summary_table',      'Summary Table',      'chart-table',   'Comparison'),
     ('waterfall',    'Waterfall',     'chart-waterfall',     'Comparison'),
     ('line',         'Line',          'chart-line',          'Trend'),
-    ('spline',       'Parliament',    'chart-parliament',    'Proportion'),
+    ('parliament',   'Parliament',    'chart-parliament',    'Proportion'),
+    ('spline',       'Parliament',    'chart-parliament',    'Proportion'),   # backward compat alias
     ('area',         'Area',          'chart-area',          'Trend'),
     ('areaspline',   'Smooth Area',   'chart-area-s',        'Trend'),
     ('stacked_area', 'Stacked Area',  'chart-area-stacked',  'Trend'),

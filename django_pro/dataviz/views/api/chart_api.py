@@ -740,6 +740,8 @@ def chart_list_partial(request):
     charts = SavedChart.objects.all().order_by('name')
     if q:
         charts = charts.filter(name__icontains=q)
+    else:
+        charts = charts[:200]
 
     # Build a full tree structure
     root = {'folders': {}, 'charts': []}

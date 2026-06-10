@@ -335,7 +335,7 @@ def get_column_distinct_values(chart, drill_filters: dict, column: str, user) ->
     """
     result = execute_drill_query(
         chart, drill_filters, columns=[], user=user,
-        page=1, per_page=999_999,
+        page=1, per_page=10000,
     )
     rows = result.get('rows', [])
     seen = set()

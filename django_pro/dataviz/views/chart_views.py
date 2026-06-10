@@ -30,7 +30,7 @@ def chart_index(request):
         return HttpResponseForbidden('Project Admins only.')
 
     current_path = request.GET.get('folder', '').strip().strip('/')
-    charts = SavedChart.objects.all().order_by('name')
+    charts = SavedChart.objects.all().order_by('name')[:500]
 
     # Build the full tree structure
     root = {'folders': {}, 'charts': []}
@@ -90,7 +90,7 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             existing_chart = get_object_or_404(SavedChart, pk=chart_id)
 
         # Accessible saved queries
-        query_list = SavedQuery.objects.select_related('owner', 'folder').order_by('name')
+        query_list = SavedQuery.objects.select_related('owner', 'folder').order_by('name')[:200]
         accessible_queries = [q for q in query_list if can_user_view_query(user, q)]
 
         # Column definitions

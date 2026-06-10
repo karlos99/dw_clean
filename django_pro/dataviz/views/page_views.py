@@ -18,7 +18,7 @@ def page_index(request):
         from django.http import HttpResponseForbidden
         return HttpResponseForbidden('Project Admins only.')
 
-    pages = DataVizPage.objects.all().order_by('-updated_at')
+    pages = DataVizPage.objects.all().order_by('-updated_at')[:100]
     return render(request, 'dataviz/pages/index.html', {'pages': pages})
 
 
@@ -45,7 +45,7 @@ class PageBuilderView(ProjectAdminMixin, TemplateView):
             filters_json = json.dumps(dv_page.page_filters or [])
 
         # Charts available to add (same as dashboard builder)
-        available_charts = SavedChart.objects.all().order_by('name')
+        available_charts = SavedChart.objects.all().order_by('name')[:200]
 
         context.update({
             'page':             dv_page,

@@ -86,7 +86,19 @@ def _build_student_info_for_ssid(ssid: str):
         'migrant': getattr(se_latest, 'migrant', None) if se_latest else None,
         'dli': getattr(cs_latest, 'dli', None) if cs_latest else None,
         'suspension_indicator': getattr(cs_latest, 'suspension_indicator', None) if cs_latest else None,
+        'avid': None,
+        'avid_type': None,
     }
+
+    # Extract AVID info from add_data JSON
+    if cs_latest and getattr(cs_latest, 'add_data', None):
+        try:
+            import json
+            add_data = json.loads(cs_latest.add_data)
+            student_info['avid'] = add_data.get('AVID')
+            student_info['avid_type'] = add_data.get('AVID_type')
+        except (json.JSONDecodeError, TypeError):
+            pass
 
 
 def _fetch_test_records_for_ssid(ssid: str):

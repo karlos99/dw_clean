@@ -23,7 +23,7 @@ def dashboard_index(request):
         Dashboard.objects
         .all()
         .annotate(chart_count=Count('chart_slots'))
-        .order_by('-updated_at')
+        .order_by('-updated_at')[:100]
     )
     return render(request, 'dataviz/dashboards/index.html', {'dashboards': dashboards})
 
@@ -45,7 +45,7 @@ class DashboardBuilderView(ProjectAdminMixin, TemplateView):
             slots_json = json.dumps([s.to_dict() for s in slots])
 
         # Charts available to add
-        charts = SavedChart.objects.all().order_by('name')
+        charts = SavedChart.objects.all().order_by('name')[:200]
         slots = []
         if dashboard:
             slots = list(dashboard.chart_slots.select_related('chart').all())

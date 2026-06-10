@@ -31,6 +31,7 @@ def run_raw_sql(sql: str) -> dict:
     """
     Execute a read-only SQL query inside a BEGIN READ ONLY transaction.
     Returns {'columns', 'col_types', 'rows', 'row_count', 'has_more', 'error'}.
+    Results are cached for 60 seconds keyed by SQL hash.
     """
     sql = (sql or '').strip()
     if not sql:
@@ -39,6 +40,11 @@ def run_raw_sql(sql: str) -> dict:
         return {'error': 'Only SELECT / WITH queries are allowed.'}
     if _SQL_DANGER_RE.search(sql):
         return {'error': 'Query contains disallowed keywords.'}
+
+    cache_key = f"dv_raw_sql:{hashlib.md5(sql.encode()).hexdigest()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         with connection.cursor() as cursor:
@@ -63,10 +69,12 @@ def run_raw_sql(sql: str) -> dict:
                     break
             col_types.setdefault(col, 'string')
 
-        return {
+        result = {
             'columns': columns, 'col_types': col_types,
             'rows': rows, 'row_count': len(rows), 'has_more': has_more,
         }
+        cache.set(cache_key, result, 60)
+        return result
     except Exception as exc:
         return {'error': str(exc)}
 

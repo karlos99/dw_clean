@@ -3,6 +3,7 @@ import json
 import re
 
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 
@@ -257,6 +258,8 @@ def query_filter_options_api(request, query_id):
 
     Excludes:
     - SS columns (``test_*_SS``) — numeric scale scores, high cardinality
+
+    Results are cached for 5 minutes per query config hash.
     """
     if not is_project_admin(request.user):
         return FORBIDDEN
@@ -264,6 +267,7 @@ def query_filter_options_api(request, query_id):
     from dataexploration.models import SavedQuery
     from dataexploration.utils import can_user_view_query
     from django.db import connection
+    from hashlib import md5
 
     try:
         sq = SavedQuery.objects.get(pk=query_id)
@@ -271,6 +275,10 @@ def query_filter_options_api(request, query_id):
         return JsonResponse({'error': 'Not found'}, status=404)
     if not can_user_view_query(request.user, sq):
         return JsonResponse({'error': 'Access denied'}, status=403)
+
+    cached_resp = cache.get(f'dv_filter_opts:{query_id}')
+    if cached_resp is not None:
+        return JsonResponse(cached_resp)
 
     config  = sq.config or {}
     columns = config.get('columns', [])
@@ -356,22 +364,30 @@ def query_filter_options_api(request, query_id):
     try:
         with connection.cursor() as cursor:
             # ── Base demographic columns from current_student ──
-            for col in filter_cols:
-                expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
-                sql = (
-                    f"SELECT DISTINCT {expr} AS val "
-                    f"FROM current_student cs{join_sql} "
-                    f"{where_sql} "
-                    f"AND {expr} IS NOT NULL AND {expr} != '' "
-                    f"ORDER BY val LIMIT 100"
-                ) if where_sql else (
-                    f"SELECT DISTINCT {expr} AS val "
-                    f"FROM current_student cs{join_sql} "
-                    f"WHERE {expr} IS NOT NULL AND {expr} != '' "
-                    f"ORDER BY val LIMIT 100"
-                )
-                cursor.execute(sql, params)
-                options[col] = [str(row[0]) for row in cursor.fetchall()]
+            if filter_cols:
+                union_parts = []
+                union_params: list = []
+                for col in filter_cols:
+                    expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
+                    col_label = col
+                    base_where = (
+                        f"{where_sql} AND {expr} IS NOT NULL AND {expr} != ''"
+                        if where_sql
+                        else f"WHERE {expr} IS NOT NULL AND {expr} != ''"
+                    )
+                    union_parts.append(
+                        f"(SELECT DISTINCT {expr} AS val, %s AS col_name "
+                        f"FROM current_student cs{join_sql} "
+                        f"{base_where} "
+                        f"ORDER BY val LIMIT 100)"
+                    )
+                    union_params.append(col_label)
+                    union_params.extend(params)
+                union_sql = ' UNION ALL '.join(union_parts)
+                cursor.execute(union_sql, union_params)
+                for row in cursor.fetchall():
+                    val, col_name = row[0], row[1]
+                    options.setdefault(col_name, []).append(str(val))
 
             # ── Assessment PL columns (test_*_PL) ──
             if pl_cols:
@@ -573,7 +589,9 @@ def query_filter_options_api(request, query_id):
     _inject_school_year_aliases(options, labels)
     if tested_school_labels:
         labels['__tested_school_labels__'] = tested_school_labels
-    return JsonResponse({'filter_options': options, 'filter_labels': labels})
+    resp_data = {'filter_options': options, 'filter_labels': labels}
+    cache.set(f'dv_filter_opts:{query_id}', resp_data, 300)
+    return JsonResponse(resp_data)
 
 
 @login_required
@@ -723,16 +741,23 @@ def column_filter_options_api(request):
 
     try:
         with connection.cursor() as cursor:
-            for col in filter_cols:
-                expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
-                sql = (
-                    f"SELECT DISTINCT {expr} AS val "
-                    f"FROM current_student cs{join_sql} "
-                    f"WHERE {expr} IS NOT NULL AND {expr} != '' "
-                    f"ORDER BY val LIMIT 100"
-                )
-                cursor.execute(sql)
-                options[col] = [str(row[0]) for row in cursor.fetchall()]
+            if filter_cols:
+                union_parts = []
+                union_params: list = []
+                for col in filter_cols:
+                    expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
+                    union_parts.append(
+                        f"(SELECT DISTINCT {expr} AS val, %s AS col_name "
+                        f"FROM current_student cs{join_sql} "
+                        f"WHERE {expr} IS NOT NULL AND {expr} != '' "
+                        f"ORDER BY val LIMIT 100)"
+                    )
+                    union_params.append(col)
+                union_sql = ' UNION ALL '.join(union_parts)
+                cursor.execute(union_sql, union_params)
+                for row in cursor.fetchall():
+                    val, col_name = row[0], row[1]
+                    options.setdefault(col_name, []).append(str(val))
 
             if pl_cols:
                 from dataviz.utils.data_loader import _build_test_columns_from_db
