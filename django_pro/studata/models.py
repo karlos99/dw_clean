@@ -38,6 +38,7 @@ class CurrentStudent(models.Model):
                             null=True, help_text="Long-Term English Learner")
     status = models.CharField(max_length=20, blank=True, null=True)
     school_year = models.CharField(max_length=20, db_index=True)
+    add_data = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = 'current_student'

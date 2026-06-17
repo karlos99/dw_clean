@@ -8,9 +8,10 @@ Supports:
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from django.core.cache import cache
-from django.db import connection
+from django.db import connection, connections
 
 
 # ── SQL safety guards (copied verbatim from original views.py) ────────────────
@@ -24,7 +25,7 @@ _SQL_DANGER_RE = re.compile(
     re.IGNORECASE,
 )
 MAX_SQL_ROWS       = 2000   # safety cap for run_raw_sql (SQL Lab)
-MAX_CHART_ROWS     = 50000  # higher cap for chart queries (aggregation needs all rows)
+MAX_CHART_ROWS     = 150000  # higher cap for chart queries (aggregation needs all rows)
 
 
 def run_raw_sql(sql: str) -> dict:
@@ -330,7 +331,15 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
           {tested_school_clause}
     """
     cursor.execute(sql, [student_ids, *params])
-    
+
+    # Group infos by year so each row only scans the (small) subset of infos
+    # that could possibly match its year, instead of every info every time.
+    # `info['year'] == ry` was already the first condition checked below, so
+    # this changes nothing about which infos match \u2014 only how many get checked.
+    infos_by_year: dict = {}
+    for info in test_cols_info:
+        infos_by_year.setdefault(info['year'], []).append(info)
+
     for row in cursor.fetchall():
         sid, ss, pl, oi, ry, rt, rs, rw = row
         # Look up by compound (student_id, result_school_year). Result can only
@@ -339,8 +348,8 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
         s_objs = student_map.get(lookup_key)
         if not s_objs:
             continue
-        for info in test_cols_info:
-            if (info['year'] == ry and info['test_name'].lower() in rt.lower() and
+        for info in infos_by_year.get(ry, ()):
+            if (info['test_name'].lower() in rt.lower() and
                 info['subject'].lower() in rs.lower()):
                 # Window match
                 iw = info.get('test_window')
@@ -396,12 +405,18 @@ def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str]
     """
     cursor.execute(sql, [student_keys, *params])
 
+    # Same scoping optimization as _fetch_test_data: group by year up front
+    # so each row only scans infos for its own year (identical match results).
+    infos_by_year: dict = {}
+    for info in mark_cols_info:
+        infos_by_year.setdefault(info['year'], []).append(info)
+
     for row in cursor.fetchall():
         sk, mark, ry, rs, rc, rp = row
         s_obj = student_map.get(sk)
         if not s_obj: continue
-        for info in mark_cols_info:
-            if (info['year'] == ry and info['subject'].lower() in rs.lower() and 
+        for info in infos_by_year.get(ry, ()):
+            if (info['subject'].lower() in rs.lower() and
                 info['course_name'].lower() in rc.lower()):
                 ip = info.get('mark_period')
                 if not ip and not rp: pass
@@ -808,6 +823,11 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                 # gets its matching assessment/mark data via the (student_id, year) key.
                 _multi_years = filters.get('school_year') if isinstance(filters.get('school_year'), list) and len(filters.get('school_year', [])) > 1 else None
 
+                test_infos = None
+                mark_infos = None
+                student_ids = None
+                student_keys = None
+
                 if need_test:
                     test_infos, _ = _build_test_columns_from_db(cursor, test_cols)
                     if _multi_years and test_infos:
@@ -821,8 +841,6 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                                     _expanded.append({**_info, 'year': _yr})
                         test_infos = _expanded
                     student_ids = [r['student_id'] for r in rows if r.get('student_id')]
-                    _fetch_test_data(cursor, test_infos, student_ids, rows,
-                                     tested_school_codes=tested_school_filter)
 
                 if need_mark:
                     mark_infos, _ = _build_mark_columns_from_db(cursor, mark_cols)
@@ -837,6 +855,34 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                                     _expanded.append({**_info, 'year': _yr})
                         mark_infos = _expanded
                     student_keys = [r['stu_annual_key'] for r in rows if r.get('stu_annual_key')]
+
+                # Run test and mark data fetches in parallel when both are needed
+                if need_test and need_mark:
+                    def _fetch_tests():
+                        with connections['default'].cursor() as cur:
+                            cur.execute("BEGIN READ ONLY")
+                            try:
+                                _fetch_test_data(cur, test_infos, student_ids, rows,
+                                                 tested_school_codes=tested_school_filter)
+                            finally:
+                                cur.execute("ROLLBACK")
+
+                    def _fetch_marks():
+                        with connections['default'].cursor() as cur:
+                            cur.execute("BEGIN READ ONLY")
+                            try:
+                                _fetch_mark_data(cur, mark_infos, student_keys, rows)
+                            finally:
+                                cur.execute("ROLLBACK")
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        futures = [executor.submit(_fetch_tests), executor.submit(_fetch_marks)]
+                        for f in futures:
+                            f.result()  # wait for both, propagate exceptions
+                elif need_test:
+                    _fetch_test_data(cursor, test_infos, student_ids, rows,
+                                     tested_school_codes=tested_school_filter)
+                elif need_mark:
                     _fetch_mark_data(cursor, mark_infos, student_keys, rows)
 
             if rows and dynamic_filters:
@@ -871,8 +917,8 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             'has_more':  len(raw) == MAX_CHART_ROWS,
             'error':     None,
         }
-        # Cache for 5 minutes (300s)
-        cache.set(cache_key, res, 300)
+        # Cache for 30 minutes (1800s) — confirmed acceptable staleness window
+        cache.set(cache_key, res, 1800)
         return res
     except Exception as exc:
         return {'error': str(exc), 'rows': [], 'columns': []}

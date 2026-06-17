@@ -1,0 +1,63 @@
+{% if is_project_admin %}
+<!-- DataViz Sub-Navigation -->
+<nav class="bg-slate-800 border-b border-slate-700">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex items-center h-10 space-x-1">
+      {# Charts #}
+      <a href="{% url 'dataviz:index' %}"
+         class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] rounded transition-all
+                {% if request.resolver_match.url_name in 'index,chart_new,chart_edit,chart_view' %}bg-slate-700 text-white{% else %}text-slate-400 hover:text-white hover:bg-slate-700/50{% endif %}">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        Charts
+      </a>
+
+      {# Datasets #}
+      <a href="{% url 'dataviz:dataset_index' %}"
+         class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] rounded transition-all
+                {% if request.resolver_match.url_name in 'dataset_index,dataset_new,dataset_edit' %}bg-slate-700 text-white{% else %}text-slate-400 hover:text-white hover:bg-slate-700/50{% endif %}">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+        </svg>
+        Datasets
+      </a>
+
+      {# Pages #}
+      <a href="{% url 'dataviz:page_index' %}"
+         class="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] rounded transition-all
+                {% if request.resolver_match.url_name in 'page_index,page_new,page_edit,page_view' %}bg-slate-700 text-white{% else %}text-slate-400 hover:text-white hover:bg-slate-700/50{% endif %}">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        Pages
+      </a>
+
+      {# Spacer #}
+      <div class="flex-1"></div>
+
+      {# Quick create buttons #}
+      <div class="flex items-center gap-1">
+        <a href="{% url 'dataviz:chart_new' %}"
+           class="flex items-center gap-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-all"
+           title="New Chart">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          Chart
+        </a>
+        <a href="{% url 'dataviz:dataset_new' %}"
+           class="flex items-center gap-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-all"
+           title="New Dataset">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          Dataset
+        </a>
+        <a href="{% url 'dataviz:page_new' %}"
+           class="flex items-center gap-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-all"
+           title="New Page">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          Page
+        </a>
+      </div>
+    </div>
+  </div>
+</nav>
+{% endif %}

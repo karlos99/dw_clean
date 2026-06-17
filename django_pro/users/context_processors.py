@@ -198,6 +198,7 @@ def navigation_pages(request):
             'usage_page_access': False,
             'usage_page_url': usage_page.url_path if usage_page else '/users/usage/',
             'is_school_admin': False,
+            'is_project_admin': False,
             'placement_cards_access': False,
             'default_school_year': default_school_year,
         }
@@ -262,6 +263,7 @@ def navigation_pages(request):
         'usage_page_access': usage_page_access,
         'usage_page_url': usage_page.url_path if usage_page else '/users/usage/',
         'is_school_admin': _is_school_admin_user(request.user),
+        'is_project_admin': is_project_admin,
         'placement_cards_access': placement_cards_access,
         'default_school_year': default_school_year,
     }

@@ -30,7 +30,8 @@
 {% endblock %}
 
 {% block content %}
-<div x-data="chartBuilder()" x-cloak class="h-[calc(100vh-5rem)] flex flex-col bg-slate-50">
+{% include "dataviz/submenu.html" %}
+<div x-data="chartBuilder()" x-cloak class="h-[calc(100vh-9rem)] flex flex-col bg-slate-50">
 
   {# ── Top bar ─────────────────────────────────────────────── #}
   <header class="flex items-center justify-between bg-white border-b border-slate-200 px-5 py-2 flex-shrink-0 shadow-sm">
@@ -122,7 +123,7 @@
           </div>
           <div class="flex items-center gap-1.5">
             <span class="step-dot" :class="guidedStep === 1 ? 'current' : (hasData ? 'done' : 'pending')" x-text="hasData ? '✓' : '1'"></span>
-            <span x-show="!srcOpen" class="text-[9px] font-semibold text-blue-600 uppercase tracking-wide" x-text="sourceType === 'query' ? 'Saved Query' : sourceType === 'sql' ? 'SQL' : 'Explorer'"></span>
+            <span x-show="!srcOpen" class="text-[9px] font-semibold text-blue-600 uppercase tracking-wide" x-text="sourceType === 'query' ? 'Saved Query' : sourceType === 'sql' ? 'SQL' : sourceType === 'columns' ? 'Explorer' : sourceType === 'dataset' ? 'Dataset' : ''"></span>
             <svg class="w-3 h-3 text-slate-400 transition-transform" :class="srcOpen && 'rotate-180'"
                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
@@ -130,8 +131,8 @@
           </div>
         </button>
         <div x-show="srcOpen" x-collapse>
-          {# ── SCHOOL YEAR CONTEXT (prominent dropdown at top) ── #}
-          <div class="px-4 pb-2 border-t border-slate-100">
+          {# ── SCHOOL YEAR CONTEXT — hidden for Dataset source (year is embedded in dataset config) ── #}
+          <div class="px-4 pb-2 border-t border-slate-100" x-show="sourceType !== 'dataset'">
             <div class="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-2.5">
               <label class="text-[10px] font-semibold uppercase tracking-wider text-blue-700 block mb-1.5">School Year Context</label>
               <select x-model="yearContext" @change="onYearContextChange()"
@@ -166,41 +167,20 @@
             </div>
           </div>
 
-          {# ── Source Type selector (radio cards with guidance) ── #}
+          {# ── Source Type selector (dropdown) ── #}
           <div class="px-4 pb-1">
             <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block mb-1.5 mt-2">Source Type</label>
-            <div class="space-y-1.5">
-              {# Saved Query [Recommended] #}
-              <label @click="setSource('query')" class="flex items-start gap-2 p-2 rounded-lg border-2 cursor-pointer transition-all"
-                     :class="sourceType==='query' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'">
-                <input type="radio" name="source_type_radio" value="query" :checked="sourceType==='query'" class="mt-0.5 w-3 h-3 text-blue-600">
-                <div class="flex-1 min-w-0">
-                  <span class="text-xs font-semibold text-slate-700">Saved Query</span>
-                  <span class="ml-1 text-[9px] font-bold text-blue-600 bg-blue-100 rounded-full px-1.5 py-0.5">Recommended</span>
-                  <p class="text-[9px] text-slate-400 mt-0.5">Use a pre-built query from Data Explorer. Best for most users.</p>
-                </div>
-              </label>
-              {# Simple Column Picker #}
-              <label @click="setSource('columns')" class="flex items-start gap-2 p-2 rounded-lg border-2 cursor-pointer transition-all"
-                     :class="sourceType==='columns' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'">
-                <input type="radio" name="source_type_radio" value="columns" :checked="sourceType==='columns'" class="mt-0.5 w-3 h-3 text-blue-600">
-                <div class="flex-1 min-w-0">
-                  <span class="text-xs font-semibold text-slate-700">Pick Columns</span>
-                  <span class="ml-1 text-[9px] font-bold text-slate-500 bg-slate-100 rounded-full px-1.5 py-0.5">Simple</span>
-                  <p class="text-[9px] text-slate-400 mt-0.5">Pick student info and assessment columns directly without saving a query first.</p>
-                </div>
-              </label>
-              {# Custom SQL [Advanced] #}
-              <label @click="setSource('sql')" class="flex items-start gap-2 p-2 rounded-lg border-2 cursor-pointer transition-all"
-                     :class="sourceType==='sql' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'">
-                <input type="radio" name="source_type_radio" value="sql" :checked="sourceType==='sql'" class="mt-0.5 w-3 h-3 text-blue-600">
-                <div class="flex-1 min-w-0">
-                  <span class="text-xs font-semibold text-slate-700">Custom SQL</span>
-                  <span class="ml-1 text-[9px] font-bold text-amber-600 bg-amber-100 rounded-full px-1.5 py-0.5">Advanced</span>
-                  <p class="text-[9px] text-slate-400 mt-0.5">Write raw SQL directly. For power users who need full control.</p>
-                </div>
-              </label>
-            </div>
+            <select x-model="sourceType" @change="setSource(sourceType)"
+                    class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="query">Saved Query (Recommended)</option>
+              <option value="columns">Pick Columns (Simple)</option>
+              <option value="dataset">Dataset (Reusable)</option>
+              <option value="sql">Custom SQL (Advanced)</option>
+            </select>
+            <p class="text-[9px] text-blue-500 mt-1 leading-snug" x-show="sourceType==='query'">Use a pre-built query from Data Explorer. Best for most users.</p>
+            <p class="text-[9px] text-slate-400 mt-1 leading-snug" x-show="sourceType==='columns'">Pick student info and assessment columns directly without saving a query first.</p>
+            <p class="text-[9px] text-violet-500 mt-1 leading-snug" x-show="sourceType==='dataset'">Select a pre-saved dataset configuration. Create datasets once, reuse across many charts.</p>
+            <p class="text-[9px] text-amber-600 mt-1 leading-snug" x-show="sourceType==='sql'">Write raw SQL directly. For power users who need full control.</p>
           </div>
 
       {# Saved query picker (searchable + preview) #}
@@ -262,6 +242,37 @@
             </table>
           </div>
         </div>
+      </div>
+
+      {# Dataset picker #}
+      <div x-show="sourceType=='dataset'" class="px-4 py-3 border-t border-slate-100 mt-1">
+        <select x-model="datasetSourceId" @change="loadDatasetColumns()"
+                class="w-full text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white
+                       focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">— choose a dataset —</option>
+          {% for ds in available_datasets %}
+          <option value="{{ ds.id }}">
+            {{ ds.name }}
+          </option>
+          {% endfor %}
+        </select>
+        <div class="flex gap-1.5 mt-1.5" x-show="datasetSourceId">
+          <a href="{% url 'dataviz:dataset_edit' 0 %}"
+             :href="`/dataviz/datasets/${datasetSourceId}/edit/`"
+             target="_blank"
+             class="flex-1 text-center text-[9px] py-1.5 font-semibold bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition flex items-center justify-center gap-0.5">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+            Edit Dataset
+          </a>
+          <button @click="loadColumns()" :disabled="columnsLoading"
+                  class="flex-1 text-center text-[9px] py-1.5 font-semibold bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition disabled:opacity-50 flex items-center justify-center gap-0.5">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+            Load Columns
+          </button>
+        </div>
+        <p x-show="!datasetSourceId" class="text-[9px] text-slate-400 mt-1.5">
+          <a href="{% url 'dataviz:dataset_index' %}" target="_blank" class="text-blue-500 hover:underline">Manage datasets →</a>
+        </p>
       </div>
 
       {# SQL Lab input #}
@@ -622,7 +633,7 @@
       </div>
 
       {# ── Query Summary Box ── #}
-      <div x-show="(sourceType==='query' && savedQueryId) || (sourceType==='sql' && rawSqlColumns.length) || (sourceType==='columns' && explorerCols.length)"
+       <div x-show="(sourceType==='query' && savedQueryId) || (sourceType==='dataset' && datasetSourceId) || (sourceType==='sql' && rawSqlColumns.length) || (sourceType==='columns' && explorerCols.length)"
            class="px-4 py-2.5 border-t border-slate-100 bg-amber-50" x-transition>
         <div class="flex items-start gap-1.5">
           <svg class="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
@@ -634,7 +645,7 @@
       </div>
 
       {# ── School Scope (prominent toggle) ── #}
-      <div x-show="hasData" class="px-4 py-3 border-t border-slate-100" x-transition>
+      <div x-show="hasData && sourceType !== 'sql' && sourceType !== 'dataset'" class="px-4 py-3 border-t border-slate-100" x-transition>
         <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-2 flex items-center gap-1.5">
           <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 21v-4a2 2 0 012-2h4a2 2 0 012 2v4M3 21h18M21 21v-4a2 2 0 00-2-2h-4a2 2 0 00-2 2v4M21 21H3"/></svg>
           School Scope
@@ -714,15 +725,15 @@
                         'bg-purple-100 text-purple-700':   assignedTo(col)==='S'
                       }"></span>
                 {# Quick-assign buttons (shown on hover, respects per-chart-type meta) #}
-                <div x-show="!assignedTo(col)"
-                     class="hidden group-hover:flex items-center gap-0.5 absolute right-1">
-                  <button x-show="!meta.x?.hide" @click.stop="xCol=col" title="Set as X-axis"
-                          class="w-5 h-5 rounded text-[9px] font-bold bg-blue-100 text-blue-700 hover:bg-blue-200 flex items-center justify-center">X</button>
-                  <button x-show="!meta.y?.hide" @click.stop="yCol=col" title="Set as Y-axis"
-                          class="w-5 h-5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 flex items-center justify-center">Y</button>
-                  <button x-show="!meta.s?.hide" @click.stop="seriesCol=col" title="Set as Series"
-                          class="w-5 h-5 rounded text-[9px] font-bold bg-purple-100 text-purple-700 hover:bg-purple-200 flex items-center justify-center">S</button>
-                </div>
+                 <div x-show="!assignedTo(col)"
+                      class="hidden group-hover:flex items-center gap-0.5 absolute right-1">
+                   <button x-show="!meta.x?.hide" @click.stop="if(!xCols.includes(col)) { xCols.push(col); _syncXCols(); }" title="Add to X-axis"
+                           class="w-5 h-5 rounded text-[9px] font-bold bg-blue-100 text-blue-700 hover:bg-blue-200 flex items-center justify-center">X</button>
+                   <button x-show="!meta.y?.hide" @click.stop="yCol=col" title="Set as Y-axis"
+                           class="w-5 h-5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700 hover:bg-emerald-200 flex items-center justify-center">Y</button>
+                   <button x-show="!meta.s?.hide" @click.stop="if(!seriesCols.includes(col)) { seriesCols.push(col); _syncSeriesCols(); }" title="Add to Series"
+                           class="w-5 h-5 rounded text-[9px] font-bold bg-purple-100 text-purple-700 hover:bg-purple-200 flex items-center justify-center">S</button>
+                 </div>
               </div>
             </template>
           </div>
@@ -813,6 +824,10 @@
                 {# Filter dropdown body #}
                 <div x-show="openFilter === col" x-collapse class="border-t border-slate-100">
                   <div class="px-2 py-1.5">
+                    <div class="flex gap-1 mb-1.5">
+                      <button type="button" @click="chartFilters[col] = [...(filterOptions[col] || [])]; chartFilters = {...chartFilters}; _refreshFilterOptions(); _schedulePreview();" class="text-[9px] font-bold text-blue-600 hover:text-blue-800 px-1 rounded hover:bg-blue-50">All</button>
+                      <button type="button" @click="delete chartFilters[col]; chartFilters = {...chartFilters}; _refreshFilterOptions(); _schedulePreview();" class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear</button>
+                    </div>
                     <input type="text" :placeholder="'Search ' + (filterLabels[col] || col) + '…'" x-model="filterSearch[col]"
                            class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-1 focus:ring-1 focus:ring-blue-200 bg-slate-50">
                     <div class="max-h-32 overflow-y-auto space-y-0.5">
@@ -940,8 +955,8 @@
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Map Columns</p>
           </div>
           <div class="flex items-center gap-1.5">
-            <span x-show="!open && (xCol || yCol)" class="text-[9px] font-medium text-slate-400 truncate max-w-[80px]"
-                  x-text="[xCol,yCol].filter(Boolean).join(' / ')"></span>
+            <span x-show="!open && (xCols.length || yCol)" class="text-[9px] font-medium text-slate-400 truncate max-w-[80px]"
+                  x-text="xCols.concat(yCol ? [yCol] : []).join(' / ')"></span>
             <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
@@ -956,32 +971,42 @@
           <span class="font-bold text-purple-600">S</span>
         </p>
 
-        {# X-Axis drop well #}
+        {# X-Axis drop well — supports multiple columns #}
         <div x-show="!meta.x?.hide" x-transition>
           <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
             <span class="w-4 h-4 rounded bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center justify-center">X</span>
             <span x-text="meta.x?.lbl || 'X-Axis / Category'"></span>
             <span x-show="meta.x?.req" class="text-red-400 text-[9px] font-bold">*</span>
+            <span class="text-[9px] text-slate-400 ml-1" x-show="xCols.length > 0" x-text="'(' + xCols.length + ')'"></span>
           </label>
-          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 flex items-center"
-               :class="dragTarget==='xCol' && 'accept'"
-               @dragover.prevent="dragTarget='xCol'"
+          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 min-h-[42px]"
+               :class="dragTarget==='xCols' && 'accept'"
+               @dragover.prevent="dragTarget='xCols'"
                @dragleave.self="dragTarget=''"
-               @drop.prevent="doDrop('xCol')">
-            <div x-show="!xCol" class="flex items-center justify-between w-full">
-              <span class="text-xs text-slate-400 italic">Drag a column here</span>
-              <select @change="xCol=$event.target.value; $event.target.selectedIndex=0"
+               @drop.prevent="doDropMulti('xCols')">
+            <div x-show="xCols.length === 0" class="flex items-center justify-between w-full">
+              <span class="text-xs text-slate-400 italic">Drag columns here</span>
+              <select @change="xCols.push($event.target.value); $event.target.selectedIndex=0; _syncXCols()"
                       class="text-[11px] border-0 bg-transparent text-blue-600 cursor-pointer p-0 focus:ring-0">
                 <option value="">or pick…</option>
-                <template x-for="c in activeCols" :key="'xp_'+c"><option :value="c" x-text="c"></option></template>
+                <template x-for="c in activeCols" :key="'xp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
               </select>
             </div>
-            <div x-show="xCol" class="flex items-center gap-2 w-full">
-              <span class="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
-                <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M3 3h14v2H3V3zm0 4h10v2H3V7zm0 4h14v2H3v-2zm0 4h10v2H3v-2z"/></svg>
-                <span x-text="xCol" class="truncate"></span>
-              </span>
-              <button @click="xCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
+            <div x-show="xCols.length > 0" class="flex flex-wrap items-center gap-1">
+              <template x-for="(col, idx) in xCols" :key="'xcol_'+col+'_'+idx">
+                <span class="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-800 rounded-md px-2 py-1 font-medium">
+                  <span class="truncate max-w-[180px]" x-text="colLabel(col)"></span>
+                  <button @click="xCols.splice(idx, 1); _syncXCols()" class="text-blue-400 hover:text-red-500 text-sm leading-none">&times;</button>
+                </span>
+              </template>
+              <select @change="xCols.push($event.target.value); $event.target.selectedIndex=0; _syncXCols()"
+                      class="text-[11px] border border-dashed border-slate-300 bg-transparent text-blue-600 cursor-pointer p-0.5 rounded focus:ring-0">
+                <option value="">+ add</option>
+                <template x-for="c in activeCols" :key="'xpa_'+c">
+                  <option :value="c" x-show="!xCols.includes(c)" x-text="colLabel(c)"></option>
+                </template>
+              </select>
+              <button @click="xCols = []; _syncXCols()" class="ml-1 text-slate-400 hover:text-red-500 text-lg leading-none">&times;</button>
             </div>
           </div>
         </div>
@@ -1003,50 +1028,60 @@
               <select @change="yCol=$event.target.value; $event.target.selectedIndex=0"
                       class="text-[11px] border-0 bg-transparent text-emerald-600 cursor-pointer p-0 focus:ring-0">
                 <option value="">or pick…</option>
-                <template x-for="c in activeCols" :key="'yp_'+c"><option :value="c" x-text="c"></option></template>
+                <template x-for="c in activeCols" :key="'yp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
               </select>
             </div>
             <div x-show="yCol" class="flex items-center gap-2 w-full">
               <span class="inline-flex items-center gap-1 text-xs bg-emerald-100 text-emerald-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
                 <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M3 17V3h2v14H3zm4-4v4h2v-4H7zm4-6v10h2V7h-2zm4-4v14h2V3h-2z"/></svg>
-                <span x-text="yCol" class="truncate"></span>
+                <span x-text="colLabel(yCol)" class="truncate"></span>
               </span>
               <button @click="yCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
             </div>
           </div>
         </div>
 
-        {# Series drop well #}
+        {# Series drop well — supports multiple columns #}
         <div x-show="!meta.s?.hide" x-transition>
           <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
             <span class="w-4 h-4 rounded bg-purple-100 text-purple-700 text-[10px] font-bold flex items-center justify-center">S</span>
             <span x-text="meta.s?.lbl || 'Series / Group-by'"></span>
             <span class="font-normal text-slate-400 text-[10px] ml-0.5">optional</span>
+            <span class="text-[9px] text-slate-400" x-show="seriesCols.length > 0" x-text="'(' + seriesCols.length + ')'"></span>
           </label>
-          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 flex items-center"
-               :class="dragTarget==='seriesCol' && 'accept'"
-               @dragover.prevent="dragTarget='seriesCol'"
+          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 min-h-[42px]"
+               :class="dragTarget==='seriesCols' && 'accept'"
+               @dragover.prevent="dragTarget='seriesCols'"
                @dragleave.self="dragTarget=''"
-               @drop.prevent="doDrop('seriesCol')">
-            <div x-show="!seriesCol" class="flex items-center justify-between w-full">
-              <span class="text-xs text-slate-400 italic">Drag a column here</span>
-              <select @change="seriesCol=$event.target.value; $event.target.selectedIndex=0"
+               @drop.prevent="doDropMulti('seriesCols')">
+            <div x-show="seriesCols.length === 0" class="flex items-center justify-between w-full">
+              <span class="text-xs text-slate-400 italic">Drag columns here</span>
+              <select @change="seriesCols.push($event.target.value); $event.target.selectedIndex=0; _syncSeriesCols()"
                       class="text-[11px] border-0 bg-transparent text-purple-600 cursor-pointer p-0 focus:ring-0">
                 <option value="">or pick…</option>
-                <template x-for="c in activeCols" :key="'sp_'+c"><option :value="c" x-text="c"></option></template>
+                <template x-for="c in activeCols" :key="'sp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
               </select>
             </div>
-            <div x-show="seriesCol" class="flex items-center gap-2 w-full">
-              <span class="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
-                <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zM18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9z"/></svg>
-                <span x-text="seriesCol" class="truncate"></span>
-              </span>
-              <button @click="seriesCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
+            <div x-show="seriesCols.length > 0" class="flex flex-wrap items-center gap-1">
+              <template x-for="(col, idx) in seriesCols" :key="'scol_'+col+'_'+idx">
+                <span class="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-800 rounded-md px-2 py-1 font-medium">
+                  <span class="truncate max-w-[180px]" x-text="colLabel(col)"></span>
+                  <button @click="seriesCols.splice(idx, 1); _syncSeriesCols()" class="text-purple-400 hover:text-red-500 text-sm leading-none">&times;</button>
+                </span>
+              </template>
+              <select @change="seriesCols.push($event.target.value); $event.target.selectedIndex=0; _syncSeriesCols()"
+                      class="text-[11px] border border-dashed border-slate-300 bg-transparent text-purple-600 cursor-pointer p-0.5 rounded focus:ring-0">
+                <option value="">+ add</option>
+                <template x-for="c in activeCols" :key="'spa_'+c">
+                  <option :value="c" x-show="!seriesCols.includes(c)" x-text="colLabel(c)"></option>
+                </template>
+              </select>
+              <button @click="seriesCols = []; _syncSeriesCols()" class="ml-1 text-slate-400 hover:text-red-500 text-lg leading-none">&times;</button>
             </div>
           </div>
 
           {# ── Stack / Series Order (drag-to-reorder) ── #}
-          <div x-show="(seriesCol || chartType === 'assessment_compare') && stackOrder.length > 1" x-collapse class="mt-2">
+          <div x-show="(seriesCols.length || chartType === 'assessment_compare') && stackOrder.length > 1" x-collapse class="mt-2">
             <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Stack Order (drag to reorder)</p>
             <div class="space-y-0.5">
               <template x-for="(item, idx) in stackOrder" :key="'so_'+item">
@@ -1066,7 +1101,7 @@
                   <svg class="w-3 h-3 text-slate-300 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
                   </svg>
-                  <span class="text-[11px] text-slate-700 truncate" x-text="item"></span>
+                  <span class="text-[11px] text-slate-700 truncate" x-text="colLabel(item)"></span>
                   <span class="ml-auto text-[9px] text-slate-400 font-mono" x-text="idx + 1"></span>
                 </div>
               </template>
@@ -1079,7 +1114,7 @@
         </div>
 
         {# Group-by drop well — visible for bar charts when Series is also set #}
-        <div x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType) && seriesCol" x-transition>
+        <div x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType) && seriesCols.length" x-transition>
           <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
             <span class="w-4 h-4 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex items-center justify-center">G</span>
             <span>Group By</span>
@@ -1095,13 +1130,13 @@
               <select @change="groupCol=$event.target.value; $event.target.selectedIndex=0"
                       class="text-[11px] border-0 bg-transparent text-amber-600 cursor-pointer p-0 focus:ring-0">
                 <option value="">or pick…</option>
-                <template x-for="c in activeCols" :key="'gp_'+c"><option :value="c" x-text="c"></option></template>
+                <template x-for="c in activeCols" :key="'gp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
               </select>
             </div>
             <div x-show="groupCol" class="flex items-center gap-2 w-full">
               <span class="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
                 <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-.293.707L13 10.414V15a1 1 0 01-.553.894l-4 2A1 1 0 017 17v-6.586L3.293 6.707A1 1 0 013 6V4z"/></svg>
-                <span x-text="groupCol" class="truncate"></span>
+                <span x-text="colLabel(groupCol)" class="truncate"></span>
               </span>
               <button @click="groupCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
             </div>
@@ -1172,7 +1207,7 @@
             <select x-model="stRowCol" @change="_schedulePreview()"
                     class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-violet-400">
               <option value="">— choose column —</option>
-              <template x-for="c in activeCols" :key="'str_'+c"><option :value="c" x-text="c"></option></template>
+              <template x-for="c in activeCols" :key="'str_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
             </select>
           </div>
           {# Column column #}
@@ -1185,11 +1220,107 @@
             <select x-model="stColCol" @change="_schedulePreview()"
                     class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-teal-400">
               <option value="">— choose column —</option>
-              <template x-for="c in activeCols" :key="'stc_'+c"><option :value="c" x-text="c"></option></template>
+              <template x-for="c in activeCols" :key="'stc_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
             </select>
           </div>
           <p class="text-[9px] text-slate-400 leading-snug">
             Each unique value in the Row column becomes a row; each unique value in the Column Header column becomes a column. Cells show counts. Click any non-zero cell to drill into the underlying records.
+          </p>
+        </div>
+
+        {# ── Dynamic Summary Table config — multi-column cross-tab ── #}
+        <div x-show="chartType==='dynamic_summary_table'" x-transition class="space-y-3">
+          <p class="text-[10px] text-slate-500 leading-snug">Select one or more columns for each axis. Combinations of all selected values form the table dimensions.</p>
+
+          {# Row Columns (multi) #}
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                <span class="w-5 h-5 rounded bg-violet-100 text-violet-700 text-[10px] font-bold flex items-center justify-center">R</span>
+                Row Columns
+                <span class="text-red-400 text-[9px] font-bold">*</span>
+              </label>
+              <span class="text-[9px] text-slate-400" x-text="stRowCols.length + ' selected'"></span>
+            </div>
+            <div class="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-1.5 space-y-0.5">
+              <template x-for="c in activeCols" :key="'dstr_'+c">
+                <label class="flex items-center gap-2 text-xs px-2 py-1 rounded hover:bg-violet-50 cursor-pointer"
+                       :class="stRowCols.includes(c) ? 'bg-violet-50 text-violet-800' : ''">
+                  <input type="checkbox" :checked="stRowCols.includes(c)"
+                         @change="toggleStRowCol(c)"
+                         class="rounded text-violet-600 w-3 h-3 border-slate-300 focus:ring-violet-200">
+                  <span x-text="colLabel(c)" class="truncate"></span>
+                </label>
+              </template>
+              <p x-show="!activeCols.length" class="text-[10px] text-slate-400 px-2 py-2 text-center">No columns available</p>
+            </div>
+          </div>
+
+          {# Column Columns (multi) #}
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                <span class="w-5 h-5 rounded bg-teal-100 text-teal-700 text-[10px] font-bold flex items-center justify-center">C</span>
+                Column Headers
+                <span class="text-red-400 text-[9px] font-bold">*</span>
+              </label>
+              <span class="text-[9px] text-slate-400" x-text="stColCols.length + ' selected'"></span>
+            </div>
+            <div class="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-1.5 space-y-0.5">
+              <template x-for="c in activeCols" :key="'dstc_'+c">
+                <label class="flex items-center gap-2 text-xs px-2 py-1 rounded hover:bg-teal-50 cursor-pointer"
+                       :class="stColCols.includes(c) ? 'bg-teal-50 text-teal-800' : ''">
+                  <input type="checkbox" :checked="stColCols.includes(c)"
+                         @change="toggleStColCol(c)"
+                         class="rounded text-teal-600 w-3 h-3 border-slate-300 focus:ring-teal-200">
+                  <span x-text="colLabel(c)" class="truncate"></span>
+                </label>
+              </template>
+              <p x-show="!activeCols.length" class="text-[10px] text-slate-400 px-2 py-2 text-center">No columns available</p>
+            </div>
+          </div>
+
+          {# Aggregation function #}
+          <div>
+            <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+              <span class="w-5 h-5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex items-center justify-center">F</span>
+              Cell Value
+            </label>
+            <select x-model="stAggFunc" @change="_schedulePreview()"
+                    class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+              <option value="count">Count (students per cell)</option>
+              <option value="sum">Sum</option>
+              <option value="avg">Average</option>
+              <option value="min">Min</option>
+              <option value="max">Max</option>
+              <option value="median">Median</option>
+            </select>
+          </div>
+
+          {# Value column — shown for numeric aggregation functions #}
+          <div x-show="['sum','avg','min','max','median'].includes(stAggFunc)">
+            <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+              <span class="w-5 h-5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex items-center justify-center">V</span>
+              Value Column
+              <span class="text-red-400 text-[9px] font-bold">*</span>
+            </label>
+            <select x-model="stValueCol" @change="_schedulePreview()"
+                    class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+              <option value="">— choose column —</option>
+              <template x-for="c in activeCols" :key="'stv_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+            </select>
+          </div>
+
+          {# Decimal precision #}
+          <div x-show="['avg','median'].includes(stAggFunc) && stValueCol" class="flex items-center gap-2">
+            <label class="text-xs font-semibold text-slate-600 whitespace-nowrap">Decimal Places</label>
+            <input type="number" min="0" max="10" placeholder="1"
+                   x-model.number="stAggDecimals" @change="_schedulePreview()"
+                   class="w-20 text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400">
+          </div>
+
+          <p class="text-[9px] text-slate-400 leading-snug">
+            Each combination of selected Row values forms a table row; each combination of Column Header values forms a column. Cells show the selected aggregation of the Value Column (or student counts if Count is chosen). Click any non-zero cell to drill into records.
           </p>
         </div>
 
@@ -1205,7 +1336,7 @@
             <select x-model="pgBeforeCol" @change="_pgAutoScale(); _schedulePreview()"
                     class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400">
               <option value="">— choose column —</option>
-              <template x-for="c in activeCols" :key="'pgb_'+c"><option :value="c" x-text="c"></option></template>
+              <template x-for="c in activeCols" :key="'pgb_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
             </select>
           </div>
           {# After PL #}
@@ -1218,7 +1349,7 @@
             <select x-model="pgAfterCol" @change="_pgAutoScale(); _schedulePreview()"
                     class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400">
               <option value="">— choose column —</option>
-              <template x-for="c in activeCols" :key="'pga_'+c"><option :value="c" x-text="c"></option></template>
+              <template x-for="c in activeCols" :key="'pga_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
             </select>
           </div>
           {# PL Scale — drag-to-reorder list #}
@@ -1400,7 +1531,8 @@
 
       {# COLOUR MAPPING #}
       <div class="px-3 py-3 border-b border-slate-100">
-        <button type="button" @click="colorMapOpen = !colorMapOpen"
+        <button type="button"
+                @click="colorMapOpen = !colorMapOpen; if(colorMapOpen && !colorMapPresetsLoaded){colorMapPresetsLoaded=true;loadColorMapPresets();}"
                 class="flex items-center gap-1.5 w-full text-[10px] font-semibold text-slate-500 hover:text-slate-700 uppercase tracking-widest transition">
           <svg class="w-2.5 h-2.5 transition-transform" :class="colorMapOpen && 'rotate-90'" fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
           Colour Mapping
@@ -1410,6 +1542,38 @@
         </button>
         <div x-show="colorMapOpen" x-collapse class="mt-2 space-y-2">
           <p class="text-[10px] text-slate-400 leading-snug">Assign fixed colours to specific data values. Overrides palette.</p>
+
+          {# Presets: load a saved set of rules, or save the current one for reuse on other charts #}
+          <div class="bg-slate-50 border border-slate-200 rounded-lg p-2 space-y-1.5">
+            <div class="flex items-center gap-1">
+              <select @change="if($event.target.value){loadColorMapPreset(parseInt($event.target.value));$event.target.value='';}"
+                      class="flex-1 text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                <option value="">Load a preset…</option>
+                <template x-for="p in colorMapPresets" :key="'cmp_'+p.id">
+                  <option :value="p.id" x-text="p.name"></option>
+                </template>
+              </select>
+              <button type="button" x-show="colorMapPresetId"
+                      @click="deleteColorMapPreset(colorMapPresetId)"
+                      title="Delete loaded preset"
+                      class="text-slate-300 hover:text-red-500 transition-colors text-sm leading-none flex-shrink-0 px-1">&times;</button>
+            </div>
+            <div x-show="colorMapPresetId" class="text-[9px] text-slate-500" x-text="'Loaded: ' + colorMapPresetName"></div>
+            <div class="flex items-center gap-1">
+              <button type="button" x-show="colorMapPresetId" @click="updateColorMapPreset()"
+                      class="text-[10px] bg-blue-600 text-white rounded px-2 py-1 hover:bg-blue-700 font-semibold"
+                      x-text="'Update \'' + colorMapPresetName + '\''"></button>
+            </div>
+            <div class="flex items-center gap-1">
+              <input type="text" x-model="colorMapSaveAsName" placeholder="New preset name…"
+                     class="flex-1 text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500">
+              <button type="button"
+                      @click="saveColorMapPresetAsNew(colorMapSaveAsName); colorMapSaveAsName='';"
+                      :disabled="!colorMapSaveAsName.trim() || Object.keys(colorMap).length === 0"
+                      class="text-[10px] bg-slate-800 text-white rounded px-2 py-1 hover:bg-slate-700 disabled:opacity-40 font-semibold whitespace-nowrap">Save as New</button>
+            </div>
+          </div>
+
           <template x-for="(color, key) in colorMap" :key="'cm_'+key">
             <div class="flex items-center gap-1.5">
               <input type="color" :value="color"
@@ -1542,6 +1706,12 @@
             <option value="left">Left</option>
             <option value="right">Right</option>
           </select>
+          <div class="flex items-center gap-2 mt-1.5">
+            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Font Size</span>
+            <input type="range" min="6" max="24" step="1" x-model.number="labelFontSize"
+                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="labelFontSize+'px'"></span>
+          </div>
         </div>
       </div>
 
@@ -1645,10 +1815,25 @@
       </template>
 
       {# LINE STYLE (conditional) #}
-      <template x-if="['line','area','areaspline','stacked_area'].includes(chartType)">
-        <div class="px-3 py-3 border-b border-slate-100 space-y-1.5">
+      <template x-if="chartType === 'line'">
+        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
           <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Line Style</p>
-          <div class="grid grid-cols-2 gap-2">
+          <div>
+            <p class="text-[9px] text-slate-400 mb-1">Layout</p>
+            <div class="grid grid-cols-2 gap-1">
+              <button type="button" @click="lineLayout='standard'"
+                      :class="lineLayout==='standard' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                      class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Standard</button>
+              <button type="button" @click="lineLayout='stacked'"
+                      :class="lineLayout==='stacked' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
+                      class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Stacked</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" x-model="lineFill" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+              <span class="text-[10px] text-slate-600">Area Fill</span>
+            </label>
             <label class="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" x-model="smooth" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
               <span class="text-[10px] text-slate-600">Smooth</span>
@@ -1657,6 +1842,12 @@
               <input type="checkbox" x-model="showPoints" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
               <span class="text-[10px] text-slate-600">Points</span>
             </label>
+            <template x-if="lineLayout === 'stacked'">
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                <span class="text-[10px] text-slate-600">100% stacked</span>
+              </label>
+            </template>
           </div>
         </div>
       </template>
@@ -1742,6 +1933,13 @@
                    class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
             <span class="text-[9px] font-mono text-slate-400 w-12 text-right"
                   x-text="xLabelMaxLength>0?xLabelMaxLength+'ch':'Off'"></span>
+          </div>
+          <div class="flex items-center gap-2 pt-1">
+            <label class="inline-flex items-center cursor-pointer select-none gap-2">
+              <input type="checkbox" x-model="forceShowAllLabels"
+                     class="rounded border-slate-300 text-indigo-650 focus:ring-indigo-200 w-3.5 h-3.5">
+              <span class="text-[10px] text-slate-600 font-semibold uppercase tracking-wider">Force show all labels</span>
+            </label>
           </div>
           <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
             <div class="flex items-center gap-2">
@@ -1929,7 +2127,7 @@
       </template>
 
       {# Drill-through (collapsible) #}
-      <section x-data="{ open: false }" class="border-b border-slate-100">
+      <section x-data="{ open: false, drillTab: 'pick' }" class="border-b border-slate-100">
         <button type="button" @click="open=!open; if(open && !Object.keys(explorerStructure?.definitions || {}).length) loadExplorerStructure();"
                 class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
           <div class="flex items-center gap-2">
@@ -1937,142 +2135,220 @@
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Drill-Through</p>
           </div>
           <div class="flex items-center gap-1.5">
-            <span x-show="drillSelected.length > 0" class="text-[9px] bg-blue-100 text-blue-700 rounded-full px-1.5 font-bold" x-text="drillSelected.length"></span>
+            <span x-show="drillPreviewList.length > 0" class="text-[9px] bg-blue-100 text-blue-700 rounded-full px-1.5 font-bold" x-text="drillPreviewList.length"></span>
             <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
             </svg>
           </div>
         </button>
-        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-3 border-t border-slate-50">
-          
-          {# Search within drill picker #}
-          <input type="text" x-model="drillSearch" placeholder="Search columns…"
-                 class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 bg-slate-50 focus:ring-1 focus:ring-blue-200">
+        <div x-show="open" x-collapse class="border-t border-slate-50">
 
-          {# Selected Columns Chips #}
-          <div x-show="drillSelected.length > 0" class="flex flex-wrap gap-1 mb-2">
-            <template x-for="col in drillSelected" :key="'ds_'+col">
-              <span class="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 border border-blue-100 rounded-md px-1.5 py-0.5 font-medium">
-                <span x-text="explorerStructure?.definitions?.[col] || col"></span>
-                <button @click="toggleDrillCol(col)" class="text-blue-400 hover:text-red-500">&times;</button>
-              </span>
-            </template>
-            <button @click="drillSelected=[]" class="text-[9px] text-red-400 hover:text-red-600 font-semibold ml-1 underline">Clear</button>
+          {# ── Tab bar ── #}
+          <div class="flex border-b border-slate-100 bg-slate-50/60">
+            <button type="button" @click="drillTab='pick'"
+                    :class="drillTab==='pick' ? 'border-b-2 border-blue-500 text-blue-600 bg-white' : 'text-slate-500 hover:text-slate-700'"
+                    class="flex-1 text-[10px] font-semibold uppercase tracking-wider px-3 py-2 transition">
+              Pick Columns
+            </button>
+            <button type="button" @click="drillTab='order'"
+                    :class="drillTab==='order' ? 'border-b-2 border-blue-500 text-blue-600 bg-white' : 'text-slate-500 hover:text-slate-700'"
+                    class="flex-1 flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-3 py-2 transition">
+              Order
+              <span x-show="drillPreviewList.length > 0" class="text-[8px] bg-blue-100 text-blue-600 rounded-full px-1.5 font-bold" x-text="drillPreviewList.length"></span>
+            </button>
           </div>
 
-          {# ── Categorized Column Tree ── #}
-          <div class="max-h-64 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
-            {# ── Static categories (Student Info, etc.) ── #}
-            <template x-for="(cat, catKey) in (explorerStructure?.categories || {})" :key="'dr_cat_'+catKey">
-              <div class="rounded border border-slate-100 bg-white overflow-hidden">
-                <button type="button" @click="drillOpenNode = drillOpenNode === catKey ? '' : catKey"
-                        class="flex items-center justify-between w-full px-2 py-1 text-[10px] hover:bg-slate-50 transition">
-                  <span class="font-medium text-slate-600" x-text="cat.title"></span>
-                  <div class="flex items-center gap-1">
-                    <span class="text-[8px] text-slate-400" x-text="drillCatSelectedCount(catKey)"></span>
-                    <svg class="w-2.5 h-2.5 text-slate-300 transition-transform" :class="drillOpenNode === catKey && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+          {# ── Pick Columns tab ── #}
+          <div x-show="drillTab==='pick'" class="px-4 pb-4 pt-3 space-y-3">
+            <input type="text" x-model="drillSearch" placeholder="Search columns…"
+                   class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 bg-slate-50 focus:ring-1 focus:ring-blue-200">
+
+            {# Selected Columns Chips #}
+            <div x-show="drillSelected.length > 0" class="flex flex-wrap gap-1">
+              <template x-for="col in drillSelected" :key="'ds_'+col">
+                <span class="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-700 border border-blue-100 rounded-md px-1.5 py-0.5 font-medium">
+                  <span x-text="drillColLabel(col)"></span>
+                  <button @click="toggleDrillCol(col)" class="text-blue-400 hover:text-red-500">&times;</button>
+                </span>
+              </template>
+              <button @click="drillSelected=[]" class="text-[9px] text-red-400 hover:text-red-600 font-semibold ml-1 underline">Clear all</button>
+            </div>
+
+            {# ── Column list: categorized tree for columns/query, flat list for dataset/sql ── #}
+            <template x-if="sourceType === 'columns' || sourceType === 'query'">
+              <div class="max-h-64 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                {# ── Static categories (Student Info, etc.) ── #}
+                <template x-for="(cat, catKey) in (explorerStructure?.categories || {})" :key="'dr_cat_'+catKey">
+                  <div class="rounded border border-slate-100 bg-white overflow-hidden">
+                    <button type="button" @click="drillOpenNode = drillOpenNode === catKey ? '' : catKey"
+                            class="flex items-center justify-between w-full px-2 py-1 text-[10px] hover:bg-slate-50 transition">
+                      <span class="font-medium text-slate-600" x-text="cat.title"></span>
+                      <div class="flex items-center gap-1">
+                        <span class="text-[8px] text-slate-400" x-text="drillCatSelectedCount(catKey)"></span>
+                        <svg class="w-2.5 h-2.5 text-slate-300 transition-transform" :class="drillOpenNode === catKey && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                      </div>
+                    </button>
+                    <div x-show="drillOpenNode === catKey" class="border-t border-slate-50 px-2 py-1 space-y-0.5 bg-slate-50/30">
+                      <template x-for="col in drillFilteredCatCols(catKey)" :key="'drsc_'+col">
+                        <label class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
+                          <input type="checkbox" :checked="drillPreviewList.includes(col)" @change="toggleDrillCol(col)"
+                                 class="rounded text-blue-600 w-2.5 h-2.5 border-slate-300">
+                          <span class="truncate text-slate-600" x-text="drillColLabel(col)"></span>
+                        </label>
+                      </template>
+                    </div>
                   </div>
-                </button>
-                <div x-show="drillOpenNode === catKey" class="border-t border-slate-50 px-2 py-1 space-y-0.5 bg-slate-50/30">
-                  <template x-for="col in drillFilteredCatCols(catKey)" :key="'drsc_'+col">
-                    <label class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
-                      <input type="checkbox" :checked="drillSelected.includes(col)" @change="toggleDrillCol(col)"
-                             class="rounded text-blue-600 w-2.5 h-2.5 border-slate-300">
-                      <span class="truncate text-slate-600" x-text="explorerStructure?.definitions?.[col] || col"></span>
-                    </label>
-                  </template>
-                </div>
-              </div>
-            </template>
+                </template>
 
-            {# ── Test columns tree ── #}
-            <template x-for="(yearObj, year) in (explorerStructure?.test_structure || {})" :key="'dr_ty_'+year">
-              <div class="rounded border border-slate-100 bg-white overflow-hidden">
-                <button type="button" @click="drillOpenNode = drillOpenNode === 'test_'+year ? '' : 'test_'+year"
-                        class="flex items-center justify-between w-full px-2 py-1 text-[10px] hover:bg-slate-50 transition">
-                  <span class="font-medium text-slate-600"><span class="text-[8px] text-blue-400 font-bold mr-1">TEST</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
-                  <svg class="w-2.5 h-2.5 text-slate-300 transition-transform" :class="drillOpenNode === 'test_'+year && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
-                </button>
-                <div x-show="drillOpenNode === 'test_'+year" class="border-t border-slate-50 p-1 space-y-1 bg-slate-50/30">
-                  <template x-for="(assessObj, assessName) in yearObj" :key="'dr_ta_'+year+'_'+assessName">
-                    <div class="ml-1 border-l border-slate-100 pl-1.5">
-                      <button type="button" @click="drillOpenSub = drillOpenSub === 'dr_ta_'+year+'_'+assessName ? '' : 'dr_ta_'+year+'_'+assessName"
-                              class="flex items-center justify-between w-full py-0.5 text-[9px] text-slate-500 font-bold uppercase tracking-wider">
-                        <span x-text="assessName"></span>
-                        <svg class="w-2 h-2 transition-transform" :class="drillOpenSub === 'dr_ta_'+year+'_'+assessName && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
-                      </button>
-                      <div x-show="drillOpenSub === 'dr_ta_'+year+'_'+assessName" class="space-y-0.5 mt-0.5 pb-1">
-                        <template x-for="(winObj, winName) in (assessObj.windows || {})" :key="'dr_tw_'+year+'_'+assessName+'_'+winName">
-                          <div>
-                            <p x-show="winName" class="text-[8px] font-bold text-slate-400 uppercase mt-1 mb-0.5" x-text="winName"></p>
-                            <template x-for="(metrics, testingName) in winObj" :key="'dr_tt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
-                              <div class="space-y-0.5">
-                                <template x-for="mKey in ['SS','PL']" :key="'dr_tm_'+metrics[mKey]">
-                                  <label x-show="metrics[mKey] && (!drillSearch || (explorerStructure?.definitions?.[metrics[mKey]] || metrics[mKey]).toLowerCase().includes(drillSearch.toLowerCase()))"
-                                         class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
-                                    <input type="checkbox" :checked="drillSelected.includes(metrics[mKey])" @change="toggleDrillCol(metrics[mKey])"
-                                           class="rounded text-blue-500 w-2.5 h-2.5 border-slate-300">
-                                    <span class="truncate text-slate-600" x-text="(explorerStructure?.definitions?.[metrics[mKey]] || metrics[mKey])"></span>
-                                  </label>
+                {# ── Test columns tree ── #}
+                <template x-for="(yearObj, year) in (explorerStructure?.test_structure || {})" :key="'dr_ty_'+year">
+                  <div class="rounded border border-slate-100 bg-white overflow-hidden">
+                    <button type="button" @click="drillOpenNode = drillOpenNode === 'test_'+year ? '' : 'test_'+year"
+                            class="flex items-center justify-between w-full px-2 py-1 text-[10px] hover:bg-slate-50 transition">
+                      <span class="font-medium text-slate-600"><span class="text-[8px] text-blue-400 font-bold mr-1">TEST</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
+                      <svg class="w-2.5 h-2.5 text-slate-300 transition-transform" :class="drillOpenNode === 'test_'+year && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div x-show="drillOpenNode === 'test_'+year" class="border-t border-slate-50 p-1 space-y-1 bg-slate-50/30">
+                      <template x-for="(assessObj, assessName) in yearObj" :key="'dr_ta_'+year+'_'+assessName">
+                        <div class="ml-1 border-l border-slate-100 pl-1.5">
+                          <button type="button" @click="drillOpenSub = drillOpenSub === 'dr_ta_'+year+'_'+assessName ? '' : 'dr_ta_'+year+'_'+assessName"
+                                  class="flex items-center justify-between w-full py-0.5 text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+                            <span x-text="assessName"></span>
+                            <svg class="w-2 h-2 transition-transform" :class="drillOpenSub === 'dr_ta_'+year+'_'+assessName && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                          </button>
+                          <div x-show="drillOpenSub === 'dr_ta_'+year+'_'+assessName" class="space-y-0.5 mt-0.5 pb-1">
+                            <template x-for="(winObj, winName) in (assessObj.windows || {})" :key="'dr_tw_'+year+'_'+assessName+'_'+winName">
+                              <div>
+                                <p x-show="winName" class="text-[8px] font-bold text-slate-400 uppercase mt-1 mb-0.5" x-text="winName"></p>
+                                <template x-for="(metrics, testingName) in winObj" :key="'dr_tt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
+                                  <div class="space-y-0.5">
+                                    <template x-for="mKey in ['SS','PL']" :key="'dr_tm_'+metrics[mKey]">
+                                      <label x-show="metrics[mKey] && (!drillSearch || (explorerStructure?.definitions?.[metrics[mKey]] || metrics[mKey]).toLowerCase().includes(drillSearch.toLowerCase()))"
+                                             class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
+                                        <input type="checkbox" :checked="drillPreviewList.includes(metrics[mKey])" @change="toggleDrillCol(metrics[mKey])"
+                                               class="rounded text-blue-500 w-2.5 h-2.5 border-slate-300">
+                                        <span class="truncate text-slate-600" x-text="drillColLabel(metrics[mKey])"></span>
+                                      </label>
+                                    </template>
+                                  </div>
                                 </template>
                               </div>
                             </template>
                           </div>
-                        </template>
-                      </div>
+                        </div>
+                      </template>
                     </div>
-                  </template>
-                </div>
-              </div>
-            </template>
+                  </div>
+                </template>
 
-            {# ── Mark columns tree ── #}
-            <template x-for="(yearObj, year) in (explorerStructure?.mark_structure || {})" :key="'dr_my_'+year">
-              <div class="rounded border border-slate-100 bg-white overflow-hidden">
-                <button type="button" @click="drillOpenNode = drillOpenNode === 'mark_'+year ? '' : 'mark_'+year"
-                        class="flex items-center justify-between w-full px-2 py-1 text-[10px] hover:bg-slate-50 transition">
-                  <span class="font-medium text-slate-600"><span class="text-[8px] text-emerald-400 font-bold mr-1">MARK</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
-                  <svg class="w-2.5 h-2.5 text-slate-300 transition-transform" :class="drillOpenNode === 'mark_'+year && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
-                </button>
-                <div x-show="drillOpenNode === 'mark_'+year" class="border-t border-slate-50 p-1 space-y-1 bg-slate-50/30">
-                  <template x-for="(assessObj, assessName) in yearObj" :key="'dr_ma_'+year+'_'+assessName">
-                    <div class="ml-1 border-l border-slate-100 pl-1.5">
-                      <button type="button" @click="drillOpenSub = drillOpenSub === 'dr_ma_'+year+'_'+assessName ? '' : 'dr_ma_'+year+'_'+assessName"
-                              class="flex items-center justify-between w-full py-0.5 text-[9px] text-slate-500 font-bold uppercase tracking-wider">
-                        <span x-text="assessName"></span>
-                        <svg class="w-2 h-2 transition-transform" :class="drillOpenSub === 'dr_ma_'+year+'_'+assessName && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
-                      </button>
-                      <div x-show="drillOpenSub === 'dr_ma_'+year+'_'+assessName" class="space-y-0.5 mt-0.5 pb-1">
-                        <template x-for="(winObj, winName) in (assessObj.windows || {})" :key="'dr_mw_'+year+'_'+assessName+'_'+winName">
-                          <div>
-                            <p x-show="winName" class="text-[8px] font-bold text-slate-400 uppercase mt-1 mb-0.5" x-text="winName"></p>
-                            <template x-for="(metrics, testingName) in winObj" :key="'dr_mt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
-                              <div class="space-y-0.5">
-                                <template x-for="mKey in ['Mark']" :key="'dr_mm_'+metrics[mKey]">
-                                  <label x-show="metrics[mKey] && (!drillSearch || (explorerStructure?.definitions?.[metrics[mKey]] || metrics[mKey]).toLowerCase().includes(drillSearch.toLowerCase()))"
-                                         class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
-                                    <input type="checkbox" :checked="drillSelected.includes(metrics[mKey])" @change="toggleDrillCol(metrics[mKey])"
-                                           class="rounded text-emerald-500 w-2.5 h-2.5 border-slate-300">
-                                    <span class="truncate text-slate-600" x-text="(explorerStructure?.definitions?.[metrics[mKey]] || metrics[mKey])"></span>
-                                  </label>
+                {# ── Mark columns tree ── #}
+                <template x-for="(yearObj, year) in (explorerStructure?.mark_structure || {})" :key="'dr_my_'+year">
+                  <div class="rounded border border-slate-100 bg-white overflow-hidden">
+                    <button type="button" @click="drillOpenNode = drillOpenNode === 'mark_'+year ? '' : 'mark_'+year"
+                            class="flex items-center justify-between w-full px-2 py-1 text-[10px] hover:bg-slate-50 transition">
+                      <span class="font-medium text-slate-600"><span class="text-[8px] text-emerald-400 font-bold mr-1">MARK</span><span x-text="explorerStructure?.year_labels?.[year] || year"></span></span>
+                      <svg class="w-2.5 h-2.5 text-slate-300 transition-transform" :class="drillOpenNode === 'mark_'+year && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div x-show="drillOpenNode === 'mark_'+year" class="border-t border-slate-50 p-1 space-y-1 bg-slate-50/30">
+                      <template x-for="(assessObj, assessName) in yearObj" :key="'dr_ma_'+year+'_'+assessName">
+                        <div class="ml-1 border-l border-slate-100 pl-1.5">
+                          <button type="button" @click="drillOpenSub = drillOpenSub === 'dr_ma_'+year+'_'+assessName ? '' : 'dr_ma_'+year+'_'+assessName"
+                                  class="flex items-center justify-between w-full py-0.5 text-[9px] text-slate-500 font-bold uppercase tracking-wider">
+                            <span x-text="assessName"></span>
+                            <svg class="w-2 h-2 transition-transform" :class="drillOpenSub === 'dr_ma_'+year+'_'+assessName && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+                          </button>
+                          <div x-show="drillOpenSub === 'dr_ma_'+year+'_'+assessName" class="space-y-0.5 mt-0.5 pb-1">
+                            <template x-for="(winObj, winName) in (assessObj.windows || {})" :key="'dr_mw_'+year+'_'+assessName+'_'+winName">
+                              <div>
+                                <p x-show="winName" class="text-[8px] font-bold text-slate-400 uppercase mt-1 mb-0.5" x-text="winName"></p>
+                                <template x-for="(metrics, testingName) in winObj" :key="'dr_mt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
+                                  <div class="space-y-0.5">
+                                    <template x-for="mKey in ['Mark']" :key="'dr_mm_'+metrics[mKey]">
+                                      <label x-show="metrics[mKey] && (!drillSearch || (explorerStructure?.definitions?.[metrics[mKey]] || metrics[mKey]).toLowerCase().includes(drillSearch.toLowerCase()))"
+                                             class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
+                                        <input type="checkbox" :checked="drillPreviewList.includes(metrics[mKey])" @change="toggleDrillCol(metrics[mKey])"
+                                               class="rounded text-emerald-500 w-2.5 h-2.5 border-slate-300">
+                                        <span class="truncate text-slate-600" x-text="drillColLabel(metrics[mKey])"></span>
+                                      </label>
+                                    </template>
+                                  </div>
                                 </template>
                               </div>
                             </template>
                           </div>
-                        </template>
-                      </div>
+                        </div>
+                      </template>
                     </div>
-                  </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            {# ── Flat list of available columns for dataset/SQL sources ── #}
+            <template x-if="sourceType === 'dataset' || sourceType === 'sql'">
+              <div class="max-h-64 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                <template x-for="col in drillFilteredFlatCols" :key="'flat_'+col">
+                  <label class="flex items-center gap-1.5 text-[10px] px-2 py-1.5 rounded hover:bg-slate-50 border border-slate-100 bg-white cursor-pointer transition">
+                    <input type="checkbox" :checked="drillPreviewList.includes(col)" @change="toggleDrillCol(col)"
+                           class="rounded text-blue-600 w-2.5 h-2.5 border-slate-300">
+                    <span class="truncate text-slate-600 font-medium" x-text="drillColLabel(col)"></span>
+                  </label>
+                </template>
+                <div x-show="drillFilteredFlatCols.length === 0" class="text-[10px] text-slate-400 py-3 text-center">
+                  No columns match your search.
                 </div>
               </div>
             </template>
+          </div>{# /pick tab #}
+
+          {# ── Order tab ── #}
+          <div x-show="drillTab==='order'" class="px-4 pb-4 pt-3">
+            <div x-show="drillPreviewList.length === 0" class="text-[10px] text-slate-400 py-3 text-center">
+              No columns available — please run the chart preview or configure a data source first.
+            </div>
+            <div x-show="drillPreviewList.length > 0" class="space-y-1">
+              <div class="flex items-center justify-between mb-2">
+                <template x-if="drillSelected.length === 0">
+                  <span class="text-[9px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium">Default Columns (using query fields)</span>
+                </template>
+                <template x-if="drillSelected.length > 0">
+                  <div class="flex items-center justify-between w-full">
+                    <span class="text-[9px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded font-medium">Customized Columns</span>
+                    <button type="button" @click="drillSelected=[]" class="text-[9px] text-red-500 hover:text-red-700 underline font-semibold transition">Reset to Default</button>
+                  </div>
+                </template>
+              </div>
+              <p class="text-[9px] text-slate-400 mb-2">Drag rows or use arrows to set display order. Removing or reordering columns will customize your drill-through table.</p>
+              <template x-for="(col, idx) in drillPreviewList" :key="'order_'+col">
+                <div class="flex items-center gap-1.5 bg-white border border-slate-200 rounded-md px-2 py-1.5 group cursor-grab active:cursor-grabbing"
+                     draggable="true"
+                     @dragstart="$event.dataTransfer.setData('text/plain', String(idx)); $event.dataTransfer.effectAllowed='move';"
+                     @dragover.prevent
+                     @drop.prevent="drillMoveCol(parseInt($event.dataTransfer.getData('text/plain')), idx)">
+                  <svg class="w-3 h-3 text-slate-300 group-hover:text-slate-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M4 8h16M4 16h16"/>
+                  </svg>
+                  <span class="text-[9px] font-bold text-slate-300 w-4 text-center shrink-0" x-text="idx+1"></span>
+                  <span class="flex-1 text-[10px] text-slate-700 truncate" x-text="drillColLabel(col)"></span>
+                  <button type="button" @click="drillMoveCol(idx, idx-1)" :disabled="idx===0"
+                          class="text-slate-300 hover:text-slate-600 disabled:opacity-20 transition p-0.5 rounded">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M5 15l7-7 7 7"/></svg>
+                  </button>
+                  <button type="button" @click="drillMoveCol(idx, idx+1)" :disabled="idx===drillPreviewList.length-1"
+                          class="text-slate-300 hover:text-slate-600 disabled:opacity-20 transition p-0.5 rounded">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 9l-7 7-7-7"/></svg>
+                  </button>
+                  <button type="button" @click="toggleDrillCol(col)"
+                          class="text-slate-300 hover:text-red-400 transition p-0.5 rounded shrink-0">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              </template>
+            </div>
           </div>
 
-          <p class="text-[9px] text-slate-400 leading-snug">
-            Choose which columns appear when clicking on data points to see individual student details. Leave all unselected to include default columns.
-          </p>
-        </div>
+        </div>{# /drill x-collapse #}
       </section>
       </div>{# /options tab #}
       </div>
@@ -2154,13 +2430,13 @@
     <input type="hidden" name="chart_title"    x-bind:value="chartTitle">
     <input type="hidden" name="title_font_size" x-model="titleFontSize">
     <input type="hidden" name="source_type"    x-bind:value="sourceType">
-    <input type="hidden" name="saved_query_id" x-bind:value="savedQueryId">
+    <input type="hidden" name="source_id"      x-bind:value="sourceType === 'dataset' ? datasetSourceId : savedQueryId">
     <input type="hidden" name="raw_sql"        x-bind:value="rawSql">
     <input type="hidden" name="selected_columns" x-bind:value="JSON.stringify(explorerSelected)">
     <input type="hidden" name="chart_type"     x-bind:value="chartType">
-    <input type="hidden" name="x_col"          x-bind:value="xCol">
+    <input type="hidden" name="x_col"          x-bind:value="xCols.join(',')">
     <input type="hidden" name="y_col"          x-bind:value="yCol">
-    <input type="hidden" name="series_col"     x-bind:value="seriesCol">
+    <input type="hidden" name="series_col"     x-bind:value="seriesCols.join(',')">
     <input type="hidden" name="group_col"      x-bind:value="groupCol">
     <input type="hidden" name="compare_pl_cols"  x-bind:value="JSON.stringify(comparePlCols)">
     <input type="hidden" name="ac_include_cats"  x-bind:value="JSON.stringify(acIncludeCats)">
@@ -2182,6 +2458,7 @@
     <input type="hidden" name="legend_top"        x-bind:value="legendTop   ?? ''">
     <input type="hidden" name="show_labels"    x-bind:value="showLabels ? '1' : ''">
     <input type="hidden" name="label_position" x-bind:value="labelPosition">
+    <input type="hidden" name="label_font_size" x-bind:value="labelFontSize">
     <input type="hidden" name="background"     x-bind:value="background">
     <input type="hidden" name="opacity"        x-bind:value="opacity">
     <input type="hidden" name="bar_border_radius" x-bind:value="barBorderRadius">
@@ -2207,12 +2484,15 @@
     <input type="hidden" name="bar_orientation" x-bind:value="barOrientation">
     <input type="hidden" name="bar_radial"      x-bind:value="barRadial ? '1' : ''">
     <input type="hidden" name="bar_polar"       x-bind:value="barPolar  ? '1' : ''">
+    <input type="hidden" name="line_layout"     x-bind:value="lineLayout">
+    <input type="hidden" name="line_fill"       x-bind:value="lineFill ? '1' : ''">
     <input type="hidden" name="compare_gap"     x-bind:value="compareGap">
     <input type="hidden" name="compare_cat_font_size" x-bind:value="compareCatFontSize">
     <input type="hidden" name="compare_cat_rotation" x-bind:value="compareCatRotation">
     <input type="hidden" name="x_label_rotation"    x-bind:value="xLabelRotation">
     <input type="hidden" name="x_label_font_size"   x-bind:value="xLabelFontSize">
     <input type="hidden" name="x_label_max_length"  x-bind:value="xLabelMaxLength">
+    <input type="hidden" name="force_show_all_labels" x-bind:value="forceShowAllLabels ? '1' : ''">
     <input type="hidden" name="bar_category_gap"    x-bind:value="barCategoryGap">
     <input type="hidden" name="y_axis_min"          x-bind:value="yAxisMin">
     <input type="hidden" name="y_axis_max"          x-bind:value="yAxisMax">
@@ -2231,6 +2511,11 @@
     <input type="hidden" name="pg_display"     x-bind:value="pgDisplay">
     <input type="hidden" name="st_row_col"     x-bind:value="stRowCol">
     <input type="hidden" name="st_col_col"     x-bind:value="stColCol">
+    <input type="hidden" name="st_row_cols"    x-bind:value="JSON.stringify(stRowCols)">
+    <input type="hidden" name="st_col_cols"    x-bind:value="JSON.stringify(stColCols)">
+    <input type="hidden" name="st_agg_func"    x-bind:value="stAggFunc">
+    <input type="hidden" name="st_value_col"   x-bind:value="stValueCol">
+    <input type="hidden" name="st_agg_decimals" x-bind:value="stAggDecimals">
     <input type="hidden" name="stack_order"     x-bind:value="JSON.stringify(stackOrder)">
     <input type="hidden" name="drill_through_columns_str" x-bind:value="drillColumns">
     <input type="hidden" name="source_filters" x-bind:value="JSON.stringify(cleanSourceFilters())">
@@ -2324,6 +2609,11 @@
 
 <script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
 <script src="{% static 'js/dataviz/chart-editor.js' %}"></script>
+<script src="{% static 'js/dataviz/chart-builder-ui.js' %}"></script>
+<script src="{% static 'js/dataviz/chart-builder-data.js' %}"></script>
+<script src="{% static 'js/dataviz/chart-builder-explorer.js' %}"></script>
+<script src="{% static 'js/dataviz/chart-builder-filters.js' %}"></script>
+<script src="{% static 'js/dataviz/chart-builder-preview.js' %}"></script>
 <script>
 function chartBuilder() {
   const existing = JSON.parse('{{ existing_chart_json|escapejs }}' || 'null');
@@ -2342,6 +2632,17 @@ function chartBuilder() {
       if (!existing.config.bar_orientation) existing.config.bar_orientation = 'vertical';
       if (existing.config.bar_radial == null) existing.config.bar_radial = false;
       if (existing.config.bar_polar  == null) existing.config.bar_polar  = false;
+    } else if (['area', 'areaspline', 'stacked_area', 'spline'].includes(existing.chart_type)) {
+      if (!existing.config.line_layout) {
+        existing.config.line_layout = existing.chart_type === 'stacked_area' ? 'stacked' : 'standard';
+      }
+      if (existing.config.line_fill == null) {
+        existing.config.line_fill = ['area', 'areaspline', 'stacked_area'].includes(existing.chart_type);
+      }
+      if (existing.config.smooth == null) {
+        existing.config.smooth = ['areaspline', 'spline'].includes(existing.chart_type);
+      }
+      existing.chart_type = 'line';
     }
   }
   const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
@@ -2352,12 +2653,9 @@ function chartBuilder() {
     assessment_compare: { x:{req:0,lbl:'X-Axis / Category (School, Grade…)'},  y:{hide:1},  s:{hide:1}, hint:'Pick 2+ PL columns to compare across windows or years — grouped + stacked by performance level' },
     progress_growth:    { x:{req:0,lbl:'Group By (School, Grade…)'},           y:{hide:1},  s:{hide:1}, hint:'Compare two PL columns per student — classifies each as Growth 🌱, Sliders 📉, or Stickers 📌. Define the PL scale order.' },
     summary_table:      { x:{hide:1}, y:{hide:1}, s:{hide:1}, hint:'Count cross-tab — pick a Row column and a Column column to build a frequency table with drill-through.' },
+    dynamic_summary_table: { x:{hide:1}, y:{hide:1}, s:{hide:1}, hint:'Multi-dimension cross-tab — pick multiple Row columns and Column columns for a nested pivot table with drill-through.' },
     waterfall:    { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{hide:1},                          hint:'Cumulative value changes per category' },
-    line:         { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Line trend over categories' },
-    spline:       { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Smooth curved line trend' },
-    area:         { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Filled area under line' },
-    areaspline:   { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Smooth filled area' },
-    stacked_area: { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Stack / Group-by'},   hint:'Stacked filled areas' },
+    line:         { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Line / Area trend over categories with optional stacking' },
     pie:          { x:{req:1,lbl:'Category / Slices'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Proportions of a whole (top 30)' },
     donut:        { x:{req:1,lbl:'Category / Slices'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Ring chart showing proportions' },
     funnel:       { x:{req:1,lbl:'Category / Stages'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Progressive stages, descending' },
@@ -2378,17 +2676,22 @@ function chartBuilder() {
     chartId:      existing?.id ?? {{ chart_id|default:"null" }},
     name:         existing?.name ?? '',
     chartTitle:   existing?.config?.chart_title ?? '',
-    sourceType:   existing ? (existing.source_type === 'sql' ? 'sql' : existing.source_type === 'columns' ? 'columns' : 'query') : 'query',
-    savedQueryId: existing ? String(existing.source_id ?? '') : '',
+    sourceType:   existing ? (existing.source_type === 'sql' ? 'sql' : existing.source_type === 'columns' ? 'columns' : existing.source_type === 'dataset' ? 'dataset' : 'query') : 'query',
+    savedQueryId: existing && existing.source_type === 'query' ? String(existing.source_id ?? '') : '',
+    datasetSourceId: existing?.source_type === 'dataset' ? String(existing.source_id ?? '') : '',
     rawSql:       existing?.source_sql ?? '',
     chartType:    existing?.chart_type ?? 'bar',
     barLayout:    existing?.config?.bar_layout ?? 'grouped',
     barOrientation: existing?.config?.bar_orientation ?? 'vertical',
     barRadial:    existing ? !!existing.config?.bar_radial : false,
     barPolar:     existing ? !!existing.config?.bar_polar  : false,
+    lineLayout:   existing?.config?.line_layout ?? 'standard',
+    lineFill:     existing ? !!existing.config?.line_fill : false,
     xCol:         existing?.config?.x_col ?? '',
+    xCols:        (existing?.config?.x_col || '').split(',').map(s => s.trim()).filter(Boolean) || [],
     yCol:         existing?.config?.y_col ?? '',
     seriesCol:    existing?.config?.stack_col ?? existing?.config?.series_col ?? '',
+    seriesCols:   ((existing?.config?.stack_col ?? existing?.config?.series_col) || '').split(',').map(s => s.trim()).filter(Boolean) || [],
     groupCol:     existing?.config?.group_col ?? '',
     comparePlCols: existing?.config?.compare_pl_cols ?? [],
     /* Progress Growth */
@@ -2402,6 +2705,12 @@ function chartBuilder() {
     /* Summary Table columns */
     stRowCol:         existing?.config?.st_row_col ?? '',
     stColCol:         existing?.config?.st_col_col ?? '',
+    /* Dynamic Summary Table columns */
+    stRowCols:        existing?.config?.st_row_cols ?? [],
+    stColCols:        existing?.config?.st_col_cols ?? [],
+    stAggFunc:        existing?.config?.st_agg_func ?? 'count',
+    stValueCol:       existing?.config?.st_value_col ?? '',
+    stAggDecimals:    existing?.config?.st_agg_decimals ?? null,
     aggFunc:      existing?.config?.agg ?? existing?.config?.agg_func ?? 'count',
     aggDecimals:  existing?.config?.agg_decimals ?? null,
     sortCol:      existing?.config?.sort_col ?? '',
@@ -2419,6 +2728,7 @@ function chartBuilder() {
     legendTop:        existing?.config?.legend_top       ?? null,
     showLabels:       existing ? !!existing.config?.data_labels : false,
     labelPosition:    existing?.config?.label_position ?? 'top',
+    labelFontSize:    existing?.config?.label_font_size ?? 10,
     background:       existing?.config?.background ?? 'white',
     opacity:          existing?.config?.opacity ?? 0.9,
     barBorderRadius:  existing?.config?.bar_border_radius ?? 0,
@@ -2428,6 +2738,11 @@ function chartBuilder() {
     colorMapOpen:     false,
     colorMapNewKey:   '',
     colorMapNewColor: '#636EFA',
+    colorMapPresets:     [],
+    colorMapPresetId:    null,
+    colorMapPresetName:  '',
+    colorMapSaveAsName:  '',
+    colorMapPresetsLoaded: false,
     /* Element toggles */
     showZoom:         existing ? (existing.config?.show_zoom !== false) : true,
     showToolbox:      existing ? (existing.config?.show_toolbox !== false) : true,
@@ -2456,6 +2771,7 @@ function chartBuilder() {
     xLabelRotation:  existing?.config?.x_label_rotation  ?? 0,
     xLabelFontSize:  existing?.config?.x_label_font_size  ?? 11,
     xLabelMaxLength: existing?.config?.x_label_max_length ?? 0,
+    forceShowAllLabels: existing ? (existing.config?.force_show_all_labels === true) : false,
     barCategoryGap:  existing?.config?.bar_category_gap   ?? 20,
     yAxisMin:        existing?.config?.y_axis_min ?? '',
     yAxisMax:        existing?.config?.y_axis_max ?? '',
@@ -2494,12 +2810,14 @@ function chartBuilder() {
     _dragAcPlIdx:     null,
     _dragAcCatIdx:    null,
 
-    drillSelected:    existing?.drill_through_columns ?? [],
+    drillSelected:    (existing?.drill_through_columns ?? []).map(c => c.split('.').pop()),
+    queryColumns:     [],
     drillSearch:      '',
     drillOpenNode:    '',
     drillOpenSub:     '',
 
     columns:        [],
+    datasetColumnMappings: {},
     rawSqlColumns:  [],
     colSearch:      '',
     columnsLoading: false,
@@ -2562,6 +2880,7 @@ function chartBuilder() {
     get activeCols()   {
       if (this.sourceType === 'sql') return this.rawSqlColumns;
       if (this.sourceType === 'columns') return this.explorerCols;
+      if (this.sourceType === 'dataset') return this.columns;
       return this.columns;
     },
     get filteredCols() {
@@ -2588,13 +2907,19 @@ function chartBuilder() {
       if (this.chartType === 'assessment_compare' && this.comparePlCols.length < 2) return false;
       if (this.chartType === 'progress_growth') return !!this.pgBeforeCol && !!this.pgAfterCol;
       if (this.chartType === 'summary_table') return !!this.stRowCol && !!this.stColCol;
+      if (this.chartType === 'dynamic_summary_table') {
+        const hasAxes = this.stRowCols.length > 0 && this.stColCols.length > 0;
+        const needsVal = !['count'].includes(this.stAggFunc);
+        return hasAxes && (!needsVal || !!this.stValueCol);
+      }
       const m = this.meta;
-      if (m.x?.req && !this.xCol) return false;
+      if (m.x?.req && this.xCols.length === 0) return false;
       if (m.y?.req && !this.yCol) return false;
-      return !!(this.xCol || this.yCol);
+      return !!(this.xCols.length > 0 || this.yCol);
     },
     get steps() {
       const hasSource = (this.sourceType === 'query' && this.savedQueryId) ||
+                        (this.sourceType === 'dataset' && this.datasetSourceId) ||
                         (this.sourceType === 'sql' && this.rawSqlColumns.length > 0) ||
                         (this.sourceType === 'columns' && this.explorerCols.length > 0);
       const m = this.meta;
@@ -2604,8 +2929,12 @@ function chartBuilder() {
         colsDone = !!this.pgBeforeCol && !!this.pgAfterCol;
       } else if (this.chartType === 'summary_table') {
         colsDone = !!this.stRowCol && !!this.stColCol;
+      } else if (this.chartType === 'dynamic_summary_table') {
+        const hasAxes = this.stRowCols.length > 0 && this.stColCols.length > 0;
+        const needsVal = !['count'].includes(this.stAggFunc);
+        colsDone = hasAxes && (!needsVal || !!this.stValueCol);
       } else {
-        colsDone = (!m.x?.req || !!this.xCol) && (!m.y?.req || !!this.yCol) && !!(this.xCol || this.yCol);
+        colsDone = (!m.x?.req || this.xCols.length > 0) && (!m.y?.req || !!this.yCol) && !!(this.xCols.length > 0 || this.yCol);
       }
       return [
         { label: 'Data',    done: hasSource,          current: !hasSource },
@@ -2614,1073 +2943,41 @@ function chartBuilder() {
         { label: 'Preview', done: !!this.previewHtml, current: colsDone && !this.previewHtml },
       ];
     },
-
-    /* ─── Helpers ────────────────────────────────────────── */
-    assignedTo(col) {
-      if (col === this.xCol) return 'X';
-      if (col === this.yCol) return 'Y';
-      if (col === this.seriesCol) return 'S';
-      return '';
+    /* Drill-through getters must live here (spread breaks getter semantics) */
+    get drillPreviewList() {
+      const list = this.drillSelected.length > 0 ? this.drillSelected : this.queryColumns;
+      return list.map(c => c.split('.').pop());
     },
-    togglePlCol(col) {
-      const idx = this.comparePlCols.indexOf(col);
-      if (idx >= 0) {
-        this.comparePlCols.splice(idx, 1);
-      } else {
-        this.comparePlCols.push(col);
+    get drillAvailableFlatCols() {
+      if (this.sourceType === 'sql') return (this.rawSqlColumns || []).map(c => c.split('.').pop());
+      if (this.sourceType === 'dataset') {
+        const cols = [];
+        (this.columns || []).forEach(c => { const cl = c.split('.').pop(); if (cl && !cols.includes(cl)) cols.push(cl); });
+        ['student_id','student_name','grade','school','school_year','ssid'].forEach(c => { if (!cols.includes(c)) cols.push(c); });
+        return cols;
       }
-      this.comparePlCols = [...this.comparePlCols];
-      this._schedulePreview();
+      return [];
     },
-    plColLabel(col) {
-      // Use filterLabels if available (populated from query), else clean column key
-      if (this.filterLabels[col]) return this.filterLabels[col];
-      // Fallback: strip prefix/suffix → readable label
-      let lbl = col.replace(/^test_/, '').replace(/_PL$/, '').replace(/_/g, ' ');
-      return lbl.charAt(0).toUpperCase() + lbl.slice(1);
-    },
-    setSource(type) {
-      this.sourceType = type;
-      this.columns = []; this.rawSqlColumns = []; this.explorerCols = []; this.colSearch = '';
-      this.filterOptions = {}; this.filterLabels = {}; this.openFilter = '';
-      // Preserve year context and school filter mode across source switches
-      const yearCtx = this.yearContext;
-      const schoolMode = this.schoolFilterMode;
-      const customYears = this.chartFilters._custom_years;
-      this.chartFilters = {};
-      if (yearCtx) {
-        this.chartFilters.school_year = yearCtx;
-      } else if (customYears && customYears.length > 0) {
-        // Custom mode — restore the user's checked school years
-        this.chartFilters._custom_years = [...customYears];
-        this.chartFilters.school_year = [...customYears];
-      }
-      this.schoolFilterMode = schoolMode;
-      if (type === 'columns' && !Object.keys(this.explorerStructure?.definitions || {}).length) this.loadExplorerStructure();
-      // Update guided step
-      if (this.guidedMode) this.guidedStep = 1;
-    },
-
-    /* ─── Filter helpers ─────────────────────────────────── */
-    toggleFilter(col) { this.openFilter = this.openFilter === col ? '' : col; },
-    filteredFilterValues(col) {
-      let vals = this.filterOptions[col] || [];
-      if (col === 'school_year') {
-        if (this.dvYearMode === 'relative') {
-          vals = vals.filter(v => (v || '').startsWith('__sy_'));
-        } else {
-          vals = vals.filter(v => !(v || '').startsWith('__sy_'));
-        }
-      }
-      const q = (this.filterSearch[col] || '').toLowerCase().trim();
-      return q ? vals.filter(v => (v || '').toLowerCase().includes(q)) : vals;
-    },
-    toggleFilterValue(col, val) {
-      const cur = this.chartFilters[col] || [];
-      if (cur.includes(val)) {
-        this.chartFilters[col] = cur.filter(v => v !== val);
-      } else {
-        this.chartFilters[col] = [...cur, val];
-      }
-      // Clean up empty arrays
-      if (this.chartFilters[col].length === 0) delete this.chartFilters[col];
-      // Trigger a shallow re-assign so Alpine detects the change
-      this.chartFilters = { ...this.chartFilters };
-      this._schedulePreview();
-    },
-    removeFilterValue(col, val) {
-      this.chartFilters[col] = (this.chartFilters[col] || []).filter(v => v !== val);
-      if (this.chartFilters[col].length === 0) delete this.chartFilters[col];
-      this.chartFilters = { ...this.chartFilters };
-      this._schedulePreview();
-    },
-    clearAllFilters() {
-      this.chartFilters = {};
-      this._schedulePreview();
-    },
-
-    /* ─── Init ───────────────────────────────────────────── */
-    _autoTimer: null,
-    init() {
-      // If existing chart has multi-year school_year, sync to _custom_years for the checkbox UI
-      if (Array.isArray(this.chartFilters.school_year)) {
-        this.chartFilters = { ...this.chartFilters, _custom_years: [...this.chartFilters.school_year] };
-      }
-      if (this.savedQueryId) this.loadColumns();
-      if (this.sourceType === 'columns') this.loadExplorerStructure();
-
-      // Data props — changing these requires a full server re-render
-      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','xCol','yCol','seriesCol','groupCol','comparePlCols','aggFunc','aggDecimals',
-                         'sortCol','sortDir','categoryOrder','limit','palette','showPercent','showPercentSymbol','percentDecimals','stackOrder',
-                         'stRowCol','stColCol','explorerSelected',
-                         'acIncludeCats','acIncludePl','acColFilters',
-                         'compareGap','compareCatFontSize','compareCatRotation','showCategories','showAxisTitles',
-                         'tooltipShowPct','tooltipShowCount','tooltipValuePct',
-                         'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS'];
-      // Style props — applied live via setOption, no server round-trip needed
-      const styleProps = ['chartTitle','titleFontSize','showLegend','showLabels',
-                          'legendPos','legendItemGap','legendFontSize','legendIconSize','legendOffset',
-                          'labelPosition','background','opacity',
-                          'barBorderRadius','showPoints','smooth',
-                          'showZoom','showToolbox','showGrid','showAxisLabels','enableAnimation','showTooltip',
-                          'xLabelRotation','xLabelFontSize','xLabelMaxLength','barCategoryGap','yAxisMin','yAxisMax',
-                          'colorMap'];
-      dataProps.forEach(prop => {
-        this.$watch(prop, () => this._scheduleDataPreview());
-      });
-      styleProps.forEach(prop => {
-        this.$watch(prop, () => this._scheduleStylePreview());
-      });
-    },
-    _schedulePreview() {
-      // When chart is already rendered, try live style update first (no server round-trip).
-      // Data changes are also watched separately and will trigger _scheduleDataPreview.
-      if (this.previewHtml) {
-        this._scheduleStylePreview();
-      } else {
-        this._scheduleDataPreview();
-      }
-    },
-    _scheduleStylePreview() {
-      if (this._editorFiring) return;
-      // If a chart is already rendered, apply style changes live — no server round-trip
-      if (this.previewHtml) {
-        clearTimeout(this._styleApplyTimer);
-        this._styleApplyTimer = setTimeout(() => this._applyStyleLive(), 120);
-        return;
-      }
-      // No chart yet — fall back to a full render
-      clearTimeout(this._autoTimer);
-      this._autoTimer = setTimeout(() => {
-        if (this.canPreview && !this.previewLoading) this.doPreview();
-      }, 400);
-    },
-    _scheduleDataPreview() {
-      if (this._editorFiring) return;
-      clearTimeout(this._autoTimer);
-      this._autoTimer = setTimeout(() => {
-        if (this.canPreview && !this.previewLoading) this.doPreview();
-      }, 600);
-    },
-
-    _applyStyleLive() {
-      const c = this.$refs.previewContainer;
-      if (!c) return;
-      const chartEl = c.querySelector('.chart-container');
-      if (!chartEl || !chartEl._echartsInstance) return;
-      const chart = chartEl._echartsInstance;
-      const opt = {};
-
-      // Background
-      const bgMap = { white: '#ffffff', light: '#f8fafc', dark: '#1e293b' };
-      opt.backgroundColor = bgMap[this.background] || '#ffffff';
-
-      // Title
-      opt.title = [{
-        text: this.chartTitle || '',
-        textStyle: { fontSize: +this.titleFontSize || 16 }
-      }];
-
-      // Legend
-      if (!this.showLegend) {
-        opt.legend = [{ show: false }];
-      } else {
-        const lgOpt = {
-          show: true,
-          itemGap:    +this.legendItemGap  || 10,
-          itemWidth:  +this.legendIconSize || 10,
-          itemHeight: +this.legendIconSize || 10,
-          textStyle:  { fontSize: +this.legendFontSize || 11 },
-        };
-        // Named position (top/bottom/left/right) from style panel
-        const posMap = { top: 'top', bottom: 'bottom', left: 'left', right: 'right' };
-        if (posMap[this.legendPos]) {
-          lgOpt.orient = ['left','right'].includes(this.legendPos) ? 'vertical' : 'horizontal';
-          lgOpt[this.legendPos] = +this.legendOffset || 0;
-          // Clear the opposing axes so named position takes over
-          if (['left','right'].includes(this.legendPos)) { lgOpt.top = 'middle'; lgOpt.bottom = undefined; }
-          else { lgOpt.left = 'center'; lgOpt.right = undefined; }
-        }
-        opt.legend = [lgOpt];
-      }
-
-      // Tooltip / animation / toolbox / zoom
-      opt.tooltip  = [{ show: !!this.showTooltip }];
-      opt.animation = !!this.enableAnimation;
-
-      // Toolbox
-      opt.toolbox = [{ show: !!this.showToolbox, feature: { saveAsImage: {}, dataView: {}, restore: {} } }];
-
-      // DataZoom (show/hide)
-      const curOpt = chart.getOption();
-      if (curOpt.dataZoom && curOpt.dataZoom.length) {
-        opt.dataZoom = curOpt.dataZoom.map(dz => ({ ...dz, show: !!this.showZoom }));
-      }
-
-      // Axes (only for chart types that have axes)
-      // showCategories controls category-axis labels (names like school, grade).
-      // showAxisLabels controls value-axis labels (numbers).  These are independent.
-      const noAxis = ['pie','donut','funnel','treemap','radar','gauge'].includes(this.chartType);
-      if (!noAxis) {
-        const catLblShow = !!this.showCategories;        // category text labels
-        const valLblShow = !!this.showAxisLabels;        // value/numeric labels
-        if (this.chartType === 'bar' && this.barRadial) {
-          // Radial: angleAxis is the category axis, radiusAxis is the value axis
-          opt.angleAxis = [{ axisLabel: {
-            show:     catLblShow,
-            rotate:   +this.xLabelRotation || 0,
-            fontSize: +this.xLabelFontSize || 11,
-          }}];
-          opt.radiusAxis = [{
-            splitLine: { show: !!this.showGrid },
-            axisLabel: { show: valLblShow },
-            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
-            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
-          }];
-        } else if (this.chartType === 'bar' && this.barPolar) {
-          // Polar: radiusAxis is the category axis, angleAxis is the value axis
-          opt.radiusAxis = [{ axisLabel: {
-            show:     catLblShow,
-            rotate:   +this.xLabelRotation || 0,
-            fontSize: +this.xLabelFontSize || 11,
-          }}];
-          opt.angleAxis = [{
-            splitLine: { show: !!this.showGrid },
-            axisLabel: { show: valLblShow },
-            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
-            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
-          }];
-        } else if (this.chartType === 'bar' && this.barOrientation === 'horizontal') {
-          // Horizontal: yAxis is the category axis, xAxis is the value axis
-          opt.yAxis = [{ axisLabel: {
-            show:     catLblShow,
-            rotate:   +this.xLabelRotation || 0,
-            fontSize: +this.xLabelFontSize || 11,
-          }}];
-          opt.xAxis = [{
-            splitLine: { show: !!this.showGrid },
-            axisLabel: { show: valLblShow },
-            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
-            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
-          }];
-        } else if (this.chartType === 'assessment_compare') {
-          // Assessment compare has two x-axes (window labels + group labels).
-          // Both are category labels; yAxis is the value axis.
-          opt.xAxis = [
-            { axisLabel: { show: catLblShow, interval: 0, fontSize: +this.xLabelFontSize || 10 } },
-            { axisLabel: { show: catLblShow, interval: 0 } },
-          ];
-          opt.yAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow } }];
-        } else {
-          // Standard vertical: xAxis is category, yAxis is value
-          opt.xAxis = [{ axisLabel: {
-            show:     catLblShow,
-            rotate:   +this.xLabelRotation || 0,
-            fontSize: +this.xLabelFontSize || 11,
-          }}];
-          opt.yAxis = [{
-            splitLine: { show: !!this.showGrid },
-            axisLabel: { show: valLblShow },
-            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
-            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined,
-          }];
-        }
-      }
-
-      // Series: bar gap, border radius, label show/position, smooth, points, opacity
-      const series = curOpt.series || [];
-      const updSeries = series.map(s => {
-        if (!s) return {};
-        const u = {};
-        if (s.type === 'bar') {
-          u.barCategoryGap = (this.barCategoryGap || 20) + '%';
-          u.itemStyle = { borderRadius: +this.barBorderRadius || 0, opacity: this.opacity != null ? +this.opacity : 1 };
-          u.label = { show: !!this.showLabels, position: this.labelPosition || 'top' };
-        }
-        if (s.type === 'line') {
-          u.smooth = !!this.smooth;
-          u.showSymbol = !!this.showPoints;
-          u.itemStyle = { opacity: this.opacity != null ? +this.opacity : 1 };
-          if (this.showLabels) u.label = { show: true, position: this.labelPosition || 'top' };
-          else u.label = { show: false };
-        }
-        if (s.type === 'pie') {
-          u.itemStyle = { opacity: this.opacity != null ? +this.opacity : 1 };
-          u.label = { show: !!this.showLabels };
-        }
-        return u;
-      });
-      if (updSeries.length) opt.series = updSeries;
-
-      chart.setOption(opt, { replaceMerge: ['dataZoom'] });
-
-      // Re-attach the editor overlay so its state reads fresh values
-      if (this._editorInstance) {
-        this._editorInstance.destroy();
-        this._editorInstance = null;
-      }
-      this.$nextTick(() => this._attachEditor());
-    },
-
-    /* Auto-populate PL Scale from filterOptions when a PG column is selected */
-    _pgAutoScale() {
-      const _KNOWN_PL_SCALES = [
-        ['Well Below Benchmark', 'Below Benchmark', 'At Benchmark', 'Above Benchmark'],
-        ['Not Met', 'Nearly Met', 'Met', 'Exceeded'],
-        ['Far Below Basic', 'Below Basic', 'Basic', 'Proficient', 'Advanced'],
-        ['Below Basic', 'Basic', 'Proficient', 'Advanced'],
-        ['1', '2', '3', '4'],
-      ];
-      const _BLANK = new Set(['', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL']);
-      // Gather distinct values from both columns via already-loaded filterOptions
-      const valsB = (this.filterOptions[this.pgBeforeCol] || []).map(v => String(v).trim()).filter(v => !_BLANK.has(v));
-      const valsA = (this.filterOptions[this.pgAfterCol]  || []).map(v => String(v).trim()).filter(v => !_BLANK.has(v));
-      const valSet = new Set([...valsB, ...valsA]);
-      if (!valSet.size) return;   // nothing to detect yet
-      // Match against known ordered scales
-      let ordered = null;
-      for (const scale of _KNOWN_PL_SCALES) {
-        if ([...valSet].every(v => scale.includes(v))) {
-          ordered = scale.filter(s => valSet.has(s));
-          break;
-        }
-      }
-      if (!ordered) ordered = [...valSet].sort();
-      const detected = ordered.join(', ');
-      // Only overwrite if scale is blank or was previously auto-filled (not manually edited)
-      if (!this.pgScaleText || this.pgScaleText === this._pgLastAutoScale) {
-        this.pgScaleText = detected;
-        this._pgLastAutoScale = detected;
-      }
-    },
-
-    _pgScaleDrop(toIdx) {
-      const from = this._pgDragIdx;
-      if (from === null || from === toIdx) {
-        this._pgDragIdx = null; this._pgDragOverIdx = null;
-        return;
-      }
-      const items = [...this.pgScaleParsed];
-      const [moved] = items.splice(from, 1);
-      items.splice(toIdx, 0, moved);
-      this.pgScaleText = items.join(', ');
-      this._pgLastAutoScale = '';
-      this._pgDragIdx = null; this._pgDragOverIdx = null;
-      this._schedulePreview();
-    },
-
-    _pgScaleRemove(i) {
-      const items = [...this.pgScaleParsed];
-      items.splice(i, 1);
-      this.pgScaleText = items.join(', ');
-      this._pgLastAutoScale = '';
-      this._schedulePreview();
-    },
-
-    /* ─── Column loading ─────────────────────────────────── */
-    async loadColumns() {
-      if (!this.savedQueryId) { this.columns = []; this.filterOptions = {}; this.filterLabels = {}; return; }
-      this.columnsLoading = true;
-      try {
-        const r = await fetch(`/dataviz/api/query/${this.savedQueryId}/columns/`,
-                              { headers: { 'X-CSRFToken': csrfToken } });
-        const d = await r.json();
-        this.columns = d.columns || [];
-      } catch (e) { console.error('Column load:', e); this.columns = []; }
-      this.columnsLoading = false;
-
-      // Load filter options in parallel (non-blocking)
-      this.loadFilterOptions();
-
-      // Fetch chart type recommendations based on loaded columns
-      this.fetchRecommendations();
-    },
-
-    async loadFilterOptions() {
-      if (!this.savedQueryId) { this.filterOptions = {}; this.filterLabels = {}; return; }
-      this.filtersLoading = true;
-      try {
-        const r = await fetch(`/dataviz/api/query/${this.savedQueryId}/filter-options/`,
-                              { headers: { 'X-CSRFToken': csrfToken } });
-        const d = await r.json();
-        this.filterOptions = d.filter_options || {};
-        const labels = d.filter_labels || {};
-        this.yearAliasLabels = labels.__school_year_alias_labels__ || {};
-        delete labels.__school_year_alias_labels__;
-        this.testedSchoolNames = labels.__tested_school_labels__ || {};
-        delete labels.__tested_school_labels__;
-        this.filterLabels = labels;
-      } catch (e) { console.error('Filter options:', e); this.filterOptions = {}; this.filterLabels = {}; }
-      this.filtersLoading = false;
-      // If editing a progress_growth chart, auto-populate scale now that
-      // filterOptions is loaded (pgBeforeCol/pgAfterCol already set from config).
-      if (this.chartType === 'progress_growth' && this.pgBeforeCol && this.pgAfterCol) {
-        this._pgAutoScale();
-      }
-    },
-
-    /* ─── Explorer (Column Picker) ───────────────────────── */
-    async loadExplorerStructure() {
-      this.explorerLoading = true;
-      try {
-        const r = await fetch('/dataviz/api/columns/structures/',
-                              { headers: { 'X-CSRFToken': csrfToken } });
-        const data = await r.json();
-        // Build underscore-keyed alias map for column key matching
-        const rawAliasMap = data?.year_alias_map || {};
-        const aliasMap = {};
-        for (const [yr, alias] of Object.entries(rawAliasMap)) {
-          aliasMap[yr.replaceAll('-', '_')] = alias;
-        }
-        this.dvYearAliasMap = aliasMap;
-        this.explorerStructure = {
-          categories: data?.categories || {},
-          definitions: data?.definitions || {},
-          test_structure: data?.test_structure || {},
-          mark_structure: data?.mark_structure || {},
-          assessment_structure: data?.assessment_structure || {},
-          mark_assessment_structure: data?.mark_assessment_structure || {},
-          year_labels: data?.year_labels || {},
-        };
-      } catch (e) {
-        console.error('Explorer structure:', e);
-        this.explorerStructure = { categories: {}, definitions: {}, test_structure: {}, mark_structure: {}, assessment_structure: {}, mark_assessment_structure: {}, year_labels: {} };
-      }
-      this.explorerLoading = false;
-      // If editing an existing columns-source chart, rebuild explorerCols
-      if (this.explorerSelected.length > 0) this._syncExplorerCols();
-    },
-
-    toggleExplorerCol(col) {
-      // Resolve both specific and alias forms of the incoming column key
-      const specific = this._dvNormaliseKey(col);
-      const alias = this._dvColKeyForMode(specific, 'relative');
-      // Match against all three possible stored forms to ensure we find it
-      const idx = this.explorerSelected.findIndex(k => k === col || k === specific || k === alias);
-      if (idx >= 0) {
-        this.explorerSelected.splice(idx, 1);
-      } else {
-        this.explorerSelected.push(this._dvColKey(col));
-      }
-      this.explorerSelected = [...this.explorerSelected];
-      this._syncExplorerCols();
-    },
-
-    // Convert col key to storage key based on current dvYearMode
-    _dvColKey(col) {
-      return this._dvColKeyForMode(col, this.dvYearMode);
-    },
-    // Convert col key to a given mode's format (used for both current and conversion)
-    _dvColKeyForMode(col, mode) {
-      if (mode !== 'relative') return col;
-      const prefix = col.startsWith('test_') ? 'test_' : col.startsWith('mark_') ? 'mark_' : null;
-      if (!prefix) return col;
-      const rest = col.slice(prefix.length);
-      const parts = rest.split('_');
-      if (parts.length < 3) return col;
-      const yearUnder = parts.slice(0, 2).join('_');
-      const alias = this.dvYearAliasMap[yearUnder];
-      if (!alias) return col;
-      return prefix + alias + '_' + parts.slice(2).join('_');
-    },
-    // Convert alias col key → specific year key
-    _dvNormaliseKey(col) {
-      const prefix = col.startsWith('test_') ? 'test_' : col.startsWith('mark_') ? 'mark_' : null;
-      if (!prefix) return col;
-      const rest = col.slice(prefix.length);
-      for (const [yearUnder, alias] of Object.entries(this.dvYearAliasMap)) {
-        if (rest.startsWith(alias + '_')) {
-          return prefix + yearUnder + '_' + rest.slice(alias.length + 1);
-        }
-      }
-      return col;
-    },
-    // True if col (in either specific or alias form) is in explorerSelected
-    _dvIsColSelected(col) {
-      const norm = this._dvNormaliseKey(col);
-      const aliasForm = this._dvColKeyForMode(norm, 'relative');
-      return this.explorerSelected.includes(norm) || this.explorerSelected.includes(aliasForm);
-    },
-    // Switch year mode, converting existing selections to the new format
-    setDvYearMode(mode) {
-      if (mode === this.dvYearMode) return;
-      this.explorerSelected = [...new Set(this.explorerSelected.map(key =>
-        mode === 'relative' ? this._dvColKeyForMode(this._dvNormaliseKey(key), 'relative')
-                            : this._dvNormaliseKey(key)
-      ))];
-      if (this.chartFilters.school_year) {
-        // school_year can be a single string (from year context dropdown) or an array of strings
-        const yearVals = Array.isArray(this.chartFilters.school_year)
-          ? this.chartFilters.school_year
-          : [this.chartFilters.school_year];
-        this.chartFilters.school_year = yearVals.map(val => {
-          if (mode === 'relative') {
-            const key_us = val.replace('-', '_');
-            return this.dvYearAliasMap[key_us] || val;
-          } else {
-            for (const [yearUs, alias] of Object.entries(this.dvYearAliasMap)) {
-              if (alias === val) {
-                return yearUs.replace('_', '-');
-              }
-            }
-            return val;
-          }
-        });
-      }
-      this.dvYearMode = mode;
-      localStorage.setItem('dwYearMode', mode);
-      this._syncExplorerCols();
-      this._schedulePreview();
-    },
-    toggleDrillCol(col) {
-      const idx = this.drillSelected.indexOf(col);
-      if (idx >= 0) this.drillSelected.splice(idx, 1);
-      else this.drillSelected.push(col);
-      this.drillSelected = [...this.drillSelected];
-    },
-    _syncExplorerCols() {
-      // Build the flat columns array from selected keys.
-      // This serves as activeCols for the column chips / mapping area.
-      const defs = this.explorerStructure?.definitions || {};
-      this.explorerCols = this.explorerSelected.map(c => c);
-      // Load filter options for the selected columns
-      this._loadExplorerFilterOptions();
-      // Fetch chart type recommendations based on selected columns
-      this.fetchRecommendations();
-    },
-
-    async _loadExplorerFilterOptions() {
-      if (this.explorerSelected.length === 0) {
-        this.filterOptions = {}; this.filterLabels = {};
-        return;
-      }
-      this.filtersLoading = true;
-      try {
-        const r = await fetch('/dataviz/api/columns/filter-options/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-          body: JSON.stringify({ columns: this.explorerSelected }),
-        });
-        const d = await r.json();
-        this.filterOptions = d.filter_options || {};
-        const labels = d.filter_labels || {};
-        this.yearAliasLabels = labels.__school_year_alias_labels__ || {};
-        delete labels.__school_year_alias_labels__;
-        this.testedSchoolNames = labels.__tested_school_labels__ || {};
-        delete labels.__tested_school_labels__;
-        this.filterLabels = labels;
-      } catch (e) { console.error('Explorer filters:', e); this.filterOptions = {}; this.filterLabels = {}; }
-      this.filtersLoading = false;
-    },
-
-    explorerCatSelectedCount(catKey) {
-      const cat = this.explorerStructure?.categories?.[catKey];
-      if (!cat) return '';
-      const n = (cat.columns || []).filter(c => this.explorerSelected.includes(c)).length;
-      return n > 0 ? `${n}/${cat.columns.length}` : '';
-    },
-
-    explorerFilteredCatCols(catKey) {
-      const cat = this.explorerStructure?.categories?.[catKey];
-      if (!cat) return [];
-      const cols = cat.columns || [];
-      if (!this.explorerSearch) return cols;
-      const q = this.explorerSearch.toLowerCase();
-      const defs = this.explorerStructure?.definitions || {};
-      return cols.filter(c => (defs[c] || c).toLowerCase().includes(q));
-    },
-
-    drillCatSelectedCount(catKey) {
-      const cat = this.explorerStructure?.categories?.[catKey];
-      if (!cat) return '';
-      const n = (cat.columns || []).filter(c => this.drillSelected.includes(c)).length;
-      return n > 0 ? `${n}/${cat.columns.length}` : '';
-    },
-
-    drillFilteredCatCols(catKey) {
-      const cat = this.explorerStructure?.categories?.[catKey];
-      if (!cat) return [];
-      const cols = cat.columns || [];
-      if (!this.drillSearch) return cols;
-      const q = this.drillSearch.toLowerCase();
-      const defs = this.explorerStructure?.definitions || {};
-      return cols.filter(c => (defs[c] || c).toLowerCase().includes(q));
-    },
-
-    async runSql() {
-      if (!this.rawSql.trim()) return;
-      this.columnsLoading = true;
-      try {
-        const r = await fetch('/dataviz/api/query/sql/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-          body: JSON.stringify({ sql: this.rawSql }),
-        });
-        const d = await r.json();
-        if (d.error) { this._flash(d.error, true); this.rawSqlColumns = []; }
-        else { this.rawSqlColumns = d.columns || []; }
-      } catch (e) { console.error('SQL:', e); this.rawSqlColumns = []; }
-      this.columnsLoading = false;
-    },
-
-    /* ─── Drag & Drop ────────────────────────────────────── */
-    onDragStart(ev, col) {
-      this.draggedCol = col;
-      ev.dataTransfer.setData('text/plain', col);
-      ev.dataTransfer.effectAllowed = 'copy';
-      requestAnimationFrame(() => ev.target.classList.add('dragging'));
-    },
-    onDragEnd() {
-      this.draggedCol = '';
-      this.dragTarget = '';
-      document.querySelectorAll('.col-chip.dragging').forEach(el => el.classList.remove('dragging'));
-    },
-    doDrop(target) {
-      if (this.draggedCol) this[target] = this.draggedCol;
-      this.draggedCol = '';
-      this.dragTarget = '';
-    },
-
-    /* ─── Interactive Layout Editor ─────────────────────── */
-    toggleEditMode() {
-      this.editMode = !this.editMode;
-      if (this.editMode) {
-        if (this.previewHtml) {
-          this.$nextTick(() => this._attachEditor());
-        } else if (this.canPreview) {
-          this.doPreview();
-        }
-      } else {
-        this.showStylePanel = false;
-        if (this._editorInstance) { this._editorInstance.destroy(); this._editorInstance = null; }
-      }
-    },
-
-    _attachEditor() {
-      if (this._editorInstance) { this._editorInstance.destroy(); this._editorInstance = null; }
-      const c = this.$refs.previewContainer;
-      if (!c) return;
-      const chartEl = c.querySelector('.chart-container');
-      if (!chartEl || !chartEl._echartsInstance) return;
-      this._editorInstance = ChartEditor.attach(chartEl, (cfg) => {
-        this._editorFiring = true;
-        if (cfg.grid_left        != null) this.gridLeft        = cfg.grid_left;
-        if (cfg.grid_right       != null) this.gridRight       = cfg.grid_right;
-        if (cfg.grid_top         != null) this.gridTop         = cfg.grid_top;
-        if (cfg.grid_bottom      != null) this.gridBottom      = cfg.grid_bottom;
-        if (cfg.title_left       != null) this.titleLeft       = cfg.title_left;
-        if (cfg.title_top        != null) this.titleTop        = cfg.title_top;
-        if (cfg.title_font_size  != null) this.titleFontSize   = cfg.title_font_size;
-        if (cfg.bar_category_gap != null) this.barCategoryGap  = cfg.bar_category_gap;
-        if (cfg.label_distance   != null) this.labelDistance   = cfg.label_distance;
-        if (cfg.legend_left      != null) this.legendLeft      = cfg.legend_left;
-        if (cfg.legend_top       != null) this.legendTop       = cfg.legend_top;
-        if (cfg.legend_item_gap  != null) this.legendItemGap   = cfg.legend_item_gap;
-        if (cfg.legend_font_size != null) this.legendFontSize  = cfg.legend_font_size;
-        if (cfg.legend_icon_size  != null) this.legendIconSize   = cfg.legend_icon_size;
-        if (cfg.container_width  != null) this.containerWidth   = cfg.container_width;
-        if (cfg.container_height != null) this.containerHeight  = cfg.container_height;
-        this._editorFiring = false;
+    get drillFilteredFlatCols() {
+      const q = (this.drillSearch || '').toLowerCase();
+      return this.drillAvailableFlatCols.filter(c => {
+        const label = this.drillColLabel(c);
+        return label.toLowerCase().includes(q) || c.toLowerCase().includes(q);
       });
     },
 
-    /* ─── Preview ────────────────────────────────────────── */
-    _lastPreviewTime: 0,
-    async doPreview() {
-      if (!this.canPreview) return;
-      // Throttle: max 1 preview per 1.5s to prevent rapid-fire server calls
-      const now = Date.now();
-      if (now - this._lastPreviewTime < 1500) {
-        // Re-schedule for after the throttle window
-        clearTimeout(this._autoTimer);
-        this._autoTimer = setTimeout(() => {
-          if (this.canPreview && !this.previewLoading) this.doPreview();
-        }, 1500 - (now - this._lastPreviewTime) + 50);
-        return;
-      }
-      this._lastPreviewTime = now;
-      this.previewLoading = true;
-      this.previewHtml = '';
-      try {
-        const fd = new FormData(document.getElementById('chart-form'));
-        const r = await fetch('{% url "dataviz:chart_preview" %}', {
-          method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: fd,
-        });
-        const html = await r.text();
-        this.previewHtml = html;
-        this.previewLoading = false;  // set before $nextTick so x-show renders the container
-        this.$nextTick(() => {
-          const c = this.$refs.previewContainer;
-          if (c) {
-            c.innerHTML = html;
-            // Restore saved container dimensions before ECharts init
-            if (this.containerWidth || this.containerHeight) {
-              const cc = c.querySelector('.chart-container');
-              if (cc) {
-                if (this.containerWidth)  cc.style.width  = this.containerWidth  + 'px';
-                if (this.containerHeight) cc.style.height = this.containerHeight + 'px';
-              }
-            }
-            if (window.initAllCharts) window.initAllCharts();
-            // Extract series names for stack order UI
-            const el = c.querySelector('[data-series-names]');
-            if (el) {
-              try {
-                const names = JSON.parse(el.dataset.seriesNames || '[]');
-                this.stackOrderAvail = names;
-                if (this.stackOrder.length !== names.length || !names.every(n => this.stackOrder.includes(n))) {
-                  this.stackOrder = [...names];
-                }
-              } catch (_) {}
-
-              try {
-                const categories = JSON.parse(el.dataset.categoryNames || '[]');
-                if (categories.length) {
-                  this.categoryOrderAvail = categories;
-                  if (this.categoryOrder.length !== categories.length || !categories.every(c => this.categoryOrder.includes(c))) {
-                    this.categoryOrder = [...categories];
-                  }
-                } else {
-                  this.categoryOrderAvail = [];
-                }
-              } catch (_) {}
-
-              // Extract available assessment_compare filter values
-              try {
-                const availCats = JSON.parse(el.dataset.acAvailCats || '[]');
-                const availPl   = JSON.parse(el.dataset.acAvailPl   || '[]');
-                if (availCats.length) this.acAvailCats = availCats;
-                if (availPl.length)   this.acAvailPl   = availPl;
-              } catch (_) {}
-            }
-          }
-        });
-        // Fetch auto-description after preview renders
-        this.fetchAutoDescription();
-        return;
-      } catch (e) {
-        const msg = `<div class="text-red-600 text-sm p-4">Preview failed: ${e.message}</div>`;
-        this.previewHtml = msg;
-        if (this.$refs.previewContainer) this.$refs.previewContainer.innerHTML = msg;
-      }
-      this.previewLoading = false;
-    },
-
-    /* ─── Save ───────────────────────────────────────────── */
-    async doSave() {
-      if (!this.name.trim()) { this._flash('Enter a chart name first', true); return; }
-      this.saving = true; this.statusMsg = '';
-      try {
-        const fd = new FormData(document.getElementById('chart-form'));
-        const r = await fetch('{% url "dataviz:chart_save" %}', {
-          method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: fd,
-        });
-        if (r.ok) {
-          this._flash('Saved!', false);
-          const text = await r.text();
-          try {
-            const data = JSON.parse(text);
-            if (data.chart?.id && !this.chartId) {
-              this.chartId = data.chart.id;
-              history.replaceState(null, '', `/dataviz/charts/${data.chart.id}/edit/`);
-            }
-          } catch (_) {
-            const m = text.match(/charts\/(\d+)\/edit/);
-            if (m && !this.chartId) {
-              this.chartId = parseInt(m[1]);
-              history.replaceState(null, '', `/dataviz/charts/${m[1]}/edit/`);
-            }
-          }
-        } else {
-          this._flash(await r.text() || 'Save failed', true);
-        }
-      } catch (e) { this._flash('Error: ' + e.message, true); }
-      this.saving = false;
-    },
-
-    /* ─── Query Preview (Phase 2) ────────────────────────── */
-    async previewQuery() {
-      if (!this.savedQueryId) return;
-      this.queryPreviewLoading = true;
-      this.queryPreviewData = null;
-      try {
-        const r = await fetch(`/dataviz/api/query/${this.savedQueryId}/preview/`);
-        const data = await r.json();
-        if (data.success) {
-          this.queryPreviewData = { columns: data.columns, rows: data.rows };
-        } else {
-          this._flash(data.error || 'Preview failed', true);
-        }
-      } catch (e) {
-        this._flash('Preview error: ' + e.message, true);
-      }
-      this.queryPreviewLoading = false;
-    },
-
-    /* ─── Year Context Change (Phase 4) ────────────────────── */
-    onYearContextChange() {
-      // Store yearContext in source_filters so it's sent on save/preview
-      if (this.yearContext) {
-        // Clear any custom years when switching to a preset alias
-        const f = { ...this.chartFilters, school_year: this.yearContext };
-        delete f._custom_years;
-        this.chartFilters = f;
-      } else {
-        // Custom mode — keep any existing _custom_years or clear school_year
-        const f = { ...this.chartFilters };
-        delete f.school_year;
-        this.chartFilters = f;
-      }
-      // Reload columns if using a saved query
-      if (this.sourceType === 'query' && this.savedQueryId) {
-        this.loadColumns();
-      }
-    },
-
-    /* ─── Custom Year multi-select (Phase 4) ──────────────────── */
-    toggleCustomYear(year) {
-      let years = this.chartFilters._custom_years || [];
-      if (years.includes(year)) {
-        years = years.filter(y => y !== year);
-      } else {
-        years = [...years, year];
-      }
-      if (years.length > 0) {
-        this.chartFilters = { ...this.chartFilters, _custom_years: years, school_year: years };
-        // Multi-year: year-first view is hidden, switch to assessment-first automatically
-        if (years.length > 1 && this.pickerLayout === 'year_first') {
-          this.pickerLayout = 'assessment_first';
-          localStorage.setItem('dwPickerLayout', 'assessment_first');
-        }
-      } else {
-        const f = { ...this.chartFilters };
-        delete f._custom_years;
-        delete f.school_year;
-        this.chartFilters = f;
-      }
-      this._schedulePreview();
-    },
-
-    /* ─── Query Summary Builder (Phase 2) ──────────────────── */
-    buildQuerySummary() {
-      const parts = [];
-      // Source type
-      if (this.sourceType === 'query') {
-        const sel = document.querySelector(`[x-model="savedQueryId"]`);
-        const qName = sel?.selectedOptions?.[0]?.textContent || 'a saved query';
-        parts.push(`From: ${qName}`);
-      } else if (this.sourceType === 'sql') {
-        parts.push('From: custom SQL query');
-      } else if (this.sourceType === 'columns') {
-        parts.push(`${this.explorerCols.length} columns selected`);
-      }
-      // School year context
-      if (this.yearContext) {
-        const label = this.aliasResolvedLabels[this.yearContext] || this.yearContext;
-        parts.push(`Year: ${label}`);
-      }
-      // School filter mode
-      parts.push(`School: ${this.schoolFilterMode === 'tested' ? 'Tested/Assessment' : 'Enrolled'}`);
-      // Assessment columns
-      if (this.activeCols.length) {
-        const plCount = this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_PL')).length;
-        const ssCount = this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_SS')).length;
-        if (plCount || ssCount) parts.push(`Assessments: ${ssCount} SS, ${plCount} PL columns`);
-      }
-      return parts.join(' | ') || 'Configure a data source to see summary';
-    },
-
-    /* ─── Save & Add to Page (Phase 5) ─────────────────────── */
-    async doSaveAndAttach() {
-      if (!this.name.trim()) { this._flash('Enter a chart name first', true); return; }
-      if (!this.targetPageId) { this._flash('Select a target page', true); return; }
-      this.saving = true;
-      try {
-        const fd = new FormData(document.getElementById('chart-form'));
-        const payload = Object.fromEntries(fd.entries());
-        // Convert form values to proper JSON for the API
-        payload.target_page_id = this.targetPageId;
-        payload.chart_type = this.chartType;
-        payload.config = this._buildConfig();
-        payload.school_filter_mode = this.schoolFilterMode;
-        payload.source_filters = this.cleanSourceFilters();
-        payload.source_type = this.sourceType;
-        if (this.sourceType === 'columns') {
-          payload.selected_columns = this.explorerSelected;
-        }
-        if (this.chartId) payload.id = this.chartId;
-
-        const r = await fetch('{% url "dataviz:chart_save_and_attach" %}', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken,
-          },
-          body: JSON.stringify(payload),
-        });
-        const data = await r.json();
-        if (data.success) {
-          this._flash(`Chart saved and added to page!`, false);
-          this.saveAndAttachOpen = false;
-          this.targetPageId = '';
-          if (data.chart?.id) {
-            this.chartId = data.chart.id;
-            if (!window.location.href.includes('/edit/')) {
-              history.replaceState(null, '', `/dataviz/charts/${data.chart.id}/edit/`);
-            }
-          }
-        } else {
-          this._flash(data.error || 'Save failed', true);
-        }
-      } catch (e) {
-        this._flash('Error: ' + e.message, true);
-      }
-      this.saving = false;
-    },
-
-    /* ─── Chart Recommendations (Phase 6) ──────────────────── */
-    async fetchRecommendations() {
-      if (!this.hasData) return;
-      this.recommendationsLoading = true;
-      try {
-        const r = await fetch('{% url "dataviz:chart_recommend" %}', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken,
-          },
-          body: JSON.stringify({ columns: this.activeCols, column_definitions: {} }),
-        });
-        const data = await r.json();
-        if (data.success) {
-          this.recommendedCharts = data.recommendations || [];
-        }
-      } catch (_) { /* silently fail for recommendations */ }
-      this.recommendationsLoading = false;
-    },
-
-    /* ─── Auto Description (Phase 6) ───────────────────────── */
-    async fetchAutoDescription() {
-      if (!this.chartType) return;
-      try {
-        const cfg = this._buildConfig();
-        const r = await fetch('{% url "dataviz:chart_describe" %}', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken,
-          },
-          body: JSON.stringify({ chart_config: cfg, column_definitions: {} }),
-        });
-        const data = await r.json();
-        if (data.success) {
-          this.autoDescription = data.description;
-        }
-      } catch (_) { /* silently fail */ }
-    },
-
-    /* ─── Clean source_filters for save (strip UI-only keys) ── */
-    cleanSourceFilters() {
-      // Strip _custom_years (UI-only checkbox tracking) before saving
-      if (!this.chartFilters || typeof this.chartFilters !== 'object') return {};
-      const { _custom_years, ...clean } = this.chartFilters;
-      return clean;
-    },
-
-    /* ─── Build config helper ───────────────────────────────── */
-    _buildConfig() {
-      return {
-        chart_type: this.chartType,
-        x_col: this.xCol,
-        y_col: this.yCol,
-        series_col: this.seriesCol,
-        stack_col: this.seriesCol,
-        group_col: this.groupCol,
-        compare_pl_cols: this.comparePlCols,
-        ac_include_cats: this.acIncludeCats,
-        ac_include_pl: this.acIncludePl,
-        ac_col_filters: this.acColFilters,
-        agg: this.aggFunc,
-        agg_decimals: this.aggDecimals,
-        pg_before_col: this.pgBeforeCol,
-        pg_after_col: this.pgAfterCol,
-        pl_scale: this.pgScaleParsed,
-        pg_display: this.pgDisplay,
-        st_row_col: this.stRowCol,
-        st_col_col: this.stColCol,
-        sort_col: this.sortCol,
-        sort_dir: this.sortDir,
-        limit: this.limit,
-        palette: this.palette,
-        legend_pos: this.showLegend ? this.legendPos : 'hidden',
-        legend_item_gap: this.legendItemGap,
-        legend_font_size: this.legendFontSize,
-        legend_icon_size: this.legendIconSize,
-        legend_offset: this.legendOffset,
-        legend_left: this.legendLeft,
-        legend_top: this.legendTop,
-        show_legend: this.showLegend,
-        data_labels: this.showLabels,
-        label_position: this.labelPosition,
-        background: this.background,
-        opacity: this.opacity,
-        bar_border_radius: this.barBorderRadius,
-        show_points: this.showPoints,
-        smooth: this.smooth,
-        color_map: this.colorMap,
-        show_zoom: this.showZoom,
-        show_toolbox: this.showToolbox,
-        show_grid: this.showGrid,
-        show_axis_labels: this.showAxisLabels,
-        show_categories: this.showCategories,
-        show_axis_titles: this.showAxisTitles,
-        animation: this.enableAnimation,
-        show_tooltip: this.showTooltip,
-        tooltip_show_pct: this.tooltipShowPct,
-        tooltip_show_count: this.tooltipShowCount,
-        tooltip_value_pct: this.tooltipValuePct,
-        show_percent: this.showPercent,
-        show_percent_symbol: this.showPercentSymbol,
-        percent_decimals: this.percentDecimals,
-        category_order: this.categoryOrder,
-        bar_layout: this.barLayout,
-        bar_orientation: this.barOrientation,
-        bar_radial: this.barRadial,
-        bar_polar: this.barPolar,
-        compare_gap: this.compareGap,
-        compare_cat_font_size: this.compareCatFontSize,
-        compare_cat_rotation: this.compareCatRotation,
-        x_label_rotation: this.xLabelRotation,
-        x_label_font_size: this.xLabelFontSize,
-        x_label_max_length: this.xLabelMaxLength,
-        bar_category_gap: this.barCategoryGap,
-        y_axis_min: this.yAxisMin,
-        y_axis_max: this.yAxisMax,
-        grid_left: this.gridLeft,
-        grid_right: this.gridRight,
-        grid_top: this.gridTop,
-        grid_bottom: this.gridBottom,
-        title_left: this.titleLeft,
-        title_top: this.titleTop,
-        title_font_size: this.titleFontSize,
-        label_distance: this.labelDistance,
-        container_width: this.containerWidth,
-        container_height: this.containerHeight,
-        chart_title: this.chartTitle,
-        stack_order: this.stackOrder,
-        parliament_dot_scale: this.parliamentDotScale,
-        parliament_shape: this.parliamentShape,
-        parliament_rows: this.parliamentRowsAuto ? null : this.parliamentRows,
-        parliament_show_ss: this.parliamentShowSS,
-        school_filter_mode: this.schoolFilterMode,
-        source_filters: this.cleanSourceFilters(),
-      };
-    },
-
-    _flash(msg, isError) {
-      this.statusMsg = msg; this.statusError = isError;
-      setTimeout(() => { this.statusMsg = ''; }, 4000);
-    },
+    /* ─── Methods from external modules ─────────────────── */
+    ...chartBuilderUIMethods(),
+    ...chartBuilderDataMethods(),
+    ...chartBuilderExplorerMethods(),
+    ...chartBuilderFilterMethods(),
+    ...chartBuilderPreviewMethods({
+      preview:       '{% url "dataviz:chart_preview" %}',
+      save:          '{% url "dataviz:chart_save" %}',
+      saveAndAttach: '{% url "dataviz:chart_save_and_attach" %}',
+      recommend:     '{% url "dataviz:chart_recommend" %}',
+      describe:      '{% url "dataviz:chart_describe" %}',
+    }),
   };
 }
 </script>

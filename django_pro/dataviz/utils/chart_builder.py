@@ -20,7 +20,7 @@ except Exception:  # pragma: no cover - keep chart builder usable in isolated co
 _YEAR_RE         = re.compile(r'^(?:test|mark)_(\d{4})_(\d{4})_')
 _META_DIM_COLS   = {'_assessment', '_test_school_year', '_test_window', '_test_pl', '_mark_school_year', '_mark_period'}
 _META_SCORE_COLS = {'_test_score', '_mark_score'}
-_MELT_MAX_ROWS   = 200000  # safety cap: refuse melt if result would exceed this many rows
+_MELT_MAX_ROWS   = 600000  # safety cap: refuse melt if result would exceed this many rows
 
 _META_LABEL_MAP = {
     '_assessment':       'Assessment',
@@ -302,6 +302,16 @@ def _agg(df, x_col, y_col, agg, stack_col='', agg_decimals=None, cfg=None):
             }.get(agg, grp.size()).reset_index().rename(columns={y_col: '_value'})
             if agg_decimals is not None and '_value' in result.columns:
                 result['_value'] = result['_value'].round(agg_decimals)
+        elif agg == 'count_unique' and y_col and y_col in df.columns:
+            grp = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
+            result = grp.nunique().reset_index().rename(columns={y_col: '_value'})
+            if agg_decimals is not None and '_value' in result.columns:
+                result['_value'] = result['_value'].round(agg_decimals)
+        elif agg == 'count_occurrence' and y_col and y_col in df.columns:
+            grp = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
+            result = grp.count().reset_index().rename(columns={y_col: '_value'})
+            if agg_decimals is not None and '_value' in result.columns:
+                result['_value'] = result['_value'].round(agg_decimals)
         else:
             if y_col and y_col in df.columns:
                 result = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True).size().reset_index(name='_value')
@@ -435,6 +445,136 @@ def _apply_color_map(option: dict, cfg: dict) -> None:
                     item.setdefault('itemStyle', {})['color'] = cmap[item_name]
 
 
+def _build_grouped_axis_data(categories, sep=' · '):
+    """
+    Parses a list of category strings (joined with `sep`)
+    and returns a tuple: (leaf_categories, group_labels_list)
+    If no grouping exists, returns (categories, None).
+    """
+    has_grouping = False
+    parsed = []
+    for cat in categories:
+        if sep in cat:
+            has_grouping = True
+            parts = cat.split(sep)
+            parent = sep.join(parts[:-1])
+            leaf = parts[-1]
+            parsed.append((parent, leaf))
+        else:
+            parsed.append(("", cat))
+            
+    if not has_grouping:
+        return categories, None
+        
+    leaf_categories = [p[1] for p in parsed]
+    parent_values = [p[0] for p in parsed]
+    
+    # Identify contiguous groups of parent values
+    n = len(parent_values)
+    group_labels = [""] * n
+    
+    i = 0
+    while i < n:
+        current_parent = parent_values[i]
+        # find the end of this contiguous group
+        j = i
+        while j < n and parent_values[j] == current_parent:
+            j += 1
+        # Group is from index i to j-1
+        middle_idx = (i + j - 1) // 2
+        group_labels[middle_idx] = current_parent
+        i = j
+        
+    return leaf_categories, group_labels
+
+
+def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax, x_lbl, orientation='vertical', radial=False, polar=False):
+    leaf_categories, group_labels = _build_grouped_axis_data(categories)
+    
+    if radial:
+        option.pop('grid', None)
+        option.update({
+            'angleAxis': {'type': 'category', 'data': leaf_categories if group_labels else categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+            'radiusAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+            'polar': {'radius': '70%'},
+            'series': series,
+        })
+        option.setdefault('dv', {})['category_axis'] = 'angle'
+        return
+    if polar:
+        option.pop('grid', None)
+        option.update({
+            'radiusAxis': {'type': 'category', 'data': leaf_categories if group_labels else categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+            'angleAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+            'polar': {'radius': '70%'},
+            'series': series,
+        })
+        option.setdefault('dv', {})['category_axis'] = 'radius'
+        return
+        
+    if orientation == 'horizontal':
+        if group_labels:
+            y_axis_option = [
+                {
+                    'type': 'category',
+                    'data': leaf_categories,
+                    'name': _axis_name(labels['x'], cfg),
+                    **ax,
+                    'axisLabel': x_lbl
+                },
+                {
+                    'type': 'category',
+                    'data': group_labels,
+                    'position': 'left',
+                    'offset': 60,
+                    'axisLine': {'show': False},
+                    'axisTick': {'show': False},
+                    'splitLine': {'show': False},
+                    'axisLabel': {'interval': 0, 'textStyle': {'fontWeight': 'bold'}, **x_lbl}
+                }
+            ]
+        else:
+            y_axis_option = {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl}
+            
+        option.update({
+            'xAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+            'yAxis': y_axis_option,
+            'series': series,
+        })
+        option.setdefault('dv', {})['category_axis'] = 'y'
+        return
+        
+    if group_labels:
+        x_axis_option = [
+            {
+                'type': 'category',
+                'data': leaf_categories,
+                'name': _axis_name(labels['x'], cfg),
+                **ax,
+                'axisLabel': x_lbl
+            },
+            {
+                'type': 'category',
+                'data': group_labels,
+                'position': 'bottom',
+                'offset': 30,
+                'axisLine': {'show': False},
+                'axisTick': {'show': False},
+                'splitLine': {'show': False},
+                'axisLabel': {'interval': 0, 'textStyle': {'fontWeight': 'bold'}, **x_lbl}
+            }
+        ]
+    else:
+        x_axis_option = {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl}
+        
+    option.update({
+        'xAxis': x_axis_option,
+        'yAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+        'series': series,
+    })
+    option.setdefault('dv', {})['category_axis'] = 'x'
+
+
 def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
     t = _theme(cfg)
     title_text = cfg.get('chart_title', '') or cfg.get('title', '')
@@ -513,6 +653,8 @@ def _x_axis_label_style(cfg: dict) -> dict:
         lbl['__formatter_js__'] = (
             f'function(v){{var s=String(v);return s.length>{max_len}?s.slice(0,{max_len})+"…":s;}}'
         )
+    if cfg.get('force_show_all_labels', False):
+        lbl['interval'] = 0
     return lbl
 
 
@@ -548,13 +690,14 @@ def _tooltip_value_pct(cfg: dict) -> bool:
     return cfg.get('tooltip_value_pct', False) is True
 
 
-def _rich_tooltip_js(raw_lookup: dict, totals_lookup: dict,
+def _rich_tooltip_js(categories: list, raw_lookup: dict, totals_lookup: dict,
                      percent_decimals: int, percent_suffix: str,
                      show_pct: bool = True, show_count: bool = True,
                      value_pct_suffix: str = '') -> str:
     """Return a JS axis-tooltip formatter that shows count + % + (n=total) per category.
 
-    ``raw_lookup``   – {series_name: {category: raw_value}}
+    ``categories``    – list of original full categories
+    ``raw_lookup``    – {series_name: {category: raw_value}}
     ``totals_lookup`` – {category: total_count}
     ``value_pct_suffix`` – when '%', appends '%' after the raw value (for avg % data)
     """
@@ -575,9 +718,11 @@ def _rich_tooltip_js(raw_lookup: dict, totals_lookup: dict,
     return (
         "function(params) {"
         "  if (!Array.isArray(params)) params = [params];"
+        f"  var cats = {json.dumps(categories)};"
         f"  var rawLookup = {json.dumps(raw_lookup)};"
         f"  var totals = {json.dumps(totals_lookup)};"
-        "  var cat = params[0].name || '';"
+        "  var dataIdx = params[0].dataIndex;"
+        "  var cat = (cats && dataIdx !== undefined && cats[dataIdx]) ? cats[dataIdx] : (params[0].name || '');"
         "  var total = totals[cat] || 0;"
         "  var html = '<b>' + cat + '</b>';"
         f"{count_line}"
@@ -595,7 +740,8 @@ def _rich_tooltip_js(raw_lookup: dict, totals_lookup: dict,
 def _inline_pct_tooltip_js(percent_decimals: int = 1, percent_suffix: str = '%',
                            grand_total: float | None = None,
                            show_pct: bool = True, show_count: bool = True,
-                           value_pct_suffix: str = '') -> str:
+                           value_pct_suffix: str = '',
+                           categories: list | None = None) -> str:
     """Return a JS axis-tooltip formatter that computes % client-side from the params array.
     If grand_total is provided (single-series), it is embedded and used as the denominator.
     Otherwise the sum of all series values for the axis category is used.
@@ -619,10 +765,16 @@ def _inline_pct_tooltip_js(percent_decimals: int = 1, percent_suffix: str = '%',
         if show_pct else ";"
     )
     val_display = f"v + '{value_pct_suffix}'" if value_pct_suffix else "v"
+    cats_js = f"var cats = {json.dumps(categories)};" if categories else "var cats = null;"
+    cat_resolve = (
+        "  var dataIdx = params[0].dataIndex;"
+        "  var cat = (cats && dataIdx !== undefined && cats[dataIdx]) ? cats[dataIdx] : (params[0].name || '');"
+    )
     return (
         "function(params) {"
         "  if (!Array.isArray(params)) params = [params];"
-        "  var cat = params[0].name || '';"
+        f"  {cats_js}"
+        f"  {cat_resolve}"
         f"  var total = {total_expr};"
         "  var html = '<b>' + cat + '</b>';"
         f"{count_line}"
@@ -682,6 +834,8 @@ def _message_option(text: str, cfg: dict, error: bool = False) -> dict:
     opt['title']['text'] = text
     opt['title']['textStyle']['color'] = '#dc2626' if error else _theme(cfg)['text']
     opt['title']['top'] = 'middle'
+    opt['__is_message__'] = True
+    opt['__is_error__'] = error
     return opt
 
 
@@ -709,7 +863,11 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         y_col = valid_y[0]
 
     def make_series(name, data, stk=None):
-        label_cfg = {'show': bool(cfg.get('data_labels', False)), 'position': label_pos}
+        label_cfg = {
+            'show': bool(cfg.get('data_labels', False)),
+            'position': label_pos,
+            'fontSize': int(cfg.get('label_font_size', 10) or 10),
+        }
         if show_percent:
             label_cfg['__formatter_js__'] = (
                 f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"
@@ -735,47 +893,14 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         return s
 
     def update_axes(categories, series, y_axis_name):
-        if radial:
-            option.pop('grid', None)
-            option.update({
-                'angleAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
-                'radiusAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
-                'polar': {'radius': '70%'},
-                'series': series,
-            })
-            option.setdefault('dv', {})['category_axis'] = 'angle'
-            return
-        if polar:
-            option.pop('grid', None)
-            option.update({
-                'radiusAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
-                'angleAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
-                'polar': {'radius': '70%'},
-                'series': series,
-            })
-            option.setdefault('dv', {})['category_axis'] = 'radius'
-            return
-        if orientation == 'horizontal':
-            option.update({
-                'xAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
-                'yAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
-                'series': series,
-            })
-            option.setdefault('dv', {})['category_axis'] = 'y'
-            return
-        option.update({
-            'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
-            'yAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
-            'series': series,
-        })
-        option.setdefault('dv', {})['category_axis'] = 'x'
+        _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax, x_lbl, orientation, radial, polar)
 
     if len(valid_y) > 1:
         categories = sorted(df[x_col].fillna('(Blank)').astype(str).unique().tolist())
         series_value_maps = {}
         series = []
         for mc in valid_y:
-            col_agg = agg if pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count' else 'count'
+            col_agg = agg if agg in ('count_unique', 'count_occurrence') or (pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count') else 'count'
             adf = _agg(df, x_col, mc, col_agg, cfg=cfg)
             vm = dict(zip(adf[x_col].astype(str), adf['_value']))
             series_value_maps[_label(mc, col_defs)] = vm
@@ -797,6 +922,10 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
             adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].agg(
                 {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}[agg]
             ).reset_index().rename(columns={y_col: '_value'})
+        elif agg == 'count_unique' and y_col and y_col in df_gs.columns:
+            adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].nunique().reset_index().rename(columns={y_col: '_value'})
+        elif agg == 'count_occurrence' and y_col and y_col in df_gs.columns:
+            adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].count().reset_index().rename(columns={y_col: '_value'})
         else:
             adf = df_gs.groupby(gc, dropna=True).size().reset_index(name='_value')
 
@@ -882,7 +1011,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         # Build tooltip — always shows raw count + % + (n=total), regardless of show_percent display mode
         raw_lookup = {sv: {xv: raw_vals.get((xv, sv), 0) for xv in categories} for sv in stacks}
         totals_lookup = {xv: cat_totals.get(xv, 0) for xv in categories}
-        tooltip_js = _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+        tooltip_js = _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
                                       show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
                                       value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')
         update_axes(categories, series, y_axis_name)
@@ -915,7 +1044,8 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                              'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
                              '__formatter_js__': _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
                                                                          show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
-                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}
+                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '',
+                                                                         categories=ordered_categories)}
     option['__category_names__'] = categories if 'categories' in locals() else ordered_categories
     if (radial or polar) and isinstance(option.get('tooltip'), dict):
         option['tooltip']['axisPointer'] = {'type': 'line'}
@@ -1198,12 +1328,18 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         y_col = valid_y[0]
 
     def make_series(name, data, stk=None):
+        label_cfg = {
+            'show': bool(cfg.get('data_labels', False)),
+            'position': cfg.get('label_position', 'top') or 'top',
+            'fontSize': int(cfg.get('label_font_size', 10) or 10),
+        }
         return {
             'name': name, 'type': 'line', 'smooth': smooth,
             'stack': 'total' if stk else None,
             'areaStyle': {} if fill else None,
             'showSymbol': show_pts, 'symbolSize': 6 if show_pts else 0,
             'lineStyle': {'opacity': opacity}, 'itemStyle': {'opacity': opacity},
+            'label': label_cfg,
             'data': data,
         }
 
@@ -1228,10 +1364,10 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
             s['data'] = [float(vm.get(cat, 0) or 0) for cat in categories]
         totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
         raw_lookup = {sn: {cat: float(vm.get(cat, 0) or 0) for cat in categories} for sn, vm in series_value_maps.items()}
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
-                       'yAxis': {'type': 'value', 'name': _axis_name('Value', cfg), **ax}, 'series': series,
+        _update_chart_axes(option, categories, series, 'Value', labels, cfg, ax, x_lbl)
+        option.update({
                        'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                   '__formatter_js__': _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                   '__formatter_js__': _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}})
     elif stack_col and stack_col in df.columns:
@@ -1247,10 +1383,10 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
         series = [make_series(sv, [raw_lookup[sv][xv] for xv in categories], stacked)
                   for sv in reversed(stacks_ordered)]
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
-                       'yAxis': {'type': 'value', 'name': _axis_name(labels['y'] or 'Count', cfg), **ax}, 'series': series,
+        _update_chart_axes(option, categories, series, labels['y'] or 'Count', labels, cfg, ax, x_lbl)
+        option.update({
                        'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                   '__formatter_js__': _rich_tooltip_js(raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                   '__formatter_js__': _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}})
     else:
@@ -1261,10 +1397,10 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         grand_total = sum(ordered_vals)
         _ltjs = _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
                                            show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
-                                           value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
-                       'yAxis': {'type': 'value', 'name': _axis_name(labels['y'] or 'Count', cfg), **ax},
-                       'series': [make_series(labels['y'] or 'Value', ordered_vals)],
+                                           value_pct_suffix='%' if _tooltip_value_pct(cfg) else '',
+                                           categories=categories)
+        _update_chart_axes(option, categories, [make_series(labels['y'] or 'Value', ordered_vals)], labels['y'] or 'Count', labels, cfg, ax, x_lbl)
+        option.update({
                        'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
                                    '__formatter_js__': _ltjs}})
     option['__category_names__'] = categories
@@ -1295,7 +1431,7 @@ def _pie_option(df, x_col, y_col, agg, cfg, donut=False):
         'name': 'Distribution', 'type': 'pie',
         'radius': ['45%', '70%'] if donut else '70%',
         'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories],
-        'label': {'show': bool(cfg.get('data_labels', False))},
+        'label': {'show': bool(cfg.get('data_labels', False)), 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
     }]
     option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'item',
                          '__formatter_js__': pie_tjs}
@@ -1353,7 +1489,7 @@ def _heatmap_option(df, x_col, y_col, agg, cfg, labels):
         'xAxis': {'type': 'category', 'data': x_vals, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
         'yAxis': {'type': 'category', 'data': y_vals, 'name': _axis_name(labels['y'], cfg), **ax, 'axisLabel': x_lbl},
         'visualMap': {'min': 0, 'max': max_val or 1, 'calculable': True, 'orient': 'vertical', 'right': 10, 'top': 'center'},
-        'series': [{'type': 'heatmap', 'data': points, 'label': {'show': bool(cfg.get('data_labels', False))}}],
+        'series': [{'type': 'heatmap', 'data': points, 'label': {'show': bool(cfg.get('data_labels', False)), 'fontSize': int(cfg.get('label_font_size', 10) or 10)}}],
     })
     option['__category_names__'] = x_vals
     _add_zoom(option, cfg)
@@ -1429,9 +1565,7 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
         if st:
             lbls, data = ['All'], [st]
 
-    option.update({'xAxis': {'type': 'category', 'data': lbls, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
-                   'yAxis': {'type': 'value', 'name': _axis_name(labels['y'], cfg), **ax},
-                   'series': [{'type': 'boxplot', 'data': data}]})
+    _update_chart_axes(option, lbls, [{'type': 'boxplot', 'data': data}], labels['y'], labels, cfg, ax, x_lbl)
     option['__category_names__'] = lbls
     _add_zoom(option, cfg)
     return option
@@ -1445,7 +1579,7 @@ def _funnel_option(df, x_col, y_col, agg, cfg):
     categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'funnel', 'left': '10%', 'top': 40, 'bottom': 20, 'width': '80%',
-                           'sort': 'descending', 'label': {'show': True, 'position': 'inside'},
+                           'sort': 'descending', 'label': {'show': True, 'position': 'inside', 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
                            'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories]}]
     option['__category_names__'] = categories
     return option
@@ -1485,15 +1619,18 @@ def _gauge_option(df, y_col, agg, cfg, labels):
     vals = pd.to_numeric(df[y_col], errors='coerce').dropna()
     if vals.empty:
         return _message_option('No numeric values for gauge', cfg, error=True)
-    value = {'sum': float(vals.sum()), 'avg': float(vals.mean()), 'min': float(vals.min()),
-             'max': float(vals.max()), 'median': float(vals.median())}.get(agg, float(len(df)))
+    value = {
+        'sum': float(vals.sum()), 'avg': float(vals.mean()), 'min': float(vals.min()),
+        'max': float(vals.max()), 'median': float(vals.median()),
+        'count_unique': float(vals.nunique()), 'count_occurrence': float(vals.count()),
+    }.get(agg, float(len(df)))
     _ad = cfg.get('agg_decimals')
-    if _ad is not None and agg in ('avg', 'sum', 'min', 'max', 'median'):
+    if _ad is not None and agg in ('avg', 'sum', 'min', 'max', 'median', 'count_unique', 'count_occurrence'):
         try:
             value = round(value, int(_ad))
         except (ValueError, TypeError):
             pass
-    max_v = float(vals.max()) * 1.1 if agg != 'count' else float(max(len(df), 1)) * 1.2
+    max_v = float(vals.max()) * 1.1 if agg not in ('count', 'count_unique', 'count_occurrence') else float(max(len(df), 1)) * 1.2
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'gauge', 'max': max_v, 'detail': {'formatter': '{value}'},
                           'title': {'show': True, 'offsetCenter': [0, '78%']},
@@ -1512,7 +1649,7 @@ def _waterfall_option(df, x_col, y_col, agg, cfg, labels):
     option['yAxis'] = {'name': _axis_name(labels.get('y', ''), cfg)}
     option['series'] = [{'type': 'bar', 'name': labels.get('y', 'Value'),
                           'data': [float(value_map.get(cat, 0) or 0) for cat in categories],
-                          'label': {'show': bool(cfg.get('data_labels', False))}}]
+                          'label': {'show': bool(cfg.get('data_labels', False)), 'fontSize': int(cfg.get('label_font_size', 10) or 10)}}]
     option['__category_names__'] = categories
     return option
 
@@ -1600,6 +1737,246 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
             'colHeaders':  col_vals,
         },
     }
+
+
+def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, agg_decimals, cfg, col_defs):
+    """Return a __type__=table option for multi-dimension cross-tabulation.
+
+    Multiple row columns produce separate label columns in the table.
+    Multiple column columns each produce their own header group (multi-level headers).
+    A single column column produces a pivoted cross-tab with column headers.
+    """
+    _SEP = ' \u25b8 '  # ▸ separator for combining multi-column headers
+
+    if not row_cols:
+        return _message_option('Dynamic Summary Table: select at least one Row column', cfg)
+    if not col_cols:
+        return _message_option('Dynamic Summary Table: select at least one Column column', cfg)
+
+    valid_row = [c for c in row_cols if c and c in df.columns]
+    valid_col = [c for c in col_cols if c and c in df.columns]
+
+    if not valid_row:
+        return _message_option('Dynamic Summary Table: no valid Row columns in data', cfg)
+    if not valid_col:
+        return _message_option('Dynamic Summary Table: no valid Column columns in data', cfg)
+
+    _VALID_AGGS = {'count', 'sum', 'avg', 'min', 'max', 'median'}
+    agg_func = agg_func if agg_func in _VALID_AGGS else 'count'
+
+    _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+    _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
+
+    # ── Multi-column mode: each column column independently pivoted into its own header group ──
+    if len(valid_col) > 1:
+        keep_cols = list(dict.fromkeys(valid_row + valid_col + ([_dup_key] if _dup_key else [])))
+        if agg_func != 'count' and value_col and value_col in df.columns:
+            keep_cols.append(value_col)
+
+        mask = pd.Series(True, index=df.index)
+        for c in valid_row + valid_col:
+            mask &= ~df[c].astype(str).str.strip().isin(_BLANK)
+
+        work = df.loc[mask, keep_cols].copy()
+        for c in valid_row + valid_col:
+            work[c] = work[c].astype(str).str.strip()
+        if agg_func != 'count' and value_col and value_col in keep_cols:
+            work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
+
+        if work.empty:
+            return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
+
+        if _dup_key and agg_func == 'count':
+            work = work.drop_duplicates(subset=[_dup_key] + valid_row + valid_col, keep='first')
+
+        # Ordered row values
+        row_val_lists = {}
+        for c in valid_row:
+            row_val_lists[c] = _auto_detect_pl_scale(work[c].unique())
+        row_combos = _build_row_combos(row_val_lists, valid_row)
+
+        _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+
+        # Build an independent pivot table for each column column
+        col_groups = []   # [{label, col, headers, pivot}]
+        all_col_headers = []
+        all_cell_cols = []   # column name tracked per header for drill-through
+
+        for cc in valid_col:
+            if agg_func == 'count':
+                ct = work.groupby(valid_row + [cc]).size().unstack(fill_value=0)
+            else:
+                ct = work.groupby(valid_row + [cc])[value_col].agg(_agg_map[agg_func]).unstack(fill_value=0)
+            vals = _auto_detect_pl_scale(work[cc].unique())
+            ct = ct.reindex(columns=vals, fill_value=0)
+            group_label = _label(cc, col_defs) if col_defs else cc
+            col_groups.append({'label': group_label, 'col': cc, 'headers': vals, 'pivot': ct})
+            all_col_headers.extend(vals)
+            all_cell_cols.extend([cc] * len(vals))
+
+        # Build rows: row label values + cell values for each group + row total
+        rows_data = []
+        col_totals = [0.0] * len(all_col_headers)
+        for combo in row_combos:
+            idx_tuple = tuple(combo)
+            cell_vals = []
+            ci = 0
+            for grp in col_groups:
+                ct = grp['pivot']
+                for cv in grp['headers']:
+                    if len(valid_row) == 1:
+                        raw = float(ct.at[idx_tuple[0], cv]) if cv in ct.columns else 0.0
+                    else:
+                        try:
+                            raw = float(ct.loc[idx_tuple, cv]) if cv in ct.columns else 0.0
+                        except KeyError:
+                            raw = 0.0
+                    col_totals[ci] += raw
+                    cell_vals.append(raw)
+                    ci += 1
+            rows_data.append(list(combo) + cell_vals + [sum(cell_vals)])
+
+        grand_total = sum(col_totals)
+        total_row = ['Total'] + [''] * (len(valid_row) - 1) + col_totals + [grand_total]
+        row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
+
+        # Build col_header_groups for multi-level header rendering in JS
+        col_header_groups = []
+        for grp in col_groups:
+            col_header_groups.append({
+                'label': grp['label'],
+                'col': grp['col'],
+                'headers': grp['headers'],
+            })
+
+        return {
+            '__type__': 'table',
+            '__series_names__': [],
+            'row_col':     valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
+            'col_col':     valid_col[0],
+            'row_labels':  row_labels,
+            'row_label':   row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels),
+            'col_label':   _SEP.join(_label(c, col_defs) if col_defs else c for c in valid_col),
+            'num_row_labels': len(valid_row),
+            'col_headers': all_col_headers,
+            'col_header_groups': col_header_groups,
+            'col_header_cols': all_cell_cols,
+            'rows':        rows_data,
+            'total_row':   total_row,
+            '_drillMeta': {
+                'stType':      'dynamic_summary_table',
+                'stRowCol':    valid_row[0],
+                'stColCol':    valid_col[0],
+                'stRowCols':   valid_row,
+                'stColCols':   valid_col,
+                'stRowVals':   row_combos,
+                'colHeaders':  all_col_headers,
+                'colHeaderCols': all_cell_cols,
+            },
+        }
+
+    # ── Single column column: pivoted cross-tabulation (original behavior) ──
+    _COMP_COL = valid_col[0]
+    col_col = _COMP_COL
+
+    mask = pd.Series(True, index=df.index)
+    for c in valid_row:
+        mask &= ~df[c].astype(str).str.strip().isin(_BLANK)
+    mask &= ~df[col_col].astype(str).str.strip().isin(_BLANK)
+
+    keep_cols = list(dict.fromkeys(valid_row + [col_col] + ([_dup_key] if _dup_key else [])))
+    if agg_func != 'count' and value_col and value_col in df.columns:
+        keep_cols.append(value_col)
+    work = df.loc[mask, keep_cols].copy()
+
+    for c in valid_row:
+        work[c] = work[c].astype(str).str.strip()
+    work[col_col] = work[col_col].astype(str).str.strip()
+    if agg_func != 'count' and value_col and value_col in keep_cols:
+        work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
+
+    if work.empty:
+        return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
+
+    if _dup_key and agg_func == 'count':
+        work = work.drop_duplicates(subset=[_dup_key] + valid_row + [col_col], keep='first')
+
+    row_val_lists = {}
+    for c in valid_row:
+        row_val_lists[c] = _auto_detect_pl_scale(work[c].unique())
+
+    row_combos = _build_row_combos(row_val_lists, valid_row)
+
+    group_cols = valid_row + [col_col]
+    _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+    if agg_func == 'count':
+        ct = work.groupby(group_cols).size().unstack(fill_value=0)
+    else:
+        ct = work.groupby(group_cols)[value_col].agg(_agg_map[agg_func]).unstack(fill_value=0)
+
+    col_vals = _auto_detect_pl_scale(work[col_col].unique())
+    ct = ct.reindex(columns=col_vals, fill_value=0)
+
+    rows_data = []
+    col_totals = [0.0] * len(col_vals)
+    for combo in row_combos:
+        idx_tuple = tuple(combo)
+        cell_vals = []
+        for cv in col_vals:
+            if len(valid_row) == 1:
+                raw = float(ct.at[idx_tuple[0], cv]) if cv in ct.columns else 0.0
+            else:
+                try:
+                    raw = float(ct.loc[idx_tuple, cv]) if cv in ct.columns else 0.0
+                except KeyError:
+                    raw = 0.0
+            col_totals[col_vals.index(cv)] += raw
+            cell_vals.append(raw)
+        rows_data.append(list(combo) + cell_vals + [sum(cell_vals)])
+
+    grand_total = sum(col_totals)
+    total_row = ['Total'] + [''] * (len(valid_row) - 1) + col_totals + [grand_total]
+
+    row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
+    col_label = _SEP.join(_label(c, col_defs) if col_defs else c for c in valid_col)
+
+    return {
+        '__type__': 'table',
+        '__series_names__': [],
+        'row_col':     valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
+        'col_col':     col_col,
+        'row_labels':  row_labels,
+        'row_label':   row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels),
+        'col_label':   col_label,
+        'num_row_labels': len(valid_row),
+        'col_headers': col_vals,
+        'rows':        rows_data,
+        'total_row':   total_row,
+        '_drillMeta': {
+            'stType':      'dynamic_summary_table',
+            'stRowCol':    valid_row[0],
+            'stColCol':    col_col,
+            'stRowCols':   valid_row,
+            'stColCols':   valid_col,
+            'stRowVals':   row_combos,
+            'colHeaders':  col_vals,
+        },
+    }
+
+
+def _build_row_combos(val_lists, cols):
+    """Build all ordered row value combinations as a list of tuples."""
+    if not cols:
+        return [()]
+    result = [()]
+    for col in cols:
+        vals = val_lists.get(col, [])
+        new_result = []
+        for combo in result:
+            for val in vals:
+                new_result.append(combo + (val,))
+        result = new_result
+    return result
 
 
 def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels):
@@ -1709,7 +2086,7 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             'type': 'pie',
             'radius': ['45%', '70%'] if pg_display == 'donut' else '70%',
             'data': data,
-            'label': {'show': bool(cfg.get('data_labels', True)), 'formatter': '{b}: {c}'},
+            'label': {'show': bool(cfg.get('data_labels', True)), 'formatter': '{b}: {c}', 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
         }]
         option['tooltip'] = {
             'show': cfg.get('show_tooltip', True) is not False,
@@ -1817,7 +2194,11 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     stacked = pg_display != 'grouped_bar'
 
     def make_series(cat, data_vals):
-        label_cfg = {'show': show_labels, 'position': label_pos}
+        label_cfg = {
+            'show': show_labels,
+            'position': label_pos,
+            'fontSize': int(cfg.get('label_font_size', 10) or 10),
+        }
         if show_percent:
             label_cfg['__formatter_js__'] = (
                 f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"
@@ -1872,9 +2253,11 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
         tooltip_js = (
             "function(params) {"
             "  if (!Array.isArray(params)) params = [params];"
+            f"  var cats = {json.dumps(categories)};"
             f"  var raw = {json.dumps({cat: {xv: raw[cat].get(xv, 0) for xv in categories} for cat in ORDER})};"
             f"  var totals = {json.dumps({xv: cat_totals[xv] for xv in categories})};"
-            "  var cat = params[0].name || '';"
+            "  var dataIdx = params[0].dataIndex;"
+            "  var cat = (dataIdx !== undefined && cats[dataIdx]) ? cats[dataIdx] : (params[0].name || '');"
             "  var total = totals[cat] || 0;"
             "  var html = '<b>' + cat + '</b>';"
             f"{_count_line2}"
@@ -1914,7 +2297,7 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
                     {'value': v, 'itemStyle': {'color': _PG_COLORS[cat], 'opacity': opacity}}
                     for cat, v in zip(ORDER, overall_counts)
                 ],
-                'label': {'show': show_labels, 'position': label_pos},
+                'label': {'show': show_labels, 'position': label_pos, 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
             }],
         })
 
@@ -2082,6 +2465,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             'label': {
                 'show': show_labels,
                 'position': label_pos,
+                'fontSize': int(cfg.get('label_font_size', 10) or 10),
                 **({'__formatter_js__': f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"} if show_percent else {}),
             },
             'itemStyle': {'color': pl_color[pv], 'opacity': opacity},
@@ -2251,6 +2635,8 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         cfg = merged_cfg
     x_col        = cfg.get('x_col', '')
     x_cols_raw   = cfg.get('x_cols', [])
+    if isinstance(x_col, str) and ',' in x_col:
+        x_cols_raw = [c.strip() for c in x_col.split(',') if c.strip()]
     y_col        = cfg.get('y_col', '')
     y_cols_raw   = cfg.get('y_cols', [])
     stack_col    = cfg.get('stack_col', '')
@@ -2258,7 +2644,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     compare_pl_cols = cfg.get('compare_pl_cols', [])
     size_col     = cfg.get('size_col', '')
     agg          = str(cfg.get('agg', 'count') or 'count').lower()
-    if agg not in {'count', 'sum', 'avg', 'min', 'max', 'median'}:
+    if agg not in {'count', 'sum', 'avg', 'min', 'max', 'median', 'count_unique', 'count_occurrence'}:
         agg = 'count'
     _raw_decimals = cfg.get('agg_decimals')
     agg_decimals  = int(_raw_decimals) if _raw_decimals is not None else None
@@ -2270,6 +2656,13 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Summary Table extra fields
     st_row_col    = cfg.get('st_row_col', '')
     st_col_col    = cfg.get('st_col_col', '')
+    # Dynamic Summary Table extra fields
+    st_row_cols    = cfg.get('st_row_cols', [])
+    st_col_cols    = cfg.get('st_col_cols', [])
+    st_agg_func    = cfg.get('st_agg_func', 'count')
+    st_value_col   = cfg.get('st_value_col', '')
+    _st_raw_decimals = cfg.get('st_agg_decimals')
+    st_agg_decimals = int(_st_raw_decimals) if _st_raw_decimals is not None else None
 
     df = pd.DataFrame(rows)
 
@@ -2296,6 +2689,9 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     pg_after_col = _resolve_cfg_col(pg_after_col)
     st_row_col = _resolve_cfg_col(st_row_col)
     st_col_col = _resolve_cfg_col(st_col_col)
+    st_row_cols = [_resolve_cfg_col(c) for c in st_row_cols] if isinstance(st_row_cols, list) else []
+    st_col_cols = [_resolve_cfg_col(c) for c in st_col_cols] if isinstance(st_col_cols, list) else []
+    st_value_col = _resolve_cfg_col(st_value_col) if st_value_col else ''
     x_cols_raw = [_resolve_cfg_col(c) for c in x_cols_raw] if isinstance(x_cols_raw, list) else x_cols_raw
     y_cols_raw = [_resolve_cfg_col(c) for c in y_cols_raw] if isinstance(y_cols_raw, list) else y_cols_raw
     compare_pl_cols = [_resolve_cfg_col(c) for c in compare_pl_cols] if isinstance(compare_pl_cols, list) else compare_pl_cols
@@ -2303,7 +2699,14 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Composite x-axis
     x_cols = [c for c in x_cols_raw if isinstance(c, str) and c in df.columns] if isinstance(x_cols_raw, list) else []
     if len(x_cols) > 1:
-        df['__x_comp__'] = df[x_cols].fillna('(Blank)').astype(str).agg(' · '.join, axis=1)
+        # Vectorized string concat instead of row-wise .agg(join, axis=1) —
+        # same output, but avoids a per-row Python call (~60x faster on
+        # large result sets).
+        _filled = df[x_cols].fillna('(Blank)').astype(str)
+        _comp = _filled[x_cols[0]]
+        for _c in x_cols[1:]:
+            _comp = _comp.str.cat(_filled[_c], sep=' · ')
+        df['__x_comp__'] = _comp
         x_col = '__x_comp__'
     elif len(x_cols) == 1 and not x_col:
         x_col = x_cols[0]
@@ -2346,8 +2749,8 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         's': (_META_LABEL_MAP.get(stack_col) or _label(stack_col, col_defs)) if stack_col else '',
     }
 
-    stacked = cfg.get('stacking_mode', 'normal') == 'percent' or chart_type in ('stacked_bar', 'stacked_area')
-    smooth  = chart_type in ('spline', 'areaspline')
+    stacked = cfg.get('stacking_mode', 'normal') == 'percent' or chart_type in ('stacked_bar', 'stacked_area') or (chart_type == 'line' and cfg.get('line_layout') == 'stacked')
+    smooth  = chart_type in ('spline', 'areaspline') or (chart_type == 'line' and bool(cfg.get('smooth', False)))
 
     builders = {
         'bar':          lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, False, col_defs, group_col),
@@ -2355,7 +2758,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'grouped_bar':  lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, False, col_defs, group_col),
         'stacked_bar':  lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, True,  col_defs, group_col),
         'waterfall':    lambda: _waterfall_option(df, x_col, y_col, agg, cfg, labels),
-        'line':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, False, False, y_cols, col_defs),
+        'line':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, bool(cfg.get('line_fill', False)), (cfg.get('line_layout') == 'stacked'), y_cols, col_defs, bool(cfg.get('smooth', False))),
         'spline':       lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
         'parliament':   lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
         'area':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  False, y_cols, col_defs),
@@ -2375,6 +2778,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'assessment_compare': lambda: _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs),
         'progress_growth': lambda: _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels),
         'summary_table':   lambda: _summary_table_option(df, st_row_col, st_col_col, cfg, col_defs),
+        'dynamic_summary_table': lambda: _dynamic_summary_table_option(df, st_row_cols, st_col_cols, st_agg_func, st_value_col, st_agg_decimals, cfg, col_defs),
     }
 
     try:
@@ -2459,13 +2863,11 @@ CHART_TYPES = [
     ('assessment_compare', 'Assessment Compare', 'chart-assess', 'Comparison'),
     ('progress_growth',    'Progress Growth',    'chart-growth',  'Comparison'),
     ('summary_table',      'Summary Table',      'chart-table',   'Comparison'),
+    ('dynamic_summary_table', 'Dynamic Summary Table', 'chart-dyntable', 'Comparison'),
     ('waterfall',    'Waterfall',     'chart-waterfall',     'Comparison'),
     ('line',         'Line',          'chart-line',          'Trend'),
     ('parliament',   'Parliament',    'chart-parliament',    'Proportion'),
     ('spline',       'Parliament',    'chart-parliament',    'Proportion'),   # backward compat alias
-    ('area',         'Area',          'chart-area',          'Trend'),
-    ('areaspline',   'Smooth Area',   'chart-area-s',        'Trend'),
-    ('stacked_area', 'Stacked Area',  'chart-area-stacked',  'Trend'),
     ('pie',          'Pie',           'chart-pie',           'Proportion'),
     ('donut',        'Donut',         'chart-donut',         'Proportion'),
     ('funnel',       'Funnel',        'chart-funnel',        'Proportion'),
@@ -2560,6 +2962,12 @@ def _has_many_pl_columns(columns, col_defs):
 
 _register_rule(_has_many_pl_columns, 'stacked_bar', 13, 'Many PL columns — Stacked Bar shows distribution composition')
 
+# Dynamic Summary Table for data exploration with many columns
+def _has_many_diverse_columns(columns, col_defs):
+    return len(columns) >= 8
+
+_register_rule(_has_many_diverse_columns, 'dynamic_summary_table', 7, 'Many columns selected — Dynamic Summary Table lets you cross-tab multiple dimensions')
+
 # Summary Table for data exploration
 def _has_diverse_columns(columns, col_defs):
     return len(columns) >= 6
@@ -2652,12 +3060,15 @@ def auto_describe_chart(cfg: dict, column_defs: dict | None = None) -> str:
 
     # What's being shown
     y_label = _col_label(y_col)
-    if y_label and agg != 'count':
-        parts.append(f'showing {agg} of {y_label}')
+    if y_label and agg not in ('count', 'count_occurrence'):
+        display_agg = agg.replace('_', ' ')
+        parts.append(f'showing {display_agg} of {y_label}')
     elif y_label:
         parts.append(f'showing {y_label}')
     elif agg == 'count':
         parts.append('showing count of students')
+    elif agg == 'count_occurrence':
+        parts.append('showing count of occurrences')
 
     # What's on the X axis
     x_label = _col_label(x_col)

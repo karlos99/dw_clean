@@ -51,6 +51,7 @@ def project_settings(request):
 
         raw_default_cols = request.POST.get('default_columns_json', '')
         raw_enabled_cols = request.POST.get('enabled_columns_json', '')
+        enabled_tables = request.POST.getlist('enabled_dataset_tables')
 
         try:
             default_columns = _json.loads(raw_default_cols) if raw_default_cols.strip() else None
@@ -65,6 +66,7 @@ def project_settings(request):
         cfg.default_school_year = default_sy
         cfg.default_columns = default_columns if default_columns else None
         cfg.enabled_columns = enabled_columns if enabled_columns else None
+        cfg.enabled_dataset_tables = enabled_tables if enabled_tables else None
         cfg.updated_by = request.user
         cfg.save()
 
@@ -75,6 +77,15 @@ def project_settings(request):
     active_enabled = cfg.enabled_columns  # None = all enabled
     all_col_keys   = list(COLUMN_DEFINITIONS.keys())
 
+    from dataviz.utils.compiler import get_db_tables
+    db_tables = get_db_tables()
+    TABLE_CHOICES = []
+    for t in sorted(db_tables.keys()):
+        label = t.replace('_', ' ').title()
+        if label == 'Users User':
+            label = 'Users/User'
+        TABLE_CHOICES.append((t, label))
+
     context = {
         'cfg': cfg,
         'school_years': school_years,
@@ -84,6 +95,8 @@ def project_settings(request):
         'active_default_columns_json': _json.dumps(active_default),
         'active_enabled_columns_json': _json.dumps(active_enabled),
         'all_column_keys_json':        _json.dumps(all_col_keys),
+        'dataset_tables':              TABLE_CHOICES,
+        'enabled_dataset_tables':      cfg.enabled_dataset_tables or [],
     }
     return render(request, 'landing/project_settings.html', context)
 

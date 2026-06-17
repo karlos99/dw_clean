@@ -6,13 +6,15 @@ from django.utils.text import slugify
 class SavedChart(models.Model):
     """A chart configuration saved by a user — can be powered by a Saved Query or raw SQL."""
 
-    SOURCE_QUERY = 'query'
-    SOURCE_SQL = 'sql'
+    SOURCE_QUERY   = 'query'
+    SOURCE_SQL     = 'sql'
     SOURCE_COLUMNS = 'columns'
+    SOURCE_DATASET = 'dataset'
     SOURCE_CHOICES = [
         (SOURCE_QUERY,   'Saved Query'),
         (SOURCE_SQL,     'SQL'),
         (SOURCE_COLUMNS, 'Column Picker'),
+        (SOURCE_DATASET, 'Dataset'),
     ]
 
     name         = models.CharField(max_length=200)
@@ -376,3 +378,109 @@ class DataVizPageSection(models.Model):
         else:
             d['dashboard'] = None
         return d
+
+
+class Dataset(models.Model):
+    """A visual dataset built by joining tables and applying filter rules."""
+
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    base_table = models.CharField(max_length=100, default='current_student')  # E.g. 'current_student'
+    distinct = models.BooleanField(default=True)
+    
+    # joins: [{"table": "results", "join_type": "left", "conditions": [{"on_left": "current_student.ssid", "on_right": "results.ssid"}]}]
+    joins = models.JSONField(default=list, blank=True)
+    
+    # filters: [{"column": "current_student.grade", "operator": "exact", "value": "12"}]
+    filters = models.JSONField(default=list, blank=True)
+    
+    # columns: ["current_student.ssid", "current_student.student_name", "results.test_name", "results.ss"]
+    columns = models.JSONField(default=list, blank=True)
+    
+    # column_mappings: {"tests.test_window": "test_window"}
+    column_mappings = models.JSONField(default=dict, blank=True)
+    
+    sql_preview = models.TextField(blank=True)
+    
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='datasets',
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return self.name
+
+    def to_dict(self):
+        return {
+            'id': self.pk,
+            'name': self.name,
+            'description': self.description,
+            'base_table': self.base_table,
+            'distinct': self.distinct,
+            'joins': self.joins or [],
+            'filters': self.filters or [],
+            'columns': self.columns or [],
+            'column_mappings': self.column_mappings or {},
+            'sql_preview': self.sql_preview,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+        }
+
+
+class RelativeYear(models.Model):
+    """
+    Dynamically maps actual school years to relative aliases 
+    (e.g., '__sy_cur__', '__sy_prev1__').
+    Automatically updated when ProjectConfig.default_school_year changes.
+    """
+    school_year = models.CharField(max_length=9, primary_key=True)  # Format: YYYY-YYYY
+    relative_alias = models.CharField(max_length=50, db_index=True)   # '__sy_cur__', '__sy_prev1__'
+    relative_label = models.CharField(max_length=50)                  # 'This School Year', 'Last School Year'
+    offset_years = models.IntegerField()                              # 0, -1, -2
+    is_current = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'relative_year'
+        verbose_name = 'Relative Year Mapping'
+
+    def __str__(self):
+        return f"{self.school_year} -> {self.relative_label}"
+
+
+class ColorMapPreset(models.Model):
+    """A named, reusable set of value -> hex-color rules for chart color mapping.
+
+    Lets an admin build a color mapping once (in the chart builder's Colour
+    Mapping panel) and reuse it across other charts, instead of re-entering
+    the same value/color pairs every time.
+    """
+    name       = models.CharField(max_length=200)
+    color_map  = models.JSONField(default=dict, blank=True)   # {"value": "#hexcolor"}
+    owner      = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='color_map_presets',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def to_dict(self):
+        return {
+            'id':         self.pk,
+            'name':       self.name,
+            'color_map':  self.color_map or {},
+            'updated_at': self.updated_at.isoformat(),
+        }

@@ -41,6 +41,15 @@ class ProjectConfig(models.Model):
         ),
     )
 
+    enabled_dataset_tables = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Allowlist of database tables that can be used in the Dataset Builder.  "
+            "Null means ALL whitelisted tables are allowed."
+        ),
+    )
+
     # ── Audit ──────────────────────────────────────────────────────────────────
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -65,6 +74,49 @@ class ProjectConfig(models.Model):
         # Bust cache so get_project_config() immediately sees new values
         from django.core.cache import cache
         cache.delete('landing:project_config')
+        cache.delete('dataviz:schema_json')
+
+        # Update RelativeYear mappings relative to the new default school year
+        try:
+            from dataviz.models import RelativeYear
+            default_year = self.default_school_year
+            if default_year and '-' in default_year:
+                current_start = int(default_year.split('-')[0])
+                mappings = [
+                    {
+                        'offset': 0,
+                        'alias': '__sy_cur__',
+                        'label': 'This School Year',
+                        'is_current': True
+                    },
+                    {
+                        'offset': -1,
+                        'alias': '__sy_prev1__',
+                        'label': 'Last School Year',
+                        'is_current': False
+                    },
+                    {
+                        'offset': -2,
+                        'alias': '__sy_prev2__',
+                        'label': 'Two Years Prior',
+                        'is_current': False
+                    }
+                ]
+                # Re-populate relative_year table
+                RelativeYear.objects.all().delete()
+                for m in mappings:
+                    year_start = current_start + m['offset']
+                    year_str = f"{year_start}-{year_start + 1}"
+                    RelativeYear.objects.create(
+                        school_year=year_str,
+                        relative_alias=m['alias'],
+                        relative_label=m['label'],
+                        offset_years=m['offset'],
+                        is_current=m['is_current']
+                    )
+        except Exception:
+            # Prevent failure during initial migrations/schema changes before table exists
+            pass
 
     @classmethod
     def get(cls):

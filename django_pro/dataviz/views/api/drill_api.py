@@ -53,7 +53,11 @@ def drill_rows_api(request, chart_id):
 
     # Column selection
     cols_param = params.get('cols', '')
-    selected_columns = [c for c in cols_param.split(',') if c] if cols_param else []
+    if cols_param:
+        selected_columns = [c for c in cols_param.split(',') if c]
+    else:
+        selected_columns = chart.drill_through_columns or []
+    selected_columns = [c.split('.')[-1] for c in selected_columns]
 
     # Per-column filters
     column_filters = _parse_column_filters(request)
@@ -72,9 +76,9 @@ def drill_rows_api(request, chart_id):
         extra_columns=extra_cols or None,
     )
 
-    query_columns = result.get('columns', [])
-    all_columns = result.get('all_columns', query_columns)
-    col_labels = {c: _col_label(c) for c in all_columns}
+    query_columns = [c.split('.')[-1] for c in result.get('columns', [])]
+    all_columns = [c.split('.')[-1] for c in result.get('all_columns', query_columns)]
+    col_labels = {c.split('.')[-1]: _col_label(c) for c in all_columns}
 
     context = {
         'chart': chart,
@@ -194,7 +198,11 @@ def drill_export_csv_api(request, chart_id):
     sort_dir = params.get('sort_dir', 'asc')
 
     cols_param = params.get('cols', '')
-    selected_columns = [c for c in cols_param.split(',') if c] if cols_param else []
+    if cols_param:
+        selected_columns = [c for c in cols_param.split(',') if c]
+    else:
+        selected_columns = chart.drill_through_columns or []
+    selected_columns = [c.split('.')[-1] for c in selected_columns]
 
     column_filters = _parse_column_filters(request)
 
@@ -204,9 +212,6 @@ def drill_export_csv_api(request, chart_id):
 
     def stream_csv():
         first_chunk = True
-        for page_num in iter(lambda: page_num + 1, 0):  # will be set below
-            pass
-
         page = 1
         while True:
             result = execute_drill_query(

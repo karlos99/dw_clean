@@ -291,7 +291,7 @@ function pageBuilder() {
         </div>
       `;
       return titleBar
-        + '<div class="flex-1 min-h-0" hx-get="' + renderUrl + '" hx-trigger="load" hx-swap="innerHTML">'
+        + '<div id="builder-chart-slot-' + sec.id + '" class="flex-1 min-h-0" hx-get="' + renderUrl + '" hx-trigger="load" hx-target="#builder-chart-slot-' + sec.id + '" hx-swap="innerHTML">'
         + '<div class="flex items-center justify-center h-full text-slate-300 text-xs">Loading…</div>'
         + '</div>';
     },
@@ -609,7 +609,12 @@ function pageBuilder() {
       const grid = this.grids[rowId];
       if (grid) {
         const el = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sectionId + '"]');
-        if (el) grid.removeWidget(el, false);
+        // removeDOM must be true here: unlike removeRow() (where Alpine's
+        // x-for re-render removes the row container), section DOM nodes are
+        // created manually via grid.addWidget() in _addWidgetToGrid() and
+        // are not tracked by any Alpine template — GridStack must remove
+        // the element itself or it stays visible after deletion.
+        if (el) grid.removeWidget(el, true);
       }
 
       const row = this.getRow(rowId);

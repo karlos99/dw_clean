@@ -7,7 +7,7 @@ from django.db import connections
 from django.shortcuts import get_object_or_404, render
 from django.views.generic import TemplateView
 
-from dataviz.models import SavedChart
+from dataviz.models import SavedChart, Dataset
 from dataviz.utils.chart_builder import CHART_TYPES
 from dataexploration.column_utils import get_mark_columns, get_test_columns
 from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
@@ -145,12 +145,14 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             'assessment_compare': _svg('<rect x="2" y="6" width="4" height="12" rx="1"/><rect x="2" y="6" width="4" height="5" rx="1" opacity=".5"/><rect x="8" y="9" width="4" height="9" rx="1"/><rect x="8" y="9" width="4" height="4" rx="1" opacity=".5"/><rect x="14" y="4" width="4" height="14" rx="1"/><rect x="14" y="4" width="4" height="6" rx="1" opacity=".5"/>'),
             'progress_growth': _svg('<path d="M3 17 C5 17 6 12 9 11 S13 13 16 8 S20 5 21 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M15 5 L21 5 L21 11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'),
             'summary_table': _svg('<rect x="2" y="3" width="20" height="3" rx=".5"/><rect x="2" y="8" width="20" height="3" rx=".5" opacity=".6"/><rect x="2" y="13" width="20" height="3" rx=".5" opacity=".4"/><rect x="2" y="18" width="20" height="3" rx=".5" opacity=".2"/>'),
+            'dynamic_summary_table': _svg('<rect x="2" y="2" width="20" height="20" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="7" x2="22" y2="7" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="13" x2="22" y2="13" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="18" x2="22" y2="18" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="2" x2="8" y2="22" stroke="currentColor" stroke-width="1.5"/><line x1="15" y1="2" x2="15" y2="22" stroke="currentColor" stroke-width="1.5"/>'),
         }
         chart_types_flat = [(k, l, _ICONS.get(k, _ICONS['bar']), g) for k, l, _, g in CHART_TYPES]
 
         agg_choices = [
             ('count', 'Count'), ('sum', 'Sum'), ('avg', 'Average'),
             ('min', 'Min'), ('max', 'Max'), ('median', 'Median'),
+            ('count_unique', 'Count Unique'), ('count_occurrence', 'Count Occurrence'),
         ]
 
         all_years = list(test_structure.keys()) + list(marks_structure.keys())
@@ -179,6 +181,11 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
         from dataviz.models import DataVizPage
         available_pages = list(DataVizPage.objects.order_by('title').values('id', 'title', 'slug'))
 
+        # Available datasets for the chart builder picker
+        available_datasets_qs = Dataset.objects.order_by('name')[:200]
+        available_datasets = list(available_datasets_qs.values('id', 'name', 'description'))
+        available_datasets_json = json.dumps(available_datasets)
+
         context.update({
             'chart_id':             chart_id,
             'existing_chart':       existing_chart,
@@ -203,6 +210,8 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             'sy_last_year':         SY_LAST_YEAR,
             'sy_two_prior':         SY_TWO_PRIOR,
             'available_pages_json': json.dumps(available_pages),
+            'available_datasets': available_datasets_qs,
+            'available_datasets_json': available_datasets_json,
         })
         return context
 

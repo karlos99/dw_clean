@@ -58,6 +58,13 @@
 {% endblock %}
 
 {% block content %}
+<!-- Loading Progress Bar -->
+<div id="loading-bar" class="fixed top-0 left-0 right-0 z-[200] hidden" aria-hidden="true">
+    <div class="h-1 bg-blue-200 overflow-hidden">
+        <div id="loading-bar-progress" class="h-full bg-blue-600 transition-all duration-300 ease-out" style="width: 0%"></div>
+    </div>
+</div>
+{% include "dataviz/submenu.html" %}
 <div x-data="pageBuilder()" class="h-[calc(100vh-5rem)] flex flex-col bg-slate-50">
 
   <!-- ── Toast ───────────────────────────────────────────────────── -->
@@ -726,4 +733,70 @@
   </div>
 
 </div><!-- /pageBuilder -->
+
+<script>
+  // Loading progress bar logic for chart slots
+  (function() {
+    let activeRequests = 0;
+    let progressTimer = null;
+    let progressVal = 0;
+
+    function startProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (!bar || !progress) return;
+
+      bar.classList.remove('hidden');
+      bar.setAttribute('aria-hidden', 'false');
+      
+      progressVal = 0;
+      progress.style.width = '0%';
+      
+      if (progressTimer) clearInterval(progressTimer);
+      
+      progressTimer = setInterval(() => {
+        if (progressVal < 90) {
+          progressVal += (90 - progressVal) * 0.1;
+          progress.style.width = Math.round(progressVal) + '%';
+        }
+      }, 150);
+    }
+
+    function completeProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      if (progress) {
+        progress.style.width = '100%';
+      }
+      setTimeout(() => {
+        if (bar) {
+          bar.classList.add('hidden');
+          bar.setAttribute('aria-hidden', 'true');
+        }
+        if (progress) {
+          progress.style.width = '0%';
+        }
+      }, 300);
+    }
+
+    document.addEventListener('htmx:beforeRequest', (evt) => {
+      if (activeRequests === 0) {
+        startProgress();
+      }
+      activeRequests++;
+    });
+
+    document.addEventListener('htmx:afterRequest', (evt) => {
+      activeRequests--;
+      if (activeRequests <= 0) {
+        activeRequests = 0;
+        completeProgress();
+      }
+    });
+  })();
+</script>
 {% endblock %}

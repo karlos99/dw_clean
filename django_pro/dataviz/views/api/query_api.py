@@ -245,11 +245,71 @@ def _inject_school_year_aliases(options: dict, labels: dict) -> None:
     labels['__school_year_alias_labels__'] = {a: lbl for a, lbl in alias_entries}
 
 
+def _build_where_clause(filters_dict: dict, exclude_col: str = None) -> tuple[list[str], list]:
+    """Helper to build WHERE clause parts and parameters for scoping filter options.
+    
+    Excluding `exclude_col` from the active filters allows the options for `exclude_col`
+    itself to stay populated with all other context-valid values.
+    """
+    where_parts = []
+    params = []
+    _SAFE_COL_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+    _enroll_keys = set(_ENROLL_FILTER_EXPRS.keys())
+
+    for fkey, fval in filters_dict.items():
+        if fkey == exclude_col:
+            continue
+        if fkey == 'search' or fkey.startswith(('test_', 'mark_')):
+            continue
+        if fkey not in _FILTERABLE_COLUMNS:
+            continue
+        
+        # Determine SQL expression for the column
+        if fkey in _enroll_keys:
+            expr = _ENROLL_FILTER_EXPRS[fkey]
+        elif _SAFE_COL_RE.match(fkey):
+            expr = f'cs.{fkey}'
+        else:
+            continue
+
+        if not fval:
+            continue
+
+        # Handle list/multi-select values
+        if isinstance(fval, list):
+            vals = [v for v in fval if v]
+            if not vals:
+                continue
+            has_blank = '(Blank)' in vals
+            others = [v for v in vals if v != '(Blank)']
+            parts = []
+            if others:
+                ph = ', '.join(['%s'] * len(others))
+                parts.append(f'{expr} IN ({ph})')
+                params.extend(others)
+            if has_blank:
+                parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
+            if len(parts) > 1:
+                where_parts.append(f"({' OR '.join(parts)})")
+            elif parts:
+                where_parts.append(parts[0])
+        else:
+            if fval == '(Blank)':
+                where_parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
+            else:
+                where_parts.append(f'{expr} = %s')
+                params.append(fval)
+
+    return where_parts, params
+
+
 @login_required
 def query_filter_options_api(request, query_id):
     """Return distinct values for every filterable column available in a query.
 
     Response: ``{ filter_options: { grade: ['K','1',...], school: [...], ... } }``
+
+    Accepts optional ?current_filters=<JSON> to scope values by active filters (cascading).
 
     Includes:
     - Base demographic columns from ``current_student`` (grade, school, …)
@@ -276,7 +336,20 @@ def query_filter_options_api(request, query_id):
     if not can_user_view_query(request.user, sq):
         return JsonResponse({'error': 'Access denied'}, status=403)
 
-    cached_resp = cache.get(f'dv_filter_opts:{query_id}')
+    # Parse optional cascading filter context
+    current_filters_raw = request.GET.get('current_filters', '')
+    current_filters = {}
+    if current_filters_raw:
+        try:
+            current_filters = json.loads(current_filters_raw)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    cache_key_parts = f'dv_filter_opts:{query_id}'
+    if current_filters:
+        filter_hash = md5(json.dumps(current_filters, sort_keys=True).encode()).hexdigest()[:8]
+        cache_key_parts += f':{filter_hash}'
+    cached_resp = cache.get(cache_key_parts)
     if cached_resp is not None:
         return JsonResponse(cached_resp)
 
@@ -284,76 +357,56 @@ def query_filter_options_api(request, query_id):
     columns = config.get('columns', [])
     filters = config.get('filters', {}) if isinstance(config.get('filters'), dict) else {}
 
+    # Keep track of original keys to map resolved values back
+    resolved_to_original = {}
+    try:
+        from dataexploration.school_year_utils import resolve_relative_column_key
+        for c in columns:
+            resolved = resolve_relative_column_key(c)
+            resolved_to_original[resolved] = c
+    except Exception:
+        resolved_to_original = {c: c for c in columns}
+
+    resolved_columns = list(resolved_to_original.keys())
     # Separate columns into base demographic, test PL, and mark columns
-    filter_cols = [c for c in columns if c in _FILTERABLE_COLUMNS]
-    pl_cols     = [c for c in columns if c.startswith('test_') and c.endswith('_PL')]
-    mark_cols   = [c for c in columns if c.startswith('mark_')]
+    filter_cols = [c for c in resolved_columns if c in _FILTERABLE_COLUMNS]
+    pl_cols     = [c for c in resolved_columns if c.startswith('test_') and c.endswith('_PL')]
+    mark_cols   = [c for c in resolved_columns if c.startswith('mark_')]
 
     if not filter_cols and not pl_cols and not mark_cols:
         return JsonResponse({'filter_options': {}})
 
+    # Merge config level filters and cascading current_filters
+    merged_filters = {}
+    if isinstance(config.get('filters'), dict):
+        merged_filters.update(config['filters'])
+    if isinstance(current_filters, dict):
+        merged_filters.update(current_filters)
+
+    # Resolve any relative column keys and school_year alias values in merged_filters
+    try:
+        from dataexploration.school_year_utils import resolve_relative_column_key, resolve_school_year
+        merged_filters = {resolve_relative_column_key(k): v for k, v in merged_filters.items()}
+        if 'school_year' in merged_filters:
+            sy_val = merged_filters['school_year']
+            if isinstance(sy_val, list):
+                merged_filters['school_year'] = [resolve_school_year(v) for v in sy_val]
+            else:
+                merged_filters['school_year'] = resolve_school_year(sy_val)
+    except Exception:
+        pass
+
     # Do we need the student_enroll JOIN?
-    needs_enroll = any(c in _ENROLL_FILTER_EXPRS for c in filter_cols)
-
-    # Build a minimal WHERE clause from the query's own school_year filter
-    # for base demographic columns (existing behaviour).
-    where_parts, params = [], []
-    sy = filters.get('school_year')
-    if sy:
-        vals = sy if isinstance(sy, list) else [sy]
-        vals = [v for v in vals if v]
-        if vals:
-            where_parts.append('cs.school_year IN (%s)' % ', '.join(['%s'] * len(vals)))
-            params.extend(vals)
-
-    where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
+    needs_enroll = (
+        any(c in _ENROLL_FILTER_EXPRS for c in filter_cols) or
+        any(c in _ENROLL_FILTER_EXPRS for c in merged_filters.keys())
+    )
     join_sql  = _ENROLL_JOIN if needs_enroll else ''
 
     # ── Build comprehensive demographic filters for PL / mark scoping ──────────
     # These replicate the same filter logic as _run_saved_query_sql so that PL
     # and mark filter options are scoped by the same demographic context.
-    _SAFE_COL_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
-    _enroll_keys = set(_ENROLL_FILTER_EXPRS.keys())
-    demo_where_parts: list[str] = []
-    demo_params: list = []
-
-    for fkey, fval in filters.items():
-        if fkey == 'search' or fkey.startswith(('test_', 'mark_')):
-            continue
-        if fkey not in _FILTERABLE_COLUMNS:
-            continue
-        if fkey in _enroll_keys:
-            expr = _ENROLL_FILTER_EXPRS[fkey]
-        elif _SAFE_COL_RE.match(fkey):
-            expr = f'cs.{fkey}'
-        else:
-            continue
-        if not fval:
-            continue
-        if isinstance(fval, list):
-            vals = [v for v in fval if v]
-            if not vals:
-                continue
-            has_blank = '(Blank)' in vals
-            others = [v for v in vals if v != '(Blank)']
-            parts = []
-            if others:
-                ph = ', '.join(['%s'] * len(others))
-                parts.append(f'{expr} IN ({ph})')
-                demo_params.extend(others)
-            if has_blank:
-                parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
-            if len(parts) > 1:
-                demo_where_parts.append(f"({' OR '.join(parts)})")
-            elif parts:
-                demo_where_parts.append(parts[0])
-        else:
-            if fval == '(Blank)':
-                demo_where_parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
-            else:
-                demo_where_parts.append(f'{expr} = %s')
-                demo_params.append(fval)
-
+    demo_where_parts, demo_params = _build_where_clause(merged_filters)
     demo_where_sql = ('WHERE ' + ' AND '.join(demo_where_parts)) if demo_where_parts else ''
     # cs join fragment for scoping PL / mark queries against current_student
     _CS_JOIN = ' INNER JOIN current_student cs ON cs.student_id = r.local_student_id AND cs.school_year = r.school_year'
@@ -369,20 +422,20 @@ def query_filter_options_api(request, query_id):
                 union_params: list = []
                 for col in filter_cols:
                     expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
-                    col_label = col
-                    base_where = (
-                        f"{where_sql} AND {expr} IS NOT NULL AND {expr} != ''"
-                        if where_sql
-                        else f"WHERE {expr} IS NOT NULL AND {expr} != ''"
-                    )
+                    
+                    # Build dynamic cascading WHERE clause excluding the current column itself
+                    col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
+                    col_where_parts.append(f"{expr} IS NOT NULL AND {expr} != ''")
+                    col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts)
+                    
                     union_parts.append(
                         f"(SELECT DISTINCT {expr} AS val, %s AS col_name "
                         f"FROM current_student cs{join_sql} "
-                        f"{base_where} "
+                        f"{col_where_sql} "
                         f"ORDER BY val LIMIT 100)"
                     )
-                    union_params.append(col_label)
-                    union_params.extend(params)
+                    union_params.append(col)
+                    union_params.extend(col_params)
                 union_sql = ' UNION ALL '.join(union_parts)
                 cursor.execute(union_sql, union_params)
                 for row in cursor.fetchall():
@@ -442,7 +495,7 @@ def query_filter_options_api(request, query_id):
                     cursor.execute(pl_sql, pl_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
-                        options[col] = vals
+                        options[resolved_to_original.get(col, col)] = vals
 
                     # Gather school_codes from results for this assessment
                     if demo_where_sql:
@@ -540,7 +593,7 @@ def query_filter_options_api(request, query_id):
                     cursor.execute(mark_sql, mark_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
-                        options[col] = vals
+                        options[resolved_to_original.get(col, col)] = vals
 
     except Exception as exc:
         return JsonResponse({'error': str(exc)}, status=500)
@@ -573,14 +626,28 @@ def query_filter_options_api(request, query_id):
         elif col.startswith('test_') and col.endswith('_PL'):
             # Build a readable label from the column key:
             # test_2025_2026_Dibbles_Dibbles_BOY_PL → Dibbles Dibbles BOY PL
-            inner = col[5:-3]  # strip "test_" and "_PL"
-            parts = inner.split('_')
+            key_for_parsing = col
+            if '__sy_' in col:
+                try:
+                    from dataexploration.school_year_utils import resolve_relative_column_key
+                    key_for_parsing = resolve_relative_column_key(col)
+                except Exception:
+                    pass
+            inner = key_for_parsing[5:-3]  # strip "test_" and "_PL"
+            parts = [p for p in inner.split('_') if p]
             # Skip the year portion (first two parts like 2025_2026)
             name_parts = parts[2:] if len(parts) > 2 else parts
             labels[col] = ' '.join(name_parts) + ' PL'
         elif col.startswith('mark_'):
-            inner = col[5:]  # strip "mark_"
-            parts = inner.split('_')
+            key_for_parsing = col
+            if '__sy_' in col:
+                try:
+                    from dataexploration.school_year_utils import resolve_relative_column_key
+                    key_for_parsing = resolve_relative_column_key(col)
+                except Exception:
+                    pass
+            inner = key_for_parsing[5:]  # strip "mark_"
+            parts = [p for p in inner.split('_') if p]
             name_parts = parts[2:] if len(parts) > 2 else parts
             labels[col] = ' '.join(name_parts)
         else:
@@ -590,7 +657,7 @@ def query_filter_options_api(request, query_id):
     if tested_school_labels:
         labels['__tested_school_labels__'] = tested_school_labels
     resp_data = {'filter_options': options, 'filter_labels': labels}
-    cache.set(f'dv_filter_opts:{query_id}', resp_data, 300)
+    cache.set(cache_key_parts, resp_data, 300)
     return JsonResponse(resp_data)
 
 
@@ -678,60 +745,62 @@ def column_filter_options_api(request):
     if not columns:
         return JsonResponse({'filter_options': {}, 'filter_labels': {}})
 
-    filter_cols = [c for c in columns if c in _FILTERABLE_COLUMNS]
-    pl_cols     = [c for c in columns if c.startswith('test_') and c.endswith('_PL')]
-    mark_cols   = [c for c in columns if c.startswith('mark_')]
+    req_filters = body.get('filters', {}) or {}
+
+    # Cache based on column set + active filters (5-minute TTL)
+    from hashlib import md5
+    cache_key = 'dv_col_filter_opts:' + md5(
+        json.dumps({'cols': sorted(columns), 'filters': req_filters}, sort_keys=True).encode()
+    ).hexdigest()[:14]
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return JsonResponse(cached)
+
+    # Keep track of original keys to map resolved values back
+    resolved_to_original = {}
+    try:
+        from dataexploration.school_year_utils import resolve_relative_column_key
+        for c in columns:
+            resolved = resolve_relative_column_key(c)
+            resolved_to_original[resolved] = c
+    except Exception:
+        resolved_to_original = {c: c for c in columns}
+
+    resolved_columns = list(resolved_to_original.keys())
+    # Always include ALL demographic filter columns — the explorer source always
+    # reads from current_student so all demographics are available regardless of
+    # which specific columns the user picked in the explorer.
+    filter_cols = list(_FILTERABLE_COLUMNS)
+    pl_cols     = [c for c in resolved_columns if c.startswith('test_') and c.endswith('_PL')]
+    mark_cols   = [c for c in resolved_columns if c.startswith('mark_')]
 
     if not filter_cols and not pl_cols and not mark_cols:
         return JsonResponse({'filter_options': {}, 'filter_labels': {}})
 
-    needs_enroll = any(c in _ENROLL_FILTER_EXPRS for c in filter_cols)
+    # Do we need the student_enroll JOIN?
+    merged_filters = req_filters
+
+    # Resolve any relative column keys and school_year alias values in merged_filters
+    try:
+        from dataexploration.school_year_utils import resolve_relative_column_key, resolve_school_year
+        merged_filters = {resolve_relative_column_key(k): v for k, v in merged_filters.items()}
+        if 'school_year' in merged_filters:
+            sy_val = merged_filters['school_year']
+            if isinstance(sy_val, list):
+                merged_filters['school_year'] = [resolve_school_year(v) for v in sy_val]
+            else:
+                merged_filters['school_year'] = resolve_school_year(sy_val)
+    except Exception:
+        pass
+
+    needs_enroll = (
+        any(c in _ENROLL_FILTER_EXPRS for c in filter_cols) or
+        any(c in _ENROLL_FILTER_EXPRS for c in merged_filters.keys())
+    )
     join_sql = _ENROLL_JOIN if needs_enroll else ''
 
     # ── Build demographic filter context from optional request filters ─────────
-    req_filters: dict = body.get('filters', {})
-    _SAFE_COL_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
-    _enroll_keys = set(_ENROLL_FILTER_EXPRS.keys())
-    demo_where_parts: list[str] = []
-    demo_params: list = []
-
-    for fkey, fval in req_filters.items():
-        if fkey == 'search' or fkey.startswith(('test_', 'mark_')):
-            continue
-        if fkey not in _FILTERABLE_COLUMNS:
-            continue
-        if fkey in _enroll_keys:
-            expr = _ENROLL_FILTER_EXPRS[fkey]
-        elif _SAFE_COL_RE.match(fkey):
-            expr = f'cs.{fkey}'
-        else:
-            continue
-        if not fval:
-            continue
-        if isinstance(fval, list):
-            vals = [v for v in fval if v]
-            if not vals:
-                continue
-            has_blank = '(Blank)' in vals
-            others = [v for v in vals if v != '(Blank)']
-            parts = []
-            if others:
-                ph = ', '.join(['%s'] * len(others))
-                parts.append(f'{expr} IN ({ph})')
-                demo_params.extend(others)
-            if has_blank:
-                parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
-            if len(parts) > 1:
-                demo_where_parts.append(f"({' OR '.join(parts)})")
-            elif parts:
-                demo_where_parts.append(parts[0])
-        else:
-            if fval == '(Blank)':
-                demo_where_parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
-            else:
-                demo_where_parts.append(f'{expr} = %s')
-                demo_params.append(fval)
-
+    demo_where_parts, demo_params = _build_where_clause(merged_filters)
     demo_where_sql = ('WHERE ' + ' AND '.join(demo_where_parts)) if demo_where_parts else ''
     _CS_JOIN = ' INNER JOIN current_student cs ON cs.student_id = r.local_student_id AND cs.school_year = r.school_year'
     _CS_JOIN_MARK = ' INNER JOIN current_student cs ON cs.stu_annual_key = sm.stu_annual_key'
@@ -746,13 +815,17 @@ def column_filter_options_api(request):
                 union_params: list = []
                 for col in filter_cols:
                     expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
+                    col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
+                    col_where_parts.append(f"{expr} IS NOT NULL AND {expr} != ''")
+                    col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts)
                     union_parts.append(
                         f"(SELECT DISTINCT {expr} AS val, %s AS col_name "
                         f"FROM current_student cs{join_sql} "
-                        f"WHERE {expr} IS NOT NULL AND {expr} != '' "
+                        f"{col_where_sql} "
                         f"ORDER BY val LIMIT 100)"
                     )
                     union_params.append(col)
+                    union_params.extend(col_params)
                 union_sql = ' UNION ALL '.join(union_parts)
                 cursor.execute(union_sql, union_params)
                 for row in cursor.fetchall():
@@ -807,7 +880,7 @@ def column_filter_options_api(request):
                     cursor.execute(pl_sql, pl_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
-                        options[col] = vals
+                        options[resolved_to_original.get(col, col)] = vals
 
                     if demo_where_sql:
                         ts_sql = (
@@ -900,7 +973,7 @@ def column_filter_options_api(request):
                     cursor.execute(mark_sql, mark_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
                     if vals:
-                        options[col] = vals
+                        options[resolved_to_original.get(col, col)] = vals
 
     except Exception as exc:
         return JsonResponse({'error': str(exc)}, status=500)
@@ -924,13 +997,27 @@ def column_filter_options_api(request):
         elif col in _FILTERABLE_COLUMNS:
             labels[col] = col.replace('_', ' ').title()
         elif col.startswith('test_') and col.endswith('_PL'):
-            inner = col[5:-3]
-            parts = inner.split('_')
+            key_for_parsing = col
+            if '__sy_' in col:
+                try:
+                    from dataexploration.school_year_utils import resolve_relative_column_key
+                    key_for_parsing = resolve_relative_column_key(col)
+                except Exception:
+                    pass
+            inner = key_for_parsing[5:-3]
+            parts = [p for p in inner.split('_') if p]
             name_parts = parts[2:] if len(parts) > 2 else parts
             labels[col] = ' '.join(name_parts) + ' PL'
         elif col.startswith('mark_'):
-            inner = col[5:]
-            parts = inner.split('_')
+            key_for_parsing = col
+            if '__sy_' in col:
+                try:
+                    from dataexploration.school_year_utils import resolve_relative_column_key
+                    key_for_parsing = resolve_relative_column_key(col)
+                except Exception:
+                    pass
+            inner = key_for_parsing[5:]
+            parts = [p for p in inner.split('_') if p]
             name_parts = parts[2:] if len(parts) > 2 else parts
             labels[col] = ' '.join(name_parts)
         else:
@@ -939,4 +1026,6 @@ def column_filter_options_api(request):
     _inject_school_year_aliases(options, labels)
     if _ts_codes:
         labels['__tested_school_labels__'] = _ts_codes
-    return JsonResponse({'filter_options': options, 'filter_labels': labels})
+    resp_data = {'filter_options': options, 'filter_labels': labels}
+    cache.set(cache_key, resp_data, 300)
+    return JsonResponse(resp_data)
