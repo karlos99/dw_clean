@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load dataviz_tags %}
 
 {% block title %}{{ page.title }} – DataViz{% endblock %}
 
@@ -12,6 +13,14 @@
     gap: 1rem;
     grid-template-columns: repeat(12, 1fr);
   }
+  .page-grid > div {
+    height: calc(var(--gs-h, 4) * 80px);
+  }
+  @media (min-width: 1025px) {
+    .page-grid > div {
+      grid-row: var(--gs-y) / span var(--gs-h);
+    }
+  }
   @media (max-width: 1024px) {
     .page-grid {
       grid-template-columns: repeat(6, 1fr);
@@ -19,12 +28,30 @@
     .page-grid > [style*="grid-column"] {
       grid-column: 1 / -1 !important;
     }
+    /* HTML blocks can expand vertically if text overflows on tablet/mobile */
+    .page-grid > div.html-section {
+      height: auto !important;
+      min-height: calc(var(--gs-h, 4) * 80px);
+    }
   }
   @media (max-width: 640px) {
     .page-grid {
       grid-template-columns: 1fr;
     }
+    /* Ensure charts on mobile are not squished vertically */
+    .page-grid > div.chart-section {
+      height: max(calc(var(--gs-h, 4) * 80px), 220px);
+    }
   }
+  /* Unified HTML prose styling */
+  .html-prose h1 { font-size: 1.5rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #0f172a; line-height: 1.2; }
+  .html-prose h2 { font-size: 1.25rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #1e293b; line-height: 1.3; }
+  .html-prose h3 { font-size: 1.1rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #334155; line-height: 1.4; }
+  .html-prose p  { margin-bottom: 0.5em; line-height: 1.5; }
+  .html-prose ul { list-style-type: disc; padding-left: 1.5rem; margin: 0.5em 0; }
+  .html-prose ol { list-style-type: decimal; padding-left: 1.5rem; margin: 0.5em 0; }
+  .html-prose a  { color: #2563eb; text-decoration: underline; }
+  .html-prose a:hover { color: #1d4ed8; }
   /* Tree menu transitions */
   .filter-tree-values { max-height: 14rem; overflow-y: auto; }
   .filter-tag { animation: tagIn .15s ease-out; }
@@ -36,6 +63,13 @@
 {% endblock %}
 
 {% block content %}
+<!-- Loading Progress Bar -->
+<div id="loading-bar" class="fixed top-0 left-0 right-0 z-[60] hidden" aria-hidden="true">
+    <div class="h-1 bg-blue-200 overflow-hidden">
+        <div id="loading-bar-progress" class="h-full bg-blue-600 transition-all duration-300 ease-out" style="width: 0%"></div>
+    </div>
+</div>
+{% include "dataviz/submenu.html" %}
 <div class="{% if page.container_width == 'full' %}max-w-full{% elif page.container_width == 'wide' %}max-w-screen-2xl{% elif page.container_width == 'lg' %}max-w-5xl{% elif page.container_width == 'md' %}max-w-3xl{% else %}max-w-7xl{% endif %} mx-auto px-4 py-8"
      x-data="pageFilters()"
      x-init="init()">
@@ -163,8 +197,8 @@
 
       <div class="page-grid">
         {% for section in row.sections.all %}
-        <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; min-height: {% widthratio section.gs_h 1 80 %}px;"
-             class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+        <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; --gs-h: {{ section.gs_h }}; --gs-y: {{ section.gs_y|add:1 }};"
+             class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto html-section html-prose{% else %}overflow-hidden chart-section{% endif %} flex flex-col">
 
           {% if section.element_type == 'chart' and section.chart %}
             {% if section.show_title %}
@@ -172,10 +206,13 @@
               <span class="text-xs font-semibold text-slate-600 truncate">{{ section.chart.name }}</span>
             </div>
             {% endif %}
-            <div class="flex-1 min-h-[12rem] page-chart-slot"
+            <div id="chart-slot-{{ section.id }}"
+                 class="flex-1 min-h-0 page-chart-slot"
                  data-chart-base-url="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                 data-filter-cols="{{ section_filter_cols_map|dict_get:section.id }}"
                  hx-get="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
-                 hx-trigger="intersect once"
+                 hx-target="#chart-slot-{{ section.id }}"
+                 hx-trigger="intersect once, reload"
                  hx-swap="innerHTML">
               <div class="flex flex-col gap-2 p-3 h-full w-full">
                 <div class="chart-skeleton h-3 rounded w-2/5"></div>
@@ -194,7 +231,10 @@
             </div>
 
           {% elif section.element_type == 'html' %}
-            <div class="p-4 text-sm text-slate-600 prose max-w-none">{{ section.html_content|safe }}</div>
+            {# Render html_content directly — padding/centering is stored inside the content wrapper #}
+            <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %} html-prose">
+              {{ section.html_content|safe }}
+            </div>
           {% endif %}
         </div>
         {% endfor %}
@@ -206,8 +246,8 @@
     {% if orphan_sections %}
     <div class="page-grid">
       {% for section in orphan_sections %}
-      <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; min-height: {% widthratio section.gs_h 1 80 %}px;"
-           class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+      <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; --gs-h: {{ section.gs_h }}; --gs-y: {{ section.gs_y|add:1 }};"
+           class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto html-section html-prose{% else %}overflow-hidden chart-section{% endif %} flex flex-col">
 
         {% if section.element_type == 'chart' and section.chart %}
           {% if section.show_title %}
@@ -215,16 +255,21 @@
             <span class="text-xs font-semibold text-slate-600 truncate">{{ section.chart.name }}</span>
           </div>
           {% endif %}
-          <div class="flex-1 min-h-[12rem] page-chart-slot"
+          <div id="chart-slot-orphan-{{ section.id }}"
+               class="flex-1 min-h-0 page-chart-slot"
                data-chart-base-url="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+               data-filter-cols="{{ section_filter_cols_map|dict_get:section.id }}"
                hx-get="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
-               hx-trigger="intersect once"
+               hx-target="#chart-slot-orphan-{{ section.id }}"
+               hx-trigger="intersect once, reload"
                hx-swap="innerHTML">
             <div class="flex items-center justify-center h-full text-slate-300 text-sm">Loading chart…</div>
           </div>
 
         {% elif section.element_type == 'html' %}
-          <div class="p-4 text-sm text-slate-600 prose max-w-none">{{ section.html_content|safe }}</div>
+          <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %} html-prose">
+            {{ section.html_content|safe }}
+          </div>
         {% endif %}
       </div>
       {% endfor %}
@@ -244,9 +289,13 @@
               {% if slot.show_title %}
               <p class="text-xs font-semibold text-slate-600 mb-1 truncate">{{ slot.chart.name }}</p>
               {% endif %}
-              <div class="flex-1 min-h-[12rem]"
+              <div id="chart-slot-dash-{{ slot.id }}"
+                   class="flex-1 min-h-[12rem] page-chart-slot"
+                   data-chart-base-url="{% url 'dataviz:chart_render' slot.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                   data-filter-cols="{{ section_filter_cols_map|dict_get:slot.id }}"
                    hx-get="{% url 'dataviz:chart_render' slot.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
-                   hx-trigger="intersect once"
+                   hx-target="#chart-slot-dash-{{ slot.id }}"
+                   hx-trigger="intersect once, reload"
                    hx-swap="innerHTML">
                 <div class="flex flex-col gap-2 p-3 h-full w-full">
                 <div class="chart-skeleton h-3 rounded w-2/5"></div>
@@ -280,7 +329,9 @@
 <script>
   const _PAGE_SLUG = "{{ page.slug|escapejs }}";
   const _FILTER_OPTIONS_TPL = "/dataviz/api/pages/" + _PAGE_SLUG + "/filters/FILTERID/";
-  const _STORAGE_KEY = 'pf_' + _PAGE_SLUG;
+  const _STORAGE_KEY = 'pf_global';
+  const _PAGE_FILTER_COLS = {{ page_filter_cols_json|safe }};  // columns that exist on this page
+  const _DEFAULT_FILTER_TAGS = {{ default_filter_tags_json|safe }};  // admin-configured defaults from the page builder
 
   function pageFilters() {
     return {
@@ -288,11 +339,34 @@
       treeOpen: false,
 
       init() {
-        // Restore tags from sessionStorage (persists across drill navigation)
+        // Restore global tags from sessionStorage, then filter to columns
+        // that exist on this page. Irrelevant tags are silently discarded.
         try {
           const saved = sessionStorage.getItem(_STORAGE_KEY);
-          if (saved) this.tags = JSON.parse(saved);
+          if (saved) {
+            const allTags = JSON.parse(saved);
+            if (_PAGE_FILTER_COLS.length) {
+              const pageCols = new Set(_PAGE_FILTER_COLS);
+              this.tags = allTags.filter(t => pageCols.has(t.col));
+            } else {
+              this.tags = allTags;
+            }
+          }
         } catch (_) {}
+
+        // Seed admin-configured defaults for any filter the visitor hasn't
+        // already picked a value for this session — explicit past choices
+        // (restored above) always win over the page's defaults. Snapshot
+        // the restored columns *before* looping so multiple default tags
+        // for the same multi-select column (e.g. grade=03 and grade=04)
+        // don't shadow each other.
+        const existingCols = new Set(this.tags.map(t => t.col));
+        for (const dt of _DEFAULT_FILTER_TAGS) {
+          if (!existingCols.has(dt.col)) {
+            this.tags.push(dt);
+          }
+        }
+        if (_DEFAULT_FILTER_TAGS.length) this._persist();
 
         // Set global QS immediately so initial chart loads include persisted filters
         window._pageFilterQS = this.buildFilterQS();
@@ -304,7 +378,18 @@
       },
 
       _persist() {
-        try { sessionStorage.setItem(_STORAGE_KEY, JSON.stringify(this.tags)); } catch (_) {}
+        // Merge current page tags into global storage (preserve tags from other pages)
+        let allTags = [];
+        try {
+          const saved = sessionStorage.getItem(_STORAGE_KEY);
+          if (saved) allTags = JSON.parse(saved);
+        } catch (_) {}
+        // Remove existing tags for cols we're about to update
+        const updatedCols = new Set(_PAGE_FILTER_COLS.length ? _PAGE_FILTER_COLS : this.tags.map(t => t.col));
+        allTags = allTags.filter(t => !updatedCols.has(t.col));
+        // Add current page's tags
+        allTags = allTags.concat(this.tags);
+        try { sessionStorage.setItem(_STORAGE_KEY, JSON.stringify(allTags)); } catch (_) {}
       },
 
       /* ── Loading values for a tree node ── */
@@ -342,13 +427,11 @@
       toggleValue(col, label, val, checked, widget) {
         const v = String(val);
         if (widget === 'select') {
-          // Single-select: remove any existing value for this column first
           this.tags = this.tags.filter(t => t.col !== col);
           if (checked) {
             this.tags.push({ col, label, value: v });
           }
         } else {
-          // Multi-select: toggle individual value
           if (checked) {
             if (!this.isValueSelected(col, v)) {
               this.tags.push({ col, label, value: v });
@@ -368,6 +451,8 @@
       },
 
       clearAll() {
+        // Track all affected columns before clearing
+        const affectedCols = [...new Set(this.tags.map(t => t.col))];
         this.tags = [];
         this._persist();
         this.refreshCharts();
@@ -388,23 +473,95 @@
           if (!base || !qs) return;
           el.setAttribute('hx-get', base + '&' + qs);
           htmx.process(el);
+          if (!el.querySelector('.chart-skeleton')) {
+            htmx.trigger(el, 'reload');
+          }
         });
       },
 
       refreshCharts() {
         const qs = this.buildFilterQS();
         window._pageFilterQS = qs;
-        document.querySelectorAll('.page-chart-slot').forEach(el => {
+        const allSlots = document.querySelectorAll('.page-chart-slot');
+        allSlots.forEach(el => {
           const base = el.getAttribute('data-chart-base-url');
           if (!base) return;
           const url = qs ? base + '&' + qs : base;
           el.setAttribute('hx-get', url);
           el.innerHTML = '<div class="flex flex-col gap-2 p-3 h-full w-full"><div class="chart-skeleton h-3 rounded w-2/5"></div><div class="flex-1 flex items-end gap-1.5 pt-2"><div class="chart-skeleton rounded-t flex-1" style="height:55%"></div><div class="chart-skeleton rounded-t flex-1" style="height:80%"></div><div class="chart-skeleton rounded-t flex-1" style="height:40%"></div><div class="chart-skeleton rounded-t flex-1" style="height:70%"></div><div class="chart-skeleton rounded-t flex-1" style="height:60%"></div><div class="chart-skeleton rounded-t flex-1" style="height:90%"></div></div><div class="chart-skeleton h-2 rounded w-3/4 mx-auto"></div></div>';
           htmx.process(el);
-          htmx.trigger(el, 'load');
+          htmx.trigger(el, 'reload');
         });
       },
     };
   }
+
+  // Loading progress bar logic for chart slots
+  (function() {
+    let activeRequests = 0;
+    let progressTimer = null;
+    let progressVal = 0;
+
+    function startProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (!bar || !progress) return;
+
+      bar.classList.remove('hidden');
+      bar.setAttribute('aria-hidden', 'false');
+      
+      progressVal = 0;
+      progress.style.width = '0%';
+      
+      if (progressTimer) clearInterval(progressTimer);
+      
+      progressTimer = setInterval(() => {
+        if (progressVal < 90) {
+          progressVal += (90 - progressVal) * 0.1;
+          progress.style.width = Math.round(progressVal) + '%';
+        }
+      }, 150);
+    }
+
+    function completeProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      if (progress) {
+        progress.style.width = '100%';
+      }
+      setTimeout(() => {
+        if (bar) {
+          bar.classList.add('hidden');
+          bar.setAttribute('aria-hidden', 'true');
+        }
+        if (progress) {
+          progress.style.width = '0%';
+        }
+      }, 300);
+    }
+
+    document.addEventListener('htmx:beforeRequest', (evt) => {
+      if (evt.detail.elt && evt.detail.elt.classList.contains('page-chart-slot')) {
+        if (activeRequests === 0) {
+          startProgress();
+        }
+        activeRequests++;
+      }
+    });
+
+    document.addEventListener('htmx:afterRequest', (evt) => {
+      if (evt.detail.elt && evt.detail.elt.classList.contains('page-chart-slot')) {
+        activeRequests--;
+        if (activeRequests <= 0) {
+          activeRequests = 0;
+          completeProgress();
+        }
+      }
+    });
+  })();
 </script>
 {% endblock %}

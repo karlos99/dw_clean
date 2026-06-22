@@ -140,6 +140,8 @@
                                     <a href="{% url 'users:manage_users' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Users</a>
                                     {% if user.is_superuser or user.active_role and user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
                                     <a href="{% url 'users:manage_pages' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Pages</a>
+                                    <a href="{% url 'landing:project_settings' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Project Settings</a>
+                                    <a href="{% url 'dataviz:index' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Data Vis</a>
                                     <a href="{% url 'dataLoader:dashboard' %}" class="block px-6 py-3 text-xs uppercase tracking-widest text-slate-600 hover:bg-slate-50 hover:text-blue-600">Data Loader</a>
                                     {% endif %}
                                     {% if usage_page_access %}

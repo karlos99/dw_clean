@@ -63,3 +63,22 @@ COLUMN_CATEGORIES = {
 
 # Default visible columns
 DEFAULT_COLUMNS = ["student_name", "ssid", "grade", "school_year", "status"]
+
+# ---------------------------------------------------------------------------
+# School-year alias constants
+# ---------------------------------------------------------------------------
+# These sentinel values can be stored in query/chart configs instead of a
+# hard-coded year string.  They are resolved to real years at query runtime
+# via dataexploration.school_year_utils.resolve_school_year().
+
+SY_THIS_YEAR = '__sy_this__'   # resolves to ProjectConfig.default_school_year
+SY_LAST_YEAR = '__sy_prev1__'  # resolves to one year before the default
+SY_TWO_PRIOR = '__sy_prev2__'  # resolves to two years before the default
+
+# Human-readable labels used in dropdowns
+SCHOOL_YEAR_ALIASES = {
+    SY_THIS_YEAR: 'This School Year',
+    SY_LAST_YEAR: 'Last School Year',
+    SY_TWO_PRIOR: 'Two Years Prior',
+}
+

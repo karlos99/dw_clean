@@ -22,6 +22,7 @@ from users.decorators import page_access_required
 
 from dataexploration.models import SavedQuery, StudentList
 from dataexploration.column_utils import get_test_columns, get_mark_columns
+from dataexploration.school_year_utils import get_year_labels_map
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
@@ -137,6 +138,7 @@ class NextYearListView(LoginRequiredMixin, ListView):
                 cache.set(grades_key, grades, 3600)
 
         context['school_years'] = school_years
+        context['year_labels'] = get_year_labels_map(list(test_structure.keys()) + list(marks_structure.keys()))
         context['grades'] = grades
         context['test_structure'] = test_structure
         context['marks_structure'] = marks_structure
@@ -161,11 +163,32 @@ class NextYearListView(LoginRequiredMixin, ListView):
 
         filters = query_config.get('filters', {})
 
+        _project_default_year = ''
+        try:
+            from landing.utils import get_project_config
+            _cfg = get_project_config()
+            _project_default_year = _cfg.default_school_year or ''
+        except Exception:
+            pass
+
         def get_param(name, default=''):
             return self.request.GET.get(name) or filters.get(name, default)
 
         context['search_query'] = get_param('search')
-        context['selected_school_year'] = get_param('school_year')
+        if 'school_year' in self.request.GET:
+            selected_year = self.request.GET.get('school_year')
+        elif _project_default_year:
+            selected_year = _project_default_year
+        else:
+            selected_year = filters.get('school_year', '')
+
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            if selected_year:
+                selected_year = resolve_school_year(selected_year)
+        except Exception:
+            pass
+        context['selected_school_year'] = selected_year
         context['selected_grade'] = get_param('grade')
         context['selected_status'] = get_param('status', 'Active')
         return context
@@ -220,21 +243,27 @@ def load_students(request):
                 pass
         return val_str if val_str else fallback
 
-    # Pasted ID list search (overrides regular search when present)
-    search_ids = None
-    search_ids_param = request.GET.get('search_ids', '')
-    if search_ids_param:
-        try:
-            parsed_ids = json.loads(search_ids_param)
-            if isinstance(parsed_ids, list):
-                search_ids = [str(s).strip() for s in parsed_ids if str(s).strip()]
-                if not search_ids:
-                    search_ids = None
-        except Exception:
-            pass
-
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
-    school_year = _parse_multi(request.GET.get('school_year', ''), _parse_multi(saved_filters.get('school_year', ''), _parse_multi(saved_config.get('school_year', ''), '')))
+    
+    _project_default_year = ''
+    try:
+        from landing.utils import get_project_config
+        _cfg = get_project_config()
+        _project_default_year = _cfg.default_school_year or ''
+    except Exception:
+        pass
+
+    _sy_in_url = 'school_year' in request.GET
+    if _sy_in_url:
+        school_year = _parse_multi(request.GET.get('school_year', ''), '')
+    elif _project_default_year:
+        school_year = _project_default_year
+    else:
+        school_year = _parse_multi(
+            saved_filters.get('school_year', ''),
+            _parse_multi(saved_config.get('school_year', ''), '')
+        )
+
     grade = _parse_multi(request.GET.get('grade', ''), _parse_multi(saved_filters.get('grade', ''), _parse_multi(saved_config.get('grade', ''), '')))
 
     status_param = request.GET.get('status')
@@ -519,11 +548,7 @@ def load_students(request):
                     status = None
                     filters = {}
 
-        if search_ids:
-            # Exact ID list match against ssid or student_id
-            base_where_clauses.append("(cs.ssid = ANY(%s) OR cs.student_id = ANY(%s))")
-            base_params.extend([search_ids, search_ids])
-        elif search:
+        if search:
             if isinstance(search, list):
                 search = search[0] if search else ''
             if search:

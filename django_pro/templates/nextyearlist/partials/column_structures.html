@@ -1,4 +1,15 @@
 {% load dataexploration_tags %}
+<!-- Assessment Year Mode Toggle -->
+<div class="flex items-center justify-between px-2 py-1.5 mb-1 bg-slate-50 rounded border border-slate-200">
+    <span class="text-[11px] text-slate-500 font-medium uppercase tracking-wide">Year mode:</span>
+    <div class="flex rounded overflow-hidden border border-slate-200 text-[11px]">
+        <button type="button" data-year-mode-btn="specific"
+            class="px-2.5 py-0.5 transition-colors">Specific</button>
+        <button type="button" data-year-mode-btn="relative"
+            class="px-2.5 py-0.5 transition-colors">Relative</button>
+    </div>
+</div>
+
 <!-- Assessments Tree Category -->
 <div class="border-b border-slate-100 pb-2">
     <button data-toggle-category="assessments"
@@ -10,10 +21,16 @@
 
     <div data-category="assessments" class="ml-4 mt-1 space-y-1 pl-3 border-l-2 border-blue-200 hidden">
         {% for year, assessments in test_structure.items %}
-        <div class="mt-2">
+        {% with alias=year_to_alias|get_item:year|default:'' %}
+        <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
             <button data-toggle-category="tests_{{ year|slugify }}"
                 class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
-                <span class="text-sm font-medium text-slate-700">{{ year }}</span>
+                <span class="text-sm font-medium text-slate-700"
+                      data-year-header-label="{{ year }}"
+                      data-specific-label="{{ year }}"
+                      data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                    {{ year_labels|get_item:year|default:year }}
+                </span>
                 <span class="text-xs text-slate-400" data-caret="closed">▶</span>
                 <span class="text-xs hidden text-slate-400" data-caret="open">▼</span>
             </button>
@@ -100,6 +117,7 @@
                 {% endfor %}
             </div>
         </div>
+        {% endwith %}
         {% empty %}
         <div class="text-xs text-slate-500 italic p-2">No assessment data available</div>
         {% endfor %}
@@ -117,10 +135,16 @@
 
     <div data-category="marks" class="ml-4 mt-1 space-y-1 pl-3 border-l-2 border-emerald-200 hidden">
         {% for year, subjects in marks_structure.items %}
-        <div class="mt-2">
+        {% with alias=year_to_alias|get_item:year|default:'' %}
+        <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
             <button data-toggle-category="marks_{{ year|slugify }}"
                 class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
-                <span class="text-sm font-medium text-slate-700">{{ year }}</span>
+                <span class="text-sm font-medium text-slate-700"
+                      data-year-header-label="{{ year }}"
+                      data-specific-label="{{ year }}"
+                      data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                    {{ year_labels|get_item:year|default:year }}
+                </span>
                 <span data-caret="closed" class="text-slate-400">▶</span>
                 <span data-caret="open" class="hidden text-slate-400">▼</span>
             </button>
@@ -161,6 +185,7 @@
                 {% endfor %}
             </div>
         </div>
+        {% endwith %}
         {% endfor %}
     </div>
 </div>

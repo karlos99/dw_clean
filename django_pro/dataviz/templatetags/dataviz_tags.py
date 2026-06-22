@@ -13,6 +13,14 @@ def get_item(dictionary, key):
     return '\u2014'
 
 
+@register.filter(name='dict_get')
+def dict_get(dictionary, key):
+    """Look up *key* in a dict, return '' on miss (for HTML attribute values)."""
+    if isinstance(dictionary, dict):
+        return dictionary.get(key, '')
+    return ''
+
+
 @register.filter(name='multiply')
 def multiply(value, arg):
     """Multiply value by arg — handy for pagination math."""

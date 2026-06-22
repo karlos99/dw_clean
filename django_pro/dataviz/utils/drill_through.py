@@ -2,7 +2,40 @@
 drill_through.py — Build drill-through filters from ECharts click params
 and execute the resulting query for the drill-through data table.
 """
+import hashlib
+import json
+
+from django.core.cache import cache
+
 from .data_loader import run_saved_query, run_raw_sql, run_column_query
+
+
+def split_composite_value(val: str, expected_len: int) -> list:
+    """
+    Split a composite category/series value by common separators.
+    First normalizes whitespace (like non-breaking spaces).
+    Returns list of parts, stripped. If splitting doesn't yield the
+    expected number of parts, returns a list containing just the original val.
+    """
+    if not val:
+        return []
+    
+    # Normalize non-breaking spaces and other weird whitespace
+    normalized = val.replace('\xa0', ' ').replace('\u200b', '').strip()
+    
+    # Try different separators in order of preference.
+    separators = [' · ', ' • ', ' — ', ' - ', ' | ', '·', '•', '—', '-', '|']
+    for sep in separators:
+        if sep in normalized:
+            parts = [p.strip() for p in normalized.split(sep)]
+            if len(parts) == expected_len:
+                return parts
+            # Try filtering out empty parts
+            filtered = [p for p in parts if p]
+            if len(filtered) == expected_len:
+                return filtered
+                
+    return [normalized]
 
 
 def build_drill_filter(chart, params: dict) -> dict:
@@ -34,6 +67,33 @@ def build_drill_filter(chart, params: dict) -> dict:
             filters[col_col] = col_val
         return filters
 
+    # dynamic_summary_table: multi-dimension drill — each row/col dimension
+    # is a composite key separated by ▸.  Split and map to individual columns.
+    # Multi-column mode: st_col_val is "col_name ▸ value" per clicked cell group.
+    if chart.chart_type == 'dynamic_summary_table':
+        _SEP = ' \u25b8 '
+        row_cols = chart.config.get('st_row_cols', [])
+        col_cols = chart.config.get('st_col_cols', [])
+        row_val = params.get('st_row_val', '')
+        col_val = params.get('st_col_val', '')
+        # Multi-column mode: st_col_val encodes "col_name ▸ cell_value"
+        if col_val and _SEP in col_val and len(col_cols) > 1:
+            parts = col_val.split(_SEP, 1)
+            if len(parts) == 2 and parts[0] in col_cols:
+                filters[parts[0]] = parts[1]
+        elif col_val and col_cols:
+            # Standard mode: st_col_val is the cell value or ▸-separated composite
+            parts = col_val.split(_SEP)
+            for i, col in enumerate(col_cols):
+                if i < len(parts):
+                    filters[col] = parts[i]
+        if row_val and row_cols:
+            parts = row_val.split(_SEP)
+            for i, col in enumerate(row_cols):
+                if i < len(parts):
+                    filters[col] = parts[i]
+        return filters
+
     # progress_growth: series classification is derived (Growth/Sliders/Stickers),
     # not a real column value.  Apply the x-group filter and store the pg
     # category as a sentinel key for post-fetch Python filtering.
@@ -60,23 +120,131 @@ def build_drill_filter(chart, params: dict) -> dict:
             filters['pg_cat'] = x_val
         return filters
 
-    x_col = fmap.get('x_col', chart.config.get('x_col', ''))
-    if x_col and params.get('x_val'):
-        filters[x_col] = params['x_val']
+    # ── Handle multiple X-axis composite columns ──
+    x_col_raw = fmap.get('x_col') or chart.config.get('x_col') or chart.config.get('x_cols') or ''
+    x_cols_list = []
+    if isinstance(x_col_raw, str) and x_col_raw:
+        x_cols_list = [c.strip() for c in x_col_raw.split(',') if c.strip()]
+    elif isinstance(x_col_raw, list):
+        for item in x_col_raw:
+            if isinstance(item, str):
+                x_cols_list.extend([c.strip() for c in item.split(',') if c.strip()])
+            elif item:
+                x_cols_list.append(str(item).strip())
+
+    x_val = params.get('x_val', '')
+    if x_val:
+        if len(x_cols_list) > 1:
+            parts = split_composite_value(x_val, len(x_cols_list))
+            if len(parts) == len(x_cols_list):
+                for col_name, part_val in zip(x_cols_list, parts):
+                    if col_name:
+                        filters[col_name] = part_val
+            else:
+                # ECharts did not concatenate or splitting didn't match (single value clicked)
+                # Apply our heuristic to map x_val and series_val to the two columns
+                if len(x_cols_list) == 2:
+                    # If there is a stack/series column configured on the chart,
+                    # then series_val belongs to that column, not the X-axis.
+                    has_stack = bool(fmap.get('series_col') or chart.config.get('stack_col') or chart.config.get('series_col'))
+                    val_a = '' if has_stack else params.get('series_val', '')
+                    val_b = x_val
+                    col_a, col_b = x_cols_list[0], x_cols_list[1]
+                    
+                    if val_a and val_b:
+                        grades_set = {'K', 'KN', 'TK', 'PK', 'PK-4', 'PK-3', 'PK-5', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'}
+                        is_a_grade = val_a in grades_set or val_a.isdigit()
+                        is_b_grade = val_b in grades_set or val_b.isdigit()
+                        
+                        is_col_a_grade = 'grade' in col_a.lower()
+                        is_col_b_grade = 'grade' in col_b.lower()
+                        
+                        if is_col_a_grade and is_b_grade:
+                            filters[col_a] = val_b
+                            filters[col_b] = val_a
+                        elif is_col_b_grade and is_a_grade:
+                            filters[col_a] = val_b
+                            filters[col_b] = val_a
+                        else:
+                            filters[col_a] = val_a
+                            filters[col_b] = val_b
+                    else:
+                        target_col = col_b
+                        if val_b:
+                            grades_set = {'K', 'KN', 'TK', 'PK', 'PK-4', 'PK-3', 'PK-5', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'}
+                            is_b_grade = val_b in grades_set or val_b.isdigit()
+                            is_col_a_grade = 'grade' in col_a.lower()
+                            is_col_b_grade = 'grade' in col_b.lower()
+                            if is_col_a_grade and is_b_grade:
+                                target_col = col_a
+                            elif is_col_b_grade and not is_b_grade:
+                                target_col = col_a
+                        filters[target_col] = val_b
+                else:
+                    for c in x_cols_list:
+                        filters[c] = x_val
+        else:
+            col_name = x_cols_list[0] if x_cols_list else (x_col_raw if isinstance(x_col_raw, str) else '')
+            if col_name:
+                filters[col_name] = x_val
 
     # assessment_compare: drill_col is the specific PL column (e.g.
     # test_2025_2026_DIBELS_Reading_BOY_PL).  The series_val is the PL value
     # ("Above Benchmark").  Filter that column directly — it already encodes
     # the test, subject, window, and year so no extra filters are needed.
     drill_col = params.get('drill_col', '')
-    if drill_col and params.get('series_val'):
-        filters[drill_col] = params['series_val']
-    else:
+    series_val = params.get('series_val', '')
+    if drill_col and series_val:
+        filters[drill_col] = series_val
+    elif series_val:
+        group_col = chart.config.get('group_col', '')
         series_col = fmap.get('series_col', chart.config.get('stack_col', ''))
-        if series_col and params.get('series_val'):
-            filters[series_col] = params['series_val']
+        
+        # Check if it's a grouped + stacked chart series value (e.g. "Group — Stack")
+        split_success = False
+        if group_col and series_col:
+            parts = split_composite_value(series_val, 2)
+            if len(parts) == 2:
+                filters[group_col] = parts[0]
+                filters[series_col] = parts[1]
+                split_success = True
+        
+        if not split_success and series_col:
+            filters[series_col] = series_val
 
-    return filters
+    # Post-process filters to ensure no keys contain commas (safety net split)
+    final_filters = {}
+    for key, val in filters.items():
+        if isinstance(key, str) and ',' in key:
+            sub_keys = [k.strip() for k in key.split(',') if k.strip()]
+            if isinstance(val, str):
+                sub_vals = split_composite_value(val, len(sub_keys))
+                if len(sub_vals) == len(sub_keys):
+                    for sk, sv in zip(sub_keys, sub_vals):
+                        if sk:
+                            final_filters[sk] = sv
+                else:
+                    # Try heuristic if 2 keys
+                    if len(sub_keys) == 2:
+                        col_a, col_b = sub_keys[0], sub_keys[1]
+                        grades_set = {'K', 'KN', 'TK', 'PK', 'PK-4', 'PK-3', 'PK-5', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'}
+                        is_val_grade = val in grades_set or str(val).isdigit()
+                        is_col_a_grade = 'grade' in col_a.lower()
+                        is_col_b_grade = 'grade' in col_b.lower()
+                        if is_col_a_grade and is_val_grade:
+                            final_filters[col_a] = val
+                        elif is_col_b_grade and is_val_grade:
+                            final_filters[col_b] = val
+                        else:
+                            for sk in sub_keys:
+                                final_filters[sk] = val
+                    else:
+                        for sk in sub_keys:
+                            final_filters[sk] = val
+        else:
+            final_filters[key] = val
+
+    return final_filters
 
 
 def execute_drill_query(
@@ -124,7 +292,30 @@ def execute_drill_query(
             if fk and fk not in extra_columns:
                 extra_columns.append(fk)
 
-    if chart.source_type == 'sql':
+    # Cache the raw fetch (everything above this point only affects which
+    # filters/extra_columns we fetch with — already baked into the key below).
+    # Scoped per-user exactly like data_loader.py:_run_saved_query_sql, since
+    # drill-through (unlike chart rendering) applies row-level access control
+    # — role, school, and even per-teacher restrictions can change the rows
+    # returned for the same chart+filters.
+    user_part = ''
+    if user:
+        user_role = getattr(user, 'active_role', None)
+        role_name = user_role.name if user_role else 'None'
+        active_school = getattr(user, 'active_school', None)
+        school_id = active_school.state_id if active_school else 'All'
+        user_part = f":u{user.pk}:r{role_name}:s{school_id}"
+    _fetch_hash = hashlib.md5(json.dumps(
+        {'f': drill_filters, 'ec': sorted(extra_columns) if extra_columns else None},
+        sort_keys=True, default=str,
+    ).encode()).hexdigest()[:16]
+    updated_ts = int(chart.updated_at.timestamp())
+    _drill_cache_key = f"drill_fetch:{chart.pk}:{updated_ts}:{chart.source_type}:{_fetch_hash}{user_part}"
+    _cached_fetch = cache.get(_drill_cache_key)
+
+    if _cached_fetch is not None:
+        rows, cols, error = _cached_fetch
+    elif chart.source_type == 'sql':
         result = run_raw_sql(chart.source_sql)
         rows = result.get('rows', [])
         cols = result.get('columns', [])
@@ -145,6 +336,228 @@ def execute_drill_query(
         rows = result.get('rows', [])
         cols = result.get('columns', [])
         error = result.get('error')
+    elif chart.source_type == 'dataset':
+        from dataviz.models import Dataset
+        from dataviz.utils.compiler import compile_dataset_to_sql, execute_compiled_query, COLUMN_WHITELIST, get_columns_for_table
+        from dataviz.utils.data_loader import _run_saved_query_sql
+        try:
+            ds = Dataset.objects.get(pk=chart.source_id)
+        except Dataset.DoesNotExist:
+            rows = []
+            cols = []
+            error = 'Dataset not found'
+        else:
+            merged_filters = dict(chart.source_filters or {})
+            merged_filters.update(drill_filters)
+
+            # Map standard keys in merged_filters to "table.column" format for compile_dataset_to_sql
+            active_tables = {ds.base_table}
+            for j in (ds.joins or []):
+                if j.get('table'):
+                    active_tables.add(j['table'])
+
+            def _allowed_columns(tbl: str) -> set:
+                return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
+
+            # Resolve all filter keys (bare exploration names, JSONB key suffixes,
+            # clean aliases from column_mappings, or already-qualified table.column)
+            # into the table.column format required by compile_dataset_to_sql.
+            from dataviz.utils.compiler import resolve_dataset_filters as _resolve_filters
+            dataset_filters = _resolve_filters(merged_filters, ds, active_tables)
+
+            # Extract school_year for the explorer fallback (used below when yr_col
+            # is absent from the dataset columns).
+            school_year = None
+            for fk, fval in merged_filters.items():
+                if fk.split('.')[-1] == 'school_year':
+                    school_year = fval
+                    break
+            
+            # Find the best student identifier, year, and annual key columns whitelisted in active tables
+            student_identifier_col = None
+            for tbl in ['current_student', 'student_enroll', 'results', 'student_marks_list', 'schedule_list']:
+                if tbl in active_tables and 'ssid' in COLUMN_WHITELIST.get(tbl, {}):
+                    student_identifier_col = f"{tbl}.ssid"
+                    break
+            if not student_identifier_col and 'ssid' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                student_identifier_col = f"{ds.base_table}.ssid"
+            
+            if not student_identifier_col:
+                for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list', 'results']:
+                    if tbl in active_tables and 'student_id' in COLUMN_WHITELIST.get(tbl, {}):
+                        student_identifier_col = f"{tbl}.student_id"
+                        break
+                if not student_identifier_col and 'student_id' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                    student_identifier_col = f"{ds.base_table}.student_id"
+
+            if not student_identifier_col:
+                student_identifier_col = f"{ds.base_table}.ssid"
+
+            key_col = None
+            for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list']:
+                if tbl in active_tables and 'stu_annual_key' in COLUMN_WHITELIST.get(tbl, {}):
+                    key_col = f"{tbl}.stu_annual_key"
+                    break
+            if not key_col and 'stu_annual_key' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                key_col = f"{ds.base_table}.stu_annual_key"
+
+            yr_col = None
+            for tbl in ['current_student', 'student_enroll', 'results', 'schedule_list', 'student_marks_list', 'tests']:
+                if tbl in active_tables and 'school_year' in COLUMN_WHITELIST.get(tbl, {}):
+                    yr_col = f"{tbl}.school_year"
+                    break
+            if not yr_col and 'school_year' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                yr_col = f"{ds.base_table}.school_year"
+
+            dataset_columns = list(ds.columns or [])
+            if student_identifier_col not in dataset_columns:
+                dataset_columns.append(student_identifier_col)
+            if key_col and key_col not in dataset_columns:
+                dataset_columns.append(key_col)
+            if yr_col and yr_col not in dataset_columns:
+                dataset_columns.append(yr_col)
+            
+            # Dynamically select any filtered dataset columns so they are returned in the rows
+            for fk in dataset_filters:
+                if fk not in dataset_columns:
+                    parts = fk.split('.', 1)
+                    if len(parts) == 2:
+                        tbl, col = parts
+                        if tbl in active_tables and (col in _allowed_columns(tbl) or col.split('->', 1)[0] in _allowed_columns(tbl)):
+                            dataset_columns.append(fk)
+            
+            class MockDataset:
+                def __init__(self, original, columns):
+                    self.base_table = original.base_table
+                    self.distinct = original.distinct
+                    self.joins = original.joins
+                    self.filters = original.filters
+                    self.columns = columns
+                    self.column_mappings = getattr(original, 'column_mappings', None) or {}
+                    self.updated_at = getattr(original, 'updated_at', None)
+            
+            mock_ds = MockDataset(ds, dataset_columns)
+            sql, params = compile_dataset_to_sql(mock_ds, user=user, interactive_filters=dataset_filters, limit=150000)
+            ds_result = execute_compiled_query(sql, params)
+            
+            error = ds_result.get('error')
+            if error:
+                rows = []
+                cols = []
+            else:
+                ds_rows = ds_result.get('rows', [])
+                keys = []
+                if key_col:
+                    keys = list(set(str(r.get(key_col) or '').strip() for r in ds_rows))
+                    keys = [k for k in keys if k]
+                
+                ssids = []
+                if student_identifier_col:
+                    ssids = list(set(str(r.get(student_identifier_col) or '').strip() for r in ds_rows))
+                    ssids = [s for s in ssids if s]
+
+                # Determine default columns from the dataset columns if none are requested
+                if not extra_columns:
+                    ds_cols = []
+                    for c in (ds.columns or []):
+                        col_name = c.split('.')[-1]
+                        if col_name not in ds_cols:
+                            ds_cols.append(col_name)
+                    for base_col in ['student_id', 'student_name', 'grade', 'school', 'school_year']:
+                        if base_col not in ds_cols:
+                            ds_cols.append(base_col)
+                    # Include test_*/mark_* column_mappings aliases so the explorer
+                    # fetches assessment scores via its results/tests join logic.
+                    for alias in (ds.column_mappings or {}).values():
+                        if alias and (alias.startswith('test_') or alias.startswith('mark_')) and alias not in ds_cols:
+                            ds_cols.append(alias)
+                    extra_columns = ds_cols
+                else:
+                    # Map any prefixed columns in extra_columns to clean column names
+                    clean_extra_cols = []
+                    for c in extra_columns:
+                        clean_col = c.split('.')[-1]
+                        if clean_col not in clean_extra_cols:
+                            clean_extra_cols.append(clean_col)
+                    extra_columns = clean_extra_cols
+                
+                if not ssids and not keys:
+                    rows = []
+                    cols = extra_columns
+                else:
+                    explorer_filters = {}
+                    if keys:
+                        explorer_filters['stu_annual_key'] = keys
+                    elif student_identifier_col and student_identifier_col.endswith('.student_id'):
+                        explorer_filters['student_id'] = ssids
+                    else:
+                        explorer_filters['ssid'] = ssids
+
+                    # Map dataset filters to explorer filters if they are standard columns
+                    from dataviz.utils.resolution import resolve_exploration_column
+                    for fk, fval in dataset_filters.items():
+                        resolved_col = resolve_exploration_column(ds, fk)
+                        if resolved_col:
+                            explorer_filters[resolved_col] = fval
+
+                    if yr_col:
+                        years = list(set(str(r.get(yr_col) or '').strip() for r in ds_rows))
+                        years = [y for y in years if y]
+                        if years:
+                            explorer_filters['school_year'] = years
+                    elif school_year:
+                        explorer_filters['school_year'] = school_year
+                        
+                    config = {
+                        'columns': extra_columns,
+                        'filters': explorer_filters,
+                    }
+                    
+                    explorer_result = _run_saved_query_sql(config, user=user)
+                    exp_rows = explorer_result.get('rows', [])
+                    error = explorer_result.get('error')
+
+                    # Build a lookup map of the explorer rows
+                    lookup = {}
+                    for r in exp_rows:
+                        for key_attr in ['stu_annual_key', 'ssid', 'student_id']:
+                            val = r.get(key_attr)
+                            if val:
+                                lookup[str(val).strip()] = r
+
+                    rows = []
+                    for r in ds_rows:
+                        new_row = {}
+                        
+                        # 1. Add dataset columns (with prefix stripped)
+                        for dk, dval in r.items():
+                            clean_dk = dk.split('.')[-1]
+                            new_row[clean_dk] = dval
+                        
+                        # 2. Merge explorer columns
+                        match_val = None
+                        if key_col and r.get(key_col):
+                            match_val = str(r.get(key_col)).strip()
+                        elif student_identifier_col and r.get(student_identifier_col):
+                            match_val = str(r.get(student_identifier_col)).strip()
+                        
+                        if match_val and match_val in lookup:
+                            exp_row = lookup[match_val]
+                            for ek, eval in exp_row.items():
+                                if ek not in new_row or ek in ['student_name', 'student_id', 'grade', 'school', 'school_year']:
+                                    new_row[ek] = eval
+                        
+                        rows.append(new_row)
+
+                    # Build final ordered columns: dataset columns first, then explorer columns
+                    cols = []
+                    for c in dataset_columns:
+                        clean_c = c.split('.')[-1]
+                        if clean_c not in cols:
+                            cols.append(clean_c)
+                    for c in extra_columns:
+                        if c not in cols:
+                            cols.append(c)
     else:
         # Merge saved source_filters with the click-derived drill_filters
         merged_filters = dict(chart.source_filters or {})
@@ -158,28 +571,31 @@ def execute_drill_query(
         cols = result.get('columns', [])
         error = result.get('error')
 
+    if _cached_fetch is None and not error:
+        cache.set(_drill_cache_key, (rows, cols, error), 300)
+
     # Post-fetch filtering for dynamic columns (test_* / mark_*).
     # The SQL data_loader skips these at the SQL level because the data
     # is fetched in a separate bulk phase.  We apply them here in Python.
     if rows and drill_filters:
         for fkey, fval in drill_filters.items():
-            if not fkey.startswith(('test_', 'mark_')):
+            col_name = fkey.split('.')[-1]
+            if not col_name.startswith(('test_', 'mark_')):
                 continue
             if isinstance(fval, list):
                 vals = set(str(v) for v in fval)
-                rows = [r for r in rows if str(r.get(fkey) or '\u2014').strip() in vals or 
-                        ('(Blank)' in vals and (not r.get(fkey) or r.get(fkey) == '\u2014'))]
+                rows = [r for r in rows if str(r.get(col_name) or '\u2014').strip() in vals or 
+                        ('(Blank)' in vals and (not r.get(col_name) or r.get(col_name) == '\u2014'))]
             else:
                 target = str(fval).strip()
                 if target == '(Blank)':
-                    rows = [r for r in rows if not r.get(fkey) or r.get(fkey) == '\u2014']
+                    rows = [r for r in rows if not r.get(col_name) or r.get(col_name) == '\u2014']
                 else:
-                    rows = [r for r in rows if str(r.get(fkey) or '').strip() == target]
+                    rows = [r for r in rows if str(r.get(col_name) or '').strip() == target]
 
-    # summary_table: deduplicate by student id AFTER dynamic column filters so
-    # the row count matches the chart (which deduplicates on the same filtered
-    # set before doing the groupby count).
-    if rows and chart.chart_type == 'summary_table':
+    # summary_table / dynamic_summary_table: deduplicate by student id AFTER
+    # dynamic column filters so the row count matches the chart.
+    if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
         _id_col = next(
             (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
             None,
@@ -307,11 +723,37 @@ def execute_drill_query(
 
     # Apply column selection if provided
     if columns and rows:
-        # Always keep 'ssid' in row data for student summary links,
-        # even if it's not a visible column.
-        keep = set(columns) | {'ssid'}
-        rows = [{k: r.get(k) for k in keep if k in r} for r in rows]
-        cols = [c for c in columns if any(c in r for r in rows[:1])]
+        row_keys = list(rows[0].keys())
+        col_to_row_key = {}
+        for c in columns:
+            c_clean = c.split('.')[-1].strip()
+            if c in row_keys:
+                col_to_row_key[c] = c
+            elif c_clean in row_keys:
+                col_to_row_key[c] = c_clean
+            else:
+                match = next((rk for rk in row_keys if rk.split('.')[-1].strip() == c_clean), None)
+                if match:
+                    col_to_row_key[c] = match
+
+        keep_row_keys = set(col_to_row_key.values())
+        for rk in row_keys:
+            if rk.split('.')[-1].strip() in ('ssid', 'student_id', 'stu_annual_key'):
+                keep_row_keys.add(rk)
+
+        new_rows = []
+        for r in rows:
+            new_row = {}
+            for c in columns:
+                rk = col_to_row_key.get(c)
+                if rk is not None and rk in r:
+                    new_row[c] = r[rk]
+            for rk in keep_row_keys:
+                if rk in r and rk not in new_row:
+                    new_row[rk] = r[rk]
+            new_rows.append(new_row)
+        rows = new_rows
+        cols = [c for c in columns if c in col_to_row_key]
 
     total = len(rows)
     start = (page - 1) * per_page
@@ -335,7 +777,7 @@ def get_column_distinct_values(chart, drill_filters: dict, column: str, user) ->
     """
     result = execute_drill_query(
         chart, drill_filters, columns=[], user=user,
-        page=1, per_page=999_999,
+        page=1, per_page=10000,
     )
     rows = result.get('rows', [])
     seen = set()
@@ -352,12 +794,42 @@ def get_column_distinct_values(chart, drill_filters: dict, column: str, user) ->
 def get_all_available_columns(chart, user) -> list:
     """
     Return the full universe of column keys that can be added to the drill
-    table — the base COLUMN_DEFINITIONS keys plus any dynamic test_*/mark_*
-    columns from the saved query config.
+    table.
+    For datasets, this is restricted to the columns defined in the dataset (along
+    with their mapped aliases).
+    For raw SQL, it is restricted to the columns returned by the query.
+    For standard explorer queries, it is the full data exploration column list.
     """
-    from dataexploration.constants import COLUMN_DEFINITIONS
+    if chart.source_type == 'dataset' and chart.source_id:
+        from dataviz.models import Dataset
+        try:
+            ds = Dataset.objects.get(pk=chart.source_id)
+            cols = []
+            # Add dataset columns (cleaned to unqualified)
+            for c in (ds.columns or []):
+                cols.append(c.split('.')[-1])
+            # Add any mapped aliases
+            for alias in (ds.column_mappings or {}).values():
+                if alias and alias.split('.')[-1] not in cols:
+                    cols.append(alias.split('.')[-1])
+            # Include standard base columns that are automatically merged in datasets
+            for c in ['student_id', 'student_name', 'grade', 'school', 'school_year', 'ssid']:
+                if c not in cols:
+                    cols.append(c)
+            return cols
+        except Dataset.DoesNotExist:
+            return []
+            
+    elif chart.source_type == 'sql':
+        # For raw SQL, we can't join other tables. The only available columns
+        # are those returned by the query.
+        from dataviz.utils.data_loader import run_raw_sql
+        result = run_raw_sql(chart.source_sql)
+        cols = [c.split('.')[-1] for c in result.get('columns', [])]
+        return cols
 
-    # Base static columns
+    # Default: data exploration columns
+    from dataexploration.constants import COLUMN_DEFINITIONS
     if isinstance(COLUMN_DEFINITIONS, dict):
         base = list(COLUMN_DEFINITIONS.keys())
     else:
@@ -365,7 +837,7 @@ def get_all_available_columns(chart, user) -> list:
 
     # Dynamic columns from the saved query's config
     dynamic = []
-    if chart.source_type != 'sql' and chart.source_id:
+    if chart.source_type == 'query' and chart.source_id:
         from dataexploration.models import SavedQuery
         try:
             sq = SavedQuery.objects.get(pk=chart.source_id)

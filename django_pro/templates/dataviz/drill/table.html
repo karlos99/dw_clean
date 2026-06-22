@@ -4,6 +4,7 @@
 {% block title %}Drill-Through – {{ chart.name }}{% endblock %}
 
 {% block content %}
+{% include "dataviz/submenu.html" %}
 <div x-data="drillTable()" class="max-w-[98vw] mx-auto px-4 py-6">
 
   <!-- ── Breadcrumbs ─────────────────────────────────────────────── -->
@@ -134,12 +135,8 @@
         <input type="text" x-model="colSearch" placeholder="Search columns…"
                class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-2 focus:ring-1 focus:ring-blue-400 bg-slate-50">
         <!-- Quick actions -->
-        <div class="flex gap-2 text-[10px] text-blue-600 mb-1.5 px-0.5">
-          <button @click="selectAllCols()" class="hover:underline font-semibold">All</button>
-          <button @click="selectNoneCols()" class="hover:underline font-semibold">None</button>
-        </div>
-        
-        <!-- Categorized Column Tree -->
+               <!-- Column Selector/Tree -->
+        {% if chart.source_type == 'columns' %}
         <div class="space-y-1 mt-2">
           {# ── Static categories (Student Info, etc.) ── #}
           {% for cat_key, cat in column_categories.items %}
@@ -263,8 +260,22 @@
               </template>
             </div>
           </div>
-
         </div>
+        {% else %}
+        <!-- Flat list of available columns for dataset/SQL/query sources -->
+        <div class="max-h-64 overflow-y-auto space-y-1 mt-2 pr-1 custom-scrollbar">
+          <template x-for="col in filteredAvailableColumns" :key="'flat_'+col">
+            <label class="flex items-center gap-1.5 text-[10px] px-1 py-1 rounded hover:bg-slate-50 cursor-pointer transition">
+              <input type="checkbox" :checked="visibleCols.includes(col.split('.').pop())" @change="toggleColumn(col)"
+                     class="rounded text-blue-600 w-2.5 h-2.5 border-slate-300">
+              <span class="truncate text-slate-600" x-text="colLabel(col)"></span>
+            </label>
+          </template>
+          <div x-show="filteredAvailableColumns.length === 0" class="text-[10px] text-slate-400 py-3 text-center">
+            No columns match your search.
+          </div>
+        </div>
+        {% endif %}
       </div>
     </div>
 
@@ -359,7 +370,7 @@ function drillTable() {
   return {
     sidebarOpen: false,
     colSearch: '',
-    visibleCols: selCols.length ? [...selCols] : [...allCols],
+    visibleCols: (selCols.length ? [...selCols] : [...allCols]).map(c => c.split('.').pop()),
     dragCol: null,             // index of column being dragged
     sortBy: '{{ sort_by }}',
     sortDir: '{{ sort_dir|default:"asc" }}',
@@ -376,15 +387,19 @@ function drillTable() {
     get filteredAvailableColumns() {
       const q = (this.colSearch || '').toLowerCase();
       return universe.filter(c => {
-        if (q && !(colLabels[c] || c).toLowerCase().includes(q)) return false;
+        const clean = c.split('.').pop();
+        if (q && !(colLabels[clean] || colLabels[c] || c).toLowerCase().includes(q)) return false;
         return true;
       });
     },
-    colLabel(key) { return colLabels[key] || key; },
+    colLabel(key) {
+      const clean = key.split('.').pop();
+      return colLabels[clean] || colLabels[key] || key;
+    },
 
     explorerCatSelectedCount(catKey) {
       const catCols = this.explorerFilteredCatCols(catKey);
-      const n = catCols.filter(c => this.visibleCols.includes(c)).length;
+      const n = catCols.filter(c => this.visibleCols.includes(c.split('.').pop())).length;
       return n > 0 ? `${n}/${catCols.length}` : '';
     },
 
@@ -394,34 +409,43 @@ function drillTable() {
       const cols = cat.columns || [];
       if (!this.colSearch) return cols;
       const q = this.colSearch.toLowerCase();
-      return cols.filter(c => (colLabels[c] || c).toLowerCase().includes(q));
+      return cols.filter(c => {
+        const clean = c.split('.').pop();
+        return (colLabels[clean] || colLabels[c] || c).toLowerCase().includes(q);
+      });
     },
 
-    selectAllCols() { this.visibleCols = [...universe]; this.applyColumns(); },
+    selectAllCols() { this.visibleCols = universe.map(c => c.split('.').pop()); this.applyColumns(); },
     selectNoneCols() { this.visibleCols = []; this.applyColumns(); },
 
     /* Toggle a column on/off from the "add" list */
     toggleColumn(col) {
-      const idx = this.visibleCols.indexOf(col);
+      const cleanCol = col.split('.').pop();
+      this.visibleCols = this.visibleCols.map(c => c.split('.').pop());
+      const idx = this.visibleCols.indexOf(cleanCol);
       if (idx >= 0) {
         this.visibleCols.splice(idx, 1);
       } else {
-        this.visibleCols.push(col);
+        this.visibleCols.push(cleanCol);
       }
+      this.visibleCols = [...this.visibleCols];
       this.applyColumns();
     },
 
     /* Remove a column from the visible set (header × button or sidebar) */
     removeColumn(col) {
-      this.visibleCols = this.visibleCols.filter(c => c !== col);
+      const cleanCol = col.split('.').pop();
+      this.visibleCols = this.visibleCols.filter(c => c !== cleanCol);
       this.applyColumns();
     },
 
     /* ── Drag-to-reorder ────────────────────────────────── */
     reorderCol(toIdx) {
       if (this.dragCol === null || this.dragCol === toIdx) return;
-      const col = this.visibleCols.splice(this.dragCol, 1)[0];
-      this.visibleCols.splice(toIdx, 0, col);
+      const arr = this.visibleCols.map(c => c.split('.').pop());
+      const col = arr.splice(this.dragCol, 1)[0];
+      arr.splice(toIdx, 0, col);
+      this.visibleCols = arr;
       this.applyColumns();
     },
 

@@ -8,9 +8,10 @@ Supports:
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from django.core.cache import cache
-from django.db import connection
+from django.db import connection, connections
 
 
 # ── SQL safety guards (copied verbatim from original views.py) ────────────────
@@ -24,13 +25,14 @@ _SQL_DANGER_RE = re.compile(
     re.IGNORECASE,
 )
 MAX_SQL_ROWS       = 2000   # safety cap for run_raw_sql (SQL Lab)
-MAX_CHART_ROWS     = 50000  # higher cap for chart queries (aggregation needs all rows)
+MAX_CHART_ROWS     = 150000  # higher cap for chart queries (aggregation needs all rows)
 
 
 def run_raw_sql(sql: str) -> dict:
     """
     Execute a read-only SQL query inside a BEGIN READ ONLY transaction.
     Returns {'columns', 'col_types', 'rows', 'row_count', 'has_more', 'error'}.
+    Results are cached for 60 seconds keyed by SQL hash.
     """
     sql = (sql or '').strip()
     if not sql:
@@ -39,6 +41,11 @@ def run_raw_sql(sql: str) -> dict:
         return {'error': 'Only SELECT / WITH queries are allowed.'}
     if _SQL_DANGER_RE.search(sql):
         return {'error': 'Query contains disallowed keywords.'}
+
+    cache_key = f"dv_raw_sql:{hashlib.md5(sql.encode()).hexdigest()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         with connection.cursor() as cursor:
@@ -63,10 +70,12 @@ def run_raw_sql(sql: str) -> dict:
                     break
             col_types.setdefault(col, 'string')
 
-        return {
+        result = {
             'columns': columns, 'col_types': col_types,
             'rows': rows, 'row_count': len(rows), 'has_more': has_more,
         }
+        cache.set(cache_key, result, 60)
+        return result
     except Exception as exc:
         return {'error': str(exc)}
 
@@ -268,12 +277,29 @@ def _build_mark_columns_from_db(cursor, selected_mark_cols: list[str]) -> tuple[
     return result
 
 
-def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict]):
-    """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place)."""
+def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict],
+                     tested_school_codes: list[str] | None = None):
+    """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place).
+
+    ``tested_school_codes``: when provided, restricts results to rows where
+    ``results.school_code`` is one of the given codes (tested/assessment school filter).
+    """
     if not test_cols_info or not student_ids:
         return
 
-    student_map = {s.get('student_id'): s for s in students if s.get('student_id')}
+    # Compound key: (student_id, school_year) — a student may appear in
+    # multiple rows when multi-year enrollment is queried. Each key maps to a
+    # LIST so that all enrollment rows for the same (student, year) get data
+    # (e.g. a student who transferred mid-year has two rows, same year).
+    # Test results only populate rows whose school_year equals the result's year,
+    # preventing 2023-2024 results from appearing on 2024-2025 rows and vice versa.
+    student_map: dict[tuple, list] = {}
+    for s in students:
+        sid = s.get('student_id')
+        sy = s.get('school_year')
+        if sid and sy:
+            key = (str(sid).strip(), str(sy).strip())
+            student_map.setdefault(key, []).append(s)
     where_parts = []
     params = []
     for info in test_cols_info:
@@ -288,6 +314,13 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
         where_parts.append(part)
         params.extend(part_params)
 
+    tested_school_clause = ''
+    if tested_school_codes:
+        codes = [c for c in tested_school_codes if c]
+        if codes:
+            tested_school_clause = f"AND r.school_code = ANY(%s)"
+            params.append(codes)
+
     sql = f"""
         SELECT r.local_student_id, r.ss, r.pl, r.other_info,
                r.school_year, t.test_name, t.subject, t.test_window
@@ -295,15 +328,28 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
         INNER JOIN tests t ON r.test_group_key = t.test_group_key
         WHERE r.local_student_id = ANY(%s)
           AND ({" OR ".join(where_parts)})
+          {tested_school_clause}
     """
     cursor.execute(sql, [student_ids, *params])
-    
+
+    # Group infos by year so each row only scans the (small) subset of infos
+    # that could possibly match its year, instead of every info every time.
+    # `info['year'] == ry` was already the first condition checked below, so
+    # this changes nothing about which infos match \u2014 only how many get checked.
+    infos_by_year: dict = {}
+    for info in test_cols_info:
+        infos_by_year.setdefault(info['year'], []).append(info)
+
     for row in cursor.fetchall():
         sid, ss, pl, oi, ry, rt, rs, rw = row
-        s_obj = student_map.get(sid)
-        if not s_obj: continue
-        for info in test_cols_info:
-            if (info['year'] == ry and info['test_name'].lower() in rt.lower() and 
+        # Look up by compound (student_id, result_school_year). Result can only
+        # populate enrollment rows for the exact same year \u2014 no cross-year bleed.
+        lookup_key = (str(sid).strip(), str(ry).strip())
+        s_objs = student_map.get(lookup_key)
+        if not s_objs:
+            continue
+        for info in infos_by_year.get(ry, ()):
+            if (info['test_name'].lower() in rt.lower() and
                 info['subject'].lower() in rs.lower()):
                 # Window match
                 iw = info.get('test_window')
@@ -313,17 +359,22 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
 
                 metric = info['metric']
                 col_name = info['col_name']
-                if metric == 'ss': 
-                    s_obj[col_name] = (str(ss).strip() if ss is not None else '\u2014')
-                elif metric == 'pl': 
-                    s_obj[col_name] = (str(pl).strip() if pl else '\u2014')
+                if metric == 'ss':
+                    val = str(ss).strip() if ss is not None else '\u2014'
+                elif metric == 'pl':
+                    val = str(pl).strip() if pl else '\u2014'
                 elif metric == 'oi':
-                    key = info.get('other_info_key')
-                    if key and isinstance(oi, dict):
-                        v = oi.get(key)
-                        s_obj[col_name] = (str(v).strip() if v is not None else '\u2014')
+                    oi_key = info.get('other_info_key')
+                    if oi_key and isinstance(oi, dict):
+                        v = oi.get(oi_key)
+                        val = str(v).strip() if v is not None else '\u2014'
                     else:
-                        s_obj[col_name] = '\u2014'
+                        val = '\u2014'
+                else:
+                    continue
+                # Write to ALL enrollment rows for this (student, year) pair
+                for s_obj in s_objs:
+                    s_obj[col_name] = val
 
 
 def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str], students: list[dict]):
@@ -354,12 +405,18 @@ def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str]
     """
     cursor.execute(sql, [student_keys, *params])
 
+    # Same scoping optimization as _fetch_test_data: group by year up front
+    # so each row only scans infos for its own year (identical match results).
+    infos_by_year: dict = {}
+    for info in mark_cols_info:
+        infos_by_year.setdefault(info['year'], []).append(info)
+
     for row in cursor.fetchall():
         sk, mark, ry, rs, rc, rp = row
         s_obj = student_map.get(sk)
         if not s_obj: continue
-        for info in mark_cols_info:
-            if (info['year'] == ry and info['subject'].lower() in rs.lower() and 
+        for info in infos_by_year.get(ry, ()):
+            if (info['subject'].lower() in rs.lower() and
                 info['course_name'].lower() in rc.lower()):
                 ip = info.get('mark_period')
                 if not ip and not rp: pass
@@ -369,6 +426,48 @@ def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str]
 
 
 # ── Public entry points ──────────────────────────────────────────────────────
+
+def run_saved_query_preview(saved_query) -> dict:
+    """Return the first 5 rows + column list for a SavedQuery for preview.
+
+    Reuses the existing query SQL from the config but limits to 5 rows.
+    Does NOT apply user filters — this is a schema-only preview.
+    """
+    config = dict(saved_query.config or {})
+    columns = config.get('columns', [])
+    if not columns:
+        return {'error': 'No columns configured in saved query', 'rows': [], 'columns': []}
+
+    # Build a minimal SELECT from current_student for preview
+    base_cols = [c for c in columns if c in _CS_COLUMNS and _SAFE_IDENT_RE.match(c)]
+    if not base_cols:
+        base_cols = ['student_id', 'student_name', 'grade', 'school', 'school_year']
+
+    select_exprs = [f'cs.{c}' for c in base_cols]
+    col_sql = ', '.join(select_exprs)
+    sql = f'SELECT {col_sql} FROM current_student cs WHERE cs.status = %s LIMIT 5'
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("BEGIN READ ONLY")
+            try:
+                cursor.execute(sql, ['Active'])
+                if cursor.description is None:
+                    return {'columns': base_cols, 'rows': [], 'row_count': 0}
+                db_cols = [col[0] for col in cursor.description]
+                raw = cursor.fetchmany(5)
+                rows = [dict(zip(db_cols, row)) for row in raw]
+            finally:
+                cursor.execute("ROLLBACK")
+
+        return {
+            'columns': base_cols,
+            'rows': rows,
+            'row_count': len(rows),
+        }
+    except Exception as exc:
+        return {'error': str(exc), 'rows': [], 'columns': []}
+
 
 def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: list | None = None, apply_user_filters: bool = False) -> dict:
     """
@@ -464,6 +563,17 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     requested = config.get('columns', [])
     filters   = config.get('filters', {}) if isinstance(config.get('filters'), dict) else {}
 
+    # Resolve school-year aliases (e.g. '__sy_this__') to concrete year values.
+    if 'school_year' in filters:
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            sy_val = filters['school_year']
+            if isinstance(sy_val, list):
+                filters = {**filters, 'school_year': [resolve_school_year(v) for v in sy_val]}
+            else:
+                filters = {**filters, 'school_year': resolve_school_year(sy_val)}
+        except Exception:
+            pass
 
     # Partition requested columns into base / test / mark buckets.
     # Base columns go directly into SQL (cs.{col}) so must be safe identifiers.
@@ -480,11 +590,22 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
         elif c.startswith('mark_'):
             mark_cols.append(c)
 
+    # Resolve relative column key aliases (e.g. test___sy_this___... → test_2025_2026_...)
+    # before they reach _parse_year / _build_test_columns_from_db which expect real years.
+    try:
+        from dataexploration.school_year_utils import resolve_relative_column_key
+        test_cols = [resolve_relative_column_key(c) for c in test_cols]
+        mark_cols = [resolve_relative_column_key(c) for c in mark_cols]
+    except Exception:
+        pass
+
     # Ensure we always have join keys so we can do bulk fetches
     need_test = bool(test_cols)
     need_mark = bool(mark_cols)
     if need_test and 'student_id' not in base_cols:
         base_cols.append('student_id')
+    if need_test and 'school_year' not in base_cols:
+        base_cols.append('school_year')
     if need_mark and 'stu_annual_key' not in base_cols:
         base_cols.append('stu_annual_key')
 
@@ -551,8 +672,26 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     # Fields that live in student_enroll (not current_student)
     _ENROLL_FIELDS = {'ell': 'se.ell_status', 'birth_date': 'se.birth_date',
                       'us_enter_date': 'se.us_enter_date', 'fep_date': 'se.fep_date',
-                      'migrant': 'se.migrant'}
+                      'migrant': 'se.migrant', 'grade': 'se.grade'}
     needs_enroll = False
+
+    # When a school_year filter is present (especially multi-year or past),
+    # force the enroll join so grade comes from the enrollment record for that year.
+    _needs_year_grade = False
+    if 'school_year' in filters:
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            default_sy = resolve_school_year('__sy_this__')
+            sy_val = filters['school_year']
+            if isinstance(sy_val, list):
+                if len(sy_val) > 1 or (len(sy_val) == 1 and sy_val[0] != default_sy):
+                    _needs_year_grade = True
+            elif isinstance(sy_val, str) and sy_val and sy_val != default_sy:
+                _needs_year_grade = True
+        except Exception:
+            pass
+    if _needs_year_grade:
+        needs_enroll = True
 
     def _add_filter(expr: str, value):
         """Add an IN / = filter using the given SQL expression."""
@@ -584,7 +723,12 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                 where_parts.append(f'{expr} = %s')
                 params.append(value)
 
-    # Apply every filter whose key is a base CS column or an enroll field
+    # Apply every filter whose key is a base CS column or an enroll field.
+    # Pull out special non-column filters first.
+    tested_school_filter = filters.pop('tested_school', None) if isinstance(filters, dict) else None
+    if tested_school_filter and not isinstance(tested_school_filter, list):
+        tested_school_filter = [tested_school_filter]
+
     for fkey, fval in filters.items():
         if fkey == 'search':
             continue  # handled separately below
@@ -647,11 +791,13 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             " ) se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
         )
 
-    # Build SELECT expressions — ell comes from COALESCE(cs.ell, se.ell_status) when enroll is joined
+    # Build SELECT expressions — use enrollment values when join is active
     select_exprs = []
     for c in base_cols:
         if c == 'ell' and needs_enroll:
             select_exprs.append('COALESCE(cs.ell, se.ell_status) AS ell')
+        elif c == 'grade' and needs_enroll:
+            select_exprs.append('COALESCE(se.grade, cs.grade) AS grade')
         else:
             select_exprs.append(f'cs.{c}')
 
@@ -671,14 +817,72 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
 
             # Phase 2: resolve test/mark column metadata & bulk-fetch
             if rows and (need_test or need_mark):
+                # When multiple school years are selected, the column key encodes only
+                # the year that was visible in the picker (usually the most recent).
+                # Expand infos to cover all selected years so each enrolled-year row
+                # gets its matching assessment/mark data via the (student_id, year) key.
+                _multi_years = filters.get('school_year') if isinstance(filters.get('school_year'), list) and len(filters.get('school_year', [])) > 1 else None
+
+                test_infos = None
+                mark_infos = None
+                student_ids = None
+                student_keys = None
+
                 if need_test:
                     test_infos, _ = _build_test_columns_from_db(cursor, test_cols)
+                    if _multi_years and test_infos:
+                        _seen = set()
+                        _expanded = []
+                        for _info in test_infos:
+                            for _yr in _multi_years:
+                                _key = (_yr, _info['test_name'], _info['subject'], _info.get('test_window'), _info['metric'])
+                                if _key not in _seen:
+                                    _seen.add(_key)
+                                    _expanded.append({**_info, 'year': _yr})
+                        test_infos = _expanded
                     student_ids = [r['student_id'] for r in rows if r.get('student_id')]
-                    _fetch_test_data(cursor, test_infos, student_ids, rows)
 
                 if need_mark:
                     mark_infos, _ = _build_mark_columns_from_db(cursor, mark_cols)
+                    if _multi_years and mark_infos:
+                        _seen = set()
+                        _expanded = []
+                        for _info in mark_infos:
+                            for _yr in _multi_years:
+                                _key = (_yr, _info['subject'], _info['course_name'], _info.get('mark_period'))
+                                if _key not in _seen:
+                                    _seen.add(_key)
+                                    _expanded.append({**_info, 'year': _yr})
+                        mark_infos = _expanded
                     student_keys = [r['stu_annual_key'] for r in rows if r.get('stu_annual_key')]
+
+                # Run test and mark data fetches in parallel when both are needed
+                if need_test and need_mark:
+                    def _fetch_tests():
+                        with connections['default'].cursor() as cur:
+                            cur.execute("BEGIN READ ONLY")
+                            try:
+                                _fetch_test_data(cur, test_infos, student_ids, rows,
+                                                 tested_school_codes=tested_school_filter)
+                            finally:
+                                cur.execute("ROLLBACK")
+
+                    def _fetch_marks():
+                        with connections['default'].cursor() as cur:
+                            cur.execute("BEGIN READ ONLY")
+                            try:
+                                _fetch_mark_data(cur, mark_infos, student_keys, rows)
+                            finally:
+                                cur.execute("ROLLBACK")
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        futures = [executor.submit(_fetch_tests), executor.submit(_fetch_marks)]
+                        for f in futures:
+                            f.result()  # wait for both, propagate exceptions
+                elif need_test:
+                    _fetch_test_data(cursor, test_infos, student_ids, rows,
+                                     tested_school_codes=tested_school_filter)
+                elif need_mark:
                     _fetch_mark_data(cursor, mark_infos, student_keys, rows)
 
             if rows and dynamic_filters:
@@ -713,8 +917,8 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             'has_more':  len(raw) == MAX_CHART_ROWS,
             'error':     None,
         }
-        # Cache for 5 minutes (300s)
-        cache.set(cache_key, res, 300)
+        # Cache for 30 minutes (1800s) — confirmed acceptable staleness window
+        cache.set(cache_key, res, 1800)
         return res
     except Exception as exc:
         return {'error': str(exc), 'rows': [], 'columns': []}

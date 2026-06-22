@@ -4,7 +4,7 @@ import io
 import json
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, StreamingHttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 
 from dataviz.models import SavedChart
@@ -13,6 +13,8 @@ from dataviz.utils.drill_through import (
     get_all_available_columns,
 )
 from dataviz.views.drill_views import _col_label, _parse_column_filters
+
+MAX_PER_PAGE = 5000
 
 
 @login_required
@@ -45,13 +47,17 @@ def drill_rows_api(request, chart_id):
                 drill_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
 
     page_num = int(params.get('page', 1))
-    per_page = int(params.get('per_page', 50))
+    per_page = min(int(params.get('per_page', 50)), MAX_PER_PAGE)
     sort_by = params.get('sort_by', '')
     sort_dir = params.get('sort_dir', 'asc')
 
     # Column selection
     cols_param = params.get('cols', '')
-    selected_columns = [c for c in cols_param.split(',') if c] if cols_param else []
+    if cols_param:
+        selected_columns = [c for c in cols_param.split(',') if c]
+    else:
+        selected_columns = chart.drill_through_columns or []
+    selected_columns = [c.split('.')[-1] for c in selected_columns]
 
     # Per-column filters
     column_filters = _parse_column_filters(request)
@@ -70,9 +76,9 @@ def drill_rows_api(request, chart_id):
         extra_columns=extra_cols or None,
     )
 
-    query_columns = result.get('columns', [])
-    all_columns = result.get('all_columns', query_columns)
-    col_labels = {c: _col_label(c) for c in all_columns}
+    query_columns = [c.split('.')[-1] for c in result.get('columns', [])]
+    all_columns = [c.split('.')[-1] for c in result.get('all_columns', query_columns)]
+    col_labels = {c.split('.')[-1]: _col_label(c) for c in all_columns}
 
     context = {
         'chart': chart,
@@ -168,7 +174,7 @@ def drill_export_csv_api(request, chart_id):
     """
     Export the current drill-through data as a CSV file.
     Accepts the same filter/sort/column params as drill_rows_api but fetches
-    ALL rows (no pagination).
+    ALL rows (no pagination) using streaming to avoid memory exhaustion.
     """
     chart = get_object_or_404(SavedChart, pk=chart_id)
     params = request.GET
@@ -192,31 +198,50 @@ def drill_export_csv_api(request, chart_id):
     sort_dir = params.get('sort_dir', 'asc')
 
     cols_param = params.get('cols', '')
-    selected_columns = [c for c in cols_param.split(',') if c] if cols_param else []
+    if cols_param:
+        selected_columns = [c for c in cols_param.split(',') if c]
+    else:
+        selected_columns = chart.drill_through_columns or []
+    selected_columns = [c.split('.')[-1] for c in selected_columns]
 
     column_filters = _parse_column_filters(request)
 
-    result = execute_drill_query(
-        chart, drill_filters, columns=selected_columns, user=request.user,
-        page=1, per_page=999_999,
-        sort_by=sort_by, sort_dir=sort_dir,
-        column_filters=column_filters,
-        extra_columns=selected_columns or None,
-    )
-
-    rows = result.get('rows', [])
-    columns = result.get('columns', [])
-
-    # Build CSV
-    output = io.StringIO()
-    writer = csv.writer(output)
-    # Header row with human-readable labels
-    writer.writerow([_col_label(c) for c in columns])
-    for row in rows:
-        writer.writerow([row.get(c, '') for c in columns])
-
-    response = HttpResponse(output.getvalue(), content_type='text/csv')
+    # Fetch all rows in chunks to avoid loading everything into memory
+    CHUNK_SIZE = 2000
     safe_name = chart.name.replace(' ', '_').replace('/', '_')[:50]
+
+    def stream_csv():
+        first_chunk = True
+        page = 1
+        while True:
+            result = execute_drill_query(
+                chart, drill_filters, columns=selected_columns, user=request.user,
+                page=page, per_page=CHUNK_SIZE,
+                sort_by=sort_by, sort_dir=sort_dir,
+                column_filters=column_filters,
+                extra_columns=selected_columns or None,
+            )
+            rows = result.get('rows', [])
+            cols = result.get('columns', [])
+
+            if not rows:
+                break
+
+            if first_chunk:
+                yield ','.join([_col_label(c) for c in cols]) + '\n'
+                first_chunk = False
+
+            for row in rows:
+                yield ','.join(
+                    f'"{str(row.get(c, "")).replace(chr(34), chr(34)+chr(34))}"'
+                    for c in cols
+                ) + '\n'
+
+            if len(rows) < CHUNK_SIZE:
+                break
+            page += 1
+
+    response = StreamingHttpResponse(stream_csv(), content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="drill_{safe_name}.csv"'
     return response
 

@@ -204,7 +204,7 @@ AUTH_USER_MODEL = 'users.User'
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://redis:6379/0',
+        'LOCATION': os.getenv('REDIS_URL', 'redis://redis:6379/0'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         },
@@ -218,3 +218,14 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Allow larger POST bodies for chart rendering (rows payload)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50 MB
+
+# Disable migrations during unit testing to avoid raw SQL dependencies
+import sys
+if 'test' in sys.argv:
+    class DisableMigrations:
+        def __contains__(self, item):
+            return True
+        def __getitem__(self, item):
+            return None
+    MIGRATION_MODULES = DisableMigrations()
+

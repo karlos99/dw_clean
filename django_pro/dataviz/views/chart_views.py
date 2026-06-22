@@ -7,13 +7,15 @@ from django.db import connections
 from django.shortcuts import get_object_or_404, render
 from django.views.generic import TemplateView
 
-from dataviz.models import SavedChart
+from dataviz.models import SavedChart, Dataset
 from dataviz.utils.chart_builder import CHART_TYPES
 from dataexploration.column_utils import get_mark_columns, get_test_columns
 from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
 from dataexploration.models import SavedQuery
 from dataexploration.utils import can_user_view_query
 from dataexploration.view_modules.column_management import get_saved_default_columns
+from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+from dataexploration.constants import SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR
 
 from .mixins import ProjectAdminMixin, is_project_admin
 
@@ -28,7 +30,7 @@ def chart_index(request):
         return HttpResponseForbidden('Project Admins only.')
 
     current_path = request.GET.get('folder', '').strip().strip('/')
-    charts = SavedChart.objects.filter(owner=request.user).order_by('name')
+    charts = SavedChart.objects.all().order_by('name')[:500]
 
     # Build the full tree structure
     root = {'folders': {}, 'charts': []}
@@ -85,10 +87,10 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
         # Pre-load an existing chart if editing
         existing_chart = None
         if chart_id:
-            existing_chart = get_object_or_404(SavedChart, pk=chart_id, owner=user)
+            existing_chart = get_object_or_404(SavedChart, pk=chart_id)
 
         # Accessible saved queries
-        query_list = SavedQuery.objects.select_related('owner', 'folder').order_by('name')
+        query_list = SavedQuery.objects.select_related('owner', 'folder').order_by('name')[:200]
         accessible_queries = [q for q in query_list if can_user_view_query(user, q)]
 
         # Column definitions
@@ -125,7 +127,7 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             'stacked_bar':  _svg('<rect x="3" y="5" width="5" height="14" rx="1"/><rect x="3" y="5" width="5" height="6" rx="1" opacity=".5"/><rect x="10" y="8" width="5" height="11" rx="1"/><rect x="10" y="8" width="5" height="5" rx="1" opacity=".5"/><rect x="17" y="2" width="5" height="17" rx="1"/><rect x="17" y="2" width="5" height="8" rx="1" opacity=".5"/>'),
             'waterfall':    _svg('<rect x="2" y="14" width="4" height="6" rx="1"/><rect x="8" y="10" width="4" height="4" rx="1" opacity=".5"/><rect x="14" y="6" width="4" height="8" rx="1"/><rect x="20" y="4" width="2" height="16" rx="1"/>'),
             'line':         _svg('<polyline points="2,18 7,10 12,14 17,6 22,9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
-            'spline':       _svg('<path d="M2 18 C5 18 6 10 9 10 S14 14 17 8 S20 6 22 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'),
+            'spline':       _svg('<path d="M4 18 A8 8 0 0 1 20 18" fill="none" stroke="currentColor" stroke-dasharray="1 3" stroke-width="3" stroke-linecap="round"/><path d="M2 18 A10 10 0 0 1 22 18" fill="none" stroke="currentColor" stroke-dasharray="1 4" stroke-width="3" stroke-linecap="round"/>'),
             'area':         _svg('<path d="M2 18 L7 10 L12 14 L17 6 L22 9 L22 20 L2 20 Z" opacity=".3"/><polyline points="2,18 7,10 12,14 17,6 22,9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
             'areaspline':   _svg('<path d="M2 18 C5 18 6 10 9 10 S14 14 17 8 S20 6 22 8 L22 20 L2 20 Z" opacity=".3"/><path d="M2 18 C5 18 6 10 9 10 S14 14 17 8 S20 6 22 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'),
             'stacked_area': _svg('<path d="M2 20 L7 14 L12 16 L17 10 L22 12 L22 20 Z" opacity=".4"/><path d="M2 14 L7 8 L12 11 L17 4 L22 7 L22 12 L17 10 L12 16 L7 14 Z" opacity=".6"/>'),
@@ -143,13 +145,46 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             'assessment_compare': _svg('<rect x="2" y="6" width="4" height="12" rx="1"/><rect x="2" y="6" width="4" height="5" rx="1" opacity=".5"/><rect x="8" y="9" width="4" height="9" rx="1"/><rect x="8" y="9" width="4" height="4" rx="1" opacity=".5"/><rect x="14" y="4" width="4" height="14" rx="1"/><rect x="14" y="4" width="4" height="6" rx="1" opacity=".5"/>'),
             'progress_growth': _svg('<path d="M3 17 C5 17 6 12 9 11 S13 13 16 8 S20 5 21 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M15 5 L21 5 L21 11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'),
             'summary_table': _svg('<rect x="2" y="3" width="20" height="3" rx=".5"/><rect x="2" y="8" width="20" height="3" rx=".5" opacity=".6"/><rect x="2" y="13" width="20" height="3" rx=".5" opacity=".4"/><rect x="2" y="18" width="20" height="3" rx=".5" opacity=".2"/>'),
+            'dynamic_summary_table': _svg('<rect x="2" y="2" width="20" height="20" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="7" x2="22" y2="7" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="13" x2="22" y2="13" stroke="currentColor" stroke-width="1.5"/><line x1="2" y1="18" x2="22" y2="18" stroke="currentColor" stroke-width="1.5"/><line x1="8" y1="2" x2="8" y2="22" stroke="currentColor" stroke-width="1.5"/><line x1="15" y1="2" x2="15" y2="22" stroke="currentColor" stroke-width="1.5"/>'),
         }
         chart_types_flat = [(k, l, _ICONS.get(k, _ICONS['bar']), g) for k, l, _, g in CHART_TYPES]
 
         agg_choices = [
             ('count', 'Count'), ('sum', 'Sum'), ('avg', 'Average'),
             ('min', 'Min'), ('max', 'Max'), ('median', 'Median'),
+            ('count_unique', 'Count Unique'), ('count_occurrence', 'Count Occurrence'),
         ]
+
+        all_years = list(test_structure.keys()) + list(marks_structure.keys())
+        year_labels_map = get_year_labels_map(all_years)
+        year_alias_map = get_year_alias_map()
+
+        # Build year alias labels for the "School Year Context" dropdown:
+        # This Year → 2025-2026, Last Year → 2024-2025, Two Prior → 2023-2024
+        year_alias_labels = {
+            SY_THIS_YEAR: 'This School Year',
+            SY_LAST_YEAR: 'Last School Year',
+            SY_TWO_PRIOR: 'Two Years Prior',
+        }
+
+        # Build the resolved labels: show which concrete year each alias resolves to
+        alias_resolved_labels = {}
+        from dataexploration.school_year_utils import resolve_school_year
+        for alias_key, alias_label in year_alias_labels.items():
+            try:
+                resolved = resolve_school_year(alias_key)
+                alias_resolved_labels[alias_key] = f'{alias_label} ({resolved})'
+            except Exception:
+                alias_resolved_labels[alias_key] = alias_label
+
+        # Build pages list for save-and-add-to-page dropdown
+        from dataviz.models import DataVizPage
+        available_pages = list(DataVizPage.objects.order_by('title').values('id', 'title', 'slug'))
+
+        # Available datasets for the chart builder picker
+        available_datasets_qs = Dataset.objects.order_by('name')[:200]
+        available_datasets = list(available_datasets_qs.values('id', 'name', 'description'))
+        available_datasets_json = json.dumps(available_datasets)
 
         context.update({
             'chart_id':             chart_id,
@@ -167,6 +202,16 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             'chart_types_flat':     chart_types_flat,
             'agg_choices':          agg_choices,
             'palettes':             list(PALETTES.keys()),
+            'year_labels':          year_labels_map,
+            'year_labels_json':     json.dumps(year_labels_map),
+            'year_alias_labels_json': json.dumps(year_alias_labels),
+            'alias_resolved_labels_json': json.dumps(alias_resolved_labels),
+            'sy_this_year':         SY_THIS_YEAR,
+            'sy_last_year':         SY_LAST_YEAR,
+            'sy_two_prior':         SY_TWO_PRIOR,
+            'available_pages_json': json.dumps(available_pages),
+            'available_datasets': available_datasets_qs,
+            'available_datasets_json': available_datasets_json,
         })
         return context
 

@@ -9,11 +9,18 @@ import re
 
 import pandas as pd
 
+try:
+    from dataexploration.school_year_utils import resolve_relative_column_key
+except Exception:  # pragma: no cover - keep chart builder usable in isolated contexts
+    def resolve_relative_column_key(col_key: str) -> str:
+        return col_key
+
 # ── Meta-column constants ─────────────────────────────────────────────────────
 
 _YEAR_RE         = re.compile(r'^(?:test|mark)_(\d{4})_(\d{4})_')
 _META_DIM_COLS   = {'_assessment', '_test_school_year', '_test_window', '_test_pl', '_mark_school_year', '_mark_period'}
 _META_SCORE_COLS = {'_test_score', '_mark_score'}
+_MELT_MAX_ROWS   = 600000  # safety cap: refuse melt if result would exceed this many rows
 
 _META_LABEL_MAP = {
     '_assessment':       'Assessment',
@@ -205,6 +212,12 @@ def _maybe_melt_for_meta(df, x_col, stack_col, y_col, y_cols, col_defs):
         if not frames:
             return df, y_col, y_cols
 
+        total_melt_rows = len(df) * len(frames)
+        if total_melt_rows > _MELT_MAX_ROWS:
+            raise RuntimeError(
+                f'Melt would produce {total_melt_rows:,} rows (> {_MELT_MAX_ROWS:,} limit). '
+                'Select fewer assessment/mark columns.'
+            )
         melted = pd.concat(frames, ignore_index=True)
         # Strip blank PL values
         melted = melted[melted['_test_pl'].astype(str).str.strip().ne('')]
@@ -218,6 +231,12 @@ def _maybe_melt_for_meta(df, x_col, stack_col, y_col, y_cols, col_defs):
         return df, y_col, y_cols
 
     id_cols = [c for c in df.columns if c not in score_cols]
+    total_melt_rows = len(df) * len(score_cols)
+    if total_melt_rows > _MELT_MAX_ROWS:
+        raise RuntimeError(
+            f'Melt would produce {total_melt_rows:,} rows (> {_MELT_MAX_ROWS:,} limit). '
+            'Select fewer assessment/mark columns.'
+        )
     melted = df.melt(id_vars=id_cols, value_vars=score_cols, var_name='_source_col', value_name='_test_score')
     melted['_test_score'] = pd.to_numeric(melted['_test_score'], errors='coerce')
     melted = melted.dropna(subset=['_test_score'])
@@ -256,30 +275,44 @@ def _label(col: str, col_defs: dict) -> str:
     return str(raw).replace('\n', ' — ').replace('\r', '')
 
 
-def _agg(df, x_col, y_col, agg, stack_col=''):
+def _agg(df, x_col, y_col, agg, stack_col='', agg_decimals=None, cfg=None):
+    if agg_decimals is None and cfg is not None:
+        _raw = cfg.get('agg_decimals')
+        if _raw is not None:
+            try:
+                agg_decimals = int(_raw)
+            except (ValueError, TypeError):
+                pass
     if x_col not in df.columns:
         return pd.DataFrame()
     
-    # Filter out rows where x_col or stack_col are NaN/None before aggregation
     group_cols = [x_col]
     if stack_col and stack_col in df.columns:
         group_cols.append(stack_col)
     
-    # Strictly drop rows with NaN in grouping columns
     df = df.dropna(subset=group_cols)
     
     try:
         if agg in ('sum', 'avg', 'min', 'max', 'median') and y_col and y_col in df.columns:
-            dfc = df.copy()
-            dfc[y_col] = pd.to_numeric(dfc[y_col], errors='coerce')
-            # dropna=True (default) ensures NaNs in group_cols don't create a group
+            dfc = df.assign(**{y_col: pd.to_numeric(df[y_col], errors='coerce')})
             grp = dfc.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
             result = {
                 'sum': grp.sum(), 'avg': grp.mean(),
                 'min': grp.min(), 'max': grp.max(), 'median': grp.median(),
             }.get(agg, grp.size()).reset_index().rename(columns={y_col: '_value'})
+            if agg_decimals is not None and '_value' in result.columns:
+                result['_value'] = result['_value'].round(agg_decimals)
+        elif agg == 'count_unique' and y_col and y_col in df.columns:
+            grp = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
+            result = grp.nunique().reset_index().rename(columns={y_col: '_value'})
+            if agg_decimals is not None and '_value' in result.columns:
+                result['_value'] = result['_value'].round(agg_decimals)
+        elif agg == 'count_occurrence' and y_col and y_col in df.columns:
+            grp = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
+            result = grp.count().reset_index().rename(columns={y_col: '_value'})
+            if agg_decimals is not None and '_value' in result.columns:
+                result['_value'] = result['_value'].round(agg_decimals)
         else:
-            # For 'count', we count rows where y_col is not NaN if provided
             if y_col and y_col in df.columns:
                 result = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True).size().reset_index(name='_value')
             else:
@@ -412,6 +445,136 @@ def _apply_color_map(option: dict, cfg: dict) -> None:
                     item.setdefault('itemStyle', {})['color'] = cmap[item_name]
 
 
+def _build_grouped_axis_data(categories, sep=' · '):
+    """
+    Parses a list of category strings (joined with `sep`)
+    and returns a tuple: (leaf_categories, group_labels_list)
+    If no grouping exists, returns (categories, None).
+    """
+    has_grouping = False
+    parsed = []
+    for cat in categories:
+        if sep in cat:
+            has_grouping = True
+            parts = cat.split(sep)
+            parent = sep.join(parts[:-1])
+            leaf = parts[-1]
+            parsed.append((parent, leaf))
+        else:
+            parsed.append(("", cat))
+            
+    if not has_grouping:
+        return categories, None
+        
+    leaf_categories = [p[1] for p in parsed]
+    parent_values = [p[0] for p in parsed]
+    
+    # Identify contiguous groups of parent values
+    n = len(parent_values)
+    group_labels = [""] * n
+    
+    i = 0
+    while i < n:
+        current_parent = parent_values[i]
+        # find the end of this contiguous group
+        j = i
+        while j < n and parent_values[j] == current_parent:
+            j += 1
+        # Group is from index i to j-1
+        middle_idx = (i + j - 1) // 2
+        group_labels[middle_idx] = current_parent
+        i = j
+        
+    return leaf_categories, group_labels
+
+
+def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax, x_lbl, orientation='vertical', radial=False, polar=False):
+    leaf_categories, group_labels = _build_grouped_axis_data(categories)
+    
+    if radial:
+        option.pop('grid', None)
+        option.update({
+            'angleAxis': {'type': 'category', 'data': leaf_categories if group_labels else categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+            'radiusAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+            'polar': {'radius': '70%'},
+            'series': series,
+        })
+        option.setdefault('dv', {})['category_axis'] = 'angle'
+        return
+    if polar:
+        option.pop('grid', None)
+        option.update({
+            'radiusAxis': {'type': 'category', 'data': leaf_categories if group_labels else categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+            'angleAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+            'polar': {'radius': '70%'},
+            'series': series,
+        })
+        option.setdefault('dv', {})['category_axis'] = 'radius'
+        return
+        
+    if orientation == 'horizontal':
+        if group_labels:
+            y_axis_option = [
+                {
+                    'type': 'category',
+                    'data': leaf_categories,
+                    'name': _axis_name(labels['x'], cfg),
+                    **ax,
+                    'axisLabel': x_lbl
+                },
+                {
+                    'type': 'category',
+                    'data': group_labels,
+                    'position': 'left',
+                    'offset': 60,
+                    'axisLine': {'show': False},
+                    'axisTick': {'show': False},
+                    'splitLine': {'show': False},
+                    'axisLabel': {'interval': 0, 'textStyle': {'fontWeight': 'bold'}, **x_lbl}
+                }
+            ]
+        else:
+            y_axis_option = {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl}
+            
+        option.update({
+            'xAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+            'yAxis': y_axis_option,
+            'series': series,
+        })
+        option.setdefault('dv', {})['category_axis'] = 'y'
+        return
+        
+    if group_labels:
+        x_axis_option = [
+            {
+                'type': 'category',
+                'data': leaf_categories,
+                'name': _axis_name(labels['x'], cfg),
+                **ax,
+                'axisLabel': x_lbl
+            },
+            {
+                'type': 'category',
+                'data': group_labels,
+                'position': 'bottom',
+                'offset': 30,
+                'axisLine': {'show': False},
+                'axisTick': {'show': False},
+                'splitLine': {'show': False},
+                'axisLabel': {'interval': 0, 'textStyle': {'fontWeight': 'bold'}, **x_lbl}
+            }
+        ]
+    else:
+        x_axis_option = {'type': 'category', 'data': categories, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl}
+        
+    option.update({
+        'xAxis': x_axis_option,
+        'yAxis': {'type': 'value', 'name': _axis_name(y_axis_name, cfg), **ax},
+        'series': series,
+    })
+    option.setdefault('dv', {})['category_axis'] = 'x'
+
+
 def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
     t = _theme(cfg)
     title_text = cfg.get('chart_title', '') or cfg.get('title', '')
@@ -470,29 +633,184 @@ def _axis_style(cfg: dict) -> dict:
 
 
 def _x_axis_label_style(cfg: dict) -> dict:
-    """Return axisLabel overrides for x-axis based on user config."""
+    """Return axisLabel overrides for the category axis.
+
+    ``show_categories`` controls whether category text labels are visible.
+    It is intentionally independent of ``show_axis_labels`` (which controls
+    the value-axis numbers).  The axis line/tick/grid remain visible
+    regardless of either setting.
+    """
     t = _theme(cfg)
-    show_labels = cfg.get('show_axis_labels', True) is not False
+    show_categories = cfg.get('show_categories', True) is not False
     rotation    = int(cfg.get('x_label_rotation', 0) or 0)
     font_size   = int(cfg.get('x_label_font_size', 11) or 11)
     max_len     = int(cfg.get('x_label_max_length', 0) or 0)
 
-    lbl: dict = {'show': show_labels, 'color': t['text'], 'fontSize': font_size}
+    lbl: dict = {'show': show_categories, 'color': t['text'], 'fontSize': font_size}
     if rotation:
         lbl['rotate'] = rotation
     if max_len > 0:
         lbl['__formatter_js__'] = (
             f'function(v){{var s=String(v);return s.length>{max_len}?s.slice(0,{max_len})+"…":s;}}'
         )
+    if cfg.get('force_show_all_labels', False):
+        lbl['interval'] = 0
     return lbl
 
 
-def _add_zoom(option: dict, cfg: dict = None) -> None:
+def _axis_name(name: str, cfg: dict) -> str:
+    return name if cfg.get('show_axis_titles', True) is not False else ''
+
+
+def _percent_decimals(cfg: dict) -> int:
+    try:
+        return max(0, min(6, int(cfg.get('percent_decimals', 1) or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _show_percent_symbol(cfg: dict) -> bool:
+    return cfg.get('show_percent_symbol', True) is not False
+
+
+def _percent_suffix(cfg: dict) -> str:
+    return '%' if _show_percent_symbol(cfg) else ''
+
+
+def _tooltip_show_pct(cfg: dict) -> bool:
+    return cfg.get('tooltip_show_pct', True) is not False
+
+
+def _tooltip_show_count(cfg: dict) -> bool:
+    return cfg.get('tooltip_show_count', True) is not False
+
+
+def _tooltip_value_pct(cfg: dict) -> bool:
+    """When True, append '%' after the raw value in tooltips (useful for AVG of percentage data)."""
+    return cfg.get('tooltip_value_pct', False) is True
+
+
+def _rich_tooltip_js(categories: list, raw_lookup: dict, totals_lookup: dict,
+                     percent_decimals: int, percent_suffix: str,
+                     show_pct: bool = True, show_count: bool = True,
+                     value_pct_suffix: str = '') -> str:
+    """Return a JS axis-tooltip formatter that shows count + % + (n=total) per category.
+
+    ``categories``    – list of original full categories
+    ``raw_lookup``    – {series_name: {category: raw_value}}
+    ``totals_lookup`` – {category: total_count}
+    ``value_pct_suffix`` – when '%', appends '%' after the raw value (for avg % data)
+    """
+    zero_pct = "'" + ('0.' + ('0' * percent_decimals) if percent_decimals else '0') + "'"
+    count_line = (
+        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
+        if show_count else ""
+    )
+    pct_fragment = (
+        f" + ' (' + pct + '%)';"
+        if show_pct else ";"
+    )
+    pct_calc = (
+        f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : {zero_pct};"
+        if show_pct else ""
+    )
+    val_display = f"cnt + '{value_pct_suffix}'" if value_pct_suffix else "cnt"
+    return (
+        "function(params) {"
+        "  if (!Array.isArray(params)) params = [params];"
+        f"  var cats = {json.dumps(categories)};"
+        f"  var rawLookup = {json.dumps(raw_lookup)};"
+        f"  var totals = {json.dumps(totals_lookup)};"
+        "  var dataIdx = params[0].dataIndex;"
+        "  var cat = (cats && dataIdx !== undefined && cats[dataIdx]) ? cats[dataIdx] : (params[0].name || '');"
+        "  var total = totals[cat] || 0;"
+        "  var html = '<b>' + cat + '</b>';"
+        f"{count_line}"
+        "  for (var i = params.length - 1; i >= 0; i--) {"
+        "    var d = params[i];"
+        "    var cnt = (rawLookup[d.seriesName] || {})[cat] || 0;"
+        f"{pct_calc}"
+        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + {val_display} + '</b>'{pct_fragment}"
+        "  }"
+        "  return html;"
+        "}"
+    )
+
+
+def _inline_pct_tooltip_js(percent_decimals: int = 1, percent_suffix: str = '%',
+                           grand_total: float | None = None,
+                           show_pct: bool = True, show_count: bool = True,
+                           value_pct_suffix: str = '',
+                           categories: list | None = None) -> str:
+    """Return a JS axis-tooltip formatter that computes % client-side from the params array.
+    If grand_total is provided (single-series), it is embedded and used as the denominator.
+    Otherwise the sum of all series values for the axis category is used.
+    ``value_pct_suffix`` – when '%', appends '%' after the raw value (for avg % data)
+    """
+    zero_pct = "'" + ('0.' + ('0' * percent_decimals) if percent_decimals else '0') + "'"
+    if grand_total is not None:
+        total_expr = str(round(grand_total, 6))
+    else:
+        total_expr = "params.reduce(function(s,d){return s+(Number(d.value)||0);},0)"
+    count_line = (
+        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + Math.round(total) + ')</span>';"
+        if show_count else ""
+    )
+    pct_calc = (
+        f"    var pct = total > 0 ? (v / total * 100).toFixed({percent_decimals}) : {zero_pct};"
+        if show_pct else ""
+    )
+    pct_fragment = (
+        f" + ' (' + pct + '%)';"
+        if show_pct else ";"
+    )
+    val_display = f"v + '{value_pct_suffix}'" if value_pct_suffix else "v"
+    cats_js = f"var cats = {json.dumps(categories)};" if categories else "var cats = null;"
+    cat_resolve = (
+        "  var dataIdx = params[0].dataIndex;"
+        "  var cat = (cats && dataIdx !== undefined && cats[dataIdx]) ? cats[dataIdx] : (params[0].name || '');"
+    )
+    return (
+        "function(params) {"
+        "  if (!Array.isArray(params)) params = [params];"
+        f"  {cats_js}"
+        f"  {cat_resolve}"
+        f"  var total = {total_expr};"
+        "  var html = '<b>' + cat + '</b>';"
+        f"{count_line}"
+        "  for (var i = params.length - 1; i >= 0; i--) {"
+        "    var d = params[i];"
+        "    if (d.value == null) continue;"
+        "    var v = Number(d.value) || 0;"
+        f"{pct_calc}"
+        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + {val_display} + '</b>'{pct_fragment}"
+        "  }"
+        "  return html;"
+        "}"
+    )
+
+
+def _ordered_categories(categories: list[str], cfg: dict, value_map: dict | None = None) -> list[str]:
+    cats = [str(c) for c in categories]
+    mode = (cfg.get('sort_col') or '').strip()
+    reverse = str(cfg.get('sort_dir', 'asc')).lower() == 'desc'
+    manual = [str(c) for c in (cfg.get('category_order') or []) if str(c) in cats]
+    if mode == '__manual__':
+        return manual + [c for c in cats if c not in manual]
+    if mode == '_value' and value_map:
+        return sorted(cats, key=lambda c: (float(value_map.get(c, 0) or 0), c), reverse=reverse)
+    if mode and mode != '_value':
+        return sorted(cats, reverse=reverse)
+    return cats
+
+
+def _add_zoom(option: dict, cfg: dict = None, axis: str = 'x') -> None:
     if cfg and cfg.get('show_zoom', True) is False:
         return
+    axis_index_key = 'yAxisIndex' if axis == 'y' else 'xAxisIndex'
     option['dataZoom'] = [
-        {'type': 'inside', 'xAxisIndex': 0},
-        {'type': 'slider', 'xAxisIndex': 0, 'bottom': 14},
+        {'type': 'inside', axis_index_key: 0},
+        {'type': 'slider', axis_index_key: 0, 'bottom': 14},
     ]
 
 
@@ -516,48 +834,150 @@ def _message_option(text: str, cfg: dict, error: bool = False) -> dict:
     opt['title']['text'] = text
     opt['title']['textStyle']['color'] = '#dc2626' if error else _theme(cfg)['text']
     opt['title']['top'] = 'middle'
+    opt['__is_message__'] = True
+    opt['__is_error__'] = error
     return opt
 
 
 # ── Chart type builders ───────────────────────────────────────────────────────
 
-def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, col_defs):
+def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, col_defs, group_col=''):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
     opacity = float(cfg.get('opacity', 0.9) or 0.9)
     border_radius = int(cfg.get('bar_border_radius', 0) or 0)
     label_pos = cfg.get('label_position', 'top') or 'top'
     show_percent = bool(cfg.get('show_percent', False))
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
+    bar_layout = (cfg.get('bar_layout') or ('stacked' if stacked else 'grouped')).lower()
+    is_stacked = stacked or bar_layout == 'stacked'
+    orientation = (cfg.get('bar_orientation') or 'vertical').lower()
+    radial = bool(cfg.get('bar_radial', False))
+    polar  = bool(cfg.get('bar_polar', False)) and not radial  # polar: radiusAxis=category, angleAxis=value
     valid_y = [c for c in (y_cols or []) if c in df.columns]
     if len(valid_y) == 1 and not y_col:
         y_col = valid_y[0]
 
     def make_series(name, data, stk=None):
+        label_cfg = {
+            'show': bool(cfg.get('data_labels', False)),
+            'position': label_pos,
+            'fontSize': int(cfg.get('label_font_size', 10) or 10),
+        }
+        if show_percent:
+            label_cfg['__formatter_js__'] = (
+                f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"
+            )
         s = {
             'name': name, 'type': 'bar',
             'stack': 'total' if stk else None,
-            'label': {'show': bool(cfg.get('data_labels', False)), 'position': label_pos},
+            'label': label_cfg,
             'itemStyle': {'opacity': opacity},
             'data': data,
         }
+        if radial or polar:
+            s['coordinateSystem'] = 'polar'
+            if label_pos == 'top':
+                s['label']['position'] = 'outside'
         if border_radius:
-            s['itemStyle']['borderRadius'] = [border_radius, border_radius, 0, 0]
+            if radial or polar:
+                s['itemStyle']['borderRadius'] = border_radius
+            elif orientation == 'horizontal':
+                s['itemStyle']['borderRadius'] = [0, border_radius, border_radius, 0]
+            else:
+                s['itemStyle']['borderRadius'] = [border_radius, border_radius, 0, 0]
         return s
+
+    def update_axes(categories, series, y_axis_name):
+        _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax, x_lbl, orientation, radial, polar)
 
     if len(valid_y) > 1:
         categories = sorted(df[x_col].fillna('(Blank)').astype(str).unique().tolist())
+        series_value_maps = {}
         series = []
         for mc in valid_y:
-            col_agg = agg if pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count' else 'count'
-            adf = _agg(df, x_col, mc, col_agg)
+            col_agg = agg if agg in ('count_unique', 'count_occurrence') or (pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count') else 'count'
+            adf = _agg(df, x_col, mc, col_agg, cfg=cfg)
             vm = dict(zip(adf[x_col].astype(str), adf['_value']))
-            series.append(make_series(_label(mc, col_defs), [float(vm.get(xv, 0) or 0) for xv in categories], stacked))
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': 'Value', **ax}, 'series': series})
+            series_value_maps[_label(mc, col_defs)] = vm
+            series.append(make_series(_label(mc, col_defs), [float(vm.get(xv, 0) or 0) for xv in categories], is_stacked))
+        if series_value_maps:
+            total_value_map = {cat: sum(float(vm.get(cat, 0) or 0) for vm in series_value_maps.values()) for cat in categories}
+            ordered_categories = _ordered_categories(categories, cfg, total_value_map)
+            for s in series:
+                vm = series_value_maps.get(s['name'], {})
+                s['data'] = [float(vm.get(cat, 0) or 0) for cat in ordered_categories]
+            categories = ordered_categories
+        update_axes(categories, series, 'Value')
+    elif group_col and group_col in df.columns and stack_col and stack_col in df.columns:
+        # Grouped + stacked: x_col = inner category, group_col = outer group, stack_col = stack within group
+        gc = [x_col, group_col, stack_col]
+        df_gs = df.dropna(subset=[c for c in gc if c in df.columns])
+        if agg in ('sum', 'avg', 'min', 'max', 'median') and y_col and y_col in df_gs.columns:
+            df_gs[y_col] = pd.to_numeric(df_gs[y_col], errors='coerce')
+            adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].agg(
+                {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}[agg]
+            ).reset_index().rename(columns={y_col: '_value'})
+        elif agg == 'count_unique' and y_col and y_col in df_gs.columns:
+            adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].nunique().reset_index().rename(columns={y_col: '_value'})
+        elif agg == 'count_occurrence' and y_col and y_col in df_gs.columns:
+            adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].count().reset_index().rename(columns={y_col: '_value'})
+        else:
+            adf = df_gs.groupby(gc, dropna=True).size().reset_index(name='_value')
+
+        categories = sorted(adf[x_col].astype(str).unique().tolist())
+        groups = sorted(adf[group_col].astype(str).unique().tolist())
+        stacks = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
+
+        raw_vals = {}
+        for _, row in adf.iterrows():
+            raw_vals[(str(row[x_col]), str(row[group_col]), str(row[stack_col]))] = float(row['_value'] or 0)
+
+        cat_totals_per_group = {
+            (xv, grp): sum(raw_vals.get((xv, grp, sv), 0) for sv in stacks)
+            for xv in categories for grp in groups
+        }
+        cat_totals = {xv: sum(raw_vals.get((xv, grp, sv), 0) for grp in groups for sv in stacks) for xv in categories}
+        categories = _ordered_categories(categories, cfg, cat_totals)
+
+        series = []
+        for grp in groups:
+            for sv in reversed(stacks):
+                if show_percent:
+                    data = [
+                        round(raw_vals.get((xv, grp, sv), 0) / cat_totals_per_group.get((xv, grp), 1) * 100, 1)
+                        if cat_totals_per_group.get((xv, grp), 0) > 0 else 0.0
+                        for xv in categories
+                    ]
+                else:
+                    data = [raw_vals.get((xv, grp, sv), 0) for xv in categories]
+                s = make_series(f'{grp} — {sv}', data)
+                s['stack'] = grp  # distinct per group → stacked within group, grouped across groups
+                series.append(s)
+
+        y_axis_name = '%' if show_percent else (labels['y'] or 'Count')
+        y_axis = {'type': 'value', 'name': y_axis_name, **ax}
+        if show_percent:
+            y_axis['max'] = 100
+        update_axes(categories, series, y_axis_name)
+        if show_percent:
+            if radial:
+                option['radiusAxis']['max'] = 100
+            elif polar:
+                option['angleAxis']['max'] = 100
+            elif orientation == 'horizontal':
+                option['xAxis']['max'] = 100
+            else:
+                option['yAxis']['max'] = 100
+        option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False,
+                             'trigger': 'axis', 'axisPointer': {'type': 'shadow'}}
+
     elif stack_col and stack_col in df.columns:
-        adf = _agg(df, x_col, y_col, agg, stack_col)
+        adf = _agg(df, x_col, y_col, agg, stack_col, cfg=cfg)
         categories = sorted(adf[x_col].astype(str).unique().tolist())
         stacks = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
 
@@ -569,11 +989,9 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
             for xv in categories:
                 raw_vals[(xv, sv)] = float(vm.get(xv, 0) or 0)
 
-        # Compute totals per category for percent mode
-        cat_totals = {}
-        if show_percent:
-            for xv in categories:
-                cat_totals[xv] = sum(raw_vals.get((xv, sv), 0) for sv in stacks)
+        # Compute totals per category — always, so tooltip shows count + % regardless of show_percent
+        cat_totals = {xv: sum(raw_vals.get((xv, sv), 0) for sv in stacks) for xv in categories}
+        categories = _ordered_categories(categories, cfg, cat_totals)
 
         series = []
         for sv in reversed(stacks):
@@ -583,65 +1001,316 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                         for xv in categories]
             else:
                 data = [raw_vals.get((xv, sv), 0) for xv in categories]
-            series.append(make_series(sv, data, stacked))
+            series.append(make_series(sv, data, is_stacked))
 
-        y_axis = {'type': 'value', 'name': '%' if show_percent else (labels['y'] or 'Count'), **ax}
+        y_axis_name = '%' if show_percent else (labels['y'] or 'Count')
+        y_axis = {'type': 'value', 'name': y_axis_name, **ax}
         if show_percent:
             y_axis['max'] = 100
 
-        # Build tooltip with both count and percent
+        # Build tooltip — always shows raw count + % + (n=total), regardless of show_percent display mode
+        raw_lookup = {sv: {xv: raw_vals.get((xv, sv), 0) for xv in categories} for sv in stacks}
+        totals_lookup = {xv: cat_totals.get(xv, 0) for xv in categories}
+        tooltip_js = _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                      show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
+                                      value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')
+        update_axes(categories, series, y_axis_name)
         if show_percent:
-            raw_lookup = {sv: {xv: raw_vals.get((xv, sv), 0) for xv in categories} for sv in stacks}
-            totals_lookup = {xv: cat_totals.get(xv, 0) for xv in categories}
-            tooltip_js = (
-                "function(params) {"
-                "  if (!Array.isArray(params)) params = [params];"
-                f"  var rawLookup = {json.dumps(raw_lookup)};"
-                f"  var totals = {json.dumps(totals_lookup)};"
-                f"  var categories = {json.dumps(categories)};"
-                "  var cat = params[0].name || '';"
-                "  var total = totals[cat] || 0;"
-                "  var html = '<b>' + cat + '</b>';"
-                "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
-                "  for (var i = params.length - 1; i >= 0; i--) {"
-                "    var d = params[i];"
-                "    var cnt = (rawLookup[d.seriesName] || {})[cat] || 0;"
-                "    var pct = total > 0 ? (cnt / total * 100).toFixed(1) : '0.0';"
-                "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '%)';"
-                "  }"
-                "  return html;"
-                "}"
-            )
-            option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                           'yAxis': y_axis, 'series': series,
-                           'tooltip': {'show': cfg.get('show_tooltip', True) is not False,
-                                       'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                       '__formatter_js__': tooltip_js}})
-        else:
-            _tjs = (
-                "function(params) {"
-                "  if (!Array.isArray(params)) params = [params];"
-                "  var cat = params[0].name || '';"
-                "  var html = '<b>' + cat + '</b>';"
-                "  for (var i = params.length - 1; i >= 0; i--) {"
-                "    var d = params[i];"
-                "    if (d.value == null) continue;"
-                "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + d.value + '</b>';"
-                "  }"
-                "  return html;"
-                "}"
-            )
-            option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                           'yAxis': y_axis, 'series': series,
-                           'tooltip': {'show': cfg.get('show_tooltip', True) is not False,
-                                       'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                       '__formatter_js__': _tjs}})
+            if radial:
+                option['radiusAxis']['max'] = 100
+            elif polar:
+                option['angleAxis']['max'] = 100
+            elif orientation == 'horizontal':
+                option['xAxis']['max'] = 100
+            else:
+                option['yAxis']['max'] = 100
+        option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False,
+                             'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
+                             '__formatter_js__': tooltip_js}
     else:
-        adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False)
-        option.update({'xAxis': {'type': 'category', 'data': adf[x_col].astype(str).tolist(), 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': labels['y'] or 'Count', **ax},
-                       'series': [make_series(labels['y'] or 'Value', [float(v or 0) for v in adf['_value'].tolist()])]})
-    _add_zoom(option, cfg)
+        adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False)
+        value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+        ordered_categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+        ordered_values = [float(value_map.get(cat, 0) or 0) for cat in ordered_categories]
+        series_name = labels['y'] or 'Value'
+        update_axes(
+            ordered_categories,
+            [make_series(series_name, ordered_values)],
+            _axis_name(labels['y'] or 'Count', cfg),
+        )
+        # Single series: tooltip shows value + % of grand total
+        grand_total = sum(ordered_values)
+        option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False,
+                             'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
+                             '__formatter_js__': _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
+                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
+                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '',
+                                                                         categories=ordered_categories)}
+    option['__category_names__'] = categories if 'categories' in locals() else ordered_categories
+    if (radial or polar) and isinstance(option.get('tooltip'), dict):
+        option['tooltip']['axisPointer'] = {'type': 'line'}
+    if not radial and not polar:
+        _add_zoom(option, cfg, axis='y' if orientation == 'horizontal' else 'x')
+    return option
+
+
+def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
+    if not x_col:
+        return _message_option('X / Category is required', cfg, error=True)
+    
+    # 1. Locate the corresponding Scale Score (SS) column
+    ss_col = None
+    x_meta = _parse_col_meta(x_col, col_defs or {})
+    if x_meta and x_meta.get('col_type') == 'test':
+        for c in df.columns:
+            c_meta = _parse_col_meta(c, col_defs or {})
+            if c_meta and c_meta.get('col_type') == 'test':
+                if (c_meta.get('assessment') == x_meta.get('assessment') and
+                    c_meta.get('year') == x_meta.get('year') and
+                    c_meta.get('window') == x_meta.get('window') and
+                    (c.endswith('_SS') or 'ss' in c.lower() or 'scale score' in (col_defs or {}).get(c, '').lower())):
+                    ss_col = c
+                    break
+    if not ss_col:
+        # Fallback to standard conventions
+        for candidate in [x_col.replace('_PL', '_SS'), x_col.replace('_pl', '_ss'), 'ss']:
+            if candidate in df.columns:
+                ss_col = candidate
+                break
+
+    # 2. Sort the student rows by SS (ascending, lowest to highest)
+    df_sorted = df.copy()
+    if ss_col:
+        # Create a numeric column for sorting, coercing invalid values to NaN
+        df_sorted['_ss_numeric'] = pd.to_numeric(df_sorted[ss_col], errors='coerce')
+        # Sort ascending, placing NaNs first (so they are on the left-most / lowest side)
+        df_sorted = df_sorted.sort_values(by='_ss_numeric', ascending=True, na_position='first')
+    else:
+        # Fallback: sort by Category or Student Name
+        sort_by_cols = []
+        if x_col in df_sorted.columns:
+            sort_by_cols.append(x_col)
+        if 'student_name' in df_sorted.columns:
+            sort_by_cols.append('student_name')
+        if sort_by_cols:
+            df_sorted = df_sorted.sort_values(by=sort_by_cols, ascending=True)
+
+    # 3. Get categories and value counts for sorting the categories list
+    value_counts = df_sorted[x_col].dropna().astype(str).value_counts()
+    value_map = value_counts.to_dict()
+    categories = _ordered_categories(list(value_map.keys()), cfg, value_map)
+
+    # 4. Total dots N = number of students
+    N = len(df_sorted)
+    if N <= 0:
+        return _message_option('No data (total dots is 0)', cfg)
+
+    import math
+    # Calculate rows (R) and concentric semicircular radii
+    custom_rows = cfg.get('parliament_rows')
+    if custom_rows is not None:
+        try:
+            R = max(1, min(20, int(custom_rows)))
+        except (ValueError, TypeError):
+            R = max(3, min(15, int(round(math.sqrt(N) / 2.0))))
+    else:
+        R = max(3, min(15, int(round(math.sqrt(N) / 2.0))))
+
+    R_min = 100.0
+    R_max = 220.0
+    
+    if R > 1:
+        radii = [R_min + i * (R_max - R_min) / (R - 1) for i in range(R)]
+    else:
+        radii = [R_min]
+        
+    # Distribute dots proportional to row radii
+    S = sum(radii)
+    assigned = [int(round(N * r / S)) for r in radii]
+    diff = N - sum(assigned)
+    while diff != 0:
+        step = 1 if diff > 0 else -1
+        # Adjust starting from outer rows (largest radii)
+        for idx in sorted(range(len(radii)), key=lambda k: radii[k], reverse=True):
+            if diff == 0:
+                break
+            assigned[idx] += step
+            diff -= step
+
+    # Get shape configuration
+    shape = cfg.get('parliament_shape', 'semi-circle')
+    if shape not in ('semi-circle', 'horseshoe', 'circle'):
+        shape = 'semi-circle'
+
+    # Generate seats coordinates
+    coords = []
+    phi = 0.05 * math.pi
+    for i, r in enumerate(radii):
+        num_seats = assigned[i]
+        if num_seats <= 0:
+            continue
+        if num_seats == 1:
+            angles = [math.pi / 2.0]
+        else:
+            if shape == 'circle':
+                # Full circle layout starting at pi and wrapping around counter-clockwise
+                angles = [math.pi - j * 2.0 * math.pi / num_seats for j in range(num_seats)]
+            elif shape == 'horseshoe':
+                # Horseshoe spans from 1.25*pi down to -0.25*pi (270 degrees)
+                start_angle = 1.25 * math.pi - phi
+                end_angle = -0.25 * math.pi + phi
+                span = start_angle - end_angle
+                angles = [start_angle - j * span / (num_seats - 1) for j in range(num_seats)]
+            else: # semi-circle
+                start_angle = math.pi - phi
+                end_angle = phi
+                span = start_angle - end_angle
+                angles = [start_angle - j * span / (num_seats - 1) for j in range(num_seats)]
+                
+        for theta in angles:
+            x = round(r * math.cos(theta), 2)
+            y = round(r * math.sin(theta), 2)
+            coords.append((theta, x, y))
+
+    # Sort coordinates by angle theta from left to right (decreasing theta) to group categories side-by-side
+    coords.sort(key=lambda t: -t[0])
+    sorted_coords = [(cx, cy) for _, cx, cy in coords]
+
+    # Map each student row to one of the generated coordinates
+    # Adjust N in case generated coordinates differ slightly from N due to rounding edge cases
+    N = min(len(df_sorted), len(sorted_coords))
+    
+    student_data_by_cat = {cat: [] for cat in categories}
+    
+    def _clean_val(val):
+        if pd.isna(val):
+            return None
+        if isinstance(val, (int, float)):
+            if float(val).is_integer():
+                return int(val)
+            return float(val)
+        val_str = str(val).strip()
+        try:
+            if '.' in val_str:
+                return float(val_str)
+            else:
+                return int(val_str)
+        except ValueError:
+            return val_str
+
+    for i in range(N):
+        row = df_sorted.iloc[i]
+        cat = str(row[x_col])
+        if cat not in student_data_by_cat:
+            student_data_by_cat[cat] = []
+            
+        cx, cy = sorted_coords[i]
+        
+        student_name = row.get('student_name', '')
+        if pd.isna(student_name):
+            student_name = 'Student'
+            
+        pl_val = row.get(x_col, '')
+        if pd.isna(pl_val):
+            pl_val = ''
+            
+        ss_val = _clean_val(row.get(ss_col, '')) if ss_col else None
+            
+        student_data_by_cat[cat].append({
+            'value': [cx, cy],
+            'student_name': str(student_name),
+            'pl': str(pl_val),
+            'ss': ss_val
+        })
+
+    # Determine point size dynamically based on N so it fits beautifully
+    if N < 50:
+        pt_size = 14
+    elif N < 150:
+        pt_size = 10
+    elif N < 400:
+        pt_size = 8
+    elif N < 800:
+        pt_size = 6
+    else:
+        pt_size = 4
+
+    # Apply custom dot size scaling multiplier if provided
+    dot_scale = cfg.get('parliament_dot_scale')
+    if dot_scale is not None:
+        try:
+            scale_val = max(0.2, min(5.0, float(dot_scale)))
+            pt_size = int(round(pt_size * scale_val))
+        except (ValueError, TypeError):
+            pass
+
+    # Assign seats to categories sequentially
+    series = []
+    for cat in categories:
+        cat_data = student_data_by_cat.get(cat, [])
+        if not cat_data:
+            continue
+        
+        series.append({
+            'name': cat,
+            'type': 'scatter',
+            'symbolSize': pt_size,
+            'data': cat_data,
+            'clip': False,
+            'itemStyle': {
+                'opacity': 0.85,
+                'shadowBlur': 2,
+                'shadowColor': 'rgba(0,0,0,0.15)'
+            }
+        })
+
+    # Set coordinate boundaries based on layout shape (expanded margins to prevent clipping)
+    if shape == 'circle':
+        x_min, x_max = -260, 260
+        y_min, y_max = -260, 260
+    elif shape == 'horseshoe':
+        x_min, x_max = -260, 260
+        y_min, y_max = -190, 260
+    else: # semi-circle
+        x_min, x_max = -260, 260
+        y_min, y_max = -20, 260
+
+    show_legend = cfg.get('legend_pos', 'bottom') != 'hidden'
+    title_text = cfg.get('chart_title', '') or cfg.get('title', '')
+
+    option = _base_option(cfg, axis_trigger=False)
+    option['__is_parliament__'] = True
+    option['__parliament_shape__'] = shape
+    option['grid'] = {
+        'left': 40,
+        'right': 40,
+        'top': 60 if title_text else 20,
+        'bottom': 60 if show_legend else 20,
+        'containLabel': False
+    }
+    option['xAxis'] = {'show': False, 'type': 'value', 'min': x_min, 'max': x_max}
+    option['yAxis'] = {'show': False, 'type': 'value', 'min': y_min, 'max': y_max}
+    option['series'] = series
+    
+    # Custom tooltip
+    show_ss = cfg.get('parliament_show_ss', False) is True
+    tooltip_js = (
+        "function(params) {"
+        "  var data = params.data;"
+        "  var marker = params.marker || '';"
+        "  var studentName = data.student_name || 'Student';"
+        "  var pl = data.pl || params.seriesName || '';"
+        f"  var showSs = {'true' if show_ss else 'false'};"
+        "  var ss = data.ss;"
+        "  var tooltip = '<b>' + studentName + '</b><br/>' + marker + ' ' + pl;"
+        "  if (showSs && ss !== undefined && ss !== null && ss !== '') {"
+        "    tooltip += ' (SS: ' + ss + ')';"
+        "  }"
+        "  return tooltip;"
+        "}"
+    )
+    option['tooltip'] = {'show': True, 'trigger': 'item', '__formatter_js__': tooltip_js}
+    option['__category_names__'] = categories
     return option
 
 
@@ -650,6 +1319,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         return _message_option('X / Category is required', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
     opacity = float(cfg.get('opacity', 0.9) or 0.9)
     smooth = smooth or bool(cfg.get('smooth', False))
     show_pts = bool(cfg.get('show_points', False))
@@ -658,38 +1328,82 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         y_col = valid_y[0]
 
     def make_series(name, data, stk=None):
+        label_cfg = {
+            'show': bool(cfg.get('data_labels', False)),
+            'position': cfg.get('label_position', 'top') or 'top',
+            'fontSize': int(cfg.get('label_font_size', 10) or 10),
+        }
         return {
             'name': name, 'type': 'line', 'smooth': smooth,
             'stack': 'total' if stk else None,
             'areaStyle': {} if fill else None,
             'showSymbol': show_pts, 'symbolSize': 6 if show_pts else 0,
             'lineStyle': {'opacity': opacity}, 'itemStyle': {'opacity': opacity},
+            'label': label_cfg,
             'data': data,
         }
 
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
+
     if len(valid_y) > 1:
         categories = sorted(df[x_col].fillna('(Blank)').astype(str).unique().tolist())
+        series_value_maps = {}
         series = []
         for mc in valid_y:
             col_agg = agg if pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count' else 'count'
-            adf = _agg(df, x_col, mc, col_agg)
+            adf = _agg(df, x_col, mc, col_agg, cfg=cfg)
             vm = dict(zip(adf[x_col].astype(str), adf['_value']))
-            series.append(make_series(_label(mc, col_defs or {}), [float(vm.get(xv, 0) or 0) for xv in categories], stacked))
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': 'Value', **ax}, 'series': series})
+            series_name = _label(mc, col_defs or {})
+            series_value_maps[series_name] = vm
+            series.append(make_series(series_name, [float(vm.get(xv, 0) or 0) for xv in categories], stacked))
+        total_value_map = {cat: sum(float(vm.get(cat, 0) or 0) for vm in series_value_maps.values()) for cat in categories}
+        categories = _ordered_categories(categories, cfg, total_value_map)
+        for s in series:
+            vm = series_value_maps.get(s['name'], {})
+            s['data'] = [float(vm.get(cat, 0) or 0) for cat in categories]
+        totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
+        raw_lookup = {sn: {cat: float(vm.get(cat, 0) or 0) for cat in categories} for sn, vm in series_value_maps.items()}
+        _update_chart_axes(option, categories, series, 'Value', labels, cfg, ax, x_lbl)
+        option.update({
+                       'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
+                                   '__formatter_js__': _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                                                        show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
+                                                                        value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}})
     elif stack_col and stack_col in df.columns:
-        adf = _agg(df, x_col, y_col, agg, stack_col)
+        adf = _agg(df, x_col, y_col, agg, stack_col, cfg=cfg)
         categories = sorted(adf[x_col].astype(str).unique().tolist())
         stacks_ordered = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
-        series = [make_series(sv, [float(dict(zip(adf[adf[stack_col].astype(str) == sv][x_col].astype(str), adf[adf[stack_col].astype(str) == sv]['_value'])).get(xv, 0) or 0) for xv in categories], stacked)
+        total_value_map = {cat: float(adf[adf[x_col].astype(str) == cat]['_value'].sum() or 0) for cat in categories}
+        categories = _ordered_categories(categories, cfg, total_value_map)
+        raw_lookup = {sv: {xv: float(dict(zip(adf[adf[stack_col].astype(str) == sv][x_col].astype(str),
+                                              adf[adf[stack_col].astype(str) == sv]['_value'])).get(xv, 0) or 0)
+                           for xv in categories}
+                      for sv in stacks_ordered}
+        totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
+        series = [make_series(sv, [raw_lookup[sv][xv] for xv in categories], stacked)
                   for sv in reversed(stacks_ordered)]
-        option.update({'xAxis': {'type': 'category', 'data': categories, 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': labels['y'] or 'Count', **ax}, 'series': series})
+        _update_chart_axes(option, categories, series, labels['y'] or 'Count', labels, cfg, ax, x_lbl)
+        option.update({
+                       'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
+                                   '__formatter_js__': _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                                                        show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
+                                                                        value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}})
     else:
-        adf = _agg(df, x_col, y_col, agg)
-        option.update({'xAxis': {'type': 'category', 'data': adf[x_col].astype(str).tolist(), 'name': labels['x'], **ax},
-                       'yAxis': {'type': 'value', 'name': labels['y'] or 'Count', **ax},
-                       'series': [make_series(labels['y'] or 'Value', [float(v or 0) for v in adf['_value'].tolist()])]})
+        adf = _agg(df, x_col, y_col, agg, cfg=cfg)
+        value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+        categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+        ordered_vals = [float(value_map.get(cat, 0) or 0) for cat in categories]
+        grand_total = sum(ordered_vals)
+        _ltjs = _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
+                                           show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
+                                           value_pct_suffix='%' if _tooltip_value_pct(cfg) else '',
+                                           categories=categories)
+        _update_chart_axes(option, categories, [make_series(labels['y'] or 'Value', ordered_vals)], labels['y'] or 'Count', labels, cfg, ax, x_lbl)
+        option.update({
+                       'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
+                                   '__formatter_js__': _ltjs}})
+    option['__category_names__'] = categories
     _add_zoom(option, cfg)
     return option
 
@@ -697,14 +1411,31 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
 def _pie_option(df, x_col, y_col, agg, cfg, donut=False):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False).head(30)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False).head(30)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
+    grand_total = sum(float(v or 0) for v in value_map.values())
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
+    pie_tjs = (
+        "function(params) {"
+        f"  var grandTotal = {round(grand_total, 6)};"
+        "  var v = Number(params.value) || 0;"
+        f"  var pct = grandTotal > 0 ? (v / grandTotal * 100).toFixed({percent_decimals}) : '0';"
+        "  return '<b>' + params.name + '</b><br/>' + params.marker + ' ' + params.seriesName"
+        f"       + ': <b>' + v + '</b> (' + pct + '{percent_suffix})';"
+        "}"
+    )
     option['series'] = [{
         'name': 'Distribution', 'type': 'pie',
         'radius': ['45%', '70%'] if donut else '70%',
-        'data': [{'name': str(r[x_col]), 'value': float(r['_value'] or 0)} for _, r in adf.iterrows()],
-        'label': {'show': bool(cfg.get('data_labels', False))},
+        'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories],
+        'label': {'show': bool(cfg.get('data_labels', False)), 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
     }]
+    option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'item',
+                         '__formatter_js__': pie_tjs}
+    option['__category_names__'] = categories
     return option
 
 
@@ -740,13 +1471,14 @@ def _scatter_option(df, x_col, y_col, stack_col, size_col, cfg, labels, bubble=F
 def _heatmap_option(df, x_col, y_col, agg, cfg, labels):
     if not x_col or not y_col:
         return _message_option('X and Y are required for heatmap', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg, stack_col=y_col)
+    adf = _agg(df, x_col, y_col, agg, stack_col=y_col, cfg=cfg)
     if adf.empty:
         return _message_option('No data loaded', cfg)
     option = _base_option(cfg, axis_trigger=False)
     ax = _axis_style(cfg)
-    x_vals = sorted(adf[x_col].astype(str).unique().tolist())
-    y_vals = sorted(adf[y_col].astype(str).unique().tolist())
+    x_lbl = _x_axis_label_style(cfg)
+    x_vals = _ordered_categories(sorted(adf[x_col].astype(str).unique().tolist()), cfg)
+    y_vals = _ordered_categories(sorted(adf[y_col].astype(str).unique().tolist()), {'sort_col': cfg.get('sort_col') if cfg.get('sort_col') == '__manual__' else '', 'category_order': cfg.get('category_order', []), 'sort_dir': cfg.get('sort_dir', 'asc')})
     xi, yi = {v: i for i, v in enumerate(x_vals)}, {v: i for i, v in enumerate(y_vals)}
     points, max_val = [], 0
     for _, row in adf.iterrows():
@@ -754,11 +1486,12 @@ def _heatmap_option(df, x_col, y_col, agg, cfg, labels):
         points.append([xi[str(row[x_col])], yi[str(row[y_col])], val])
         max_val = max(max_val, val)
     option.update({
-        'xAxis': {'type': 'category', 'data': x_vals, 'name': labels['x'], **ax},
-        'yAxis': {'type': 'category', 'data': y_vals, 'name': labels['y'], **ax},
+        'xAxis': {'type': 'category', 'data': x_vals, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+        'yAxis': {'type': 'category', 'data': y_vals, 'name': _axis_name(labels['y'], cfg), **ax, 'axisLabel': x_lbl},
         'visualMap': {'min': 0, 'max': max_val or 1, 'calculable': True, 'orient': 'vertical', 'right': 10, 'top': 'center'},
-        'series': [{'type': 'heatmap', 'data': points, 'label': {'show': bool(cfg.get('data_labels', False))}}],
+        'series': [{'type': 'heatmap', 'data': points, 'label': {'show': bool(cfg.get('data_labels', False)), 'fontSize': int(cfg.get('label_font_size', 10) or 10)}}],
     })
+    option['__category_names__'] = x_vals
     _add_zoom(option, cfg)
     return option
 
@@ -768,6 +1501,7 @@ def _histogram_option(df, x_col, stack_col, cfg, labels):
         return _message_option('X / Category is required', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
     bins = max(4, min(40, int(cfg.get('bins', 12) or 12)))
 
     def hist(vals, nbins):
@@ -785,15 +1519,19 @@ def _histogram_option(df, x_col, stack_col, cfg, labels):
             bns, cnts = hist(sub[x_col], bins)
             per_group[g] = dict(zip(bns, cnts))
             all_x.extend(bns)
-        x_axis = sorted(set(all_x))
+        x_axis = _ordered_categories(sorted(set(all_x)), cfg)
         series = [{'name': g, 'type': 'bar', 'stack': 'total', 'data': [int(per_group[g].get(b, 0)) for b in x_axis]}
                   for g in reversed(list(per_group))]
     else:
         x_axis, counts = hist(df[x_col], bins)
+        value_map = dict(zip(x_axis, counts))
+        x_axis = _ordered_categories(x_axis, cfg, value_map)
+        counts = [value_map.get(cat, 0) for cat in x_axis]
         series = [{'name': 'Count', 'type': 'bar', 'data': [int(v) for v in counts]}]
 
-    option.update({'xAxis': {'type': 'category', 'data': x_axis, 'name': labels['x'], **ax},
-                   'yAxis': {'type': 'value', 'name': 'Count', **ax}, 'series': series})
+    option.update({'xAxis': {'type': 'category', 'data': x_axis, 'name': _axis_name(labels['x'], cfg), **ax, 'axisLabel': x_lbl},
+                   'yAxis': {'type': 'value', 'name': _axis_name('Count', cfg), **ax}, 'series': series})
+    option['__category_names__'] = x_axis
     _add_zoom(option, cfg)
     return option
 
@@ -803,6 +1541,7 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
         return _message_option('Y / Value is required', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
 
     def stats(vals):
         s = pd.to_numeric(vals, errors='coerce').dropna()
@@ -818,14 +1557,16 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
             if st:
                 lbls.append(g)
                 data.append(st)
+        paired = dict(zip(lbls, data))
+        lbls = _ordered_categories(lbls, cfg)
+        data = [paired[lbl] for lbl in lbls]
     else:
         st = stats(df[y_col])
         if st:
             lbls, data = ['All'], [st]
 
-    option.update({'xAxis': {'type': 'category', 'data': lbls, 'name': labels['x'], **ax},
-                   'yAxis': {'type': 'value', 'name': labels['y'], **ax},
-                   'series': [{'type': 'boxplot', 'data': data}]})
+    _update_chart_axes(option, lbls, [{'type': 'boxplot', 'data': data}], labels['y'], labels, cfg, ax, x_lbl)
+    option['__category_names__'] = lbls
     _add_zoom(option, cfg)
     return option
 
@@ -833,34 +1574,42 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
 def _funnel_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg).sort_values('_value', ascending=False)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'funnel', 'left': '10%', 'top': 40, 'bottom': 20, 'width': '80%',
-                          'sort': 'descending', 'label': {'show': True, 'position': 'inside'},
-                          'data': [{'name': str(r[x_col]), 'value': float(r['_value'] or 0)} for _, r in adf.iterrows()]}]
+                           'sort': 'descending', 'label': {'show': True, 'position': 'inside', 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
+                           'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories]}]
+    option['__category_names__'] = categories
     return option
 
 
 def _treemap_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'treemap', 'nodeClick': 'zoomToNode',
-                          'data': [{'name': str(r[x_col]), 'value': float(r['_value'] or 0)} for _, r in adf.iterrows()]}]
+                          'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories]}]
+    option['__category_names__'] = categories
     return option
 
 
 def _radar_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg)
-    vals = [float(v or 0) for v in adf['_value'].tolist()]
-    names = adf[x_col].astype(str).tolist()
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    names = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+    vals = [float(value_map.get(name, 0) or 0) for name in names]
     max_v = max(vals) if vals else 1
     option = _base_option(cfg, axis_trigger=False)
     option.update({'radar': {'indicator': [{'name': n, 'max': max_v * 1.1} for n in names], 'splitArea': {'show': True}},
                    'series': [{'type': 'radar', 'data': [{'name': 'Values', 'value': vals}]}]})
+    option['__category_names__'] = names
     return option
 
 
@@ -870,9 +1619,18 @@ def _gauge_option(df, y_col, agg, cfg, labels):
     vals = pd.to_numeric(df[y_col], errors='coerce').dropna()
     if vals.empty:
         return _message_option('No numeric values for gauge', cfg, error=True)
-    value = {'sum': float(vals.sum()), 'avg': float(vals.mean()), 'min': float(vals.min()),
-             'max': float(vals.max()), 'median': float(vals.median())}.get(agg, float(len(df)))
-    max_v = float(vals.max()) * 1.1 if agg != 'count' else float(max(len(df), 1)) * 1.2
+    value = {
+        'sum': float(vals.sum()), 'avg': float(vals.mean()), 'min': float(vals.min()),
+        'max': float(vals.max()), 'median': float(vals.median()),
+        'count_unique': float(vals.nunique()), 'count_occurrence': float(vals.count()),
+    }.get(agg, float(len(df)))
+    _ad = cfg.get('agg_decimals')
+    if _ad is not None and agg in ('avg', 'sum', 'min', 'max', 'median', 'count_unique', 'count_occurrence'):
+        try:
+            value = round(value, int(_ad))
+        except (ValueError, TypeError):
+            pass
+    max_v = float(vals.max()) * 1.1 if agg not in ('count', 'count_unique', 'count_occurrence') else float(max(len(df), 1)) * 1.2
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'gauge', 'max': max_v, 'detail': {'formatter': '{value}'},
                           'title': {'show': True, 'offsetCenter': [0, '78%']},
@@ -883,13 +1641,16 @@ def _gauge_option(df, y_col, agg, cfg, labels):
 def _waterfall_option(df, x_col, y_col, agg, cfg, labels):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg)
+    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
+    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
     option = _base_option(cfg)
-    option['xAxis'] = {'type': 'category', 'data': adf[x_col].astype(str).tolist(), 'name': labels.get('x', '')}
-    option['yAxis'] = {'name': labels.get('y', '')}
+    option['xAxis'] = {'type': 'category', 'data': categories, 'name': _axis_name(labels.get('x', ''), cfg)}
+    option['yAxis'] = {'name': _axis_name(labels.get('y', ''), cfg)}
     option['series'] = [{'type': 'bar', 'name': labels.get('y', 'Value'),
-                          'data': [float(v or 0) for v in adf['_value'].tolist()],
-                          'label': {'show': bool(cfg.get('data_labels', False))}}]
+                          'data': [float(value_map.get(cat, 0) or 0) for cat in categories],
+                          'label': {'show': bool(cfg.get('data_labels', False)), 'fontSize': int(cfg.get('label_font_size', 10) or 10)}}]
+    option['__category_names__'] = categories
     return option
 
 
@@ -978,6 +1739,246 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     }
 
 
+def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, agg_decimals, cfg, col_defs):
+    """Return a __type__=table option for multi-dimension cross-tabulation.
+
+    Multiple row columns produce separate label columns in the table.
+    Multiple column columns each produce their own header group (multi-level headers).
+    A single column column produces a pivoted cross-tab with column headers.
+    """
+    _SEP = ' \u25b8 '  # ▸ separator for combining multi-column headers
+
+    if not row_cols:
+        return _message_option('Dynamic Summary Table: select at least one Row column', cfg)
+    if not col_cols:
+        return _message_option('Dynamic Summary Table: select at least one Column column', cfg)
+
+    valid_row = [c for c in row_cols if c and c in df.columns]
+    valid_col = [c for c in col_cols if c and c in df.columns]
+
+    if not valid_row:
+        return _message_option('Dynamic Summary Table: no valid Row columns in data', cfg)
+    if not valid_col:
+        return _message_option('Dynamic Summary Table: no valid Column columns in data', cfg)
+
+    _VALID_AGGS = {'count', 'sum', 'avg', 'min', 'max', 'median'}
+    agg_func = agg_func if agg_func in _VALID_AGGS else 'count'
+
+    _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+    _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
+
+    # ── Multi-column mode: each column column independently pivoted into its own header group ──
+    if len(valid_col) > 1:
+        keep_cols = list(dict.fromkeys(valid_row + valid_col + ([_dup_key] if _dup_key else [])))
+        if agg_func != 'count' and value_col and value_col in df.columns:
+            keep_cols.append(value_col)
+
+        mask = pd.Series(True, index=df.index)
+        for c in valid_row + valid_col:
+            mask &= ~df[c].astype(str).str.strip().isin(_BLANK)
+
+        work = df.loc[mask, keep_cols].copy()
+        for c in valid_row + valid_col:
+            work[c] = work[c].astype(str).str.strip()
+        if agg_func != 'count' and value_col and value_col in keep_cols:
+            work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
+
+        if work.empty:
+            return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
+
+        if _dup_key and agg_func == 'count':
+            work = work.drop_duplicates(subset=[_dup_key] + valid_row + valid_col, keep='first')
+
+        # Ordered row values
+        row_val_lists = {}
+        for c in valid_row:
+            row_val_lists[c] = _auto_detect_pl_scale(work[c].unique())
+        row_combos = _build_row_combos(row_val_lists, valid_row)
+
+        _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+
+        # Build an independent pivot table for each column column
+        col_groups = []   # [{label, col, headers, pivot}]
+        all_col_headers = []
+        all_cell_cols = []   # column name tracked per header for drill-through
+
+        for cc in valid_col:
+            if agg_func == 'count':
+                ct = work.groupby(valid_row + [cc]).size().unstack(fill_value=0)
+            else:
+                ct = work.groupby(valid_row + [cc])[value_col].agg(_agg_map[agg_func]).unstack(fill_value=0)
+            vals = _auto_detect_pl_scale(work[cc].unique())
+            ct = ct.reindex(columns=vals, fill_value=0)
+            group_label = _label(cc, col_defs) if col_defs else cc
+            col_groups.append({'label': group_label, 'col': cc, 'headers': vals, 'pivot': ct})
+            all_col_headers.extend(vals)
+            all_cell_cols.extend([cc] * len(vals))
+
+        # Build rows: row label values + cell values for each group + row total
+        rows_data = []
+        col_totals = [0.0] * len(all_col_headers)
+        for combo in row_combos:
+            idx_tuple = tuple(combo)
+            cell_vals = []
+            ci = 0
+            for grp in col_groups:
+                ct = grp['pivot']
+                for cv in grp['headers']:
+                    if len(valid_row) == 1:
+                        raw = float(ct.at[idx_tuple[0], cv]) if cv in ct.columns else 0.0
+                    else:
+                        try:
+                            raw = float(ct.loc[idx_tuple, cv]) if cv in ct.columns else 0.0
+                        except KeyError:
+                            raw = 0.0
+                    col_totals[ci] += raw
+                    cell_vals.append(raw)
+                    ci += 1
+            rows_data.append(list(combo) + cell_vals + [sum(cell_vals)])
+
+        grand_total = sum(col_totals)
+        total_row = ['Total'] + [''] * (len(valid_row) - 1) + col_totals + [grand_total]
+        row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
+
+        # Build col_header_groups for multi-level header rendering in JS
+        col_header_groups = []
+        for grp in col_groups:
+            col_header_groups.append({
+                'label': grp['label'],
+                'col': grp['col'],
+                'headers': grp['headers'],
+            })
+
+        return {
+            '__type__': 'table',
+            '__series_names__': [],
+            'row_col':     valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
+            'col_col':     valid_col[0],
+            'row_labels':  row_labels,
+            'row_label':   row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels),
+            'col_label':   _SEP.join(_label(c, col_defs) if col_defs else c for c in valid_col),
+            'num_row_labels': len(valid_row),
+            'col_headers': all_col_headers,
+            'col_header_groups': col_header_groups,
+            'col_header_cols': all_cell_cols,
+            'rows':        rows_data,
+            'total_row':   total_row,
+            '_drillMeta': {
+                'stType':      'dynamic_summary_table',
+                'stRowCol':    valid_row[0],
+                'stColCol':    valid_col[0],
+                'stRowCols':   valid_row,
+                'stColCols':   valid_col,
+                'stRowVals':   row_combos,
+                'colHeaders':  all_col_headers,
+                'colHeaderCols': all_cell_cols,
+            },
+        }
+
+    # ── Single column column: pivoted cross-tabulation (original behavior) ──
+    _COMP_COL = valid_col[0]
+    col_col = _COMP_COL
+
+    mask = pd.Series(True, index=df.index)
+    for c in valid_row:
+        mask &= ~df[c].astype(str).str.strip().isin(_BLANK)
+    mask &= ~df[col_col].astype(str).str.strip().isin(_BLANK)
+
+    keep_cols = list(dict.fromkeys(valid_row + [col_col] + ([_dup_key] if _dup_key else [])))
+    if agg_func != 'count' and value_col and value_col in df.columns:
+        keep_cols.append(value_col)
+    work = df.loc[mask, keep_cols].copy()
+
+    for c in valid_row:
+        work[c] = work[c].astype(str).str.strip()
+    work[col_col] = work[col_col].astype(str).str.strip()
+    if agg_func != 'count' and value_col and value_col in keep_cols:
+        work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
+
+    if work.empty:
+        return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
+
+    if _dup_key and agg_func == 'count':
+        work = work.drop_duplicates(subset=[_dup_key] + valid_row + [col_col], keep='first')
+
+    row_val_lists = {}
+    for c in valid_row:
+        row_val_lists[c] = _auto_detect_pl_scale(work[c].unique())
+
+    row_combos = _build_row_combos(row_val_lists, valid_row)
+
+    group_cols = valid_row + [col_col]
+    _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+    if agg_func == 'count':
+        ct = work.groupby(group_cols).size().unstack(fill_value=0)
+    else:
+        ct = work.groupby(group_cols)[value_col].agg(_agg_map[agg_func]).unstack(fill_value=0)
+
+    col_vals = _auto_detect_pl_scale(work[col_col].unique())
+    ct = ct.reindex(columns=col_vals, fill_value=0)
+
+    rows_data = []
+    col_totals = [0.0] * len(col_vals)
+    for combo in row_combos:
+        idx_tuple = tuple(combo)
+        cell_vals = []
+        for cv in col_vals:
+            if len(valid_row) == 1:
+                raw = float(ct.at[idx_tuple[0], cv]) if cv in ct.columns else 0.0
+            else:
+                try:
+                    raw = float(ct.loc[idx_tuple, cv]) if cv in ct.columns else 0.0
+                except KeyError:
+                    raw = 0.0
+            col_totals[col_vals.index(cv)] += raw
+            cell_vals.append(raw)
+        rows_data.append(list(combo) + cell_vals + [sum(cell_vals)])
+
+    grand_total = sum(col_totals)
+    total_row = ['Total'] + [''] * (len(valid_row) - 1) + col_totals + [grand_total]
+
+    row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
+    col_label = _SEP.join(_label(c, col_defs) if col_defs else c for c in valid_col)
+
+    return {
+        '__type__': 'table',
+        '__series_names__': [],
+        'row_col':     valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
+        'col_col':     col_col,
+        'row_labels':  row_labels,
+        'row_label':   row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels),
+        'col_label':   col_label,
+        'num_row_labels': len(valid_row),
+        'col_headers': col_vals,
+        'rows':        rows_data,
+        'total_row':   total_row,
+        '_drillMeta': {
+            'stType':      'dynamic_summary_table',
+            'stRowCol':    valid_row[0],
+            'stColCol':    col_col,
+            'stRowCols':   valid_row,
+            'stColCols':   valid_col,
+            'stRowVals':   row_combos,
+            'colHeaders':  col_vals,
+        },
+    }
+
+
+def _build_row_combos(val_lists, cols):
+    """Build all ordered row value combinations as a list of tuples."""
+    if not cols:
+        return [()]
+    result = [()]
+    for col in cols:
+        vals = val_lists.get(col, [])
+        new_result = []
+        for combo in result:
+            for val in vals:
+                new_result.append(combo + (val,))
+        result = new_result
+    return result
+
+
 def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels):
     """Progress Growth: classify students as Growth / Sliders / Stickers.
 
@@ -1049,6 +2050,8 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     show_labels = bool(cfg.get('data_labels', False))
     label_pos = cfg.get('label_position', 'top') or 'top'
     show_percent = bool(cfg.get('show_percent', False))
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
     t = _theme(cfg)
     ax = _axis_style(cfg)
 
@@ -1060,21 +2063,30 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
              'itemStyle': {'color': _PG_COLORS[cat]}}
             for cat in ORDER if counts.get(cat, 0) > 0
         ]
-        tooltip_js = (
-            "function(params) {"
-            f"  var total = {total};"
-            "  var pct = total > 0 ? (params.value / total * 100).toFixed(1) : '0';"
-            "  return params.marker + ' ' + params.name + ': <b>' + params.value"
-            "       + '</b> (' + pct + '%)';"
-            "}"
-        )
+        _sp = _tooltip_show_pct(cfg)
+        _zero = '0.' + '0' * percent_decimals if percent_decimals else '0'
+        if _sp:
+            tooltip_js = (
+                "function(params) {"
+                f"  var total = {total};"
+                f"  var pct = total > 0 ? (params.value / total * 100).toFixed({percent_decimals}) : '{_zero}';"
+                "  return params.marker + ' ' + params.name + ': <b>' + params.value"
+                f"       + '</b> (' + pct + '%)';"
+                "}"
+            )
+        else:
+            tooltip_js = (
+                "function(params) {"
+                "  return params.marker + ' ' + params.name + ': <b>' + params.value + '</b>';"
+                "}"
+            )
         option['color'] = [_PG_COLORS[cat] for cat in ORDER]
         option['series'] = [{
             'name': 'Progress Growth',
             'type': 'pie',
             'radius': ['45%', '70%'] if pg_display == 'donut' else '70%',
             'data': data,
-            'label': {'show': bool(cfg.get('data_labels', True)), 'formatter': '{b}: {c}'},
+            'label': {'show': bool(cfg.get('data_labels', True)), 'formatter': '{b}: {c}', 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
         }]
         option['tooltip'] = {
             'show': cfg.get('show_tooltip', True) is not False,
@@ -1182,11 +2194,20 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     stacked = pg_display != 'grouped_bar'
 
     def make_series(cat, data_vals):
+        label_cfg = {
+            'show': show_labels,
+            'position': label_pos,
+            'fontSize': int(cfg.get('label_font_size', 10) or 10),
+        }
+        if show_percent:
+            label_cfg['__formatter_js__'] = (
+                f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"
+            )
         s = {
             'name': cat,
             'type': 'bar',
             'stack': 'total' if stacked else None,
-            'label': {'show': show_labels, 'position': label_pos},
+            'label': label_cfg,
             'itemStyle': {'color': _PG_COLORS[cat], 'opacity': opacity},
             'data': data_vals,
         }
@@ -1201,12 +2222,13 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             sub = dfc[dfc['_pg'] == cat]
             raw[cat] = {k: int(v) for k, v in sub[x_col].fillna('(Blank)').astype(str).value_counts().items()}
         cat_totals = {xv: int(sum(raw[cat].get(xv, 0) for cat in ORDER)) for xv in categories}
+        categories = _ordered_categories(categories, cfg, cat_totals)
 
         series = []
         for cat in ORDER:
             if show_percent:
                 vals = [
-                    round(raw[cat].get(xv, 0) / cat_totals[xv] * 100, 1)
+                    round(raw[cat].get(xv, 0) / cat_totals[xv] * 100, percent_decimals)
                     if cat_totals.get(xv, 0) > 0 else 0.0
                     for xv in categories
                 ]
@@ -1214,29 +2236,45 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
                 vals = [float(raw[cat].get(xv, 0)) for xv in categories]
             series.append(make_series(cat, vals))
 
+        _sp2 = _tooltip_show_pct(cfg)
+        _sc2 = _tooltip_show_count(cfg)
+        _vp2 = _tooltip_value_pct(cfg)
+        _zero2 = '0.' + '0' * percent_decimals if percent_decimals else '0'
+        _count_line2 = (
+            "  if (total > 0) html += ' <span style=\"color:#999\">(n=' + total + ')</span>';"
+            if _sc2 else ""
+        )
+        _pct_calc2 = (
+            f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{_zero2}';"
+            if _sp2 else ""
+        )
+        _pct_frag2 = " + ' (' + pct + '%)';" if _sp2 else ";"
+        _val_disp2 = "cnt + '%'" if _vp2 else "cnt"
         tooltip_js = (
             "function(params) {"
             "  if (!Array.isArray(params)) params = [params];"
+            f"  var cats = {json.dumps(categories)};"
             f"  var raw = {json.dumps({cat: {xv: raw[cat].get(xv, 0) for xv in categories} for cat in ORDER})};"
             f"  var totals = {json.dumps({xv: cat_totals[xv] for xv in categories})};"
-            "  var cat = params[0].name || '';"
+            "  var dataIdx = params[0].dataIndex;"
+            "  var cat = (dataIdx !== undefined && cats[dataIdx]) ? cats[dataIdx] : (params[0].name || '');"
             "  var total = totals[cat] || 0;"
             "  var html = '<b>' + cat + '</b>';"
-            "  if (total > 0) html += ' <span style=\"color:#999\">(n=' + total + ')</span>';"
+            f"{_count_line2}"
             "  for (var i = 0; i < params.length; i++) {"
             "    var d = params[i];"
             "    var cnt = (raw[d.seriesName] || {})[cat] || 0;"
-            "    var pct = total > 0 ? (cnt / total * 100).toFixed(1) : '0.0';"
-            "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '%)';"
+            f"{_pct_calc2}"
+            f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + {_val_disp2} + '</b>'{_pct_frag2}"
             "  }"
             "  return html;"
             "}"
         )
-        y_axis = {'type': 'value', 'name': '%' if show_percent else 'Students', **ax}
+        y_axis = {'type': 'value', 'name': _axis_name('%' if show_percent else 'Students', cfg), **ax}
         if show_percent:
             y_axis['max'] = 100
         option.update({
-            'xAxis': {'type': 'category', 'data': categories, 'name': labels.get('x', ''), **ax},
+            'xAxis': {'type': 'category', 'data': categories, 'name': _axis_name(labels.get('x', ''), cfg), **ax},
             'yAxis': y_axis,
             'series': series,
             'tooltip': {
@@ -1250,8 +2288,8 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
         # No grouping — overall counts as a simple coloured bar
         overall_counts = [float(counts.get(cat, 0)) for cat in ORDER]
         option.update({
-            'xAxis': {'type': 'category', 'data': ORDER, **ax},
-            'yAxis': {'type': 'value', 'name': 'Students', **ax},
+            'xAxis': {'type': 'category', 'data': ORDER, 'name': _axis_name(labels.get('x', ''), cfg), **ax},
+            'yAxis': {'type': 'value', 'name': _axis_name('Students', cfg), **ax},
             'series': [{
                 'name': 'Students',
                 'type': 'bar',
@@ -1259,10 +2297,11 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
                     {'value': v, 'itemStyle': {'color': _PG_COLORS[cat], 'opacity': opacity}}
                     for cat, v in zip(ORDER, overall_counts)
                 ],
-                'label': {'show': show_labels, 'position': label_pos},
+                'label': {'show': show_labels, 'position': label_pos, 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
             }],
         })
 
+    option['__category_names__'] = categories if x_col and x_col in dfc.columns else ORDER
     _add_zoom(option, cfg)
     return option
 
@@ -1301,6 +2340,9 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             base_categories = sorted(unique_vals)
     else:
         base_categories = []
+    if base_categories:
+        category_value_map = {cat: int((df[x_col].fillna('(Blank)').astype(str) == cat).sum()) for cat in base_categories}
+        base_categories = _ordered_categories(base_categories, cfg, category_value_map)
 
     if ac_col_filters:
         for fcol, fvals in ac_col_filters.items():
@@ -1329,6 +2371,8 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     label_pos     = cfg.get('label_position', 'top') or 'top'
     show_labels   = bool(cfg.get('data_labels', False))
     show_percent  = bool(cfg.get('show_percent', False))
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
 
     # User-configurable compare layout options
     _raw_gap = cfg.get('compare_gap', 30)
@@ -1409,7 +2453,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         for pos in range(total_positions):
             cnt = raw_counts[pos].get(pv, 0)
             if show_percent and totals[pos] > 0:
-                data_vals.append(round(cnt / totals[pos] * 100, 1))
+                data_vals.append(round(cnt / totals[pos] * 100, percent_decimals))
             else:
                 data_vals.append(float(cnt))
         s = {
@@ -1418,7 +2462,12 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             'stack': 'total',
             'xAxisIndex': 0,
             'barCategoryGap': f'{compare_gap}%',
-            'label': {'show': show_labels, 'position': label_pos},
+            'label': {
+                'show': show_labels,
+                'position': label_pos,
+                'fontSize': int(cfg.get('label_font_size', 10) or 10),
+                **({'__formatter_js__': f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"} if show_percent else {}),
+            },
             'itemStyle': {'color': pl_color[pv], 'opacity': opacity},
             'data': data_vals,
         }
@@ -1426,7 +2475,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             s['itemStyle']['borderRadius'] = [border_radius, border_radius, 0, 0]
         series.append(s)
 
-    # ── Tooltip: always show count + percent ──
+    # ── Tooltip: respect tooltipShowPct / tooltipShowCount flags ──
     raw_counts_flat = {str(p): {pv: raw_counts[p].get(pv, 0) for pv in pl_vals} for p in range(total_positions)}
     totals_flat = {str(p): totals[p] for p in range(total_positions)}
     display_names = {}
@@ -1435,6 +2484,20 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         gi = pos % n_groups
         display_names[str(pos)] = f"{base_categories[ci]} \u00b7 {group_labels[ordered_cols[gi]]}"
 
+    _sp3 = _tooltip_show_pct(cfg)
+    _sc3 = _tooltip_show_count(cfg)
+    _vp3 = _tooltip_value_pct(cfg)
+    _zero3 = '0.' + '0' * percent_decimals if percent_decimals else '0'
+    _count_line3 = (
+        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
+        if _sc3 else ""
+    )
+    _pct_calc3 = (
+        f"    var pct = total > 0 ? (cnt / total * 100).toFixed({percent_decimals}) : '{_zero3}';"
+        if _sp3 else ""
+    )
+    _pct_frag3 = " + ' (' + pct + '%)';" if _sp3 else ";"
+    _val_disp3 = "cnt + '%'" if _vp3 else "cnt"
     tooltip_js = (
         "function(params) {"
         "  if (!Array.isArray(params)) params = [params];"
@@ -1445,13 +2508,13 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         "  var cat = names[String(idx)] || params[0].name || '';"
         "  var total = totals[String(idx)] || 0;"
         "  var html = '<b>' + cat + '</b>';"
-        "  if (total > 0) html += ' &nbsp;<span style=\"color:#999\">(n=' + total + ')</span>';"
+        f"{_count_line3}"
         "  for (var i = params.length - 1; i >= 0; i--) {"
         "    var d = params[i];"
         "    if (d.value == null) continue;"
         "    var cnt = (rawCounts[String(idx)] || {})[d.seriesName] || 0;"
-        "    var pct = total > 0 ? (cnt / total * 100).toFixed(1) : '0.0';"
-        "    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + cnt + '</b> (' + pct + '%)';"
+        f"{_pct_calc3}"
+        f"    html += '<br/>' + d.marker + ' ' + d.seriesName + ': <b>' + {_val_disp3} + '</b>'{_pct_frag3}"
         "  }"
         "  return html;"
         "}"
@@ -1467,6 +2530,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             **ax.get('axisLabel', {}),
             'interval': 0,
             'fontSize': 10,
+            'show': cfg.get('show_categories', True) is not False,
         },
         'axisTick': {'show': False},
         'axisLine': {'show': False},
@@ -1494,6 +2558,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             'color': ax.get('axisLabel', {}).get('color', '#475569'),
             'rotate': cat_rotation,
             'margin': 4,
+            'show': cfg.get('show_categories', True) is not False,
             '__formatter_js__': cat_formatter_js,
         },
         'axisTick': {'show': False},
@@ -1502,7 +2567,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     }
 
     # ── Y-axis ──
-    y_name = '%' if show_percent else 'Count'
+    y_name = _axis_name('%' if show_percent else 'Count', cfg)
     y_max = 100 if show_percent else None
     y_axis = {'type': 'value', 'name': y_name, **ax}
     if y_max:
@@ -1523,6 +2588,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     # Expose available filter values so the builder UI can populate filter pickers
     option['__ac_avail_cats__'] = base_categories          # all unique x-col values
     option['__ac_avail_pl__']   = _ordered_stacks(list(all_pl), cfg)  # all PL values (unfiltered)
+    option['__category_names__'] = base_categories
 
     # Embed drill-through metadata so the click handler can resolve
     # the real category from a dataIndex (needed because xAxis[0] shows window/year).
@@ -1549,16 +2615,39 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         return _message_option('No data loaded', cfg)
 
     chart_type   = cfg.get('chart_type', 'bar')
+    legacy_bar_defaults = {
+        'column': {'bar_layout': 'grouped', 'bar_orientation': 'vertical', 'bar_radial': False},
+        'grouped_bar': {'bar_layout': 'grouped', 'bar_orientation': 'vertical', 'bar_radial': False},
+        'stacked_bar': {'bar_layout': 'stacked', 'bar_orientation': 'vertical', 'bar_radial': False},
+    }
+    if chart_type in legacy_bar_defaults:
+        merged_cfg = dict(cfg)
+        for key, value in legacy_bar_defaults[chart_type].items():
+            if merged_cfg.get(key) in (None, ''):
+                merged_cfg[key] = value
+        cfg = merged_cfg
+        chart_type = 'bar'
+    elif chart_type == 'bar':
+        merged_cfg = dict(cfg)
+        merged_cfg.setdefault('bar_layout', 'grouped')
+        merged_cfg.setdefault('bar_orientation', 'vertical')
+        merged_cfg.setdefault('bar_radial', False)
+        cfg = merged_cfg
     x_col        = cfg.get('x_col', '')
     x_cols_raw   = cfg.get('x_cols', [])
+    if isinstance(x_col, str) and ',' in x_col:
+        x_cols_raw = [c.strip() for c in x_col.split(',') if c.strip()]
     y_col        = cfg.get('y_col', '')
     y_cols_raw   = cfg.get('y_cols', [])
     stack_col    = cfg.get('stack_col', '')
+    group_col    = cfg.get('group_col', '')
     compare_pl_cols = cfg.get('compare_pl_cols', [])
     size_col     = cfg.get('size_col', '')
     agg          = str(cfg.get('agg', 'count') or 'count').lower()
-    if agg not in {'count', 'sum', 'avg', 'min', 'max', 'median'}:
+    if agg not in {'count', 'sum', 'avg', 'min', 'max', 'median', 'count_unique', 'count_occurrence'}:
         agg = 'count'
+    _raw_decimals = cfg.get('agg_decimals')
+    agg_decimals  = int(_raw_decimals) if _raw_decimals is not None else None
     # Progress Growth extra fields
     pg_before_col = cfg.get('pg_before_col', '')
     pg_after_col  = cfg.get('pg_after_col', '')
@@ -1567,13 +2656,57 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Summary Table extra fields
     st_row_col    = cfg.get('st_row_col', '')
     st_col_col    = cfg.get('st_col_col', '')
+    # Dynamic Summary Table extra fields
+    st_row_cols    = cfg.get('st_row_cols', [])
+    st_col_cols    = cfg.get('st_col_cols', [])
+    st_agg_func    = cfg.get('st_agg_func', 'count')
+    st_value_col   = cfg.get('st_value_col', '')
+    _st_raw_decimals = cfg.get('st_agg_decimals')
+    st_agg_decimals = int(_st_raw_decimals) if _st_raw_decimals is not None else None
 
     df = pd.DataFrame(rows)
+
+    # Apply row limit before any processing (None = no limit)
+    _row_limit = cfg.get('limit')
+    if _row_limit and _row_limit > 0:
+        df = df.head(_row_limit)
+
+    def _resolve_cfg_col(col):
+        if not isinstance(col, str):
+            return col
+        if col in df.columns:
+            return col
+        resolved = resolve_relative_column_key(col)
+        return resolved if resolved in df.columns else col
+
+    # Resolve relative-year config keys against the loaded dataframe columns.
+    x_col = _resolve_cfg_col(x_col)
+    y_col = _resolve_cfg_col(y_col)
+    stack_col = _resolve_cfg_col(stack_col)
+    group_col = _resolve_cfg_col(group_col)
+    size_col = _resolve_cfg_col(size_col)
+    pg_before_col = _resolve_cfg_col(pg_before_col)
+    pg_after_col = _resolve_cfg_col(pg_after_col)
+    st_row_col = _resolve_cfg_col(st_row_col)
+    st_col_col = _resolve_cfg_col(st_col_col)
+    st_row_cols = [_resolve_cfg_col(c) for c in st_row_cols] if isinstance(st_row_cols, list) else []
+    st_col_cols = [_resolve_cfg_col(c) for c in st_col_cols] if isinstance(st_col_cols, list) else []
+    st_value_col = _resolve_cfg_col(st_value_col) if st_value_col else ''
+    x_cols_raw = [_resolve_cfg_col(c) for c in x_cols_raw] if isinstance(x_cols_raw, list) else x_cols_raw
+    y_cols_raw = [_resolve_cfg_col(c) for c in y_cols_raw] if isinstance(y_cols_raw, list) else y_cols_raw
+    compare_pl_cols = [_resolve_cfg_col(c) for c in compare_pl_cols] if isinstance(compare_pl_cols, list) else compare_pl_cols
 
     # Composite x-axis
     x_cols = [c for c in x_cols_raw if isinstance(c, str) and c in df.columns] if isinstance(x_cols_raw, list) else []
     if len(x_cols) > 1:
-        df['__x_comp__'] = df[x_cols].fillna('(Blank)').astype(str).agg(' · '.join, axis=1)
+        # Vectorized string concat instead of row-wise .agg(join, axis=1) —
+        # same output, but avoids a per-row Python call (~60x faster on
+        # large result sets).
+        _filled = df[x_cols].fillna('(Blank)').astype(str)
+        _comp = _filled[x_cols[0]]
+        for _c in x_cols[1:]:
+            _comp = _comp.str.cat(_filled[_c], sep=' · ')
+        df['__x_comp__'] = _comp
         x_col = '__x_comp__'
     elif len(x_cols) == 1 and not x_col:
         x_col = x_cols[0]
@@ -1581,6 +2714,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     x_col       = x_col       if x_col       in df.columns else ''
     y_col       = y_col       if y_col       in df.columns else ''
     stack_col   = stack_col   if stack_col   in df.columns else ''
+    group_col   = group_col   if group_col   in df.columns else ''
     size_col    = size_col    if size_col    in df.columns else ''
     y_cols    = [c for c in y_cols_raw if isinstance(c, str) and c in df.columns] if isinstance(y_cols_raw, list) else []
 
@@ -1591,13 +2725,14 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         x_col       = x_col       if x_col       in df.columns else ''
         y_col       = y_col       if y_col       in df.columns else ''
         stack_col   = stack_col   if stack_col   in df.columns else ''
+        group_col   = group_col   if group_col   in df.columns else ''
         size_col    = size_col    if size_col    in df.columns else ''
         y_cols    = [c for c in y_cols if c in df.columns]
 
     # Drop rows where key categorical columns contain placeholder / blank values
     # (e.g. '—' assigned by data_loader for students with no test result)
     _BLANK_VALUES = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL', 'nan', 'NAN', 'NaN'})
-    for _col in (stack_col, x_col):
+    for _col in (stack_col, group_col, x_col):
         if _col and _col in df.columns:
             # Drop actual NaNs
             df = df.dropna(subset=[_col])
@@ -1614,17 +2749,18 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         's': (_META_LABEL_MAP.get(stack_col) or _label(stack_col, col_defs)) if stack_col else '',
     }
 
-    stacked = cfg.get('stacking_mode', 'normal') == 'percent' or chart_type in ('stacked_bar', 'stacked_area')
-    smooth  = chart_type in ('spline', 'areaspline')
+    stacked = cfg.get('stacking_mode', 'normal') == 'percent' or chart_type in ('stacked_bar', 'stacked_area') or (chart_type == 'line' and cfg.get('line_layout') == 'stacked')
+    smooth  = chart_type in ('spline', 'areaspline') or (chart_type == 'line' and bool(cfg.get('smooth', False)))
 
     builders = {
-        'bar':          lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, False, col_defs),
-        'column':       lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, False, col_defs),
-        'grouped_bar':  lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, False, col_defs),
-        'stacked_bar':  lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, True,  col_defs),
+        'bar':          lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, False, col_defs, group_col),
+        'column':       lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, False, col_defs, group_col),
+        'grouped_bar':  lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, False, col_defs, group_col),
+        'stacked_bar':  lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, True,  col_defs, group_col),
         'waterfall':    lambda: _waterfall_option(df, x_col, y_col, agg, cfg, labels),
-        'line':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, False, False, y_cols, col_defs),
-        'spline':       lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, False, False, y_cols, col_defs, smooth=True),
+        'line':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, bool(cfg.get('line_fill', False)), (cfg.get('line_layout') == 'stacked'), y_cols, col_defs, bool(cfg.get('smooth', False))),
+        'spline':       lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
+        'parliament':   lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
         'area':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  False, y_cols, col_defs),
         'areaspline':   lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  False, y_cols, col_defs, smooth=True),
         'stacked_area': lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  True,  y_cols, col_defs),
@@ -1642,6 +2778,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'assessment_compare': lambda: _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs),
         'progress_growth': lambda: _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels),
         'summary_table':   lambda: _summary_table_option(df, st_row_col, st_col_col, cfg, col_defs),
+        'dynamic_summary_table': lambda: _dynamic_summary_table_option(df, st_row_cols, st_col_cols, st_agg_func, st_value_col, st_agg_decimals, cfg, col_defs),
     }
 
     try:
@@ -1652,23 +2789,38 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Apply colour mapping (user overrides + semantic defaults) to all chart types
     _apply_color_map(option, cfg)
 
-    # Apply x-axis label overrides (rotation, font size, truncation)
+    # Apply category-axis label overrides (rotation, font size, truncation)
     x_label_style = _x_axis_label_style(cfg)
-    x_axes = option.get('xAxis', None)
-    if x_axes is not None:
-        if isinstance(x_axes, list):
-            for xa in x_axes:
-                if isinstance(xa, dict):
-                    xa.setdefault('axisLabel', {}).update(x_label_style)
-        elif isinstance(x_axes, dict):
-            x_axes.setdefault('axisLabel', {}).update(x_label_style)
+    category_axis = (option.get('dv') or {}).get('category_axis', 'x')
+    axis_targets = []
+    if category_axis == 'y':
+        axis_targets.append(option.get('yAxis'))
+    elif category_axis == 'angle':
+        axis_targets.append(option.get('angleAxis'))
+    elif category_axis == 'radius':
+        axis_targets.append(option.get('radiusAxis'))
+    else:
+        axis_targets.append(option.get('xAxis'))
 
-    # Apply y-axis min/max overrides
+    for axes in axis_targets:
+        if axes is None:
+            continue
+        if isinstance(axes, list):
+            for axis in axes:
+                if isinstance(axis, dict):
+                    axis.setdefault('axisLabel', {}).update(x_label_style)
+        elif isinstance(axes, dict):
+            axes.setdefault('axisLabel', {}).update(x_label_style)
+
+    # Apply value-axis min/max overrides
     y_min = cfg.get('y_axis_min')
     y_max = cfg.get('y_axis_max')
     if y_min is not None or y_max is not None:
-        y_axes = option.get('yAxis', None)
-        targets = y_axes if isinstance(y_axes, list) else ([y_axes] if isinstance(y_axes, dict) else [])
+        value_axis = (option.get('radiusAxis') if category_axis == 'angle'
+                      else option.get('angleAxis') if category_axis == 'radius'
+                      else option.get('xAxis') if category_axis == 'y'
+                      else option.get('yAxis'))
+        targets = value_axis if isinstance(value_axis, list) else ([value_axis] if isinstance(value_axis, dict) else [])
         for ya in targets:
             if isinstance(ya, dict) and ya.get('type') == 'value':
                 if y_min not in (None, ''):
@@ -1708,18 +2860,14 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
 CHART_TYPES = [
     # (key, label, icon_class, group)
     ('bar',          'Bar',           'chart-bar',           'Comparison'),
-    ('column',       'Column',        'chart-bar-r',         'Comparison'),
-    ('grouped_bar',  'Grouped Bar',   'chart-grouped',       'Comparison'),
-    ('stacked_bar',  'Stacked Bar',   'chart-stacked',       'Comparison'),
     ('assessment_compare', 'Assessment Compare', 'chart-assess', 'Comparison'),
     ('progress_growth',    'Progress Growth',    'chart-growth',  'Comparison'),
     ('summary_table',      'Summary Table',      'chart-table',   'Comparison'),
+    ('dynamic_summary_table', 'Dynamic Summary Table', 'chart-dyntable', 'Comparison'),
     ('waterfall',    'Waterfall',     'chart-waterfall',     'Comparison'),
     ('line',         'Line',          'chart-line',          'Trend'),
-    ('spline',       'Smooth Line',   'chart-spline',        'Trend'),
-    ('area',         'Area',          'chart-area',          'Trend'),
-    ('areaspline',   'Smooth Area',   'chart-area-s',        'Trend'),
-    ('stacked_area', 'Stacked Area',  'chart-area-stacked',  'Trend'),
+    ('parliament',   'Parliament',    'chart-parliament',    'Proportion'),
+    ('spline',       'Parliament',    'chart-parliament',    'Proportion'),   # backward compat alias
     ('pie',          'Pie',           'chart-pie',           'Proportion'),
     ('donut',        'Donut',         'chart-donut',         'Proportion'),
     ('funnel',       'Funnel',        'chart-funnel',        'Proportion'),
@@ -1732,3 +2880,233 @@ CHART_TYPES = [
     ('radar',        'Radar',         'chart-radar',         'Advanced'),
     ('gauge',        'Gauge',         'chart-gauge',         'Advanced'),
 ]
+
+
+# ── Chart Recommendation Engine (Phase 6) ──────────────────────────────────────
+
+# Heuristic rules: column patterns → recommended chart types with scores.
+# Each rule is (condition_fn, chart_key, score_adjustment, reason).
+_RECOMMENDATION_RULES = []
+
+
+def _register_rule(condition, chart_key, score=10, reason=''):
+    _RECOMMENDATION_RULES.append((condition, chart_key, score, reason))
+
+
+# Assessment PL columns present → Assessment Compare is a top recommendation
+def _has_pl_columns(columns, col_defs):
+    return any(c.endswith('_PL') and c.startswith('test_') for c in columns)
+
+_register_rule(_has_pl_columns, 'assessment_compare', 25, 'Performance Level columns detected — Assessment Compare shows PL distribution across tests')
+
+# Multiple test score columns in different years → Progress Growth
+def _has_multi_year_test_scores(columns, col_defs):
+    test_cols = [c for c in columns if c.startswith('test_') and c.endswith('_SS')]
+    years = set()
+    for c in test_cols:
+        m = _YEAR_RE.match(c)
+        if m:
+            years.add(f"{m.group(1)}-{m.group(2)}")
+    return len(years) >= 2
+
+_register_rule(_has_multi_year_test_scores, 'progress_growth', 22, 'Multiple years of test scores found — Progress Growth tracks improvement')
+
+# Single time dimension + numeric metric = Line chart
+def _has_time_dimension(columns, col_defs):
+    return any(c in ('school_year', 'grade') for c in columns)
+
+_register_rule(_has_time_dimension, 'line', 15, 'Time/grade dimension detected — Line chart shows trends')
+
+# Categorical dimension + numeric value = Bar or Column
+def _has_categorical_and_numeric(columns, col_defs):
+    has_cat = any(c in ('grade', 'school', 'gender', 'race', 'ell', 'status', 'sped') for c in columns)
+    has_num = any(c.endswith('_SS') for c in columns) or any(c in ('student_id',) for c in columns)
+    return has_cat and has_num
+
+_register_rule(_has_categorical_and_numeric, 'bar', 18, 'Categorical dimension with numeric data — Bar chart is the clearest comparison')
+
+# Many categories → consider pie/donut for proportions
+def _has_few_cat_columns(columns, col_defs):
+    cat_cols = [c for c in columns if c in ('grade', 'gender', 'race', 'ell', 'status', 'sped')]
+    return len(cat_cols) >= 1
+
+_register_rule(_has_few_cat_columns, 'pie', 10, 'Categorical data — Pie/Donut shows proportion breakdown')
+
+_register_rule(_has_few_cat_columns, 'donut', 11, 'Categorical data — Donut chart for proportion breakdown')
+
+# Two numeric columns → scatter
+def _has_two_numeric(columns, col_defs):
+    num_cols = [c for c in columns if c.endswith('_SS') or c in ('atendace_rate', 'suspension_indicator')]
+    return len(num_cols) >= 2
+
+_register_rule(_has_two_numeric, 'scatter', 12, 'Two numeric columns — Scatter plot shows correlation')
+
+# Multiple categorical columns → heatmap or grouped bar
+def _has_multiple_categories(columns, col_defs):
+    cat_cols = [c for c in columns if c in ('grade', 'school', 'gender', 'race', 'ell', 'status', 'sped')]
+    return len(cat_cols) >= 2
+
+_register_rule(_has_multiple_categories, 'heatmap', 8, 'Multiple categories — Heatmap reveals patterns in cross-tabulation')
+
+# Single numeric column → histogram
+def _has_single_numeric(columns, col_defs):
+    num_cols = [c for c in columns if c.endswith('_SS')]
+    return len(num_cols) == 1
+
+_register_rule(_has_single_numeric, 'histogram', 7, 'Single numeric column — Histogram shows distribution')
+
+# Many assessment PL columns → stacked bar works well
+def _has_many_pl_columns(columns, col_defs):
+    pl_cols = [c for c in columns if c.endswith('_PL') and c.startswith('test_')]
+    return len(pl_cols) >= 4
+
+_register_rule(_has_many_pl_columns, 'stacked_bar', 13, 'Many PL columns — Stacked Bar shows distribution composition')
+
+# Dynamic Summary Table for data exploration with many columns
+def _has_many_diverse_columns(columns, col_defs):
+    return len(columns) >= 8
+
+_register_rule(_has_many_diverse_columns, 'dynamic_summary_table', 7, 'Many columns selected — Dynamic Summary Table lets you cross-tab multiple dimensions')
+
+# Summary Table for data exploration
+def _has_diverse_columns(columns, col_defs):
+    return len(columns) >= 6
+
+_register_rule(_has_diverse_columns, 'summary_table', 6, 'Many columns selected — Summary Table is great for data exploration')
+
+
+def recommend_chart_types(columns: list, column_defs: dict | None = None) -> list[dict]:
+    """Recommend chart types based on selected columns.
+
+    Returns a list of {chart_type, label, icon, reason, score} sorted by score descending.
+    """
+    if not columns:
+        return []
+
+    col_defs = column_defs or {}
+    scores: dict[str, int] = {}
+    reasons: dict[str, str] = {}
+
+    for condition, chart_key, score, reason in _RECOMMENDATION_RULES:
+        try:
+            if condition(columns, col_defs):
+                scores[chart_key] = scores.get(chart_key, 0) + score
+                if chart_key not in reasons:
+                    reasons[chart_key] = reason
+        except Exception:
+            pass
+
+    # Always recommend bar as a safe fallback
+    if 'bar' not in scores:
+        scores['bar'] = 5
+        reasons['bar'] = 'Bar chart — the most universal and readable chart type'
+
+    # Map chart key to label
+    chart_label_map = dict((k, l) for k, l, _, _ in CHART_TYPES)
+    chart_icon_map = dict((k, i) for k, _, i, _ in CHART_TYPES)
+    chart_group_map = dict((k, g) for k, _, _, g in CHART_TYPES)
+
+    results = []
+    for chart_key, score in sorted(scores.items(), key=lambda x: x[1], reverse=True):
+        results.append({
+            'chart_type': chart_key,
+            'label': chart_label_map.get(chart_key, chart_key),
+            'icon': chart_icon_map.get(chart_key, 'chart-bar'),
+            'group': chart_group_map.get(chart_key, ''),
+            'reason': reasons.get(chart_key, ''),
+            'score': score,
+        })
+
+    return results[:5]  # top 5
+
+
+# ── Auto-Description Engine (Phase 6) ──────────────────────────────────────────
+
+_CHART_TYPE_NAME_MAP = dict((k, l) for k, l, _, _ in CHART_TYPES)
+
+# Add some common names not in CHART_TYPES
+_CHART_TYPE_NAME_MAP.update({
+    'grouped_bar': 'Grouped Bar Chart',
+    'stacked_bar': 'Stacked Bar Chart',
+    'column': 'Column Chart',
+})
+
+
+def auto_describe_chart(cfg: dict, column_defs: dict | None = None) -> str:
+    """Generate a plain-English description of a chart configuration.
+
+    Example: "A bar chart showing count of students by Grade for This School Year,
+    grouped by Race, at Lincoln Elementary."
+    """
+    col_defs = column_defs or {}
+    chart_type = cfg.get('chart_type', 'bar')
+    chart_type_name = _CHART_TYPE_NAME_MAP.get(chart_type, chart_type.replace('_', ' ').title())
+
+    x_col = cfg.get('x_col', '')
+    y_col = cfg.get('y_col', '')
+    series_col = cfg.get('series_col', '') or cfg.get('stack_col', '')
+    agg = cfg.get('agg', 'count')
+
+    def _col_label(col_key):
+        if not col_key:
+            return None
+        label = col_defs.get(col_key, '')
+        if label:
+            return str(label).split('\n')[0].strip()
+        # Fall back to readable version of the key
+        return col_key.replace('_', ' ').title()
+
+    parts = [f'A {chart_type_name}']
+
+    # What's being shown
+    y_label = _col_label(y_col)
+    if y_label and agg not in ('count', 'count_occurrence'):
+        display_agg = agg.replace('_', ' ')
+        parts.append(f'showing {display_agg} of {y_label}')
+    elif y_label:
+        parts.append(f'showing {y_label}')
+    elif agg == 'count':
+        parts.append('showing count of students')
+    elif agg == 'count_occurrence':
+        parts.append('showing count of occurrences')
+
+    # What's on the X axis
+    x_label = _col_label(x_col)
+    if x_label:
+        parts.append(f'by {x_label}')
+
+    # Grouping
+    s_label = _col_label(series_col)
+    if s_label:
+        parts.append(f'grouped by {s_label}')
+
+    # School filter info
+    school_mode = cfg.get('school_filter_mode', 'enrolled')
+    source_filters = cfg.get('source_filters', {})
+    school_name = ''
+    if isinstance(source_filters, dict):
+        school_val = source_filters.get('school', '')
+        if isinstance(school_val, list) and school_val:
+            school_name = school_val[0]
+        elif isinstance(school_val, str) and school_val:
+            school_name = school_val
+
+    if school_name:
+        scope = 'enrollment' if school_mode == 'enrolled' else 'tested'
+        parts.append(f'at {school_name} ({scope} school)')
+
+    # School year context
+    if isinstance(source_filters, dict):
+        sy = source_filters.get('school_year', '')
+        if sy:
+            if sy == '__sy_this__':
+                parts.append('for This School Year')
+            elif sy == '__sy_prev1__':
+                parts.append('for Last School Year')
+            elif sy == '__sy_prev2__':
+                parts.append('for Two Years Prior')
+            elif isinstance(sy, str) and sy:
+                parts.append(f'for {sy}')
+
+    return ' '.join(parts) + '.'
+

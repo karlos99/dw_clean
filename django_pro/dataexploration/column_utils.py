@@ -263,6 +263,81 @@ def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses
         return columns
 
 
+def invert_test_to_assessment_first(test_structure: dict) -> dict:
+    """Transform year-first test structure into assessment-first.
+
+    Input:  {year: {assessment: {windows: {window: {testing_name: {SS: key, PL: key}}}}}}
+    Output: {assessment: {testing_name: {years: {year: {windows: {window: {SS: key, PL: key}}}}}}}
+    """
+    result = {}
+    for year, assessments in test_structure.items():
+        for assess_name, assess_data in assessments.items():
+            if assess_name not in result:
+                result[assess_name] = {}
+
+            # Process windows
+            for window_name, win_data in assess_data.get('windows', {}).items():
+                for testing_name, metrics in win_data.items():
+                    if testing_name not in result[assess_name]:
+                        result[assess_name][testing_name] = {'years': {}, 'additional_info': {}}
+                    yr = result[assess_name][testing_name]['years']
+                    if year not in yr:
+                        yr[year] = {'windows': {}}
+                    if window_name not in yr[year]['windows']:
+                        yr[year]['windows'][window_name] = {}
+                    # Nest by testing_name within the window to avoid overwriting
+                    yr[year]['windows'][window_name][testing_name] = metrics
+
+            # Process additional_info
+            for window_name, win_data in assess_data.get('additional_info', {}).items():
+                for testing_name, keys in win_data.items():
+                    if testing_name not in result[assess_name]:
+                        result[assess_name][testing_name] = {'years': {}, 'additional_info': {}}
+                    ai = result[assess_name][testing_name]['additional_info']
+                    if year not in ai:
+                        ai[year] = {}
+                    if window_name not in ai[year]:
+                        ai[year][window_name] = {}
+                    ai[year][window_name][testing_name] = keys
+
+    # Sort years descending within each subject for consistent display
+    for assess_name in result:
+        for testing_name in result[assess_name]:
+            yr = result[assess_name][testing_name].get('years', {})
+            result[assess_name][testing_name]['years'] = dict(
+                sorted(yr.items(), key=lambda x: x[0], reverse=True)
+            )
+    return result
+
+
+def invert_marks_to_assessment_first(mark_structure: dict) -> dict:
+    """Transform year-first mark structure into subject/course-first.
+
+    Input:  {year: {subject: {course: {period: key}}}}
+    Output: {subject: {course: {years: {year: {period: key}}}}}
+    """
+    result = {}
+    for year, subjects in mark_structure.items():
+        for subject, courses in subjects.items():
+            if subject not in result:
+                result[subject] = {}
+            for course, periods in courses.items():
+                if course not in result[subject]:
+                    result[subject][course] = {'years': {}}
+                if year not in result[subject][course]['years']:
+                    result[subject][course]['years'][year] = {}
+                result[subject][course]['years'][year] = periods
+
+    # Sort years descending within each course
+    for subject in result:
+        for course in result[subject]:
+            yr = result[subject][course].get('years', {})
+            result[subject][course]['years'] = dict(
+                sorted(yr.items(), key=lambda x: x[0], reverse=True)
+            )
+    return result
+
+
 def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses=None, extra_params=None):
     """Get dynamic mark columns from student_marks_list organized by year/subject/course/period.
 

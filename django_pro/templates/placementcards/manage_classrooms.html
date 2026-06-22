@@ -19,9 +19,10 @@
         <div class="p-4 bg-slate-50 border-b border-slate-200">
             <form method="get" class="flex items-center gap-4">
                 <label class="text-sm font-medium text-slate-700">Filter Year:</label>
-                <select name="school_year" onchange="this.form.submit()" class="rounded-md border-slate-300 py-1 pl-3 pr-8 text-sm focus:border-blue-500 focus:ring-blue-500">
-                    <option value="{{ school_year }}">{{ school_year }}</option>
-                    {% comment %} Options populated dynamically or just current selection {% endcomment %}
+                <select name="school_year" onchange="this.form.submit()" class="rounded-md border-slate-300 py-1 pl-3 pr-8 text-sm focus:border-blue-500 focus:ring-blue-500 bg-white">
+                    {% for yr in available_years %}
+                    <option value="{{ yr }}" {% if school_year == yr %}selected{% endif %}>{{ yr }}</option>
+                    {% endfor %}
                 </select>
             </form>
         </div>

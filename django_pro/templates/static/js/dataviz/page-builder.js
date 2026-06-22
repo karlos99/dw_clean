@@ -1,13 +1,11 @@
 /**
  * page-builder.js — Alpine.js component for the row-based page builder.
  *
- * Each page has rows (layout sections). Each row has its own 12-column
- * GridStack grid with charts and text blocks.
- *
  * Globals set by the template:
  *   _PAGE_ID, _PAGE_SLUG, _PAGE_TITLE, _PAGE_DESC, _PAGE_STATUS,
  *   _PAGE_FILTERS, _ROWS_JSON, _SECTIONS_JSON, _SAVE_URL, _SECTIONS_URL,
- *   _SECTION_URL_TPL, _ROW_URL_TPL, _CHART_LIST_URL, _CHART_RENDER_TPL, _CSRF
+ *   _SECTION_URL_TPL, _ROW_URL_TPL, _CHART_LIST_URL, _CHART_RENDER_TPL,
+ *   _FILTER_COLS_URL, _CSRF
  */
 function pageBuilder() {
   return {
@@ -22,8 +20,33 @@ function pageBuilder() {
     filters:  (_PAGE_FILTERS || []).map(f => ({ ...f })),
     filtersEnabled: (_PAGE_FILTERS || []).length > 0,
     filterCategories: [],
-    filterPickerOpen: false,
+
+    /* Sidebar accordion open/closed state */
+    sidebarSections: { settings: true, filters: true, layout: true },
+
+    /* Filter modal */
+    filterModalOpen: false,
+    filterColumnSearch: '',
+
+    /* Text editor modal */
     htmlEditorMode: 'visual',
+    editorModalOpen: false,
+    editorSectionId: null,
+
+    /* Saving indicator */
+    saving: false,
+
+    /* Section drag-to-reorder */
+    dragSectionId: null,
+    dragOverSectionId: null,
+    dragSourceRowId: null,
+
+    /* Row drag-to-reorder */
+    dragRowId: null,
+    dragOverRowId: null,
+
+    /* Editor selection save (for toolbar controls that steal focus) */
+    _savedSel: null,
 
     rows: _ROWS_JSON.map(r => ({
       id:        r.id,
@@ -36,14 +59,29 @@ function pageBuilder() {
 
     activeRow: null,
     selectedSection: null,
-    grids: {},          // rowId → GridStack instance
+    grids: {},
     pickerOpen: false,
     pickerSearch: '',
-    pickerTargetRow: null,  // which row the chart picker is adding to
+    pickerTargetRow: null,
 
     toast: '',
     toastType: 'success',
     lastSaved: '',
+
+    /* ── Computed: filtered categories for filter modal ─────────── */
+    get filteredFilterCategories() {
+      const q = (this.filterColumnSearch || '').toLowerCase().trim();
+      if (!q) return this.filterCategories;
+      return this.filterCategories
+        .map(cat => ({
+          ...cat,
+          columns: cat.columns.filter(col =>
+            (col.label || '').toLowerCase().includes(q) ||
+            (col.key  || '').toLowerCase().includes(q)
+          ),
+        }))
+        .filter(cat => cat.columns.length > 0);
+    },
 
     /* ── Init ───────────────────────────────────────────────────── */
     init() {
@@ -52,6 +90,25 @@ function pageBuilder() {
           this._addChartToRow(this.pickerTargetRow, chartId, chartName);
         }
       };
+
+      // Event delegation for widget title input and show_title toggle on the canvas
+      document.addEventListener('change', (e) => {
+        if (e.target.matches('.widget-title-toggle')) {
+          const secId = parseInt(e.target.dataset.secId, 10);
+          const showTitle = e.target.checked;
+          this.updateSectionProp(secId, 'show_title', showTitle);
+        }
+        if (e.target.matches('.widget-title-input')) {
+          const secId = parseInt(e.target.dataset.secId, 10);
+          const newName = e.target.value.trim();
+          this.updateSectionProp(secId, 'chart_name', newName);
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.target.matches('.widget-title-input') && e.key === 'Enter') {
+          e.target.blur();
+        }
+      });
 
       this.$nextTick(() => {
         if (this.pageId) {
@@ -64,15 +121,7 @@ function pageBuilder() {
       });
 
       // Load available filter columns
-      this._loadFilterColumns();
-
-      // Re-init rich editor when selected section changes
-      this.$watch('selectedSection', (newId) => {
-        if (newId) {
-          this.htmlEditorMode = 'visual';
-          this.initRichEditor(newId);
-        }
-      });
+      this.loadFilterColumns();
     },
 
     /* ── Grid management ────────────────────────────────────────── */
@@ -90,13 +139,31 @@ function pageBuilder() {
           cellHeight: 80,
           animate: true,
           margin: 8,
+          acceptWidgets: true,
           disableOneColumnMode: true,
-          resizable: { handles: 'se,sw,e,w' },
+          resizable: { handles: 'se,s,sw,e,w,n,nw,ne' },
           float: false,
         }, el);
         this.grids[row.id] = grid;
 
-        // Render existing sections
+        // Auto-persist layout changes (resize or drag) immediately
+        grid.on('resizestop dragstop', (_event, gsEl) => {
+          const secId = parseInt(gsEl.getAttribute('gs-id') || '0', 10);
+          if (!secId) return;
+          const node = gsEl.gridstackNode || {};
+          const sec = this.getSection(secId);
+          if (sec) {
+            sec.gs_x = node.x ?? sec.gs_x;
+            sec.gs_y = node.y ?? sec.gs_y;
+            sec.gs_w = node.w ?? sec.gs_w;
+            sec.gs_h = node.h ?? sec.gs_h;
+          }
+          const url = _SECTION_URL_TPL.replace('SECTIONID', String(secId));
+          this._post(url, {
+            gs_x: node.x, gs_y: node.y, gs_w: node.w, gs_h: node.h,
+          });
+        });
+
         if (row.sections.length > 0) {
           grid.batchUpdate(true);
           row.sections.forEach(sec => this._addWidgetToGrid(row.id, sec));
@@ -126,32 +193,105 @@ function pageBuilder() {
       item.setAttribute('gs-h', String(h));
 
       const content = document.createElement('div');
+      // HTML sections need overflow-y scroll; charts clip content
+      const overflowCls = sec.element_type === 'html' ? 'pb-html-block' : 'overflow-hidden';
       content.classList.add('grid-stack-item-content',
         'bg-white', 'border', 'border-slate-200', 'rounded-xl',
-        'overflow-hidden', 'shadow-sm', 'flex', 'flex-col');
+        overflowCls, 'shadow-sm', 'flex', 'flex-col');
       content.innerHTML = this._buildSectionHtml(sec);
       item.appendChild(content);
 
       grid.addWidget(item);
+
+      // Read finalized coordinates assigned by GridStack and save them immediately
+      this.$nextTick(() => {
+        const node = item.gridstackNode || {};
+        const newX = node.x ?? sec.gs_x;
+        const newY = node.y ?? sec.gs_y;
+        const newW = node.w ?? sec.gs_w;
+        const newH = node.h ?? sec.gs_h;
+
+        if (newX !== sec.gs_x || newY !== sec.gs_y || newW !== sec.gs_w || newH !== sec.gs_h) {
+          sec.gs_x = newX;
+          sec.gs_y = newY;
+          sec.gs_w = newW;
+          sec.gs_h = newH;
+          const url = _SECTION_URL_TPL.replace('SECTIONID', String(sec.id));
+          this._post(url, { gs_x: newX, gs_y: newY, gs_w: newW, gs_h: newH });
+        }
+      });
+
+      // After paint, auto-fit height to content for HTML blocks
+      if (sec.element_type === 'html') {
+        this.$nextTick(() => this._fitHtmlWidget(grid, item));
+      }
+
       return item;
+    },
+
+    _fitHtmlWidget(grid, item) {
+      const secId = parseInt(item.getAttribute('gs-id') || '0', 10);
+      const saveHeight = (h) => {
+        if (!secId || !h) return;
+        const sec = this.getSection(secId);
+        if (sec) sec.gs_h = h;
+        this._post(_SECTION_URL_TPL.replace('SECTIONID', String(secId)), { gs_h: h });
+      };
+
+      const inner = item.querySelector('.grid-stack-item-content > div');
+      if (!inner) return;
+      const cellPx = grid.getCellHeight(true) || 80;
+      const needed = Math.max(1, Math.ceil(inner.scrollHeight / cellPx));
+      const current = parseInt(item.getAttribute('gs-h') || item.getAttribute('data-gs-h') || '2');
+      if (needed !== current) {
+        grid.update(item, { h: needed });
+      }
+      saveHeight(needed);
     },
 
     _buildSectionHtml(sec) {
       if (sec.element_type === 'html') {
-        return '<div class="p-4 text-sm text-slate-600">' + (sec.html_content || '<p>Text block</p>') + '</div>';
+        const placeholder = '<p class="text-slate-400 italic">Empty text block — click Edit Content to add text</p>';
+        const content = sec.html_content || placeholder;
+        // Use default p-4 only when no explicit wrapper (avoids double-padding)
+        const hasPadWrapper = content.includes('data-pb-p=') || content.includes('data-pb-center=');
+        const padClass = hasPadWrapper ? '' : 'p-4 ';
+        const centerStyle = sec.center_content
+          ? 'display:flex;align-items:center;justify-content:center;height:100%;'
+          : 'height:100%;';
+        return `<div class="${padClass}text-sm text-slate-700 leading-relaxed overflow-y-auto html-prose" style="${centerStyle}">${content}</div>`;
       }
       const pageSlug = encodeURIComponent(this.pageSlug);
       const chartId = sec.chart_id;
       const renderUrl = _CHART_RENDER_TPL.replace('CHARTID', chartId)
         + '?source=page&source_id=' + encodeURIComponent(this.pageId) + '&source_name=' + pageSlug;
-      const titleBar = sec.show_title !== false
-        ? '<div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 bg-slate-50/50">'
-        + '<span class="text-xs font-semibold text-slate-600 truncate">' + this._esc(sec.chart_name || 'Chart') + '</span>'
-        + '<a href="/dataviz/charts/' + chartId + '/edit/" class="text-[10px] text-blue-500 hover:underline" title="Edit chart">edit</a>'
-        + '</div>'
-        : '';
+      const isChecked = sec.show_title !== false ? 'checked' : '';
+      const titleOpacity = sec.show_title !== false ? 'opacity-100' : 'opacity-60 bg-slate-100/70';
+      const titleBar = `
+        <div class="flex items-center justify-between px-3 py-1 border-b border-slate-100 bg-slate-50/50 ${titleOpacity} transition-opacity select-none">
+          <div class="flex items-center gap-1.5 flex-1 min-w-0">
+            <span class="text-[9px] font-bold text-slate-400 uppercase select-none mr-1">Title:</span>
+            <input type="text" value="${this._esc(sec.chart_name || '')}" 
+                   placeholder="Chart Title..."
+                   class="widget-title-input text-xs font-semibold text-slate-700 bg-transparent hover:bg-white/80 focus:bg-white border border-transparent hover:border-slate-200 focus:border-slate-300 rounded px-1.5 py-0.5 w-full max-w-[240px] focus:ring-0 transition"
+                   data-sec-id="${sec.id}">
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-1 cursor-pointer text-[10px] text-slate-500 select-none">
+              <input type="checkbox" ${isChecked} 
+                     class="widget-title-toggle rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3"
+                     data-sec-id="${sec.id}">
+              <span>Visible on Page</span>
+            </label>
+            <a href="/dataviz/charts/${chartId}/edit/" target="_blank" class="text-[10px] text-blue-500 hover:underline inline-flex items-center gap-0.5">
+              <span>Edit Chart</span>
+              <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            </a>
+          </div>
+        </div>
+      `;
       return titleBar
-        + '<div class="flex-1 min-h-0" hx-get="' + renderUrl + '" hx-trigger="load" hx-swap="innerHTML">'
+        + '<div id="builder-chart-slot-' + sec.id + '" class="flex-1 min-h-0" hx-get="' + renderUrl + '" hx-trigger="load" hx-target="#builder-chart-slot-' + sec.id + '" hx-swap="innerHTML">'
         + '<div class="flex items-center justify-center h-full text-slate-300 text-xs">Loading…</div>'
         + '</div>';
     },
@@ -197,11 +337,13 @@ function pageBuilder() {
           source_col: f.source_col,
           source_table: f.source_table || 'current_student',
           widget: f.widget || 'select',
+          default_val: f.default_val || '',
         }));
     },
 
     async autoSave() {
       if (!this.pageId || !this.title.trim()) return;
+      this.saving = true;
       await this._post(_SAVE_URL, {
         id: this.pageId,
         title: this.title.trim(),
@@ -213,13 +355,14 @@ function pageBuilder() {
         page_filters: this._collectFilters(),
       });
       this.lastSaved = new Date().toLocaleTimeString();
+      this.saving = false;
     },
 
     async savePage(status) {
       const pageId = await this._ensurePage();
       if (!pageId) return;
 
-      // Save page metadata
+      this.saving = true;
       const res = await this._post(_SAVE_URL, {
         id: pageId,
         title: this.title.trim(),
@@ -230,7 +373,7 @@ function pageBuilder() {
         show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
-      if (res.error) { this.showToast(res.error, 'error'); return; }
+      if (res.error) { this.showToast(res.error, 'error'); this.saving = false; return; }
       if (res.page) {
         this.pageSlug = res.page.slug;
         this.status = res.page.status;
@@ -242,15 +385,19 @@ function pageBuilder() {
         let sectionLayout = [];
 
         if (grid) {
-          const items = grid.save(false) || [];
-          console.log('[page-builder] grid.save(false) for row', row.id, JSON.stringify(items));
-          sectionLayout = items.map(item => ({
-            section_id: parseInt(item.id, 10),
-            gs_x: item.x ?? 0, gs_y: item.y ?? 0,
-            gs_w: item.w ?? 6, gs_h: item.h ?? 4,
-          })).filter(i => i.section_id);
-          console.log('[page-builder] sectionLayout after filter:', JSON.stringify(sectionLayout));
-
+          const el = document.getElementById('row-grid-' + row.id);
+          const items = el ? el.querySelectorAll('[gs-id]') : [];
+          sectionLayout = Array.from(items).map(item => {
+            const secId = parseInt(item.getAttribute('gs-id'), 10);
+            const node = item.gridstackNode || {};
+            return {
+              section_id: secId,
+              gs_x: node.x ?? parseInt(item.getAttribute('gs-x'), 10) ?? 0,
+              gs_y: node.y ?? parseInt(item.getAttribute('gs-y'), 10) ?? 0,
+              gs_w: node.w ?? parseInt(item.getAttribute('gs-w'), 10) ?? 6,
+              gs_h: node.h ?? parseInt(item.getAttribute('gs-h'), 10) ?? 4,
+            };
+          }).filter(i => i.section_id);
           sectionLayout.sort((a, b) => a.gs_y - b.gs_y || a.gs_x - b.gs_x);
           sectionLayout.forEach((item, idx) => item.position = idx);
         }
@@ -263,21 +410,30 @@ function pageBuilder() {
       });
 
       const url = this._sectionsUrl();
-      console.log('[page-builder] reorder payload:', JSON.stringify({ action: 'reorder', rows: rowsPayload }));
       const reorderRes = await this._post(url, { action: 'reorder', rows: rowsPayload });
-      console.log('[page-builder] reorder response:', JSON.stringify(reorderRes));
 
       // Sync local state
+      const allSections = [];
+      this.rows.forEach(r => allSections.push(...r.sections));
       rowsPayload.forEach(rp => {
         const row = this.rows.find(r => r.id === rp.row_id);
         if (!row) return;
-        rp.sections.forEach(l => {
-          const s = row.sections.find(s => s.id === l.section_id);
-          if (s) { s.gs_x = l.gs_x; s.gs_y = l.gs_y; s.gs_w = l.gs_w; s.gs_h = l.gs_h; }
-        });
+        row.sections = rp.sections.map(l => {
+          const s = allSections.find(sec => sec.id === l.section_id);
+          if (s) {
+            s.row_id = rp.row_id;
+            s.gs_x = l.gs_x;
+            s.gs_y = l.gs_y;
+            s.gs_w = l.gs_w;
+            s.gs_h = l.gs_h;
+            return s;
+          }
+          return null;
+        }).filter(Boolean);
       });
 
       this.lastSaved = new Date().toLocaleTimeString();
+      this.saving = false;
       this.showToast(status === 'active' ? 'Page published' : 'Page saved');
     },
 
@@ -308,7 +464,6 @@ function pageBuilder() {
       const url = this._sectionsUrl();
       await this._post(url, { action: 'remove_row', row_id: rowId });
 
-      // Destroy GridStack instance
       if (this.grids[rowId]) {
         this.grids[rowId].destroy(false);
         delete this.grids[rowId];
@@ -381,7 +536,7 @@ function pageBuilder() {
       const url = this._sectionsUrl();
       const res = await this._post(url, {
         action: 'add_html', row_id: rowId,
-        html_content: '<h3>Title</h3><p>Description text…</p>',
+        html_content: '<p>Add your text here…</p>',
         gs_w: 12, gs_h: 2,
       });
       if (res.error) { this.showToast(res.error, 'error'); return; }
@@ -392,8 +547,8 @@ function pageBuilder() {
         chart_id: null,
         chart_name: null,
         element_type: 'html',
-        html_content: '<h3>Title</h3><p>Description text…</p>',
-        html_preview: 'Title Description text…',
+        html_content: '<p>Add your text here…</p>',
+        html_preview: 'Add your text here…',
         show_title: false,
         gs_x: 0, gs_y: 0,
         gs_w: 12, gs_h: 2,
@@ -406,6 +561,43 @@ function pageBuilder() {
       this.showToast('Text block added');
     },
 
+    /* ── Add title block to row ─────────────────────────────────── */
+    async addTitleToRow(rowId) {
+      const pageId = await this._ensurePage();
+      if (!pageId) return;
+
+      const titleHtml = '<h2 style="font-size:1.4rem;font-weight:700;color:#1e293b;margin:0;line-height:1.3">Section Title</h2>';
+
+      const url = this._sectionsUrl();
+      const res = await this._post(url, {
+        action: 'add_html', row_id: rowId,
+        html_content: titleHtml,
+        gs_w: 12, gs_h: 1,
+      });
+      if (res.error) { this.showToast(res.error, 'error'); return; }
+
+      const sec = {
+        id: res.section.id,
+        row_id: rowId,
+        chart_id: null,
+        chart_name: null,
+        element_type: 'html',
+        html_content: titleHtml,
+        html_preview: 'Section Title',
+        show_title: false,
+        gs_x: 0, gs_y: 0,
+        gs_w: 12, gs_h: 1,
+      };
+
+      const row = this.getRow(rowId);
+      if (row) row.sections.push(sec);
+
+      this._addWidgetToGrid(rowId, sec);
+      // Open editor immediately so user can edit the title
+      this.$nextTick(() => this.openEditorModal(sec.id));
+      this.showToast('Title block added');
+    },
+
     /* ── Remove section ─────────────────────────────────────────── */
     async removeSection(rowId, sectionId) {
       const url = _SECTION_URL_TPL.replace('SECTIONID', sectionId);
@@ -414,16 +606,125 @@ function pageBuilder() {
         headers: { 'X-CSRFToken': _CSRF },
       });
 
-      // Remove from grid
       const grid = this.grids[rowId];
       if (grid) {
         const el = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sectionId + '"]');
-        if (el) grid.removeWidget(el, false);
+        // removeDOM must be true here: unlike removeRow() (where Alpine's
+        // x-for re-render removes the row container), section DOM nodes are
+        // created manually via grid.addWidget() in _addWidgetToGrid() and
+        // are not tracked by any Alpine template — GridStack must remove
+        // the element itself or it stays visible after deletion.
+        if (el) grid.removeWidget(el, true);
       }
 
       const row = this.getRow(rowId);
       if (row) row.sections = row.sections.filter(s => s.id !== sectionId);
       if (this.selectedSection === sectionId) this.selectedSection = null;
+    },
+
+    /* ── Section drag-to-reorder ────────────────────────────────── */
+    startSectionDrag(event, secId, rowId) {
+      this.dragSectionId = secId;
+      this.dragSourceRowId = rowId;
+      // setData() is required by browsers to activate the drag
+      event.dataTransfer.setData('text/plain', String(secId));
+      event.dataTransfer.effectAllowed = 'move';
+    },
+
+    sectionDragOver(event, secId) {
+      event.preventDefault();
+      this.dragOverSectionId = secId;
+    },
+
+    dropSection(event, rowId, targetSecId) {
+      event.preventDefault();
+      if (!this.dragSectionId || this.dragSectionId === targetSecId) {
+        this.endSectionDrag(); return;
+      }
+      const row = this.getRow(rowId);
+      if (!row) { this.endSectionDrag(); return; }
+
+      const fromIdx = row.sections.findIndex(s => s.id === this.dragSectionId);
+      const toIdx   = row.sections.findIndex(s => s.id === targetSecId);
+      if (fromIdx < 0 || toIdx < 0) { this.endSectionDrag(); return; }
+
+      const moved = row.sections.splice(fromIdx, 1)[0];
+      row.sections.splice(toIdx, 0, moved);
+      this._saveSectionOrder(rowId, row.sections);
+      this.endSectionDrag();
+    },
+
+    endSectionDrag() {
+      this.dragSectionId = null;
+      this.dragOverSectionId = null;
+      this.dragSourceRowId = null;
+    },
+
+    async _saveSectionOrder(rowId, sections) {
+      const url = this._sectionsUrl();
+      const rows = [{
+        row_id: rowId,
+        sections: sections.map((s, i) => ({ section_id: s.id, position: i })),
+      }];
+      await this._post(url, { action: 'reorder', rows });
+    },
+
+    /* ── Row drag-to-reorder ───────────────────────────────────── */
+    startRowDrag(event, rowId) {
+      this.dragRowId = rowId;
+      event.dataTransfer.setData('text/plain', String(rowId));
+      event.dataTransfer.effectAllowed = 'move';
+    },
+
+    rowDragOver(event, rowId) {
+      event.preventDefault();
+      this.dragOverRowId = rowId;
+    },
+
+    async dropRow(event, targetRowId) {
+      event.preventDefault();
+      if (!this.dragRowId || this.dragRowId === targetRowId) {
+        this.endRowDrag(); return;
+      }
+      const fromIdx = this.rows.findIndex(r => r.id === this.dragRowId);
+      const toIdx   = this.rows.findIndex(r => r.id === targetRowId);
+      if (fromIdx < 0 || toIdx < 0) { this.endRowDrag(); return; }
+
+      const moved = this.rows.splice(fromIdx, 1)[0];
+      this.rows.splice(toIdx, 0, moved);
+
+      // Save the updated row positions immediately
+      this.saving = true;
+      const url = this._sectionsUrl();
+      const rowsPayload = this.rows.map((row, ri) => {
+        row.position = ri;
+        const grid = this.grids[row.id];
+        let sectionLayout = [];
+        if (grid) {
+          const items = grid.save(false) || [];
+          sectionLayout = items.map(item => ({
+            section_id: parseInt(item.id, 10),
+            gs_x: item.x ?? 0, gs_y: item.y ?? 0,
+            gs_w: item.w ?? 6, gs_h: item.h ?? 4,
+          })).filter(i => i.section_id);
+          sectionLayout.sort((a, b) => a.gs_y - b.gs_y || a.gs_x - b.gs_x);
+          sectionLayout.forEach((item, idx) => item.position = idx);
+        }
+        return {
+          row_id: row.id,
+          position: ri,
+          sections: sectionLayout,
+        };
+      });
+      await this._post(url, { action: 'reorder', rows: rowsPayload });
+      this.saving = false;
+      this.endRowDrag();
+      this.showToast('Row order updated');
+    },
+
+    endRowDrag() {
+      this.dragRowId = null;
+      this.dragOverRowId = null;
     },
 
     /* ── Section helpers ────────────────────────────────────────── */
@@ -469,48 +770,185 @@ function pageBuilder() {
       await this._post(url, { html_content: content });
     },
 
-    /* ── Rich text editor ───────────────────────────────────────── */
+    setSectionPadding(sectionId, px) {
+      const sec = this.getSection(sectionId);
+      if (!sec) return;
+      sec.padding_px = px;
+      const { inner } = _parseHtmlWrapper(sec.html_content);
+      sec.html_content = _applyHtmlWrapper(inner, px, sec.center_content || false);
+      sec.html_preview = sec.html_content.replace(/<[^>]*>/g, '').slice(0, 30);
+      const row = this._findRowForSection(sectionId);
+      if (row) this._rerenderSection(row.id, sec);
+      const url = _SECTION_URL_TPL.replace('SECTIONID', sectionId);
+      this._post(url, { html_content: sec.html_content });
+    },
+
+    setCenterContent(sectionId, center) {
+      const sec = this.getSection(sectionId);
+      if (!sec) return;
+      sec.center_content = center;
+      const { inner } = _parseHtmlWrapper(sec.html_content);
+      sec.html_content = _applyHtmlWrapper(inner, sec.padding_px || 0, center);
+      sec.html_preview = sec.html_content.replace(/<[^>]*>/g, '').slice(0, 30);
+      const row = this._findRowForSection(sectionId);
+      if (row) this._rerenderSection(row.id, sec);
+      const url = _SECTION_URL_TPL.replace('SECTIONID', sectionId);
+      this._post(url, { html_content: sec.html_content });
+    },
+
+    async updateSectionHeight(sectionId, h) {
+      const sec = this.getSection(sectionId);
+      if (!sec) return;
+      const row = this._findRowForSection(sectionId);
+      const grid = row ? this.grids[row.id] : null;
+      const widget = row ? document.querySelector('#row-grid-' + row.id + ' [gs-id="' + sectionId + '"]') : null;
+      if (h === 0) {
+        // 0 = auto-fit to content; _fitHtmlWidget will persist the result
+        if (grid && widget) this._fitHtmlWidget(grid, widget);
+      } else {
+        sec.gs_h = h;
+        if (widget) { widget.removeAttribute('gs-size-to-content'); }
+        if (grid && widget) grid.update(widget, { h });
+        await this._post(_SECTION_URL_TPL.replace('SECTIONID', sectionId), { gs_h: h });
+      }
+    },
+
+    /* ── Rich text editor (modal) ───────────────────────────────── */
     richCmd(cmd, value) {
-      const editor = document.getElementById('rich-editor');
-      if (editor) editor.focus();
-      document.execCommand(cmd, false, value || null);
+      // @mousedown.prevent on toolbar buttons keeps editor focus/selection intact.
+      // formatBlock requires angle-bracket tag names across browsers.
+      if (cmd === 'formatBlock' && value && !value.startsWith('<')) value = '<' + value + '>';
+      document.execCommand(cmd, false, value !== undefined ? value : null);
+    },
+
+    saveEditorSel() {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) this._savedSel = sel.getRangeAt(0).cloneRange();
+    },
+
+    restoreSelAndRichCmd(cmd, value) {
+      if (this._savedSel) {
+        const editor = document.getElementById('pb-rich-editor');
+        if (editor) editor.focus();
+        const sel = window.getSelection();
+        if (sel) { sel.removeAllRanges(); sel.addRange(this._savedSel); }
+        this._savedSel = null;
+      }
+      this.richCmd(cmd, value);
     },
 
     initRichEditor(sectionId) {
       this.$nextTick(() => {
-        const editor = document.getElementById('rich-editor');
+        const editor = document.getElementById('pb-rich-editor');
         if (!editor) return;
         const sec = this.getSection(sectionId);
-        editor.innerHTML = sec?.html_content || '<p></p>';
+        // Strip any layout wrapper so editor shows clean inner content
+        const { inner } = _parseHtmlWrapper(sec?.html_content || '<p></p>');
+        editor.innerHTML = inner || '<p></p>';
+        editor.focus();
       });
     },
 
     syncRichEditor(sectionId) {
-      const editor = document.getElementById('rich-editor');
-      if (editor) this.updateHtmlContent(sectionId, editor.innerHTML);
+      // On blur: just save inner content without re-applying wrapper (modal close/save does that)
+      const editor = document.getElementById('pb-rich-editor');
+      if (!editor) return;
+      const sec = this.getSection(sectionId);
+      if (sec) {
+        const content = _applyHtmlWrapper(editor.innerHTML, sec.padding_px || 0, sec.center_content || false);
+        this.updateHtmlContent(sectionId, content);
+      }
     },
 
     switchEditorMode(mode, sectionId) {
+      const richEl = document.getElementById('pb-rich-editor');
+      const codeEl = document.getElementById('pb-code-editor');
+      const sec = this.getSection(sectionId);
+
       if (mode === 'code') {
-        // Flush visual editor content to state before switching
-        const editor = document.getElementById('rich-editor');
-        if (editor) {
-          const sec = this.getSection(sectionId);
-          if (sec) {
-            sec.html_content = editor.innerHTML;
-            sec.html_preview = editor.innerHTML.replace(/<[^>]*>/g, '').slice(0, 30);
-          }
+        // Flush visual → code (show inner HTML without wrapper in code view)
+        if (richEl && sec) {
+          const { inner } = _parseHtmlWrapper(sec.html_content);
+          this.$nextTick(() => { if (codeEl) codeEl.value = inner || richEl.innerHTML; });
         }
       } else {
-        // Populate visual editor from current state when switching back
-        this.initRichEditor(sectionId);
+        // Flush code → visual
+        if (codeEl && sec) {
+          const inner = codeEl.value;
+          sec.html_content = _applyHtmlWrapper(inner, sec.padding_px || 0, sec.center_content || false);
+          sec.html_preview = inner.replace(/<[^>]*>/g, '').slice(0, 30);
+        }
+        this.$nextTick(() => {
+          if (richEl && sec) {
+            const { inner } = _parseHtmlWrapper(sec.html_content);
+            richEl.innerHTML = inner || '<p></p>';
+            richEl.focus();
+          }
+        });
       }
       this.htmlEditorMode = mode;
     },
 
+    /* ── Editor modal ───────────────────────────────────────────── */
+    openEditorModal(sectionId) {
+      this.editorSectionId = sectionId;
+      this.htmlEditorMode = 'visual';
+      this.editorModalOpen = true;
+      this.$nextTick(() => this.initRichEditor(sectionId));
+    },
+
+    closeEditorModal() {
+      if (this.editorSectionId) {
+        const sec = this.getSection(this.editorSectionId);
+        const editor = document.getElementById('pb-rich-editor');
+        if (editor && this.htmlEditorMode === 'visual') {
+          const content = _applyHtmlWrapper(editor.innerHTML, sec?.padding_px || 0, sec?.center_content || false);
+          this.updateHtmlContent(this.editorSectionId, content);
+        }
+        const codeEl = document.getElementById('pb-code-editor');
+        if (codeEl && this.htmlEditorMode === 'code') {
+          const content = _applyHtmlWrapper(codeEl.value, sec?.padding_px || 0, sec?.center_content || false);
+          this.updateHtmlContent(this.editorSectionId, content);
+        }
+      }
+      this.editorModalOpen = false;
+      this.editorSectionId = null;
+    },
+
+    saveEditorModal(sectionId) {
+      const editor = document.getElementById('pb-rich-editor');
+      const codeEl = document.getElementById('pb-code-editor');
+      const sec = this.getSection(sectionId);
+      const rawContent = this.htmlEditorMode === 'visual'
+        ? (editor ? editor.innerHTML : '')
+        : (codeEl ? codeEl.value : '');
+      const content = _applyHtmlWrapper(rawContent, sec?.padding_px || 0, sec?.center_content || false);
+      if (sectionId) this.updateHtmlContent(sectionId, content);
+      this.editorModalOpen = false;
+      this.editorSectionId = null;
+      this.showToast('Content saved');
+    },
+
+    insertLink() {
+      const url = prompt('Enter URL:');
+      if (url) {
+        const editor = document.getElementById('pb-rich-editor');
+        if (editor) editor.focus();
+        document.execCommand('createLink', false, url);
+      }
+    },
+
     _rerenderSection(rowId, sec) {
-      const el = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sec.id + '"] .grid-stack-item-content');
-      if (el) el.innerHTML = this._buildSectionHtml(sec);
+      const contentEl = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sec.id + '"] .grid-stack-item-content');
+      if (contentEl) contentEl.innerHTML = this._buildSectionHtml(sec);
+      // Auto-fit height for HTML sections after content changes
+      if (sec.element_type === 'html') {
+        const grid = this.grids[rowId];
+        const widget = document.querySelector('#row-grid-' + rowId + ' [gs-id="' + sec.id + '"]');
+        if (grid && widget) {
+          this.$nextTick(() => this._fitHtmlWidget(grid, widget));
+        }
+      }
     },
 
     /* ── Chart picker ───────────────────────────────────────────── */
@@ -531,7 +969,7 @@ function pageBuilder() {
     },
 
     /* ── Filters ────────────────────────────────────────────────── */
-    async _loadFilterColumns() {
+    async loadFilterColumns() {
       try {
         const res = await fetch(_FILTER_COLS_URL, { credentials: 'same-origin' });
         const data = await res.json();
@@ -556,6 +994,7 @@ function pageBuilder() {
           source_col: col.key,
           source_table: 'current_student',
           widget: 'select',
+          default_val: '',
         });
       }
       this.autoSave();
@@ -589,17 +1028,50 @@ function pageBuilder() {
   };
 }
 
+/* ── Layout wrapper helpers ──────────────────────────────────────── */
+function _parseHtmlWrapper(html) {
+  if (!html) return { inner: '', padding_px: 0, center_content: false };
+  if (!html.includes('data-pb-p') && !html.includes('data-pb-center')) {
+    return { inner: html, padding_px: 0, center_content: false };
+  }
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const w = doc.body.firstElementChild;
+    if (w && w.tagName === 'DIV' && (w.hasAttribute('data-pb-p') || w.hasAttribute('data-pb-center'))) {
+      return {
+        inner: w.innerHTML,
+        padding_px: parseInt(w.getAttribute('data-pb-p') || '0') || 0,
+        center_content: w.getAttribute('data-pb-center') === '1',
+      };
+    }
+  } catch (e) {}
+  return { inner: html, padding_px: 0, center_content: false };
+}
+
+function _applyHtmlWrapper(inner, padding_px, center_content) {
+  if (!padding_px && !center_content) return inner;
+  let attrs = '';
+  let style = 'box-sizing:border-box;';
+  if (padding_px) { attrs += ` data-pb-p="${padding_px}"`; style += `padding:${padding_px}px;`; }
+  if (center_content) { attrs += ' data-pb-center="1"'; style += 'display:flex;align-items:center;justify-content:center;min-height:100%;'; }
+  return `<div${attrs} style="${style}">${inner}</div>`;
+}
+
 /* ── Helper to map a section from JSON ──────────────────────────── */
 function _mapSection(s) {
+  const html = s.html_content || '';
+  const { padding_px, center_content } = _parseHtmlWrapper(html);
   return {
     id: s.id,
     row_id: s.row_id,
     chart_id: s.chart ? s.chart.id : null,
     chart_name: s.chart ? s.chart.name : null,
     element_type: s.element_type || 'chart',
-    html_content: s.html_content || '',
-    html_preview: (s.html_content || '').replace(/<[^>]*>/g, '').slice(0, 30),
+    html_content: html,
+    html_preview: html.replace(/<[^>]*>/g, '').slice(0, 30),
     show_title: s.show_title !== false,
+    padding_px,
+    center_content,
     gs_x: s.gs_x ?? 0, gs_y: s.gs_y ?? 0,
     gs_w: s.gs_w ?? 6, gs_h: s.gs_h ?? 4,
   };

@@ -26,6 +26,8 @@ from .column_management import (
     get_saved_default_columns,
     get_column_expression,
 )
+from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
+from landing.utils import get_project_config
 
 class StudentWithTestsListView(LoginRequiredMixin, ListView):
     """Display list of students with their test results (one row per student)."""
@@ -99,6 +101,13 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
                 cache.set(grades_key, grades, 3600)
         
         context['school_years'] = school_years
+        context['school_year_choices'] = get_school_year_choices(school_years)
+        all_years = list(test_structure.keys()) + list(marks_structure.keys())
+        context['year_labels'] = get_year_labels_map(all_years)
+        year_to_alias = get_year_alias_map()
+        context['year_to_alias'] = year_to_alias
+        # underscore-format keys for JS (column keys use underscores not hyphens)
+        context['year_alias_map_json'] = json.dumps({y.replace('-', '_'): a for y, a in year_to_alias.items()})
         context['grades'] = grades
         context['test_structure'] = test_structure
         context['marks_structure'] = marks_structure
@@ -126,13 +135,35 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
 
         filters = query_config.get('filters', {})
 
+        # Resolve the project default school year for the initial page load
+        _project_default_year = ''
+        try:
+            _cfg = get_project_config()
+            _project_default_year = _cfg.default_school_year or ''
+        except Exception:
+            pass
+
         def get_param(name, default=''):
             # URL param takes precedence over saved query, which takes precedence over default
             return self.request.GET.get(name) or filters.get(name, default)
 
         # Current filter values
         context['search_query'] = get_param('search')
-        context['selected_school_year'] = get_param('school_year')
+        if 'school_year' in self.request.GET:
+            selected_year = self.request.GET.get('school_year')
+        elif _project_default_year:
+            selected_year = _project_default_year
+        else:
+            selected_year = filters.get('school_year', '')
+
+        # Resolve selected_school_year to concrete school year if it is an alias
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            if selected_year:
+                selected_year = resolve_school_year(selected_year)
+        except Exception:
+            pass
+        context['selected_school_year'] = selected_year
         context['selected_grade'] = get_param('grade')
         context['selected_status'] = get_param('status', 'Active')
         
@@ -171,7 +202,10 @@ def load_students(request):
         selected_columns = saved_config.get('columns')
     else:
         selected_columns = get_saved_default_columns()
-    
+
+    # Resolve any relative column keys (e.g. test___sy_this___...) to real year keys
+    selected_columns = [resolve_relative_column_key(c) for c in selected_columns]
+
     # Extract saved filters (they may be nested under 'filters' key or at top level)
     saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
     
@@ -210,12 +244,34 @@ def load_students(request):
     # Get filters - URL params take precedence over saved config
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
     
-    _sy_raw = request.GET.get('school_year', '')
-    school_year = _parse_multi(
-        _sy_raw,
-        _parse_multi(saved_filters.get('school_year', ''),
-                     _parse_multi(saved_config.get('school_year', ''), ''))
-    )
+    _project_default_year = ''
+    try:
+        _cfg = get_project_config()
+        _project_default_year = _cfg.default_school_year or ''
+    except Exception:
+        pass
+
+    _sy_in_url = 'school_year' in request.GET
+    if _sy_in_url:
+        _sy_raw = request.GET.get('school_year', '')
+        school_year = _parse_multi(_sy_raw, '')
+    elif _project_default_year:
+        school_year = _project_default_year
+    else:
+        school_year = _parse_multi(
+            saved_filters.get('school_year', ''),
+            _parse_multi(saved_config.get('school_year', ''), '')
+        )
+
+    # Resolve school-year aliases to concrete year strings
+    try:
+        from dataexploration.school_year_utils import resolve_school_year
+        if isinstance(school_year, list):
+            school_year = [resolve_school_year(y) for y in school_year]
+        elif school_year:
+            school_year = resolve_school_year(school_year)
+    except Exception:
+        pass
     
     _gr_raw = request.GET.get('grade', '')
     grade = _parse_multi(
@@ -247,6 +303,12 @@ def load_students(request):
     else:
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
+    
+    # Resolve any relative column keys in sort_by and filters keys
+    if sort_by:
+        sort_by = resolve_relative_column_key(sort_by)
+    if isinstance(filters, dict):
+        filters = {resolve_relative_column_key(k): v for k, v in filters.items()}
     
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
         """Append SQL filter clauses + params for the provided filters dict."""

@@ -57,24 +57,19 @@
                     {% with assigned_students=classroom_assignments|get_item:classroom.id %}
                     {% if assigned_students %}
                         {% for assigned in assigned_students %}
-                        <div class="bg-slate-50 border border-slate-200 px-2 py-2">
-                            <div class="flex items-center justify-between gap-2">
-                                <div class="flex-1">
-                                    <div class="text-sm font-medium">{{ assigned.student_name }}</div>
-                                    <div class="text-xs text-slate-500">{{ assigned.ssid }}{% if assigned.grade %} · Grade {{ assigned.grade }}{% endif %}</div>
-                                    <div class="text-xs text-slate-600">Current HR Teacher: {{ assigned.current_hr_teacher|default:'—' }}</div>
-                                </div>
-                                <form hx-post="{% url 'placementcards:unassign_student' %}" hx-target="#placement-workspace" hx-swap="innerHTML">
-                                    {% csrf_token %}
-                                    <input type="hidden" name="student_ssid" value="{{ assigned.ssid }}">
-                                    <input type="hidden" name="placement_year" value="{{ placement_year }}">
-                                    {% include 'placementcards/partials/placement_filter_hidden_fields.html' %}
-                                    <button type="submit" class="text-xs px-2 py-1 border border-slate-300 bg-white text-slate-700">Unassign</button>
-                                </form>
+                        <div class="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 px-2 py-1">
+                            <div>
+                                <div class="text-sm font-medium">{{ assigned.student_name }}</div>
+                                <div class="text-xs text-slate-500">{{ assigned.ssid }}{% if assigned.grade %} · Grade {{ assigned.grade }}{% endif %}</div>
+                                <div class="text-xs text-slate-600">Current HR Teacher: {{ assigned.current_hr_teacher|default:'—' }}</div>
                             </div>
-                            <div class="mt-2">
-                                <button type="button" hx-get="{% url 'placementcards:preview_card' assigned.ssid %}?student_year={{ student_year }}" hx-target="#placement-modal-shell" hx-swap="innerHTML" class="px-2 py-1 text-xs border border-slate-300 bg-white text-slate-700">View Card (Read Only)</button>
-                            </div>
+                            <form hx-post="{% url 'placementcards:unassign_student' %}" hx-target="#placement-workspace" hx-swap="innerHTML">
+                                {% csrf_token %}
+                                <input type="hidden" name="student_ssid" value="{{ assigned.ssid }}">
+                                <input type="hidden" name="placement_year" value="{{ placement_year }}">
+                                {% include 'placementcards/partials/placement_filter_hidden_fields.html' %}
+                                <button type="submit" class="text-xs px-2 py-1 border border-slate-300 bg-white text-slate-700">Unassign</button>
+                            </form>
                         </div>
                         {% endfor %}
                     {% else %}
