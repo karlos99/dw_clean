@@ -1180,6 +1180,8 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     };
 
+    window.loadData = loadData;
+
     const updateColumnSelection = (col) => {
         const key = storageKey(col);
         // Check against all forms of the key
