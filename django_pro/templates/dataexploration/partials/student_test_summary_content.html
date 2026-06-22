@@ -187,6 +187,7 @@
                                 <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Grade</th>
                                 <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-blue-50/30">Level (PL)</th>
                                 <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-blue-50/30">Score (SS)</th>
+                                <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-purple-50/30">DFP</th>
                                 <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Window</th>
                                 <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">School</th>
                             </tr>
@@ -208,6 +209,15 @@
                                     </span>
                                 </td>
                                 <td class="px-6 py-3 whitespace-nowrap text-sm font-bold text-slate-900 bg-blue-50/10">{{ record.ss|default:"-" }}</td>
+                                <td class="px-6 py-3 whitespace-nowrap bg-purple-50/10">
+                                    {% if record.test_name == 'CAASPP' and record.other_info and record.other_info.dfp is not None %}
+                                    <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                                        DFP {{ record.other_info.dfp }}
+                                    </span>
+                                    {% else %}
+                                    <span class="text-xs text-slate-400">-</span>
+                                    {% endif %}
+                                </td>
                                 <td class="px-6 py-3 whitespace-nowrap text-xs text-slate-500">{{ record.test_window|default:"-" }}</td>
                                 <td class="px-6 py-3 whitespace-nowrap text-xs text-slate-500">{{ record.school_short_name|default:record.school|truncatewords:2 }}</td>
                             </tr>

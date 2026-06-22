@@ -3,6 +3,7 @@ import json
 import logging
 import re
 from collections import Counter
+from decimal import Decimal
 from django.db import connection
 from django.core.cache import cache
 from dataexploration.utils import get_user_roles
@@ -778,7 +779,13 @@ def execute_compiled_query(sql, params):
                     }
                 columns = [col[0] for col in cursor.description]
                 raw = cursor.fetchall()
-                rows = [dict(zip(columns, row)) for row in raw]
+                rows = []
+                for row in raw:
+                    row_dict = dict(zip(columns, row))
+                    for k, v in row_dict.items():
+                        if isinstance(v, Decimal):
+                            row_dict[k] = float(v)
+                    rows.append(row_dict)
             finally:
                 cursor.execute("ROLLBACK")
 
@@ -823,7 +830,14 @@ def execute_compiled_query_aliased(sql, params, column_mappings):
                 columns = [col[0] for col in cursor.description]
                 aliased_columns = [column_mappings.get(c, c) for c in columns] if column_mappings else columns
                 raw = cursor.fetchall()
-                rows = [dict(zip(aliased_columns, row)) for row in raw]
+                rows = []
+                for row in raw:
+                    row_dict = dict(zip(aliased_columns, row))
+                    # Convert Decimal values to float for JSON serialization
+                    for k, v in row_dict.items():
+                        if isinstance(v, Decimal):
+                            row_dict[k] = float(v)
+                    rows.append(row_dict)
             finally:
                 cursor.execute("ROLLBACK")
 
