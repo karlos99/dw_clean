@@ -196,7 +196,7 @@ def get_column_statistics(request):
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     val_params = list(exist_params_base)
-                    if metric_col == 'oi':
+                    if metric_col == 'oi' or metric_col == 'dfp':
                         val_params.append(test_info['other_info_key'])
                     val_params.append(real_values)
                     conditions.append(f"EXISTS ({val_clause})")

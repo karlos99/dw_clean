@@ -356,7 +356,7 @@ def load_students(request):
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     val_params = list(exist_params_base)
-                    if metric_col == 'oi':
+                    if metric_col == 'oi' or metric_col == 'dfp':
                         val_params.append(test_info['other_info_key'])
                     val_params.append(real_values)
                     conditions.append(f"EXISTS ({val_clause})")
@@ -475,11 +475,13 @@ def load_students(request):
                 win_norm = _np(test_window).strip('_')
                 key_base = f"{_np(yr)}_{_np(test_name)}_{_np(subject)}_{win_norm}" if win_norm else f"{_np(yr)}_{_np(test_name)}_{_np(subject)}"
                 win_value = (test_window or '').strip() or None
-                for norm_key, metric in ((f"test_{key_base}_SS", 'ss'), (f"test_{key_base}_PL", 'pl')):
+                for norm_key, metric in ((f"test_{key_base}_SS", 'ss'), (f"test_{key_base}_PL", 'pl'), (f"test_{key_base}_DFP", 'dfp')):
                     ok = normalized_to_original.get(norm_key)
                     if not ok:
                         continue
                     info = {'col_name': ok, 'year': yr, 'test_name': test_name or '', 'subject': subject or '', 'test_window': win_value, 'metric': metric}
+                    if metric == 'dfp':
+                        info['other_info_key'] = 'dfp'
                     infos.append(info)
                     col_map[ok] = info
                     col_map[ok.replace('-', '_')] = info

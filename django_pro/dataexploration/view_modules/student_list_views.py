@@ -1659,7 +1659,7 @@ def load_students(request):
     dynamic_definitions.update(get_survey_columns().get('definitions', {}))
     if test_cols_info:
         for info in test_cols_info:
-            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
+            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
             metric_label = metric_map.get(info['metric'], info['metric'])
             display_test = _get_display_name(info['test_name'])
             display_subject = _get_display_name(info['subject'])
