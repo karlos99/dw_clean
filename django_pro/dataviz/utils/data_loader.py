@@ -158,7 +158,7 @@ def _build_test_columns_from_db(cursor, selected_test_cols: list[str]) -> tuple[
 
         key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
 
-        for suffix, metric in (('SS', 'ss'), ('PL', 'pl')):
+        for suffix, metric in (('SS', 'ss'), ('PL', 'pl'), ('DFP', 'dfp')):
             norm_key = f"test_{key_base}_{suffix}"
             original_key = normalized_to_original.get(norm_key)
             if not original_key:
@@ -171,6 +171,8 @@ def _build_test_columns_from_db(cursor, selected_test_cols: list[str]) -> tuple[
                 'test_window': win_value if win_norm else None,
                 'metric': metric,
             }
+            if metric == 'dfp':
+                info['other_info_key'] = 'dfp'
             infos.append(info)
             col_map[original_key] = info
             col_map[original_key.replace('-', '_')] = info
@@ -363,7 +365,7 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                     val = str(ss).strip() if ss is not None else '\u2014'
                 elif metric == 'pl':
                     val = str(pl).strip() if pl else '\u2014'
-                elif metric == 'oi':
+                elif metric == 'oi' or metric == 'dfp':
                     oi_key = info.get('other_info_key')
                     if oi_key and isinstance(oi, dict):
                         v = oi.get(oi_key)

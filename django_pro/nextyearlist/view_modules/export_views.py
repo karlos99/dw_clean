@@ -294,7 +294,7 @@ def export_students_csv(request):
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     val_params = list(exist_params_base)
-                    if metric_col == 'oi':
+                    if metric_col == 'oi' or metric_col == 'dfp':
                         val_params.append(test_info['other_info_key'])
                     val_params.append(real_values)
                     conditions.append(f"EXISTS ({val_clause})")
@@ -425,7 +425,7 @@ def export_students_csv(request):
                                 f"{_np(yr)}_{_np(test_name)}_{_np(subject)}"
                             )
                             win_value = (test_window or '').strip() or None
-                            for metric, suffix in (('ss', 'SS'), ('pl', 'PL')):
+                            for metric, suffix in (('ss', 'SS'), ('pl', 'PL'), ('dfp', 'DFP')):
                                 ok = n2o.get(f"test_{key_base}_{suffix}")
                                 if not ok:
                                     continue
@@ -436,6 +436,8 @@ def export_students_csv(request):
                                     'test_window': win_value,
                                     'metric': metric,
                                 }
+                                if metric == 'dfp':
+                                    info['other_info_key'] = 'dfp'
                                 test_cols_info.append(info)
                                 test_col_map[ok] = info
                                 test_col_map[ok.replace('-', '_')] = info
@@ -512,7 +514,7 @@ def export_students_csv(request):
                 # --- Dynamic headers ---
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
                 for info in test_cols_info:
-                    metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
+                    metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
                     label = (
                         f"{_get_display_name(info['test_name'])} {_get_display_name(info['subject'])}"
                         f" ({info['year']}) {metric_map.get(info['metric'], info['metric'])}"
