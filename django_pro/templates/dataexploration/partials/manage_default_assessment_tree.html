@@ -62,6 +62,13 @@
                                 </label>
                                 {% endif %}
 
+                                {% if metrics.DFP %}
+                                <label class="flex items-center space-x-2">
+                                    <input type="checkbox" name="columns" value="{{ metrics.DFP }}" {% if metrics.DFP in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                                    <span class="text-xs text-slate-700">DFP</span>
+                                </label>
+                                {% endif %}
+
                                 {% if assessment_data.additional_info %}
                                 {% for add_window_name, add_testings in assessment_data.additional_info.items %}
                                 {% if add_window_name == window_name %}

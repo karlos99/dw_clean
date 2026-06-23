@@ -239,13 +239,28 @@ def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses
 
                 raw_key_str = str(raw_key)
                 key_norm = _norm_part(raw_key_str)
-                key_hash = hashlib.md5(raw_key_str.encode('utf-8')).hexdigest()[:6]
-                other_key = f"test_{test_key}_OI_{key_norm}_{key_hash}"
 
                 # Table header label should remain consistent with the existing format.
                 display_test_name = _get_display_name(test_name)
                 label_base = f"{display_test_name} {clean_subject} ({year})"
-                
+
+                # Promote DFP out of "Additional Info" to live alongside SS and PL
+                if raw_key_str.lower() == 'dfp':
+                    dfp_key = f"test_{test_key}_DFP"
+                    COLUMN_DEFINITIONS[dfp_key] = f"{label_base} DFP"
+                    new_definitions[dfp_key] = COLUMN_DEFINITIONS[dfp_key]
+
+                    # Ensure the windows/testing_name entry exists
+                    if window_name not in columns[year][assessment_name]['windows']:
+                        columns[year][assessment_name]['windows'][window_name] = {}
+                    if testing_name not in columns[year][assessment_name]['windows'][window_name]:
+                        columns[year][assessment_name]['windows'][window_name] = {}
+                    columns[year][assessment_name]['windows'][window_name][testing_name]['DFP'] = dfp_key
+                    continue
+
+                key_hash = hashlib.md5(raw_key_str.encode('utf-8')).hexdigest()[:6]
+                other_key = f"test_{test_key}_OI_{key_norm}_{key_hash}"
+
                 COLUMN_DEFINITIONS[other_key] = f"{label_base} {raw_key_str}"
                 new_definitions[other_key] = COLUMN_DEFINITIONS[other_key]
 

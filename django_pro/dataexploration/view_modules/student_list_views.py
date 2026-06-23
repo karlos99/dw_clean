@@ -397,7 +397,7 @@ def load_students(request):
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     
                     val_params = list(exist_params_base)
-                    if metric_col == 'oi':
+                    if metric_col == 'oi' or metric_col == 'dfp':
                          val_params.append(test_info['other_info_key'])
                     val_params.append(real_values)
                     
@@ -596,8 +596,9 @@ def load_students(request):
 
                 ss_norm = f"test_{key_base}_SS"
                 pl_norm = f"test_{key_base}_PL"
+                dfp_norm = f"test_{key_base}_DFP"
 
-                for norm_key, metric in ((ss_norm, 'ss'), (pl_norm, 'pl')):
+                for norm_key, metric in ((ss_norm, 'ss'), (pl_norm, 'pl'), (dfp_norm, 'dfp')):
                     original_key = normalized_to_original.get(norm_key)
                     if not original_key:
                         continue
@@ -610,6 +611,8 @@ def load_students(request):
                         'test_window': win_value,
                         'metric': metric,
                     }
+                    if metric == 'dfp':
+                        info['other_info_key'] = 'dfp'
                     infos.append(info)
                     # Map both exact and normalized keys for lookups
                     col_map[original_key] = info
