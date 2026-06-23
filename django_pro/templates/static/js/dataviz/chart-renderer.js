@@ -255,6 +255,8 @@
     const rowLabel   = option.row_label   || option.row_col || 'Row';
     const rowLabels  = option.row_labels  || [rowLabel];
     const numRowLbls = option.num_row_labels || rowLabels.length || 1;
+    const showRowTotals = option.st_show_row_totals !== false;  // default true
+    const showColTotals = option.st_show_col_totals !== false;  // default true
 
     const chartId    = container.dataset.chartId;
     const drillEnabled = container.dataset.drillEnabled === '1';
@@ -282,7 +284,9 @@
         html += '<th class="bg-slate-100 border border-slate-200 px-2 py-1 text-center font-semibold text-slate-500 whitespace-nowrap" colspan="' + grp.headers.length + '">'
              + _esc(String(grp.label)) + '</th>';
       }
-      html += '<th class="bg-slate-200 border border-slate-200 px-2 py-1.5 text-center font-bold text-slate-700 whitespace-nowrap" rowspan="2">Total</th>';
+      if (showRowTotals) {
+        html += '<th class="bg-slate-200 border border-slate-200 px-2 py-1.5 text-center font-bold text-slate-700 whitespace-nowrap" rowspan="2">Total</th>';
+      }
       html += '</tr><tr>';
       // Value header row
       for (var i = 0; i < colHeaders.length; i++) {
@@ -301,7 +305,9 @@
       for (var i = 0; i < colHeaders.length; i++) {
         html += '<th class="bg-slate-100 border border-slate-200 px-2 py-1.5 text-center font-semibold text-slate-600 whitespace-nowrap">' + _esc(String(colHeaders[i])) + '</th>';
       }
-      html += '<th class="bg-slate-200 border border-slate-200 px-2 py-1.5 text-center font-bold text-slate-700 whitespace-nowrap">Total</th>';
+      if (showRowTotals) {
+        html += '<th class="bg-slate-200 border border-slate-200 px-2 py-1.5 text-center font-bold text-slate-700 whitespace-nowrap">Total</th>';
+      }
       html += '</tr>';
     }
     html += '</thead>';
@@ -311,8 +317,8 @@
     for (var r = 0; r < rows.length; r++) {
       var row    = rows[r];
       var rowVals = row.slice(0, numRowLbls);
-      var cells  = row.slice(numRowLbls, row.length - 1);
-      var rTotal = row[row.length - 1];
+      var cells  = showRowTotals ? row.slice(numRowLbls, row.length - 1) : row.slice(numRowLbls);
+      var rTotal = showRowTotals ? row[row.length - 1] : null;
       html += '<tr class="hover:bg-sky-50 transition">';
       for (var rl = 0; rl < numRowLbls; rl++) {
         var rv = String(rowVals[rl] || '');
@@ -332,12 +338,14 @@
           html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500">' + (cnt > 0 ? cnt : '<span class="text-slate-300">\u2014</span>') + '</td>';
         }
       }
-      html += '<td class="bg-slate-50 border border-slate-200 px-2 py-1 text-center font-semibold text-slate-700">' + rTotal + '</td>';
+      if (showRowTotals) {
+        html += '<td class="bg-slate-50 border border-slate-200 px-2 py-1 text-center font-semibold text-slate-700">' + rTotal + '</td>';
+      }
       html += '</tr>';
     }
 
     // Total row
-    if (totalRow.length) {
+    if (showColTotals && totalRow.length) {
       html += '<tr class="bg-slate-100">';
       for (var rl = 0; rl < numRowLbls; rl++) {
         html += '<td class="sticky left-0 bg-slate-100 border border-slate-200 px-2 py-1.5 font-bold text-slate-700 whitespace-nowrap"'

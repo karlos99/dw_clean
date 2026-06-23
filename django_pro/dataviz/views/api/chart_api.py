@@ -185,6 +185,9 @@ def _cfg_from_post(post):
         # Summary Table fields
         'st_row_col':        post.get('st_row_col', ''),
         'st_col_col':        post.get('st_col_col', ''),
+        'st_col_mode':       post.get('st_col_mode', 'values'),
+        'st_show_row_totals': post.get('st_show_row_totals', '1') == '1',
+        'st_show_col_totals': post.get('st_show_col_totals', '1') == '1',
         # Dynamic Summary Table fields
         'st_row_cols':       _parse_json_list('st_row_cols'),
         'st_col_cols':       _parse_json_list('st_col_cols'),
