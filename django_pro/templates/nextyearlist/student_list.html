@@ -322,7 +322,7 @@
                     <!-- School Year -->
                     <div>
                         <label for="school_year" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">School Year</label>
-                        <select id="school_year" name="school_year" @change="loadData()"
+                        <select id="school_year" name="school_year" @change="window.loadData && window.loadData()"
                             class="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
                             <option value="">All Years</option>
                             {% for year in school_years %}
@@ -335,7 +335,7 @@
                     <!-- Grade -->
                     <div>
                         <label for="grade" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">Grade</label>
-                        <select id="grade" name="grade" @change="loadData()"
+                        <select id="grade" name="grade" @change="window.loadData && window.loadData()"
                             class="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
                             <option value="">All Grades</option>
                             {% for g in grades %}
@@ -347,7 +347,7 @@
                     <!-- Status -->
                     <div>
                         <label for="status" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">Status</label>
-                        <select id="status" name="status" @change="loadData()"
+                        <select id="status" name="status" @change="window.loadData && window.loadData()"
                             class="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
                             <option value="Active" {% if selected_status == 'Active' %}selected{% endif %}>Active</option>
                             <option value="Inactive" {% if selected_status == 'Inactive' %}selected{% endif %}>Inactive

@@ -14,11 +14,19 @@
         <input id="placement-filter-overlay" type="checkbox" class="peer sr-only">
         <div>
             <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Student Year</label>
-            <input type="text" name="student_year" value="{{ student_year }}" class="w-full border border-slate-300 px-3 py-2 text-sm">
+            <select name="student_year" class="w-full border border-slate-300 px-3 py-2 text-sm bg-white">
+                {% for yr in available_student_years %}
+                <option value="{{ yr }}" {% if student_year == yr %}selected{% endif %}>{{ yr }}</option>
+                {% endfor %}
+            </select>
         </div>
         <div>
             <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Placement Year</label>
-            <input type="text" name="placement_year" value="{{ placement_year }}" class="w-full border border-slate-300 px-3 py-2 text-sm">
+            <select name="placement_year" class="w-full border border-slate-300 px-3 py-2 text-sm bg-white">
+                {% for yr in available_placement_years %}
+                <option value="{{ yr }}" {% if placement_year == yr %}selected{% endif %}>{{ yr }}</option>
+                {% endfor %}
+            </select>
         </div>
         {% if 'grade' in enabled_filters %}
         <div>

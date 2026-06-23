@@ -1,626 +1,816 @@
-{% extends 'base.html' %}
-{% block title %}{% if page %}Edit Layout - {{ page.title }}{% else %}New Layout Page{% endif %} - DS Data{% endblock %}
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Page Builder – DataViz{% endblock %}
 
 {% block extra_head %}
-<!-- Apache ECharts -->
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-<!-- GridStack.js Styles -->
-<link href="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack.min.css" rel="stylesheet" />
-<!-- GridStack.js Script -->
-<script src="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack-all.js"></script>
-
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack-extra.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack-all.js"></script>
 <style>
-    .grid-stack {
-        background: #f8fafc;
-        min-height: 500px;
-    }
-    .grid-stack-item-content {
-        background: white;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
+  .grid-stack { min-height: 80px !important; }
+  .grid-stack-item-content { overflow: hidden; }
+  /* HTML/text sections scroll rather than clip */
+  .grid-stack-item-content.pb-html-block { overflow-y: auto; overflow-x: hidden; }
+  .row-container { transition: box-shadow 0.15s, border-color 0.15s; }
+  .row-lbl { background:transparent; border:none; outline:none; font-weight:700;
+             font-size:.7rem; letter-spacing:.07em; text-transform:uppercase;
+             color:#334155; width:100%; }
+  .row-lbl::placeholder { color:#94a3b8; text-transform:none; letter-spacing:0; font-weight:400; }
+  .row-lbl:focus { border-bottom:2px solid #3b82f6; }
+  .sidebar-section { border-bottom:1px solid #e2e8f0; }
+  .sidebar-section-header { display:flex; align-items:center; justify-content:space-between;
+                            padding:.75rem 1rem; cursor:pointer; user-select:none; }
+  .sidebar-section-header:hover { background:#f8fafc; }
+  /* Unified HTML prose styling */
+  .html-prose h1 { font-size: 1.5rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #0f172a; line-height: 1.2; }
+  .html-prose h2 { font-size: 1.25rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #1e293b; line-height: 1.3; }
+  .html-prose h3 { font-size: 1.1rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #334155; line-height: 1.4; }
+  .html-prose p  { margin-bottom: 0.5em; line-height: 1.5; }
+  .html-prose ul { list-style-type: disc; padding-left: 1.5rem; margin: 0.5em 0; }
+  .html-prose ol { list-style-type: decimal; padding-left: 1.5rem; margin: 0.5em 0; }
+  .html-prose a  { color: #2563eb; text-decoration: underline; }
+  .html-prose a:hover { color: #1d4ed8; }
 </style>
+<script>
+  const _PAGE_ID              = {{ page_id|default:'null' }};
+  const _PAGE_SLUG            = "{{ page.slug|default:''|escapejs }}";
+  const _PAGE_TITLE           = "{{ page.title|default:''|escapejs }}";
+  const _PAGE_DESC            = "{{ page.description|default:''|escapejs }}";
+  const _PAGE_STATUS          = "{{ page.status|default:'draft'|escapejs }}";
+  const _PAGE_CONTAINER_WIDTH = "{{ page.container_width|default:'xl'|escapejs }}";
+  const _PAGE_SHOW_HEADER     = {{ page.show_header|default:True|yesno:"true,false" }};
+  const _PAGE_FILTERS         = JSON.parse('{{ filters_json|escapejs }}');
+  const _ROWS_JSON            = JSON.parse('{{ rows_json|escapejs }}');
+  const _SECTIONS_JSON        = JSON.parse('{{ sections_json|escapejs }}');
+  const _SAVE_URL             = "{% url 'dataviz:page_save' %}";
+  const _SECTIONS_URL         = "{% url 'dataviz:page_sections' '__slug__' %}";
+  const _SECTION_URL_TPL      = "/dataviz/api/sections/SECTIONID/";
+  const _ROW_URL_TPL          = "/dataviz/api/rows/ROWID/";
+  const _CHART_LIST_URL       = "{% url 'dataviz:chart_list' %}";
+  const _CHART_RENDER_TPL     = "/dataviz/api/charts/CHARTID/render/";
+  const _FILTER_COLS_URL      = "{% url 'dataviz:page_filter_columns' %}";
+  const _CSRF                 = "{{ csrf_token }}";
+</script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
+<script src="{% static 'js/dataviz/page-builder.js' %}"></script>
 {% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" x-data="pageBuilder()">
-    <!-- Header -->
-    <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-6">
-        <div>
-            <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">
-                {% if page %}Edit Layout: {{ page.title }}{% else %}Layout Page Builder{% endif %}
-            </h1>
-            <p class="mt-1 text-sm text-slate-500">Drag widgets onto the grid canvas, resize them, and design your report structure.</p>
-        </div>
-        <div class="mt-4 sm:mt-0 flex space-x-3">
-            <a href="{% url 'dataviz:page_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition">
-                Cancel
-            </a>
-            <button @click="savePage()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none transition">
-                <span x-text="pageId ? 'Save Page' : 'Create Page'"></span>
-            </button>
-        </div>
-    </div>
-
-    <!-- Error Alert -->
-    <div class="mb-6 bg-red-50 border-l-4 border-red-400 p-4" x-show="errorMessage" style="display: none;">
-        <div class="flex">
-            <div class="ml-3">
-                <p class="text-sm font-semibold text-red-700" x-text="errorMessage"></p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Page Details Form (Must save page before layout works) -->
-    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8">
-        <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Page Configuration</h3>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Page Title</label>
-                <input type="text" x-model="title" class="w-full border-slate-300 rounded-none shadow-sm focus:ring-emerald-500 text-sm py-2 px-3 border" placeholder="E.g., Student Overview">
-            </div>
-            <div>
-                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Description</label>
-                <input type="text" x-model="description" class="w-full border-slate-300 rounded-none shadow-sm focus:ring-emerald-500 text-sm py-2 px-3 border" placeholder="E.g., General student demographics.">
-            </div>
-            <!-- Page level dynamic filters configuration -->
-            <div>
-                <div class="flex justify-between items-center mb-1">
-                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Page Filters</label>
-                    <button @click="addPageFilter()" class="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 uppercase tracking-wider">+ Add Filter</button>
-                </div>
-                <div class="space-y-2 max-h-32 overflow-y-auto pr-1">
-                    <template x-for="(pf, index) in pageFilters" :key="index">
-                        <div class="flex items-center space-x-2 bg-slate-50 p-2 border border-slate-200">
-                            <input type="text" x-model="pf.label" placeholder="Label" class="w-1/3 border-slate-300 text-xs py-1 px-1.5 border">
-                            <select x-model="pf.column" class="w-1/2 border-slate-300 text-xs py-1 px-1.5 border bg-white">
-                                <option value="">-- Col --</option>
-                                <template x-for="tbl in Object.keys(schema)" :key="tbl">
-                                    <optgroup :label="tbl">
-                                        <template x-for="col in schema[tbl]" :key="col">
-                                            <option :value="tbl + '.' + col" x-text="col"></option>
-                                        </template>
-                                    </optgroup>
-                                </template>
-                            </select>
-                            <button @click="removePageFilter(index)" class="text-slate-400 hover:text-red-500">
-                                <svg class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                            </button>
-                        </div>
-                    </template>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Workspace Grid Stack (Only active if Page exists) -->
-    <div x-show="pageId">
-        <div class="grid grid-cols-1 lg:grid-cols-4 gap-8">
-            <!-- Sidebar Widgets -->
-            <div class="lg:col-span-1 space-y-6">
-                <!-- Add text block -->
-                <div class="bg-white border border-slate-200 shadow p-6 rounded-none">
-                    <h4 class="text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Report Elements</h4>
-                    <div class="space-y-2">
-                        <button @click="addTextBlockWidget()" class="w-full flex items-center justify-center px-4 py-2 border border-slate-300 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 transition rounded-none">
-                            + Add Text / Note Block
-                        </button>
-                    </div>
-                </div>
-                
-                <!-- Saved Charts -->
-                <div class="bg-white border border-slate-200 shadow p-6 rounded-none">
-                    <h4 class="text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Saved Charts</h4>
-                    <div class="space-y-2 max-h-96 overflow-y-auto pr-1">
-                        {% for chart in charts %}
-                        <div class="flex items-center justify-between p-3 border border-slate-200 bg-slate-50 hover:bg-slate-100 transition">
-                            <div>
-                                <p class="text-xs font-bold text-slate-900">{{ chart.name }}</p>
-                                <p class="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5">{{ chart.chart_type }} chart</p>
-                            </div>
-                            <button @click="addChartWidget({{ chart.pk }}, '{{ chart.name|escapejs }}')" class="text-xs font-semibold text-emerald-600 hover:text-emerald-800 uppercase tracking-wider pl-2">
-                                Add
-                            </button>
-                        </div>
-                        {% empty %}
-                        <p class="text-xs text-slate-400 text-center py-4">No charts configured yet.</p>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Canvas Grid Stack -->
-            <div class="lg:col-span-3">
-                <div class="bg-white border border-slate-200 shadow p-6 rounded-none">
-                    <h4 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Layout Canvas</h4>
-                    <div class="grid-stack min-h-[550px] border-2 border-dashed border-slate-200 p-4 bg-slate-50">
-                        <!-- GridStack items rendered dynamically -->
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Edit Text Modal -->
-    <div class="fixed z-50 inset-0 overflow-y-auto" x-show="textModalOpen" style="display: none;">
-        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="textModalOpen = false">
-                <div class="absolute inset-0 bg-slate-500 opacity-75"></div>
-            </div>
-            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-middle bg-white border border-slate-200 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full rounded-none">
-                <div class="bg-white px-6 py-6 border-b border-slate-100 flex justify-between items-center">
-                    <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Edit Text Content</h3>
-                    <button @click="textModalOpen = false" class="text-slate-400 hover:text-slate-500">
-                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                </div>
-                <div class="bg-white px-6 py-6 space-y-4">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">HTML/Text Content</label>
-                        <textarea x-model="editingTextContent" rows="12" class="w-full border-slate-300 font-mono text-xs p-3 border rounded-none focus:ring-emerald-500 focus:border-emerald-500" placeholder="Use HTML markup for formatting. E.g. <h2 class='text-lg font-bold'>Section Title</h2><p class='text-xs text-slate-500'>Paragraph notes.</p>"></textarea>
-                    </div>
-                </div>
-                <div class="bg-slate-50 px-6 py-4 border-t border-slate-100 flex justify-end space-x-3">
-                    <button @click="textModalOpen = false" class="px-4 py-2 border border-slate-300 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 rounded-none transition">Cancel</button>
-                    <button @click="saveTextWidgetContent()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-none transition">Update Content</button>
-                </div>
-            </div>
-        </div>
+<!-- Loading Progress Bar -->
+<div id="loading-bar" class="fixed top-0 left-0 right-0 z-[200] hidden" aria-hidden="true">
+    <div class="h-1 bg-blue-200 overflow-hidden">
+        <div id="loading-bar-progress" class="h-full bg-blue-600 transition-all duration-300 ease-out" style="width: 0%"></div>
     </div>
 </div>
-<script id="charts-data" type="application/json">
-    {{ charts_json|safe }}
-</script>
-{% if page %}
-    {{ page.page_filters|json_script:"page-filters-data" }}
-    <script id="sections-data" type="application/json">
-        {{ sections_json|safe }}
-    </script>
-{% endif %}
+{% include "dataviz/submenu.html" %}
+<div x-data="pageBuilder()" class="h-[calc(100vh-5rem)] flex flex-col bg-slate-50">
+
+  <!-- ── Toast ───────────────────────────────────────────────────── -->
+  <div x-show="toast" x-transition
+       class="fixed top-4 right-4 z-[200] px-4 py-2.5 rounded-lg shadow-xl text-xs font-semibold uppercase tracking-wider pointer-events-none"
+       :class="toastType==='error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'"
+       x-text="toast" x-cloak></div>
+
+  <!-- ── Top bar ─────────────────────────────────────────────────── -->
+  <div class="flex items-center justify-between bg-white border-b border-slate-200 px-5 py-3 flex-shrink-0 gap-4">
+
+    <div class="flex items-center gap-3 min-w-0">
+      <a href="{% url 'dataviz:page_index' %}"
+         class="flex-shrink-0 text-slate-400 hover:text-slate-700 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M15 19l-7-7 7-7"/>
+        </svg>
+      </a>
+      <!-- Cross-navigation -->
+      <div class="flex items-center gap-1">
+        <a href="{% url 'dataviz:index' %}" class="text-[9px] font-semibold text-slate-400 hover:text-slate-700 px-2 py-1 rounded transition uppercase tracking-wide">Charts</a>
+        <a href="{% url 'dataviz:page_index' %}" class="text-[9px] font-semibold text-slate-700 bg-slate-100 px-2 py-1 rounded uppercase tracking-wide">Pages</a>
+      </div>
+      <span class="text-slate-300 text-xs">|</span>
+      <!-- Title edit -->
+      <div class="min-w-0">
+        <input type="text" x-model="title" placeholder="Page title…"
+               @blur="autoSave()"
+               class="text-sm font-bold tracking-wide text-slate-900 border-0 border-b-2 border-transparent focus:border-blue-500 focus:ring-0 px-0 py-0.5 bg-transparent w-72 placeholder:font-normal placeholder:text-slate-400 placeholder:tracking-normal">
+        <div class="flex items-center gap-2 text-xs text-slate-400 mt-0.5 h-4">
+          <span x-show="pageSlug">/<span x-text="pageSlug"></span></span>
+          <span x-show="lastSaved" class="text-slate-300">· Saved <span x-text="lastSaved"></span></span>
+          <span x-show="saving" class="text-blue-400 animate-pulse">· Saving…</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <a href="{% url 'dataviz:chart_new' %}" target="_blank"
+         class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 rounded-lg shadow-sm hover:bg-blue-100 transition-all">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        New Chart
+      </a>
+      <button @click="addRow()"
+              :disabled="!pageId"
+              :class="{'opacity-40 cursor-not-allowed': !pageId}"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white border border-slate-300 rounded-lg shadow-sm hover:bg-slate-50 transition-all">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M12 4v16m8-8H4"/>
+        </svg>
+        Add Row
+      </button>
+      <a x-show="pageSlug" :href="'/dataviz/pages/' + pageSlug + '/'" target="_blank"
+         class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white border border-slate-300 rounded-lg shadow-sm hover:bg-slate-50 transition-all">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+        </svg>
+        Preview
+      </a>
+      <button @click="savePage('draft')"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white border border-slate-300 rounded-lg shadow-sm hover:bg-slate-50 transition-all">
+        Save Draft
+      </button>
+      <button @click="savePage('active')"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white bg-slate-900 border border-slate-800 rounded-lg shadow-sm hover:bg-slate-800 transition-all">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M5 13l4 4L19 7"/>
+        </svg>
+        Publish
+      </button>
+    </div>
+  </div>
+
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- Left sidebar: accordion sections                          -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="w-72 bg-white border-r border-slate-200 flex flex-col overflow-y-auto flex-shrink-0 shadow-sm">
+
+      <!-- ── 1. Page Settings ──────────────────────────────────── -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header" @click="sidebarSections.settings = !sidebarSections.settings">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+            <span class="text-xs font-bold uppercase tracking-widest text-slate-700">Page Settings</span>
+          </div>
+          <svg class="w-3.5 h-3.5 text-slate-400 transition-transform" :class="{'rotate-180': sidebarSections.settings}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+        <div x-show="sidebarSections.settings" x-cloak class="px-4 pb-4 space-y-3">
+
+          <div>
+            <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Slug</label>
+            <input type="text" x-model="pageSlug" @blur="autoSave()"
+                   class="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                   placeholder="auto-generated">
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Description</label>
+            <textarea x-model="description" rows="2" @blur="autoSave()"
+                      class="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none transition-all"
+                      placeholder="Optional description…"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Container Width</label>
+            <select x-model="containerWidth" @change="autoSave()"
+                    class="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
+              <option value="full">Full width</option>
+              <option value="wide">Wide (1536px)</option>
+              <option value="xl">Standard (1280px)</option>
+              <option value="lg">Narrow (1024px)</option>
+              <option value="md">Compact (768px)</option>
+            </select>
+          </div>
+
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" x-model="showHeader" @change="autoSave()"
+                   class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5">
+            <div>
+              <span class="text-xs font-semibold text-slate-600">Show Page Header</span>
+              <p class="text-[10px] text-slate-400">Title &amp; description on published page</p>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- ── 2. Page Filters ───────────────────────────────────── -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header" @click="sidebarSections.filters = !sidebarSections.filters">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
+            </svg>
+            <span class="text-xs font-bold uppercase tracking-widest text-slate-700">Filters</span>
+            <span x-show="filters.length > 0"
+                  class="ml-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-blue-100 text-blue-700"
+                  x-text="filters.length"></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" @click.stop>
+              <input type="checkbox" x-model="filtersEnabled"
+                     @change="if (!filtersEnabled) filters = []; autoSave()"
+                     class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3">
+              On
+            </label>
+            <svg class="w-3.5 h-3.5 text-slate-400 transition-transform" :class="{'rotate-180': sidebarSections.filters}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+        </div>
+
+        <div x-show="sidebarSections.filters" x-cloak class="px-4 pb-4">
+          <div x-show="!filtersEnabled" class="text-[10px] text-slate-400 text-center py-2">Enable filters to configure</div>
+          <div x-show="filtersEnabled">
+            <button @click="filterModalOpen = true; loadFilterColumns()"
+                    class="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-all mb-3">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+              Add Filter Column
+            </button>
+
+            <!-- Active filter cards -->
+            <div class="space-y-2">
+              <template x-for="(f, idx) in filters" :key="f.id">
+                <div class="bg-slate-50 border border-slate-200 rounded-lg p-2.5 space-y-2">
+                  <div class="flex items-center justify-between">
+                    <input type="text" x-model="f.label" @blur="autoSave()"
+                           class="flex-1 text-xs font-semibold text-slate-700 bg-transparent border-b border-transparent focus:border-blue-400 focus:outline-none px-0 py-0.5"
+                           placeholder="Filter label…">
+                    <button @click="removeFilter(idx)"
+                            class="ml-2 text-slate-300 hover:text-red-500 transition-colors text-base leading-none flex-shrink-0">&times;</button>
+                  </div>
+                  <div class="text-[9px] text-slate-400 font-mono truncate" x-text="f.source_col"></div>
+                  <div class="grid grid-cols-2 gap-1.5">
+                    <div>
+                      <div class="text-[9px] text-slate-500 mb-0.5 font-semibold">Widget</div>
+                      <select x-model="f.widget" @change="autoSave()"
+                              class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                        <option value="select">Single</option>
+                        <option value="multi">Multi</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div class="text-[9px] text-slate-500 mb-0.5 font-semibold">Default</div>
+                      <input type="text" x-model="f.default_val" @blur="autoSave()"
+                             class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                             placeholder="All">
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <div x-show="filters.length === 0" class="text-center py-3 text-[10px] text-slate-400">No filters added</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 3. Layout (row/section tree) ─────────────────────── -->
+      <div class="sidebar-section flex-1">
+        <div class="sidebar-section-header" @click="sidebarSections.layout = !sidebarSections.layout">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+            <span class="text-xs font-bold uppercase tracking-widest text-slate-700">Layout</span>
+            <span x-show="rows.length > 0"
+                  class="ml-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-600"
+                  x-text="rows.length + ' Row' + (rows.length !== 1 ? 's' : '')"></span>
+          </div>
+          <svg class="w-3.5 h-3.5 text-slate-400 transition-transform" :class="{'rotate-180': sidebarSections.layout}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+
+        <div x-show="sidebarSections.layout" x-cloak class="px-3 pb-4">
+          <div x-show="rows.length === 0" class="text-center py-6 text-[10px] text-slate-400">
+            No rows yet — click <strong class="text-slate-600">Add Row</strong>
+          </div>
+          <div class="space-y-1" x-show="rows.length > 0">
+            <template x-for="(row, ri) in rows" :key="row.id">
+              <div>
+                <!-- Row pill -->
+                <div class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer group transition-all text-xs"
+                     :class="{
+                       'bg-blue-50 text-blue-800 border border-blue-200': activeRow === row.id,
+                       'text-slate-600 hover:bg-slate-100': activeRow !== row.id,
+                       'border-2 border-dashed border-blue-400 bg-blue-50': dragOverRowId === row.id && dragRowId !== row.id
+                     }"
+                     draggable="true"
+                     @dragstart="startRowDrag($event, row.id)"
+                     @dragover.prevent="rowDragOver($event, row.id)"
+                     @dragenter.prevent="rowDragOver($event, row.id)"
+                     @drop.prevent="dropRow($event, row.id)"
+                     @dragend="endRowDrag()"
+                     @click="activeRow = activeRow === row.id ? null : row.id; selectedSection = null">
+                  <svg class="w-3 h-3 text-slate-400 flex-shrink-0 cursor-grab" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 18h16"/></svg>
+                  <span class="truncate flex-1 font-semibold uppercase tracking-wide text-[10px]" x-text="row.label || ('Row ' + (ri + 1))"></span>
+                  <span class="text-[9px] text-slate-400 mr-1" x-text="row.sections.length + ' el'"></span>
+                  <button @click.stop="removeRow(row.id)"
+                          class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all text-sm leading-none">&times;</button>
+                </div>
+                <!-- Nested section items -->
+                <div x-show="activeRow === row.id" class="ml-5 mt-0.5 space-y-0.5">
+                  <template x-for="sec in row.sections" :key="sec.id">
+                    <div class="flex items-center gap-1.5 text-[10px] py-1 px-2 rounded-lg hover:bg-slate-50 group cursor-pointer"
+                         :class="{
+                           'bg-blue-50/50 border border-blue-100 text-blue-700': selectedSection === sec.id,
+                           'text-slate-500': selectedSection !== sec.id,
+                           'border-2 border-blue-400 bg-blue-50': dragOverSectionId === sec.id && dragSectionId !== sec.id
+                         }"
+                         draggable="true"
+                         @dragstart="startSectionDrag($event, sec.id, row.id)"
+                         @dragover.prevent="sectionDragOver($event, sec.id)"
+                         @dragenter.prevent="sectionDragOver($event, sec.id)"
+                         @drop.prevent="dropSection($event, row.id, sec.id)"
+                         @dragend="endSectionDrag()"
+                         @click="selectedSection = selectedSection === sec.id ? null : sec.id">
+                      <!-- Drag handle -->
+                      <svg class="w-3 h-3 flex-shrink-0 text-slate-300 group-hover:text-slate-400 cursor-grab" fill="currentColor" viewBox="0 0 20 20">
+                        <circle cx="7" cy="6" r="1.2"/><circle cx="13" cy="6" r="1.2"/>
+                        <circle cx="7" cy="10" r="1.2"/><circle cx="13" cy="10" r="1.2"/>
+                        <circle cx="7" cy="14" r="1.2"/><circle cx="13" cy="14" r="1.2"/>
+                      </svg>
+                      <template x-if="sec.element_type === 'chart'">
+                        <svg class="w-3 h-3 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10"/></svg>
+                      </template>
+                      <template x-if="sec.element_type !== 'chart'">
+                        <svg class="w-3 h-3 flex-shrink-0 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10"/></svg>
+                      </template>
+                      <span class="truncate flex-1" x-text="sec.chart_name || sec.html_preview || (sec.element_type === 'html' ? 'Text block' : sec.element_type)"></span>
+                      <button @click.stop="removeSection(row.id, sec.id)"
+                              class="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all text-sm leading-none">&times;</button>
+                    </div>
+                  </template>
+                  <!-- Element edit panel when section selected -->
+                  <template x-if="selectedSection !== null && row.sections.some(s => s.id === selectedSection)">
+                    <div class="mt-2 p-2 bg-white border border-slate-200 rounded-lg space-y-2">
+                      <template x-if="getSection(selectedSection)?.element_type === 'chart'">
+                        <div class="space-y-2">
+                          <label class="flex items-center gap-2 cursor-pointer text-[10px] text-slate-600">
+                            <input type="checkbox"
+                                   :checked="getSection(selectedSection)?.show_title"
+                                   @change="updateSectionProp(selectedSection, 'show_title', $event.target.checked)"
+                                   class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3">
+                            Show title bar
+                          </label>
+                          <!-- Container Width/Height in pixels -->
+                          <div>
+                            <div class="text-[9px] text-slate-500 mb-1 font-semibold uppercase tracking-wider">Chart Size (px — leave blank for auto)</div>
+                            <div class="flex gap-1.5">
+                              <input type="number" min="0" max="4000" placeholder="Width"
+                                     :value="getSection(selectedSection)?.chart?.config?.container_width || ''"
+                                     @change="updateChartContainerSize(selectedSection, 'container_width', $event.target.value)"
+                                     class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              <input type="number" min="0" max="4000" placeholder="Height"
+                                     :value="getSection(selectedSection)?.chart?.config?.container_height || ''"
+                                     @change="updateChartContainerSize(selectedSection, 'container_height', $event.target.value)"
+                                     class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            </div>
+                          </div>
+                          <a :href="'/dataviz/charts/' + getSection(selectedSection)?.chart_id + '/edit/'"
+                             target="_blank"
+                             class="flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            Edit chart
+                          </a>
+                        </div>
+                      </template>
+                      <template x-if="getSection(selectedSection)?.element_type === 'html'">
+                        <div class="space-y-2">
+                          <button @click="openEditorModal(selectedSection)"
+                                  class="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-all">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            Edit Content
+                          </button>
+                          <!-- Padding control -->
+                          <div>
+                            <div class="text-[9px] text-slate-500 mb-0.5 font-semibold uppercase tracking-wider">Padding</div>
+                            <select :value="getSection(selectedSection)?.padding_px || 0"
+                                    @change="setSectionPadding(selectedSection, parseInt($event.target.value))"
+                                    class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              <option value="0">None</option>
+                              <option value="8">Compact (8px)</option>
+                              <option value="16">Normal (16px)</option>
+                              <option value="24">Comfortable (24px)</option>
+                              <option value="32">Spacious (32px)</option>
+                            </select>
+                          </div>
+                          <!-- Height control -->
+                          <div>
+                            <div class="text-[9px] text-slate-500 mb-0.5 font-semibold uppercase tracking-wider">Height</div>
+                            <select :value="getSection(selectedSection)?.gs_h || 2"
+                                    @change="updateSectionHeight(selectedSection, parseInt($event.target.value))"
+                                    class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              <option value="0">Auto (fit content)</option>
+                              <option value="1">1 row (80px)</option>
+                              <option value="2">2 rows (160px)</option>
+                              <option value="3">3 rows (240px)</option>
+                              <option value="4">4 rows (320px)</option>
+                              <option value="6">6 rows (480px)</option>
+                              <option value="8">8 rows (640px)</option>
+                            </select>
+                          </div>
+                          <!-- Center toggle -->
+                          <label class="flex items-center gap-2 cursor-pointer text-[10px] text-slate-600">
+                            <input type="checkbox"
+                                   :checked="getSection(selectedSection)?.center_content"
+                                   @change="setCenterContent(selectedSection, $event.target.checked)"
+                                   class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3">
+                            Center content (H &amp; V)
+                          </label>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                  <!-- Add element buttons -->
+                  <div class="flex gap-1 mt-1 px-0.5">
+                    <button @click="addChartToRow(row.id)"
+                            class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors">+ Chart</button>
+                    <button @click="addTitleToRow(row.id)"
+                            class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 bg-purple-50 text-purple-700 border border-purple-200 rounded-md hover:bg-purple-100 transition-colors">+ Title</button>
+                    <button @click="addHtmlToRow(row.id)"
+                            class="text-[9px] font-bold uppercase tracking-wider px-2 py-1 bg-slate-100 text-slate-600 border border-slate-200 rounded-md hover:bg-slate-200 transition-colors">+ Text</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- Main canvas                                               -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <div class="flex-1 bg-slate-100 overflow-auto p-6">
+      <div class="space-y-4 max-w-none">
+
+        <template x-for="(row, ri) in rows" :key="row.id">
+          <div class="row-container bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible"
+               :class="activeRow === row.id ? 'ring-2 ring-blue-400 border-blue-300' : 'hover:border-slate-300'"
+               @click.self="activeRow = row.id">
+
+            <!-- Row header -->
+            <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl"
+                 @click="activeRow = row.id; selectedSection = null">
+              <!-- Drag handle -->
+              <svg class="w-4 h-4 text-slate-300 cursor-grab flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M4 8h16M4 16h16"/>
+              </svg>
+              <!-- Editable label -->
+              <input type="text" :value="row.label || ''"
+                     @blur="updateRowProp(row.id, 'label', $event.target.value)"
+                     @click.stop
+                     class="row-lbl flex-1 min-w-0 text-[11px]"
+                     :placeholder="'Row ' + (ri + 1)">
+              <!-- BG color pills -->
+              <div class="flex items-center gap-1 flex-shrink-0" @click.stop>
+                <button @click="updateRowProp(row.id, 'bg_color', '')"
+                        class="w-4 h-4 rounded-full border-2 flex-shrink-0"
+                        :class="!row.bg_color ? 'border-blue-500' : 'border-transparent bg-white shadow-sm'"
+                        title="No background">
+                  <span class="sr-only">None</span>
+                </button>
+                <template x-for="c in [{cls:'bg-slate-100',label:'Gray'},{cls:'bg-blue-50',label:'Blue'},{cls:'bg-amber-50',label:'Amber'},{cls:'bg-green-50',label:'Green'},{cls:'bg-rose-50',label:'Rose'}]" :key="c.cls">
+                  <button @click="updateRowProp(row.id, 'bg_color', c.cls)"
+                          class="w-4 h-4 rounded-full border-2 flex-shrink-0"
+                          :class="[c.cls, row.bg_color === c.cls ? 'border-blue-500' : 'border-transparent']"
+                          :title="c.label"></button>
+                </template>
+              </div>
+              <!-- Action buttons -->
+              <div class="flex items-center gap-1 flex-shrink-0" @click.stop>
+                <button @click="addChartToRow(row.id)"
+                        class="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors">+ Chart</button>
+                <button @click="addTitleToRow(row.id)"
+                        class="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 bg-purple-50 text-purple-700 border border-purple-200 rounded-md hover:bg-purple-100 transition-colors">+ Title</button>
+                <button @click="addHtmlToRow(row.id)"
+                        class="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 bg-slate-100 text-slate-600 border border-slate-200 rounded-md hover:bg-slate-200 transition-colors">+ Text</button>
+                <button @click="removeRow(row.id)"
+                        class="w-6 h-6 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all text-base leading-none">&times;</button>
+              </div>
+            </div>
+
+            <!-- GridStack grid (with background color applied here) -->
+            <div class="p-3 rounded-b-xl" :class="row.bg_color || ''">
+              <div :id="'row-grid-' + row.id" class="grid-stack"></div>
+              <div x-show="row.sections.length === 0"
+                   class="text-center py-8 text-xs text-slate-400">
+                Click <strong class="text-slate-500">+ Chart</strong>, <strong class="text-slate-500">+ Title</strong> or <strong class="text-slate-500">+ Text</strong> above to add elements
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Empty canvas state -->
+        <div x-show="rows.length === 0"
+             class="flex flex-col items-center justify-center py-28 text-slate-400">
+          <svg class="w-16 h-16 mb-5 text-slate-200" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24">
+            <path d="M12 4v16m8-8H4"/>
+          </svg>
+          <p class="text-sm font-bold uppercase tracking-wider text-slate-400">Start building your page</p>
+          <p class="text-xs mt-1.5">Click <strong class="text-slate-600">Add Row</strong> in the toolbar above</p>
+        </div>
+
+      </div>
+    </div><!-- /canvas -->
+
+    <!-- ── Chart picker slide-over (right) ───────────────────── -->
+    <div x-show="pickerOpen"
+         x-transition:enter="transition ease-out duration-200 transform"
+         x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
+         x-transition:leave="transition ease-in duration-150 transform"
+         x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full"
+         class="w-96 border-l border-slate-200 bg-white flex flex-col flex-shrink-0 overflow-hidden shadow-xl"
+         x-cloak>
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+          </svg>
+          <h2 class="text-xs font-bold uppercase tracking-widest text-slate-900">Add Chart</h2>
+        </div>
+        <button @click="pickerOpen = false"
+                class="text-slate-400 hover:text-slate-700 hover:bg-slate-100 w-7 h-7 flex items-center justify-center rounded-lg transition-all text-xl leading-none">&times;</button>
+      </div>
+      <div class="px-4 py-3 border-b border-slate-200">
+        <input type="text" x-model="pickerSearch" placeholder="Search charts…"
+               @input.debounce.300ms="loadChartList()"
+               class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all">
+      </div>
+      <div id="chart-picker-body" class="flex-1 overflow-y-auto p-4">
+        <div class="text-center py-12 text-sm text-slate-400">Loading charts…</div>
+      </div>
+    </div>
+
+  </div><!-- /flex main -->
+
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- Filter Column Picker Modal                                    -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div x-show="filterModalOpen" x-cloak
+       class="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <!-- Backdrop -->
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-[1px]" @click="filterModalOpen = false"></div>
+    <!-- Panel -->
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[80vh]">
+      <!-- Header -->
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div>
+          <h2 class="text-sm font-bold text-slate-900">Select Filter Columns</h2>
+          <p class="text-xs text-slate-500 mt-0.5">Check the columns to use as page-level filters</p>
+        </div>
+        <button @click="filterModalOpen = false"
+                class="text-slate-400 hover:text-slate-700 hover:bg-slate-100 w-8 h-8 flex items-center justify-center rounded-xl transition-all text-xl leading-none">&times;</button>
+      </div>
+      <!-- Search -->
+      <div class="px-5 py-3 border-b border-slate-100">
+        <input type="text" x-model="filterColumnSearch" placeholder="Search columns…"
+               class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all">
+      </div>
+      <!-- Column list -->
+      <div class="flex-1 overflow-y-auto px-5 py-3">
+        <template x-for="cat in filteredFilterCategories" :key="cat.key">
+          <div class="mb-4">
+            <div class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 px-0.5"
+                 x-text="cat.title"></div>
+            <div class="space-y-0.5">
+              <template x-for="col in cat.columns" :key="col.key">
+                <label class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors text-sm"
+                       :class="isFilterSelected(col.key) ? 'bg-blue-50 text-blue-700' : 'text-slate-700'">
+                  <input type="checkbox"
+                         :checked="isFilterSelected(col.key)"
+                         @change="toggleFilter(col)"
+                         class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 flex-shrink-0">
+                  <div class="min-w-0">
+                    <div class="font-medium" x-text="col.label"></div>
+                    <div class="text-[9px] text-slate-400 font-mono" x-text="col.key"></div>
+                  </div>
+                </label>
+              </template>
+            </div>
+          </div>
+        </template>
+        <div x-show="filteredFilterCategories.length === 0"
+             class="text-center py-8 text-sm text-slate-400">No columns found</div>
+      </div>
+      <!-- Footer -->
+      <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-between bg-slate-50 rounded-b-2xl">
+        <span class="text-xs text-slate-500" x-text="filters.length + ' filter' + (filters.length !== 1 ? 's' : '') + ' selected'"></span>
+        <button @click="filterModalOpen = false"
+                class="px-4 py-2 text-xs font-bold uppercase tracking-wider text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all">
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!-- Text / HTML Block Editor Modal                               -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <div x-show="editorModalOpen" x-cloak
+       class="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <!-- Backdrop -->
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-[1px]" @click="closeEditorModal()"></div>
+    <!-- Panel -->
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col" style="max-height:85vh">
+      <!-- Header -->
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+          </svg>
+          <h2 class="text-sm font-bold text-slate-900">Edit Text Block</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          <!-- Mode toggle -->
+          <div class="flex rounded-lg overflow-hidden border border-slate-300 text-[10px] font-bold uppercase tracking-wider">
+            <button type="button" @click="switchEditorMode('visual', editorSectionId)"
+                    :class="htmlEditorMode === 'visual' ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'"
+                    class="px-3 py-1.5 transition-all">Visual</button>
+            <button type="button" @click="switchEditorMode('code', editorSectionId)"
+                    :class="htmlEditorMode === 'code' ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'"
+                    class="px-3 py-1.5 border-l border-slate-300 transition-all">HTML</button>
+          </div>
+          <button @click="closeEditorModal()"
+                  class="text-slate-400 hover:text-slate-700 hover:bg-slate-100 w-8 h-8 flex items-center justify-center rounded-xl transition-all text-xl leading-none">&times;</button>
+        </div>
+      </div>
+
+      <!-- Visual editor -->
+      <div x-show="htmlEditorMode === 'visual'" class="flex flex-col flex-1 overflow-hidden">
+        <!-- Rich toolbar -->
+        <div class="flex flex-wrap items-center gap-0.5 px-4 py-2 bg-slate-50 border-b border-slate-200 flex-shrink-0">
+          <!-- Format buttons -->
+          <button type="button" @mousedown.prevent="richCmd('bold')" title="Bold"
+                  class="w-7 h-7 flex items-center justify-center text-xs font-black text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">B</button>
+          <button type="button" @mousedown.prevent="richCmd('italic')" title="Italic"
+                  class="w-7 h-7 flex items-center justify-center text-xs italic text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">I</button>
+          <button type="button" @mousedown.prevent="richCmd('underline')" title="Underline"
+                  class="w-7 h-7 flex items-center justify-center text-xs underline text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">U</button>
+          <button type="button" @mousedown.prevent="richCmd('strikeThrough')" title="Strikethrough"
+                  class="w-7 h-7 flex items-center justify-center text-xs line-through text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">S</button>
+          <div class="w-px h-5 bg-slate-300 mx-1"></div>
+          <!-- Headings -->
+          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'h1')" title="Heading 1"
+                  class="px-2 h-7 flex items-center justify-center text-[10px] font-black text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">H1</button>
+          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'h2')" title="Heading 2"
+                  class="px-2 h-7 flex items-center justify-center text-[10px] font-black text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">H2</button>
+          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'h3')" title="Heading 3"
+                  class="px-2 h-7 flex items-center justify-center text-[10px] font-bold text-slate-700 hover:bg-white hover:shadow rounded-md transition-all">H3</button>
+          <button type="button" @mousedown.prevent="richCmd('formatBlock', 'p')" title="Paragraph"
+                  class="px-2 h-7 flex items-center justify-center text-[10px] text-slate-600 hover:bg-white hover:shadow rounded-md transition-all">¶</button>
+          <div class="w-px h-5 bg-slate-300 mx-1"></div>
+          <!-- Lists -->
+          <button type="button" @mousedown.prevent="richCmd('insertUnorderedList')" title="Bullet list"
+                  class="px-2 h-7 flex items-center justify-center text-[10px] text-slate-600 hover:bg-white hover:shadow rounded-md transition-all">• —</button>
+          <button type="button" @mousedown.prevent="richCmd('insertOrderedList')" title="Numbered list"
+                  class="px-2 h-7 flex items-center justify-center text-[10px] text-slate-600 hover:bg-white hover:shadow rounded-md transition-all">1.</button>
+          <div class="w-px h-5 bg-slate-300 mx-1"></div>
+          <!-- Alignment -->
+          <button type="button" @mousedown.prevent="richCmd('justifyLeft')" title="Align left"
+                  class="w-7 h-7 flex items-center justify-center text-[10px] text-slate-600 hover:bg-white hover:shadow rounded-md transition-all">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 5a1 1 0 000 2h14a1 1 0 100-2H3zm0 4a1 1 0 000 2h8a1 1 0 100-2H3zm0 4a1 1 0 000 2h14a1 1 0 100-2H3z" clip-rule="evenodd"/></svg>
+          </button>
+          <button type="button" @mousedown.prevent="richCmd('justifyCenter')" title="Center"
+                  class="w-7 h-7 flex items-center justify-center text-[10px] text-slate-600 hover:bg-white hover:shadow rounded-md transition-all">
+            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3 5a1 1 0 000 2h14a1 1 0 100-2H3zm3 4a1 1 0 000 2h8a1 1 0 100-2H6zm-3 4a1 1 0 000 2h14a1 1 0 100-2H3z" clip-rule="evenodd"/></svg>
+          </button>
+          <div class="w-px h-5 bg-slate-300 mx-1"></div>
+          <!-- Font size -->
+          <select @mousedown="saveEditorSel()"
+                  @change="restoreSelAndRichCmd('fontSize', $event.target.value); $event.target.value = ''"
+                  class="text-[10px] border border-slate-300 rounded-md px-1 py-0.5 bg-white focus:outline-none h-7">
+            <option value="">Size</option>
+            <option value="1">XS</option>
+            <option value="2">S</option>
+            <option value="3">M</option>
+            <option value="4">L</option>
+            <option value="5">XL</option>
+            <option value="6">2XL</option>
+          </select>
+          <div class="w-px h-5 bg-slate-300 mx-1"></div>
+          <!-- Link -->
+          <button type="button" @mousedown.prevent="insertLink()" title="Insert link"
+                  class="px-2 h-7 flex items-center justify-center text-[10px] text-slate-600 hover:bg-white hover:shadow rounded-md transition-all">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+          </button>
+          <div class="w-px h-5 bg-slate-300 mx-1"></div>
+          <!-- Colors -->
+          <div class="flex items-center gap-0.5">
+            <button type="button" @mousedown.prevent="richCmd('foreColor', '#1e293b')" style="background:#1e293b" title="Dark" class="w-5 h-5 rounded-full border-2 border-white shadow hover:scale-110 transition-transform"></button>
+            <button type="button" @mousedown.prevent="richCmd('foreColor', '#3b82f6')" style="background:#3b82f6" title="Blue" class="w-5 h-5 rounded-full border-2 border-white shadow hover:scale-110 transition-transform"></button>
+            <button type="button" @mousedown.prevent="richCmd('foreColor', '#10b981')" style="background:#10b981" title="Green" class="w-5 h-5 rounded-full border-2 border-white shadow hover:scale-110 transition-transform"></button>
+            <button type="button" @mousedown.prevent="richCmd('foreColor', '#f59e0b')" style="background:#f59e0b" title="Amber" class="w-5 h-5 rounded-full border-2 border-white shadow hover:scale-110 transition-transform"></button>
+            <button type="button" @mousedown.prevent="richCmd('foreColor', '#ef4444')" style="background:#ef4444" title="Red" class="w-5 h-5 rounded-full border-2 border-white shadow hover:scale-110 transition-transform"></button>
+            <button type="button" @mousedown.prevent="richCmd('foreColor', '#7c3aed')" style="background:#7c3aed" title="Purple" class="w-5 h-5 rounded-full border-2 border-white shadow hover:scale-110 transition-transform"></button>
+            <button type="button" @mousedown.prevent="richCmd('foreColor', '#64748b')" style="background:#64748b" title="Gray" class="w-5 h-5 rounded-full border-2 border-white shadow hover:scale-110 transition-transform"></button>
+          </div>
+        </div>
+        <!-- Editable area -->
+        <div id="pb-rich-editor"
+             contenteditable="true"
+             class="flex-1 overflow-y-auto px-6 py-4 text-sm text-slate-800 focus:outline-none html-prose"
+             style="min-height:200px;"
+             @blur="syncRichEditor(editorSectionId)"></div>
+      </div>
+
+      <!-- Code / HTML editor -->
+      <div x-show="htmlEditorMode === 'code'" class="flex-1 overflow-hidden flex flex-col">
+        <textarea id="pb-code-editor" rows="12"
+                  class="flex-1 w-full px-5 py-4 text-xs font-mono border-0 focus:outline-none resize-none text-slate-800"
+                  placeholder="Enter HTML…"
+                  @blur="updateHtmlContent(editorSectionId, $event.target.value)"></textarea>
+      </div>
+
+      <!-- Footer -->
+      <div class="px-5 py-3 border-t border-slate-100 flex justify-end gap-2 bg-slate-50 rounded-b-2xl flex-shrink-0">
+        <button @click="closeEditorModal()"
+                class="px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-all">
+          Cancel
+        </button>
+        <button @click="saveEditorModal(editorSectionId)"
+                class="px-5 py-2 text-xs font-bold uppercase tracking-wider text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all">
+          Save & Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pageBuilder -->
 
 <script>
-    function pageBuilder() {
-        return {
-            pageId: "{% if page %}{{ page.pk }}{% else %}{% endif %}",
-            title: "{% if page %}{{ page.title|escapejs }}{% else %}{% endif %}",
-            description: "{% if page %}{{ page.description|escapejs }}{% else %}{% endif %}",
-            pageFilters: [],
-            
-            // System schema metadata for filters dropdown
-            schema: {{ schema_json|safe }},
-            
-            grid: null,
-            errorMessage: '',
-            
-            // Modal Edit Text state
-            textModalOpen: false,
-            editingGridItemId: null,
-            editingTextContent: '',
-            
-            chartInstances: {},
-            availableCharts: [],
-            
-            init() {
-                if (document.getElementById('page-filters-data')) {
-                    this.pageFilters = JSON.parse(document.getElementById('page-filters-data').textContent);
-                }
-                if (document.getElementById('charts-data')) {
-                    this.availableCharts = JSON.parse(document.getElementById('charts-data').textContent);
-                }
-                
-                if (this.pageId) {
-                    this.$nextTick(() => {
-                        this.initGridStack();
-                        this.loadLayout();
-                    });
-                }
-                
-                // Handle resize
-                window.addEventListener('resize', () => {
-                    Object.values(this.chartInstances).forEach(chart => {
-                        chart.resize();
-                    });
-                });
-            },
-            
-            addPageFilter() {
-                this.pageFilters.push({
-                    label: '',
-                    column: ''
-                });
-            },
-            
-            removePageFilter(index) {
-                this.pageFilters.splice(index, 1);
-            },
-            
-            initGridStack() {
-                this.grid = GridStack.init({
-                    column: 12,
-                    cellHeight: 80,
-                    margin: 8,
-                    acceptWidgets: true,
-                    alwaysShowResizeHandle: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
-                    resizable: { handles: 'e, se, s, w, sw' }
-                });
-            },
-            
-            addChartWidget(chartId, chartName) {
-                const id = 'w_' + Math.random().toString(36).substr(2, 9);
-                const widgetEl = this.createWidgetHTML({
-                    element_type: 'chart',
-                    chart_id: chartId,
-                    chart_name: chartName,
-                    gs_x: 0,
-                    gs_y: 0,
-                    gs_w: 6,
-                    gs_h: 4
-                }, id);
-                this.grid.addWidget(widgetEl, { w: 6, h: 4, autoPosition: true });
-                this.$nextTick(() => {
-                    this.loadChart(id, chartId);
-                });
-            },
-            
-            addTextBlockWidget() {
-                const id = 'w_' + Math.random().toString(36).substr(2, 9);
-                const widgetEl = this.createWidgetHTML({
-                    element_type: 'html',
-                    html_content: "<h3 class='text-sm font-bold text-slate-800'>Custom Heading</h3><p class='text-xs text-slate-400 mt-1'>Double-click to edit this text content and add reports explanation.</p>",
-                    gs_x: 0,
-                    gs_y: 0,
-                    gs_w: 6,
-                    gs_h: 2
-                }, id);
-                this.grid.addWidget(widgetEl, { w: 6, h: 2, autoPosition: true });
-            },
-            
-            createWidgetHTML(w, id) {
-                const div = document.createElement('div');
-                div.className = 'grid-stack-item';
-                div.setAttribute('gs-x', w.gs_x);
-                div.setAttribute('gs-y', w.gs_y);
-                div.setAttribute('gs-w', w.gs_w);
-                div.setAttribute('gs-h', w.gs_h);
-                
-                if (!id) {
-                    id = 'w_' + Math.random().toString(36).substr(2, 9);
-                }
-                div.setAttribute('data-id', id);
-                div.setAttribute('data-type', w.element_type);
-                if (w.chart_id) {
-                    div.setAttribute('data-chart-id', w.chart_id);
-                }
-                
-                let innerContent = '';
-                if (w.element_type === 'chart') {
-                    innerContent = `
-                        <div class="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50 shrink-0">
-                            <span class="text-xs font-bold text-slate-700 uppercase tracking-wider truncate">${w.chart_name}</span>
-                            <button class="delete-btn text-slate-400 hover:text-red-500 font-bold text-xs">&times;</button>
-                        </div>
-                        <div class="flex-grow p-4 relative min-h-0 min-w-0">
-                            <div id="chart-canvas-${id}" class="w-full h-full min-h-[220px]"></div>
-                            <div class="absolute inset-0 bg-white/70 flex items-center justify-center text-xs text-slate-500 font-sans z-10 chart-loader" style="display: none;">
-                                Loading chart options...
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    innerContent = `
-                        <div class="absolute top-2 right-2 flex space-x-2 z-10">
-                            <button class="edit-btn text-[10px] font-bold text-slate-400 hover:text-blue-600 bg-white border px-1.5 py-0.5 shadow-sm uppercase">Edit</button>
-                            <button class="delete-btn text-[10px] font-bold text-slate-400 hover:text-red-600 bg-white border px-1.5 py-0.5 shadow-sm uppercase">Delete</button>
-                        </div>
-                        <div class="p-4 text-container h-full overflow-y-auto text-xs text-slate-600">${w.html_content}</div>
-                    `;
-                }
-                
-                div.innerHTML = `<div class="grid-stack-item-content flex flex-col justify-between h-full relative overflow-hidden">${innerContent}</div>`;
-                
-                // Add event listeners directly to avoid relying on obsolete global window functions
-                if (w.element_type === 'chart') {
-                    const deleteBtn = div.querySelector('.delete-btn');
-                    if (deleteBtn) {
-                        deleteBtn.addEventListener('click', () => {
-                            this.grid.removeWidget(div);
-                            if (this.chartInstances[id]) {
-                                this.chartInstances[id].dispose();
-                                delete this.chartInstances[id];
-                            }
-                        });
-                    }
-                } else {
-                    const editBtn = div.querySelector('.edit-btn');
-                    if (editBtn) {
-                        editBtn.addEventListener('click', () => {
-                            this.editTextWidget(div);
-                        });
-                    }
-                    const deleteBtn = div.querySelector('.delete-btn');
-                    if (deleteBtn) {
-                        deleteBtn.addEventListener('click', () => {
-                            this.grid.removeWidget(div);
-                        });
-                    }
-                    const textContainer = div.querySelector('.text-container');
-                    if (textContainer) {
-                        textContainer.addEventListener('dblclick', () => {
-                            this.editTextWidget(div);
-                        });
-                    }
-                }
-                
-                return div;
-            },
-            
-            loadLayout() {
-                // Fetch saved sections from DB if editing
-                let sections = [];
-                const sectionsEl = document.getElementById('sections-data');
-                if (sectionsEl) {
-                    try {
-                        sections = JSON.parse(sectionsEl.textContent);
-                    } catch(e) {
-                        console.error("Failed to parse sections data", e);
-                    }
-                }
-                
-                sections.forEach(s => {
-                    const id = 'w_' + Math.random().toString(36).substr(2, 9);
-                    const el = this.createWidgetHTML({
-                        element_type: s.element_type,
-                        chart_id: s.chart ? s.chart.id : null,
-                        chart_name: s.chart ? s.chart.name : '',
-                        html_content: s.html_content,
-                        gs_x: s.gs_x,
-                        gs_y: s.gs_y,
-                        gs_w: s.gs_w,
-                        gs_h: s.gs_h
-                    }, id);
-                    this.grid.addWidget(el, {
-                        x: s.gs_x,
-                        y: s.gs_y,
-                        w: s.gs_w,
-                        h: s.gs_h
-                    });
-                    if (s.element_type === 'chart' && s.chart) {
-                        this.$nextTick(() => {
-                            this.loadChart(id, s.chart.id);
-                        });
-                    }
-                });
-            },
-            
-            loadChart(id, chartId) {
-                const chartInfo = this.availableCharts.find(c => c.id == chartId);
-                if (!chartInfo) return;
-                
-                const canvas = document.getElementById(`chart-canvas-${id}`);
-                if (!canvas) return;
-                const loader = canvas.parentElement.querySelector('.chart-loader');
-                if (loader) loader.style.display = 'flex';
-                
-                const config = chartInfo.config || {};
-                const sourceId = chartInfo.source_type === 'dataset' ? chartInfo.dataset_id : chartInfo.query_id;
-                
-                const params = new URLSearchParams({
-                    source_type: chartInfo.source_type,
-                    source_id: sourceId,
-                    chart_type: chartInfo.chart_type,
-                    x_col: config.x_axis_column || '',
-                    y_col: config.y_axis_column || '',
-                    aggregation: config.y_axis_aggregation || '',
-                    series_col: config.series_column || '',
-                    variation: config.variation || 'standard',
-                    value_colors: JSON.stringify(config.value_colors || {}),
-                    value_labels: JSON.stringify(config.value_labels || {}),
-                    value_prefix: config.value_prefix || '',
-                    value_suffix: config.value_suffix || '',
-                    show_tooltip: config.show_tooltip !== undefined ? config.show_tooltip : true,
-                    tooltip_show_percent: config.tooltip_show_percent !== undefined ? config.tooltip_show_percent : false,
-                    stacked_percent: config.stacked_percent !== undefined ? config.stacked_percent : false,
-                    title_custom: config.title_custom || '',
-                    x_title: config.x_title || '',
-                    y_title: config.y_title || '',
-                    show_legend: config.show_legend !== undefined ? config.show_legend : true,
-                    legend_position: config.legend_position || 'horizontal',
-                    show_gridlines: config.show_gridlines !== undefined ? config.show_gridlines : true,
-                    stacked: config.stacked !== undefined ? config.stacked : false,
-                    colors: (config.colors || []).join(','),
-                    extra_filters: JSON.stringify({})
-                });
-                
-                fetch(`{% url 'dataviz:api_chart_preview' %}?${params.toString()}`)
-                    .then(res => res.json())
-                    .then(option => {
-                        if (option.error) {
-                            canvas.innerHTML = `<div class="flex items-center justify-center h-full text-center text-xs text-red-500 font-sans p-4">${option.error}</div>`;
-                            return;
-                        }
-                        
-                        // Ensure tooltip is configured properly
-                        if (!option.tooltip) {
-                            option.tooltip = {};
-                        }
+  // Loading progress bar logic for chart slots
+  (function() {
+    let activeRequests = 0;
+    let progressTimer = null;
+    let progressVal = 0;
 
-                        // Apply tooltip visibility & confinement (matching view.html)
-                        option.tooltip.show = config.show_tooltip !== undefined ? config.show_tooltip : true;
-                        option.tooltip.confine = true;
-                        option.tooltip.appendToBody = true;
-                        if (!option.tooltip.trigger) {
-                            option.tooltip.trigger = 'axis';
-                        }
+    function startProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (!bar || !progress) return;
 
-                        // Apply tooltip formatting if needed
-                        const prefix = option.tooltip._prefix || '';
-                        const suffix = option.tooltip._suffix || '';
-                        const showPercent = option.tooltip._show_percent || false;
-
-                        option.tooltip.formatter = (params) => {
-                            if (Array.isArray(params)) {
-                                const title = params[0] ? `<span style="font-weight: 600; color: #1e293b; margin-bottom: 4px; display: inline-block;">${params[0].name}</span><br/>` : '';
-                                const rows = params.map(p => {
-                                    if (!p || p.value === undefined || p.value === null) return '';
-                                    let val = String(p.value);
-                                    if (prefix || suffix) {
-                                        val = prefix + val + suffix;
-                                    }
-                                    if (showPercent && typeof p.value === 'number') {
-                                        val += ` (${p.value.toFixed(1)}%)`;
-                                    }
-                                    const marker = p.marker || '';
-                                    const seriesName = p.seriesName || '';
-                                    return `<span style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-                                        <span style="display: flex; align-items: center; gap: 6px; color: #64748b;">${marker} ${seriesName}</span>
-                                        <span style="font-weight: 600; color: #0f172a;">${val}</span>
-                                    </span>`;
-                                }).filter(s => s).join('');
-                                return `<div style="font-family: Inter, sans-serif; font-size: 12px; line-height: 1.5;">${title}${rows}</div>`;
-                            }
-                            if (!params || params.value === undefined || params.value === null) return '';
-                            let val = String(params.value);
-                            if (prefix || suffix) {
-                                val = prefix + val + suffix;
-                            }
-                            if (showPercent && typeof params.value === 'number') {
-                                val += ` (${params.value.toFixed(1)}%)`;
-                            }
-                            const name = params.name || '';
-                            const seriesName = params.seriesName || '';
-                            const marker = params.marker || '';
-                            return `<div style="font-family: Inter, sans-serif; font-size: 12px; line-height: 1.5;">
-                                ${name ? `<span style="font-weight: 600; color: #1e293b; margin-bottom: 4px; display: inline-block;">${name}</span><br/>` : ''}
-                                <span style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-                                    <span style="display: flex; align-items: center; gap: 6px; color: #64748b;">${marker} ${seriesName}</span>
-                                    <span style="font-weight: 600; color: #0f172a;">${val}</span>
-                                </span>
-                            </div>`;
-                        };
-
-                        // Clean up internal properties
-                        delete option.tooltip._prefix;
-                        delete option.tooltip._suffix;
-                        delete option.tooltip._show_percent;
-
-                        let chart = this.chartInstances[id];
-                        if (!chart) {
-                            chart = echarts.init(canvas);
-                            this.chartInstances[id] = chart;
-                        }
-                        
-                        chart.setOption(option, true);
-                        chart.resize();
-                    })
-                    .catch(err => {
-                        console.error("Error loading layout chart:", err);
-                        canvas.innerHTML = `<div class="flex items-center justify-center h-full text-center text-xs text-red-500 font-sans p-4">Error loading visualization data</div>`;
-                    })
-                    .finally(() => {
-                        if (loader) loader.style.display = 'none';
-                    });
-            },
-            
-            async savePage() {
-                if (!this.title) {
-                    this.errorMessage = "Please provide a Page Title.";
-                    return;
-                }
-                this.errorMessage = "";
-                
-                const payload = {
-                    title: this.title,
-                    description: this.description,
-                    page_filters: this.pageFilters
-                };
-                
-                const url = this.pageId 
-                    ? "{% url 'dataviz:page_save_id' 0 %}".replace('0', this.pageId) 
-                    : "{% url 'dataviz:page_save' %}";
-                
-                try {
-                    let res = await fetch(url, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRFToken': '{{ csrf_token }}'
-                        },
-                        body: JSON.stringify(payload)
-                    });
-                    let data = await res.json();
-                    if (!data.success) {
-                        this.errorMessage = data.error;
-                        return;
-                    }
-                    
-                    const newPageId = data.id || this.pageId;
-                    
-                    if (!this.pageId) {
-                        // First save: redirect to the edit page for this new page id
-                        window.location.href = "{% url 'dataviz:page_edit' 0 %}".replace('0', newPageId);
-                        return;
-                    }
-                    
-                    // If page already exists, also save the layout
-                    if (this.grid) {
-                        const items = this.grid.getGridItems();
-                        const sections = items.map(item => {
-                            const el = item.el || item;
-                            const node = el.gridstackNode || {};
-                            return {
-                                element_type: el.getAttribute('data-type'),
-                                chart_id: el.getAttribute('data-chart-id') || null,
-                                html_content: el.getAttribute('data-type') === 'html' ? el.querySelector('.text-container').innerHTML : '',
-                                gs_x: node.x !== undefined ? node.x : parseInt(el.getAttribute('gs-x') || 0),
-                                gs_y: node.y !== undefined ? node.y : parseInt(el.getAttribute('gs-y') || 0),
-                                gs_w: node.w !== undefined ? node.w : parseInt(el.getAttribute('gs-w') || 6),
-                                gs_h: node.h !== undefined ? node.h : parseInt(el.getAttribute('gs-h') || 4)
-                            };
-                        });
-                        
-                        let layoutRes = await fetch("{% url 'dataviz:page_layout_save' 0 %}".replace('0', this.pageId), {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-CSRFToken': '{{ csrf_token }}'
-                            },
-                            body: JSON.stringify({ sections: sections })
-                        });
-                        let layoutData = await layoutRes.json();
-                        if (!layoutData.success) {
-                            this.errorMessage = "Details saved, but layout failed: " + layoutData.error;
-                            return;
-                        }
-                    }
-                    
-                    alert("Page saved successfully.");
-                } catch (err) {
-                    console.error(err);
-                    this.errorMessage = "Failed to save page: " + err;
-                }
-            },
-            
-            editTextWidget(itemEl) {
-                this.editingGridItemId = itemEl.getAttribute('data-id');
-                const textContainer = itemEl.querySelector('.text-container');
-                this.editingTextContent = textContainer.innerHTML;
-                this.textModalOpen = true;
-            },
-            
-            saveTextWidgetContent() {
-                if (!this.editingGridItemId) return;
-                
-                const itemEl = document.querySelector(`.grid-stack-item[data-id="${this.editingGridItemId}"]`);
-                if (itemEl) {
-                    const textContainer = itemEl.querySelector('.text-container');
-                    textContainer.innerHTML = this.editingTextContent;
-                }
-                this.textModalOpen = false;
-                this.editingGridItemId = null;
-                this.editingTextContent = '';
-            }
-        };
+      bar.classList.remove('hidden');
+      bar.setAttribute('aria-hidden', 'false');
+      
+      progressVal = 0;
+      progress.style.width = '0%';
+      
+      if (progressTimer) clearInterval(progressTimer);
+      
+      progressTimer = setInterval(() => {
+        if (progressVal < 90) {
+          progressVal += (90 - progressVal) * 0.1;
+          progress.style.width = Math.round(progressVal) + '%';
+        }
+      }, 150);
     }
+
+    function completeProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      if (progress) {
+        progress.style.width = '100%';
+      }
+      setTimeout(() => {
+        if (bar) {
+          bar.classList.add('hidden');
+          bar.setAttribute('aria-hidden', 'true');
+        }
+        if (progress) {
+          progress.style.width = '0%';
+        }
+      }, 300);
+    }
+
+    document.addEventListener('htmx:beforeRequest', (evt) => {
+      if (activeRequests === 0) {
+        startProgress();
+      }
+      activeRequests++;
+    });
+
+    document.addEventListener('htmx:afterRequest', (evt) => {
+      activeRequests--;
+      if (activeRequests <= 0) {
+        activeRequests = 0;
+        completeProgress();
+      }
+    });
+  })();
 </script>
 {% endblock %}

@@ -1,0 +1,1872 @@
+{
+  "/home/karlos/Documents/projects/dw_clean/.claude/settings.local.json": {
+    "mtime": 1781645374.35513,
+    "ast_hash": "22f4c0d859b41fbbadb5b9d9b3bf56d5",
+    "semantic_hash": "22f4c0d859b41fbbadb5b9d9b3bf56d5"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/assesments/__init__.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/assesments/admin.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "e3dc717de887db03a015667a5fec59d8",
+    "semantic_hash": "e3dc717de887db03a015667a5fec59d8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/assesments/apps.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "069bf7f6a1cf3108983a5ef84cc08b24",
+    "semantic_hash": "069bf7f6a1cf3108983a5ef84cc08b24"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/assesments/migrations/__init__.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/assesments/models.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "8c4eb991c6dca757bdd77f539092e29b",
+    "semantic_hash": "8c4eb991c6dca757bdd77f539092e29b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/assesments/tests.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "465b7e9f69bfd158c850cdfbc7306818",
+    "semantic_hash": "465b7e9f69bfd158c850cdfbc7306818"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/assesments/views.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "f467fa232324ad139aaecd0df7698f3f",
+    "semantic_hash": "f467fa232324ad139aaecd0df7698f3f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/config/__init__.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/config/asgi.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "78fe6e88b19d8ca033189a680d5e750b",
+    "semantic_hash": "78fe6e88b19d8ca033189a680d5e750b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/config/local_settings.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "f61b49087965c7e5814fc26fa33957f1",
+    "semantic_hash": "f61b49087965c7e5814fc26fa33957f1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/config/settings.py": {
+    "mtime": 1781190458.8369248,
+    "ast_hash": "d71c9971cc5144e83f4d78dda49753b0",
+    "semantic_hash": "d71c9971cc5144e83f4d78dda49753b0"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/config/urls.py": {
+    "mtime": 1775150972.5227382,
+    "ast_hash": "dafae7fea0e3e3f2d664bbd736819c40",
+    "semantic_hash": "dafae7fea0e3e3f2d664bbd736819c40"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/config/wsgi.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "3bee9cf44f47c208ef0a914c8cb85899",
+    "semantic_hash": "3bee9cf44f47c208ef0a914c8cb85899"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/create_superuser.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "cf69e481e735d3e151a725102ff6449b",
+    "semantic_hash": "cf69e481e735d3e151a725102ff6449b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/__init__.py": {
+    "mtime": 1775145895.6129656,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/access_control.py": {
+    "mtime": 1775150972.509738,
+    "ast_hash": "c0975e1282086f8f5bbbc36a7d7c7a15",
+    "semantic_hash": "c0975e1282086f8f5bbbc36a7d7c7a15"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/admin.py": {
+    "mtime": 1775769010.2620926,
+    "ast_hash": "9a3a51d0a4f3972840c4bf9fa2884bdf",
+    "semantic_hash": "9a3a51d0a4f3972840c4bf9fa2884bdf"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/apps.py": {
+    "mtime": 1775150972.501738,
+    "ast_hash": "7f6ca77fa904c5679ae2bdf2ca5fd171",
+    "semantic_hash": "7f6ca77fa904c5679ae2bdf2ca5fd171"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0001_initial.py": {
+    "mtime": 1775146537.0183668,
+    "ast_hash": "65f116592653069cefd2c435223efdff",
+    "semantic_hash": "65f116592653069cefd2c435223efdff"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0002_responsescalelabel_alter_surveyresponse_options_and_more.py": {
+    "mtime": 1775147581.2455204,
+    "ast_hash": "8e9ad61509453de3390167cccbc54693",
+    "semantic_hash": "8e9ad61509453de3390167cccbc54693"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0003_add_publication_fields.py": {
+    "mtime": 1775150770.3987749,
+    "ast_hash": "e4fc6816cb9afcb327224b11c02f7f6f",
+    "semantic_hash": "e4fc6816cb9afcb327224b11c02f7f6f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0004_add_import_publication_fields.py": {
+    "mtime": 1775152184.4376779,
+    "ast_hash": "a531caf1688cb54fbd7e0ea89dafdded",
+    "semantic_hash": "a531caf1688cb54fbd7e0ea89dafdded"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0005_add_response_colors.py": {
+    "mtime": 1775153637.9467497,
+    "ast_hash": "7366c22c1fa3a92b6dbb5e9170eb258c",
+    "semantic_hash": "7366c22c1fa3a92b6dbb5e9170eb258c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0006_add_survey_theme.py": {
+    "mtime": 1775171584.4964807,
+    "ast_hash": "4504bf42c361b28cee4d04617023e6ab",
+    "semantic_hash": "4504bf42c361b28cee4d04617023e6ab"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0007_rename_theme_to_topic.py": {
+    "mtime": 1775171584.4964807,
+    "ast_hash": "d375263fc760eeae659b0b795150a417",
+    "semantic_hash": "d375263fc760eeae659b0b795150a417"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0008_surveyresponse_school_code.py": {
+    "mtime": 1775758375.44711,
+    "ast_hash": "a224f0370d7bf5f5b1eef1e40b3b138e",
+    "semantic_hash": "a224f0370d7bf5f5b1eef1e40b3b138e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0009_surveytopic_global.py": {
+    "mtime": 1775769010.2607627,
+    "ast_hash": "42e74994ba4486ac5c02d6b88b8faccb",
+    "semantic_hash": "42e74994ba4486ac5c02d6b88b8faccb"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/0010_alter_surveytopic_options_and_more.py": {
+    "mtime": 1777578960.471641,
+    "ast_hash": "894e6b16812c6843255bbf10aa0bf241",
+    "semantic_hash": "894e6b16812c6843255bbf10aa0bf241"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/migrations/__init__.py": {
+    "mtime": 1775150972.5237384,
+    "ast_hash": "91e9637be3da693a3121d13b19be607f",
+    "semantic_hash": "91e9637be3da693a3121d13b19be607f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/models.py": {
+    "mtime": 1775769010.2597628,
+    "ast_hash": "3c5a805dbfdfea1948f729117d02490d",
+    "semantic_hash": "3c5a805dbfdfea1948f729117d02490d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/templatetags/__init__.py": {
+    "mtime": 1775153911.4186466,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/templatetags/dataloader_tags.py": {
+    "mtime": 1775154200.9057448,
+    "ast_hash": "e1656b70b0ff4f7b62b994dee3682e35",
+    "semantic_hash": "e1656b70b0ff4f7b62b994dee3682e35"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/tests.py": {
+    "mtime": 1775150972.5227382,
+    "ast_hash": "6c486712e652a008888823feb205fe26",
+    "semantic_hash": "6c486712e652a008888823feb205fe26"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/urls.py": {
+    "mtime": 1775769010.259179,
+    "ast_hash": "10bbc608e4237b20e239567a8deda3de",
+    "semantic_hash": "10bbc608e4237b20e239567a8deda3de"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/utils/__init__.py": {
+    "mtime": 1775150972.503738,
+    "ast_hash": "f277b27dc6a4d9887493ecea6d594d2b",
+    "semantic_hash": "f277b27dc6a4d9887493ecea6d594d2b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/utils/column_analyzer.py": {
+    "mtime": 1775150972.504738,
+    "ast_hash": "17aaa6f2b8fd0b9013598eb6d3dc9e24",
+    "semantic_hash": "17aaa6f2b8fd0b9013598eb6d3dc9e24"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/utils/response_loader.py": {
+    "mtime": 1776089819.896053,
+    "ast_hash": "13ef909556bb757534a0e10d16ec241c",
+    "semantic_hash": "13ef909556bb757534a0e10d16ec241c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/utils/student_matcher.py": {
+    "mtime": 1775150972.509738,
+    "ast_hash": "cac8cd9620c9a5814bbc3a7420d2eb8d",
+    "semantic_hash": "cac8cd9620c9a5814bbc3a7420d2eb8d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataLoader/views.py": {
+    "mtime": 1776089819.8920531,
+    "ast_hash": "6fa2dd56574dfeb5dc33202621376f24",
+    "semantic_hash": "6fa2dd56574dfeb5dc33202621376f24"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/__init__.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/admin.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "66e59964b08d6957d48a43dc75c12f15",
+    "semantic_hash": "66e59964b08d6957d48a43dc75c12f15"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/apps.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "3b854c0a4ef9b614e285408dfc88f7ef",
+    "semantic_hash": "3b854c0a4ef9b614e285408dfc88f7ef"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/column_utils.py": {
+    "mtime": 1780410459.9924924,
+    "ast_hash": "2277c2d184f3bf6c98b6b810d9616ba8",
+    "semantic_hash": "2277c2d184f3bf6c98b6b810d9616ba8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/constants.py": {
+    "mtime": 1780421072.882115,
+    "ast_hash": "78bafccc7490b79a5ee5bbc3957af964",
+    "semantic_hash": "78bafccc7490b79a5ee5bbc3957af964"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/management/__init__.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/management/commands/__init__.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/management/commands/init_folders.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "bb63d1ea4ae2225397d66b374a56cca2",
+    "semantic_hash": "bb63d1ea4ae2225397d66b374a56cca2"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/management/commands/init_school_hierarchy.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "4a277bbc3b66e9fa53bc53461c3c5166",
+    "semantic_hash": "4a277bbc3b66e9fa53bc53461c3c5166"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/0001_initial.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "ea0cfb2305351ad0c523b1428759a733",
+    "semantic_hash": "ea0cfb2305351ad0c523b1428759a733"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/0002_default_column_selection.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "f45db44e0f2925fcdd7ed9fa7c5aff6a",
+    "semantic_hash": "f45db44e0f2925fcdd7ed9fa7c5aff6a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/0003_studentcombined_studentwithtests.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "6bd601d61120cc65ee2e26492263ecb1",
+    "semantic_hash": "6bd601d61120cc65ee2e26492263ecb1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/0004_reportfolder_savedquery_studentlist_studentlistitem.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "7d1eaa4e0e81d74f48e28141c1635383",
+    "semantic_hash": "7d1eaa4e0e81d74f48e28141c1635383"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/0005_savedquery_description_foldershare.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "fe669a4a1fe12da834624c64ec4e7796",
+    "semantic_hash": "fe669a4a1fe12da834624c64ec4e7796"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/0008_add_performance_indexes.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "8142e1d3b8a4dc240803d954b16f820e",
+    "semantic_hash": "8142e1d3b8a4dc240803d954b16f820e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/0009_alter_savedquery_options_alter_studentlist_options_and_more.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "8b25c15e657ead20bef51f197a5b6b6b",
+    "semantic_hash": "8b25c15e657ead20bef51f197a5b6b6b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/0010_elementaryhomeroomteacher.py": {
+    "mtime": 1780330777.0153844,
+    "ast_hash": "42ced13d364cae2e696bc28f7549ce00",
+    "semantic_hash": "42ced13d364cae2e696bc28f7549ce00"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/migrations/__init__.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/models.py": {
+    "mtime": 1780421349.0466714,
+    "ast_hash": "057379393c1bbeaae5b9152fb2a9be72",
+    "semantic_hash": "057379393c1bbeaae5b9152fb2a9be72"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/school_year_utils.py": {
+    "mtime": 1779832723.7577987,
+    "ast_hash": "29f08b9b321a62582c2deb7fd3c9888c",
+    "semantic_hash": "29f08b9b321a62582c2deb7fd3c9888c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/survey_utils.py": {
+    "mtime": 1776089819.893736,
+    "ast_hash": "85adc6471089aa7ddcbde67ab05bcbaf",
+    "semantic_hash": "85adc6471089aa7ddcbde67ab05bcbaf"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/templatetags/__init__.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "3c983db590d25ded75c7879ad3df14e3",
+    "semantic_hash": "3c983db590d25ded75c7879ad3df14e3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/templatetags/dataexploration_tags.py": {
+    "mtime": 1775758375.4422216,
+    "ast_hash": "ffecd3a7ac0a4a0a7d94b1e675aa76fb",
+    "semantic_hash": "ffecd3a7ac0a4a0a7d94b1e675aa76fb"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/tests.py": {
+    "mtime": 1779895454.4359376,
+    "ast_hash": "36e28e55b8a6d43af05cb2b5a8860920",
+    "semantic_hash": "36e28e55b8a6d43af05cb2b5a8860920"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/urls.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "35f595afe35cefb1dfc0163e2e7089ce",
+    "semantic_hash": "35f595afe35cefb1dfc0163e2e7089ce"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/utils.py": {
+    "mtime": 1773442760.0,
+    "ast_hash": "a2d960b381bbc568599f2edfe071efc3",
+    "semantic_hash": "a2d960b381bbc568599f2edfe071efc3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/view_modules/__init__.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "26b311d1f7e20ff5b6bbd788476d688a",
+    "semantic_hash": "26b311d1f7e20ff5b6bbd788476d688a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/view_modules/column_management.py": {
+    "mtime": 1780421079.5022821,
+    "ast_hash": "422f9067aeba2135e8c47f0e79c499a6",
+    "semantic_hash": "422f9067aeba2135e8c47f0e79c499a6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/view_modules/export_views.py": {
+    "mtime": 1780331369.2309127,
+    "ast_hash": "b6922d228f7b47b8c8a034c0ae33a9bc",
+    "semantic_hash": "b6922d228f7b47b8c8a034c0ae33a9bc"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/view_modules/folder_management.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "bf21063eb301f704151085e230138bca",
+    "semantic_hash": "bf21063eb301f704151085e230138bca"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/view_modules/statistics_views.py": {
+    "mtime": 1780331371.0302157,
+    "ast_hash": "8ddcaa3953929e95b2b57f96576135b9",
+    "semantic_hash": "8ddcaa3953929e95b2b57f96576135b9"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/view_modules/student_data_utils.py": {
+    "mtime": 1780421088.290832,
+    "ast_hash": "9dff7d1b5e6b9a20c0f1fe15ac2ef7ca",
+    "semantic_hash": "9dff7d1b5e6b9a20c0f1fe15ac2ef7ca"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/view_modules/student_list_views.py": {
+    "mtime": 1780348205.512439,
+    "ast_hash": "f89fc34503c982baed9adf12e1fbac11",
+    "semantic_hash": "f89fc34503c982baed9adf12e1fbac11"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/view_modules/student_summary.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "ada9ceae8052ceebec095151e931145f",
+    "semantic_hash": "ada9ceae8052ceebec095151e931145f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataexploration/views.py": {
+    "mtime": 1772823711.0,
+    "ast_hash": "310d5d498859e8e0f40493155f4ec7dd",
+    "semantic_hash": "310d5d498859e8e0f40493155f4ec7dd"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/__init__.py": {
+    "mtime": 1781187062.2274942,
+    "ast_hash": "8e3915207118e66c8892a725f135d902",
+    "semantic_hash": "8e3915207118e66c8892a725f135d902"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/admin.py": {
+    "mtime": 1774880762.0741951,
+    "ast_hash": "a7712f747132bfe3f0e1f9cf3897d723",
+    "semantic_hash": "a7712f747132bfe3f0e1f9cf3897d723"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/apps.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "e35a520e2538bc353c03fd71ab48130e",
+    "semantic_hash": "e35a520e2538bc353c03fd71ab48130e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0001_initial.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "bc1b58d0ca82b7f826f2d45017b2b4de",
+    "semantic_hash": "bc1b58d0ca82b7f826f2d45017b2b4de"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0002_dashboardchart_height_class_and_more.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "37975b0154c9ea9bdb23c01b2b08514b",
+    "semantic_hash": "37975b0154c9ea9bdb23c01b2b08514b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0003_slot_filters_html_element.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "6cb1b82e48f0f424d0c721260df9ac9e",
+    "semantic_hash": "6cb1b82e48f0f424d0c721260df9ac9e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0004_page_drillthrough_gridstack.py": {
+    "mtime": 1774880762.0741951,
+    "ast_hash": "e95724e1f4787fc1bade3c4988d8c653",
+    "semantic_hash": "e95724e1f4787fc1bade3c4988d8c653"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0005_add_chart_gridstack_to_pagesection.py": {
+    "mtime": 1774880762.0741951,
+    "ast_hash": "389ef0c75abaa790e759c60d8f784067",
+    "semantic_hash": "389ef0c75abaa790e759c60d8f784067"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0006_add_page_row_model.py": {
+    "mtime": 1774880762.0741951,
+    "ast_hash": "169ae4a608d293fa1ee290bc0540044b",
+    "semantic_hash": "169ae4a608d293fa1ee290bc0540044b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0007_add_source_columns_type.py": {
+    "mtime": 1774880762.0741951,
+    "ast_hash": "0695239745ddc39922f68dfc764561ce",
+    "semantic_hash": "0695239745ddc39922f68dfc764561ce"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0008_page_container_width_show_header.py": {
+    "mtime": 1775055185.3666375,
+    "ast_hash": "2ca5ad090b1916d12b65279d0418d068",
+    "semantic_hash": "2ca5ad090b1916d12b65279d0418d068"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0009_add_school_filter_mode.py": {
+    "mtime": 1780351094.9125829,
+    "ast_hash": "6368dd0f0f90bef23a93c63b1e7826f2",
+    "semantic_hash": "6368dd0f0f90bef23a93c63b1e7826f2"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0010_alter_savedchart_source_type_dataset.py": {
+    "mtime": 1781127466.6805222,
+    "ast_hash": "a318bc818b57ea4656e3b912849bf53a",
+    "semantic_hash": "a318bc818b57ea4656e3b912849bf53a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0011_relativeyear.py": {
+    "mtime": 1781190437.791977,
+    "ast_hash": "3a21d5d4f682472e51e93a23ec4c5fc4",
+    "semantic_hash": "3a21d5d4f682472e51e93a23ec4c5fc4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/0012_dataset_column_mappings.py": {
+    "mtime": 1781191197.4490938,
+    "ast_hash": "84b95f7909c1cfbfa820a6e52ae0fb6d",
+    "semantic_hash": "84b95f7909c1cfbfa820a6e52ae0fb6d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/migrations/__init__.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/models.py": {
+    "mtime": 1781191090.348854,
+    "ast_hash": "063e6aecea8b7a479fe3358b6fcaef43",
+    "semantic_hash": "063e6aecea8b7a479fe3358b6fcaef43"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/templatetags/__init__.py": {
+    "mtime": 1774880762.0741951,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/templatetags/dataviz_tags.py": {
+    "mtime": 1774880762.0742955,
+    "ast_hash": "55a4be29ca2979d8fb190a5da2786647",
+    "semantic_hash": "55a4be29ca2979d8fb190a5da2786647"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/tests.py": {
+    "mtime": 1781644676.5370116,
+    "ast_hash": "dbbeb9a4f986863120230d6d553cccb6",
+    "semantic_hash": "dbbeb9a4f986863120230d6d553cccb6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/urls.py": {
+    "mtime": 1781128228.3684034,
+    "ast_hash": "c13e5ef45c1580bf206c52f4cc4c357b",
+    "semantic_hash": "c13e5ef45c1580bf206c52f4cc4c357b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/utils/__init__.py": {
+    "mtime": 1774880762.0742955,
+    "ast_hash": "84ddc02a33a7426b65f238e764a698f4",
+    "semantic_hash": "84ddc02a33a7426b65f238e764a698f4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/utils/chart_builder.py": {
+    "mtime": 1781705553.4688547,
+    "ast_hash": "bc8283761ee277d2ce1b1a664c408809",
+    "semantic_hash": "bc8283761ee277d2ce1b1a664c408809"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/utils/compiler.py": {
+    "mtime": 1781217660.2741084,
+    "ast_hash": "8887d5c447a83170591d5fc89de49a46",
+    "semantic_hash": "8887d5c447a83170591d5fc89de49a46"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/utils/data_loader.py": {
+    "mtime": 1781131497.4268768,
+    "ast_hash": "3a736f5500eb6f2b04db7678adc6f39c",
+    "semantic_hash": "3a736f5500eb6f2b04db7678adc6f39c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/utils/drill_through.py": {
+    "mtime": 1781648771.674303,
+    "ast_hash": "258d757492cd20b37fb034e7f03955de",
+    "semantic_hash": "258d757492cd20b37fb034e7f03955de"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/utils/page_publish.py": {
+    "mtime": 1774880762.075232,
+    "ast_hash": "fdab091f1fb7b2bb1969967eafad4f7a",
+    "semantic_hash": "fdab091f1fb7b2bb1969967eafad4f7a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/utils/resolution.py": {
+    "mtime": 1781201556.057395,
+    "ast_hash": "a908f8e16f152959a349f515691957d3",
+    "semantic_hash": "a908f8e16f152959a349f515691957d3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views.py": {
+    "mtime": 1777578960.4737976,
+    "ast_hash": "a2ed5cf7b62cdc89d8cd46a448dd7bf5",
+    "semantic_hash": "a2ed5cf7b62cdc89d8cd46a448dd7bf5"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/__init__.py": {
+    "mtime": 1781128232.6864536,
+    "ast_hash": "8714406ba37db6ae8750c5b93273b75b",
+    "semantic_hash": "8714406ba37db6ae8750c5b93273b75b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/api/__init__.py": {
+    "mtime": 1774880762.0752954,
+    "ast_hash": "1c4703ca33c965aee0cac5a52c722f26",
+    "semantic_hash": "1c4703ca33c965aee0cac5a52c722f26"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/api/chart_api.py": {
+    "mtime": 1781649703.328785,
+    "ast_hash": "9c96386d1feeaf462d51f1de16e43bfa",
+    "semantic_hash": "9c96386d1feeaf462d51f1de16e43bfa"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/api/dashboard_api.py": {
+    "mtime": 1779832723.7632146,
+    "ast_hash": "872b01abd0a07eb803d2a7827a408543",
+    "semantic_hash": "872b01abd0a07eb803d2a7827a408543"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/api/drill_api.py": {
+    "mtime": 1781627747.778661,
+    "ast_hash": "73142e31ff2c70fac203e9036b059f6c",
+    "semantic_hash": "73142e31ff2c70fac203e9036b059f6c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/api/page_api.py": {
+    "mtime": 1780431327.6576722,
+    "ast_hash": "c9a06dbc0d07157fa9a3dac896ca1f2e",
+    "semantic_hash": "c9a06dbc0d07157fa9a3dac896ca1f2e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/api/query_api.py": {
+    "mtime": 1781646816.481052,
+    "ast_hash": "53c7617cac7ae2ac67423ea910a73938",
+    "semantic_hash": "53c7617cac7ae2ac67423ea910a73938"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/chart_views.py": {
+    "mtime": 1781648706.5375981,
+    "ast_hash": "2c4866e281df437ac6f1fa57d6f87b9e",
+    "semantic_hash": "2c4866e281df437ac6f1fa57d6f87b9e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/dashboard_views.py": {
+    "mtime": 1780431305.712972,
+    "ast_hash": "5eeb842130ba3628bf2ec7721bfe6359",
+    "semantic_hash": "5eeb842130ba3628bf2ec7721bfe6359"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/dataset_views.py": {
+    "mtime": 1781214807.6452699,
+    "ast_hash": "1b21781107f68e93625eb6677565733e",
+    "semantic_hash": "1b21781107f68e93625eb6677565733e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/drill_views.py": {
+    "mtime": 1781644018.0462708,
+    "ast_hash": "35fb3259465807ae8eb654db57197f06",
+    "semantic_hash": "35fb3259465807ae8eb654db57197f06"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/mixins.py": {
+    "mtime": 1774880762.0762956,
+    "ast_hash": "50c3770b8e06051ec06ae8f321823232",
+    "semantic_hash": "50c3770b8e06051ec06ae8f321823232"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views/page_views.py": {
+    "mtime": 1780431311.5395758,
+    "ast_hash": "e9d5f2685e1cbea66ae5c6ac280a077e",
+    "semantic_hash": "e9d5f2685e1cbea66ae5c6ac280a077e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/dataviz/views_legacy.py": {
+    "mtime": 1774880762.0762956,
+    "ast_hash": "d1f62c6c905568709935234391d64d71",
+    "semantic_hash": "d1f62c6c905568709935234391d64d71"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/__init__.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/admin.py": {
+    "mtime": 1781192224.3213842,
+    "ast_hash": "8992c46a01db4fa4a6f392c15193f6e3",
+    "semantic_hash": "8992c46a01db4fa4a6f392c15193f6e3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/apps.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "2157e5c3a31a31a8e9196ac6d8dae3ce",
+    "semantic_hash": "2157e5c3a31a31a8e9196ac6d8dae3ce"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/migrations/0001_projectconfig.py": {
+    "mtime": 1779832723.7647421,
+    "ast_hash": "3fbd2700cc7c5f42c83d202d298b4757",
+    "semantic_hash": "3fbd2700cc7c5f42c83d202d298b4757"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/migrations/0002_alter_projectconfig_default_columns_and_more.py": {
+    "mtime": 1779833988.8612566,
+    "ast_hash": "e8cc307487a3f1b6517bd5bd257498d2",
+    "semantic_hash": "e8cc307487a3f1b6517bd5bd257498d2"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/migrations/0003_projectconfig_enabled_dataset_tables.py": {
+    "mtime": 1781191551.9203897,
+    "ast_hash": "4ea1e10e44a435c2280ef5633432e021",
+    "semantic_hash": "4ea1e10e44a435c2280ef5633432e021"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/migrations/__init__.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/models.py": {
+    "mtime": 1781192891.7053254,
+    "ast_hash": "240962cbfb151aeddbff5b76115ae97a",
+    "semantic_hash": "240962cbfb151aeddbff5b76115ae97a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/tests.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "465b7e9f69bfd158c850cdfbc7306818",
+    "semantic_hash": "465b7e9f69bfd158c850cdfbc7306818"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/urls.py": {
+    "mtime": 1779832723.7647421,
+    "ast_hash": "b3cce22b9c1d35057a4b99fdc9df2e95",
+    "semantic_hash": "b3cce22b9c1d35057a4b99fdc9df2e95"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/utils.py": {
+    "mtime": 1779832723.7647421,
+    "ast_hash": "7b110b5a8137ba63aa2eed9dda947670",
+    "semantic_hash": "7b110b5a8137ba63aa2eed9dda947670"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/landing/views.py": {
+    "mtime": 1781192216.0322862,
+    "ast_hash": "2d035e867deb083b712c81acb39c272e",
+    "semantic_hash": "2d035e867deb083b712c81acb39c272e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/manage.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "09ce28f22db4398409f377833475117f",
+    "semantic_hash": "09ce28f22db4398409f377833475117f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/__init__.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/admin.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "6ff586d4c4e9a6907349070fd1de4c25",
+    "semantic_hash": "6ff586d4c4e9a6907349070fd1de4c25"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/apps.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "71a61545255fbf0b039ded4a281586f4",
+    "semantic_hash": "71a61545255fbf0b039ded4a281586f4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/migrations/0001_initial.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "edd507a1c9d773e1bbd7a7d45fb5eb73",
+    "semantic_hash": "edd507a1c9d773e1bbd7a7d45fb5eb73"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/migrations/__init__.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/models.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "f838995ad636a138d2efc189e1b2a27f",
+    "semantic_hash": "f838995ad636a138d2efc189e1b2a27f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/urls.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "570a089f7954a484a33590cb675308fd",
+    "semantic_hash": "570a089f7954a484a33590cb675308fd"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/view_modules/__init__.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/view_modules/access_utils.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "730fce5df48f1e0d329ec12169e3db1b",
+    "semantic_hash": "730fce5df48f1e0d329ec12169e3db1b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/view_modules/completion_views.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "2c842ad3b8f8db34bef3cf05abc1ecdc",
+    "semantic_hash": "2c842ad3b8f8db34bef3cf05abc1ecdc"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/view_modules/data_utils.py": {
+    "mtime": 1780330613.5775847,
+    "ast_hash": "2a2f8511f9b2b26c3768e0815ba78632",
+    "semantic_hash": "2a2f8511f9b2b26c3768e0815ba78632"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/view_modules/detail_views.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "1f9b2fffb7b847e46390c87f4f2e85e6",
+    "semantic_hash": "1f9b2fffb7b847e46390c87f4f2e85e6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/view_modules/recommendation_views.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "0e6eed4122019a040c81aba3f6cb7d48",
+    "semantic_hash": "0e6eed4122019a040c81aba3f6cb7d48"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/view_modules/student_views.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "648523637091617a4a74dff7ddcd16f4",
+    "semantic_hash": "648523637091617a4a74dff7ddcd16f4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/mathr/views.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "35016d158d9ac0fca7d6acd310025116",
+    "semantic_hash": "35016d158d9ac0fca7d6acd310025116"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/__init__.py": {
+    "mtime": 1773442417.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/admin.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "11d4842efb09553cc1a676b7e4b4ebfc",
+    "semantic_hash": "11d4842efb09553cc1a676b7e4b4ebfc"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/apps.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "81a489839d1d8f59b464d88b66efe896",
+    "semantic_hash": "81a489839d1d8f59b464d88b66efe896"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/column_utils.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "89c3168705334dddf945a227795cf820",
+    "semantic_hash": "89c3168705334dddf945a227795cf820"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/constants.py": {
+    "mtime": 1773442417.0,
+    "ast_hash": "416639bab605eddfe0938fa6d9039a22",
+    "semantic_hash": "416639bab605eddfe0938fa6d9039a22"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/migrations/0001_initial.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "d58f7162a6c18259c60f51a2335a5a20",
+    "semantic_hash": "d58f7162a6c18259c60f51a2335a5a20"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/migrations/0002_rename_nyl_year_school_idx_nextyearlis_school__ddd117_idx.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "77efec113194a9a24ca306897cbbecf2",
+    "semantic_hash": "77efec113194a9a24ca306897cbbecf2"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/migrations/__init__.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/models.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "0d8f77921dc6e769f092bdb55b67347b",
+    "semantic_hash": "0d8f77921dc6e769f092bdb55b67347b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/urls.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "7eb91f1848164444997d8a1a13d08e82",
+    "semantic_hash": "7eb91f1848164444997d8a1a13d08e82"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/utils.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "731e6f033381194c63157792ed3a3beb",
+    "semantic_hash": "731e6f033381194c63157792ed3a3beb"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/view_modules/__init__.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/view_modules/column_management.py": {
+    "mtime": 1779832723.7647421,
+    "ast_hash": "c58fc3552172476b0aae6cce659dfc79",
+    "semantic_hash": "c58fc3552172476b0aae6cce659dfc79"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/view_modules/export_views.py": {
+    "mtime": 1779832723.7657423,
+    "ast_hash": "19579726f0807751e03379230787c8d4",
+    "semantic_hash": "19579726f0807751e03379230787c8d4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/view_modules/folder_management.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "a72189dbcd6ffe43135742e62b42bc59",
+    "semantic_hash": "a72189dbcd6ffe43135742e62b42bc59"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/view_modules/statistics_views.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "45e79cb1731f4e8469386c67f251e3e2",
+    "semantic_hash": "45e79cb1731f4e8469386c67f251e3e2"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/view_modules/student_list_views.py": {
+    "mtime": 1780348208.0818727,
+    "ast_hash": "e6ca0f31b4ac75b91905fc063e97eef1",
+    "semantic_hash": "e6ca0f31b4ac75b91905fc063e97eef1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/view_modules/student_summary.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "598c784ba237b1ff1bff54787dbb2af3",
+    "semantic_hash": "598c784ba237b1ff1bff54787dbb2af3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/nextyearlist/views.py": {
+    "mtime": 1773442418.0,
+    "ast_hash": "ce8b40eeb193fb61de76140f85c7b1a8",
+    "semantic_hash": "ce8b40eeb193fb61de76140f85c7b1a8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/__init__.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/admin.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "f584e5a3f4633b354e7259cc4313c549",
+    "semantic_hash": "f584e5a3f4633b354e7259cc4313c549"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/apps.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "5463321a9bf1bd24ea8076202b5c7ead",
+    "semantic_hash": "5463321a9bf1bd24ea8076202b5c7ead"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/migrations/0001_initial.py": {
+    "mtime": 1772822552.0,
+    "ast_hash": "b9b6c35d0cd98f61398f7b367e25d4dd",
+    "semantic_hash": "b9b6c35d0cd98f61398f7b367e25d4dd"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/migrations/0002_rename_placementca_school__6ec4ca_idx_placementca_school__7cf3fb_idx_and_more.py": {
+    "mtime": 1772822552.0,
+    "ast_hash": "325cabf77986275bed53586c874d93bc",
+    "semantic_hash": "325cabf77986275bed53586c874d93bc"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/migrations/0003_widen_classroom_grade_field.py": {
+    "mtime": 1772822552.0,
+    "ast_hash": "15a69ef6b4014cf1e9618a6b4ec0d7f0",
+    "semantic_hash": "15a69ef6b4014cf1e9618a6b4ec0d7f0"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/migrations/__init__.py": {
+    "mtime": 1772822552.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/models.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "73bb102ca8b2f5e09d4eca81e694e8c4",
+    "semantic_hash": "73bb102ca8b2f5e09d4eca81e694e8c4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/templatetags/__init__.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/templatetags/placementcards_tags.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "aa66f28570f73ae73b91ac6b7ffafff6",
+    "semantic_hash": "aa66f28570f73ae73b91ac6b7ffafff6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/urls.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "a7d6ebb7a949dc3afcb7866599a24e0c",
+    "semantic_hash": "a7d6ebb7a949dc3afcb7866599a24e0c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/__init__.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/card_data_utils.py": {
+    "mtime": 1779832723.7667425,
+    "ast_hash": "027de51ff0c156052624563766a02701",
+    "semantic_hash": "027de51ff0c156052624563766a02701"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/card_views.py": {
+    "mtime": 1780330596.1386461,
+    "ast_hash": "ee32dbf62630cb2e78192f8625e67fc9",
+    "semantic_hash": "ee32dbf62630cb2e78192f8625e67fc9"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/classroom_views.py": {
+    "mtime": 1780330608.559739,
+    "ast_hash": "e5654702596691025362375d03fc294e",
+    "semantic_hash": "e5654702596691025362375d03fc294e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/full_page_print_views.py": {
+    "mtime": 1777578960.4759738,
+    "ast_hash": "5094f4b0855d0c55839aae6b1eca12b6",
+    "semantic_hash": "5094f4b0855d0c55839aae6b1eca12b6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/half_page_print_views.py": {
+    "mtime": 1777578960.4759738,
+    "ast_hash": "2d4c5894a9b369167dc46df591890938",
+    "semantic_hash": "2d4c5894a9b369167dc46df591890938"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/placement_views.py": {
+    "mtime": 1780330601.5895648,
+    "ast_hash": "602629d858e14815fdeeb9c06447e793",
+    "semantic_hash": "602629d858e14815fdeeb9c06447e793"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/question_views.py": {
+    "mtime": 1777578960.476137,
+    "ast_hash": "211a4b0e9edd26a838cb4299abb47cba",
+    "semantic_hash": "211a4b0e9edd26a838cb4299abb47cba"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/view_modules/tag_views.py": {
+    "mtime": 1774880762.0762956,
+    "ast_hash": "d62bfb2777aaab6f10b339ea46fb0fda",
+    "semantic_hash": "d62bfb2777aaab6f10b339ea46fb0fda"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/placementcards/views.py": {
+    "mtime": 1772822551.0,
+    "ast_hash": "67750ca5a6cd51aa4f816a1085552678",
+    "semantic_hash": "67750ca5a6cd51aa4f816a1085552678"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/__init__.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/admin.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "e3dc717de887db03a015667a5fec59d8",
+    "semantic_hash": "e3dc717de887db03a015667a5fec59d8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/apps.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "16129d76acbdac27069843c1e37d5434",
+    "semantic_hash": "16129d76acbdac27069843c1e37d5434"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0001_initial.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "48eec01fef242d9d3bbbf2d922dbbb7d",
+    "semantic_hash": "48eec01fef242d9d3bbbf2d922dbbb7d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0002_alter_currentstudent_grade_alter_studentenroll_grade.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "54e46d2db17f42337166ecc697a9b8b0",
+    "semantic_hash": "54e46d2db17f42337166ecc697a9b8b0"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0003_alter_studentenroll_stu_annual_key.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "e5cd11c2cf4ed6531a75948d85a9aef9",
+    "semantic_hash": "e5cd11c2cf4ed6531a75948d85a9aef9"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0004_alter_studentenroll_ssid.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "b7b81144e10f58dfffe7350ced0378f6",
+    "semantic_hash": "b7b81144e10f58dfffe7350ced0378f6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0005_school.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "ae3c5951537da7263981c92a3c9d47ec",
+    "semantic_hash": "ae3c5951537da7263981c92a3c9d47ec"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0006_result_test_delete_studentcombined_and_more.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "f47ce35383e13213becc09ec285f192f",
+    "semantic_hash": "f47ce35383e13213becc09ec285f192f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0007_alter_result_test_group_key.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "bd4c84909d92c8e5e10d8df2d8caceab",
+    "semantic_hash": "bd4c84909d92c8e5e10d8df2d8caceab"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0008_schedule_studentmarks_teacheraccess.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "7eb7f7223a1cc366398dad23ba878f53",
+    "semantic_hash": "7eb7f7223a1cc366398dad23ba878f53"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0009_schedule_schedule_li_state_s_3d24fb_idx_and_more.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "323bef0c534378b56250efd31899e065",
+    "semantic_hash": "323bef0c534378b56250efd31899e065"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0010_schedule_schedule_li_staff_n_deba0d_idx.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "41e022ea23f8afa72c20e29a566770f7",
+    "semantic_hash": "41e022ea23f8afa72c20e29a566770f7"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0011_result_results_local_s_de0513_idx_and_more.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "74d4e26585dedf082957cd457f1a476d",
+    "semantic_hash": "74d4e26585dedf082957cd457f1a476d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0012_alt_tables_compatibility_views.py": {
+    "mtime": 1780063898.1352367,
+    "ast_hash": "78bc8400a6c1e2a5ce07de200e345fdd",
+    "semantic_hash": "78bc8400a6c1e2a5ce07de200e345fdd"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/0013_currentstudent_add_data.py": {
+    "mtime": 1781197280.074137,
+    "ast_hash": "1cffb789a04340c33f8be91fe99e0818",
+    "semantic_hash": "1cffb789a04340c33f8be91fe99e0818"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/migrations/__init__.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/models.py": {
+    "mtime": 1781197266.7652397,
+    "ast_hash": "a11cf9119cd33f3585ab58bdc14ac108",
+    "semantic_hash": "a11cf9119cd33f3585ab58bdc14ac108"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/tests.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "465b7e9f69bfd158c850cdfbc7306818",
+    "semantic_hash": "465b7e9f69bfd158c850cdfbc7306818"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/studata/views.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "f467fa232324ad139aaecd0df7698f3f",
+    "semantic_hash": "f467fa232324ad139aaecd0df7698f3f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/chart-builder-data.js": {
+    "mtime": 1781645507.5676954,
+    "ast_hash": "c7a597dd3bfd3f1f4221ee2fd4bc3c6f",
+    "semantic_hash": "c7a597dd3bfd3f1f4221ee2fd4bc3c6f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/chart-builder-explorer.js": {
+    "mtime": 1781649721.9580877,
+    "ast_hash": "ad703fb47baa2c2b9288fde011b883c4",
+    "semantic_hash": "ad703fb47baa2c2b9288fde011b883c4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/chart-builder-filters.js": {
+    "mtime": 1781645583.6955914,
+    "ast_hash": "6617b41f581b2ad02fa4b5a70daca86f",
+    "semantic_hash": "6617b41f581b2ad02fa4b5a70daca86f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/chart-builder-preview.js": {
+    "mtime": 1781649647.3721116,
+    "ast_hash": "cf5687a6e9beba13b9d802164b955bef",
+    "semantic_hash": "cf5687a6e9beba13b9d802164b955bef"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/chart-builder-ui.js": {
+    "mtime": 1781649643.7222495,
+    "ast_hash": "05e1673d249a61f0a4303388db691337",
+    "semantic_hash": "05e1673d249a61f0a4303388db691337"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/chart-editor.js": {
+    "mtime": 1778531293.9664595,
+    "ast_hash": "40aca6a8e76ab1ebef9d03b6895fdc14",
+    "semantic_hash": "40aca6a8e76ab1ebef9d03b6895fdc14"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/chart-renderer.js": {
+    "mtime": 1781705589.6222854,
+    "ast_hash": "ac5d0be09eea8a6c05a3865394392f3e",
+    "semantic_hash": "ac5d0be09eea8a6c05a3865394392f3e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/dashboard-builder.js": {
+    "mtime": 1774880762.0806923,
+    "ast_hash": "883b5a2274880f90e781d6fa5a9c0580",
+    "semantic_hash": "883b5a2274880f90e781d6fa5a9c0580"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/page-builder.js": {
+    "mtime": 1779832723.7743778,
+    "ast_hash": "b56ebf685bfc1a48a23433de298b3658",
+    "semantic_hash": "b56ebf685bfc1a48a23433de298b3658"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/dataviz/sql-lab.js": {
+    "mtime": 1774880762.0806923,
+    "ast_hash": "5e1a6b4843881b84fb8cb5bf8484f4c4",
+    "semantic_hash": "5e1a6b4843881b84fb8cb5bf8484f4c4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/student_tests_app.js": {
+    "mtime": 1780348202.6169503,
+    "ast_hash": "5ea4f651b0db0714e01c671208d4fb1f",
+    "semantic_hash": "5ea4f651b0db0714e01c671208d4fb1f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/js/tailwind_config.js": {
+    "mtime": 1772822600.0,
+    "ast_hash": "5e57acc2bc2a92cd03e8799355f58e58",
+    "semantic_hash": "5e57acc2bc2a92cd03e8799355f58e58"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/__init__.py": {
+    "mtime": 1772823228.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/adapters.py": {
+    "mtime": 1772823234.0,
+    "ast_hash": "f2f78444332b541c90f23ecdd89fb5bb",
+    "semantic_hash": "f2f78444332b541c90f23ecdd89fb5bb"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/admin.py": {
+    "mtime": 1772823234.0,
+    "ast_hash": "03c6170635e1f723d54bb9a1e3963a92",
+    "semantic_hash": "03c6170635e1f723d54bb9a1e3963a92"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/apps.py": {
+    "mtime": 1772823234.0,
+    "ast_hash": "3aa1108eb8be974118178b8e7b3a6572",
+    "semantic_hash": "3aa1108eb8be974118178b8e7b3a6572"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/context_processors.py": {
+    "mtime": 1780330582.4663424,
+    "ast_hash": "ebc6396974a362310b90c3e6a8292d9a",
+    "semantic_hash": "ebc6396974a362310b90c3e6a8292d9a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/decorators.py": {
+    "mtime": 1779917673.3730528,
+    "ast_hash": "58515dee2d444e7a5f3659ba50a9b9bf",
+    "semantic_hash": "58515dee2d444e7a5f3659ba50a9b9bf"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/management/__init__.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/management/commands/__init__.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/management/commands/add_page.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "c137a1d3d127085ac41e6d0008326ff3",
+    "semantic_hash": "c137a1d3d127085ac41e6d0008326ff3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/management/commands/init_pages.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "6707427260d711aad9eb7ba236e6f9a8",
+    "semantic_hash": "6707427260d711aad9eb7ba236e6f9a8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/management/commands/init_roles.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "4ee94aeac79a4c5136927820fe71b582",
+    "semantic_hash": "4ee94aeac79a4c5136927820fe71b582"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/middleware.py": {
+    "mtime": 1779917673.3725288,
+    "ast_hash": "ac77812f0310189169fc18ab56e83ee1",
+    "semantic_hash": "ac77812f0310189169fc18ab56e83ee1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0001_initial.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "43058e35dbdba81627df299547dd25fc",
+    "semantic_hash": "43058e35dbdba81627df299547dd25fc"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0002_user_avatar.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "22f842f4e1c767d8815aa58b32d2a2cb",
+    "semantic_hash": "22f842f4e1c767d8815aa58b32d2a2cb"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0003_user_staff_id.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "f29bb9a5f264d1b2e3d59703b754071c",
+    "semantic_hash": "f29bb9a5f264d1b2e3d59703b754071c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0004_remove_user_schools_user_schools.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "3112ce3aaaa7b44ce93f2699f5a36c9c",
+    "semantic_hash": "3112ce3aaaa7b44ce93f2699f5a36c9c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0004_usage_tracking.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "f2471633788ceb7a19885807836953b3",
+    "semantic_hash": "f2471633788ceb7a19885807836953b3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0005_remove_user_role_user_roles.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "3f3016431c9a02479d4fc6d9b0622110",
+    "semantic_hash": "3f3016431c9a02479d4fc6d9b0622110"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0006_add_grade_levels.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "7d35129e086d959c76e54b54f96bb45e",
+    "semantic_hash": "7d35129e086d959c76e54b54f96bb45e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0007_page.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "7465f160f8fa81ff57a937affdd8cc58",
+    "semantic_hash": "7465f160f8fa81ff57a937affdd8cc58"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0008_page_allowed_users.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "4c1245485bb61adb3d52d10365ffe6f3",
+    "semantic_hash": "4c1245485bb61adb3d52d10365ffe6f3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0009_merge_0004_usage_tracking_0008_page_allowed_users.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "3ab3798f911add64793a18e8eff8a36c",
+    "semantic_hash": "3ab3798f911add64793a18e8eff8a36c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0010_add_usage_page.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "27fb1c36cd55cdcca1650a6e2db0ec5b",
+    "semantic_hash": "27fb1c36cd55cdcca1650a6e2db0ec5b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0011_rename_users_pagev_started_0e07c1_idx_users_pagev_started_72ed6c_idx_and_more.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "2a28cfeb01118b9226b8cdf953f88e06",
+    "semantic_hash": "2a28cfeb01118b9226b8cdf953f88e06"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0012_add_next_sy_and_placement_pages.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "82e609a510042c32d66fb38520301c6c",
+    "semantic_hash": "82e609a510042c32d66fb38520301c6c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0013_page_app_reference_and_menu_targeting.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "a260a68ad745b6fe75fc662e403eb6fb",
+    "semantic_hash": "a260a68ad745b6fe75fc662e403eb6fb"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0014_add_placement_configuration_page.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "3fd96f35f0dc2d83bc4508a1d95f932c",
+    "semantic_hash": "3fd96f35f0dc2d83bc4508a1d95f932c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0015_add_nextyearlist_page.py": {
+    "mtime": 1774880762.0806923,
+    "ast_hash": "a0f1def120fff999d5c5840ebb1dc373",
+    "semantic_hash": "a0f1def120fff999d5c5840ebb1dc373"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/0016_nextyearlist_page_roles.py": {
+    "mtime": 1774880762.0806923,
+    "ast_hash": "553327f2c41a5a649e0d65b7b6a59fcb",
+    "semantic_hash": "553327f2c41a5a649e0d65b7b6a59fcb"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/migrations/__init__.py": {
+    "mtime": 1772823235.0,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/models.py": {
+    "mtime": 1772823234.0,
+    "ast_hash": "64d8887d7c760390650795e27c2785b7",
+    "semantic_hash": "64d8887d7c760390650795e27c2785b7"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/models_pages.py": {
+    "mtime": 1772823234.0,
+    "ast_hash": "a48e307480582af46f946f2f404a6af5",
+    "semantic_hash": "a48e307480582af46f946f2f404a6af5"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/page_views.py": {
+    "mtime": 1779917673.3717518,
+    "ast_hash": "a25067b12498f739ed6ddc92bfa8a44c",
+    "semantic_hash": "a25067b12498f739ed6ddc92bfa8a44c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/signals.py": {
+    "mtime": 1770763600.0,
+    "ast_hash": "b09281a12bfb1b16d5a4401f51fe085a",
+    "semantic_hash": "b09281a12bfb1b16d5a4401f51fe085a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/templatetags/__init__.py": {
+    "mtime": 1777578960.4801369,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/templatetags/user_tags.py": {
+    "mtime": 1777578960.481137,
+    "ast_hash": "dc773b91c056d1dcd72398a9572d5f15",
+    "semantic_hash": "dc773b91c056d1dcd72398a9572d5f15"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/tests.py": {
+    "mtime": 1772823234.0,
+    "ast_hash": "465b7e9f69bfd158c850cdfbc7306818",
+    "semantic_hash": "465b7e9f69bfd158c850cdfbc7306818"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/urls.py": {
+    "mtime": 1772823234.0,
+    "ast_hash": "6213d4166bf5a8f097f94016bd31bd6d",
+    "semantic_hash": "6213d4166bf5a8f097f94016bd31bd6d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/users/views.py": {
+    "mtime": 1779917662.7560937,
+    "ast_hash": "ad816955a52a3d8e6d22a67f18b3ed0e",
+    "semantic_hash": "ad816955a52a3d8e6d22a67f18b3ed0e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/verify_strict.py": {
+    "mtime": 1770419903.0,
+    "ast_hash": "32701a7b6542628585bb8b0764df354a",
+    "semantic_hash": "32701a7b6542628585bb8b0764df354a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/init-databases.sh": {
+    "mtime": 1770925553.6496844,
+    "ast_hash": "93b571a35d8a6f5d0678072c4fa221b1",
+    "semantic_hash": "93b571a35d8a6f5d0678072c4fa221b1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/.claude/agent-memory/dataviz-config-generator/MEMORY.md": {
+    "mtime": 1780408753.0083427,
+    "ast_hash": "073904987e5ad7525b46692ca6b8eac1",
+    "semantic_hash": "073904987e5ad7525b46692ca6b8eac1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/.claude/agent-memory/dataviz-config-generator/dataviz-ux-overhaul.md": {
+    "mtime": 1780351633.34131,
+    "ast_hash": "831a63ec05ebbc3753c43a715c87929b",
+    "semantic_hash": "831a63ec05ebbc3753c43a715c87929b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/.claude/agent-memory/dataviz-config-generator/echarts-alpine-stack.md": {
+    "mtime": 1780351648.2398353,
+    "ast_hash": "649124c538286e6d80b8dfe578883095",
+    "semantic_hash": "649124c538286e6d80b8dfe578883095"
+  },
+  "/home/karlos/Documents/projects/dw_clean/.claude/agent-memory/dataviz-config-generator/multi-year-enrollment-review.md": {
+    "mtime": 1780408743.9368272,
+    "ast_hash": "8a41be16403bd02695decdb52a6bb5bd",
+    "semantic_hash": "8a41be16403bd02695decdb52a6bb5bd"
+  },
+  "/home/karlos/Documents/projects/dw_clean/.claude/agents/dataviz-config-generator.md": {
+    "mtime": 1780350829.4088452,
+    "ast_hash": "030659bb68e0284174141bba4fad8cb3",
+    "semantic_hash": "030659bb68e0284174141bba4fad8cb3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/PAGE_MANAGEMENT.md": {
+    "mtime": 1770925553.6336842,
+    "ast_hash": "728378d602d32fcaddaf973fc701cf24",
+    "semantic_hash": "728378d602d32fcaddaf973fc701cf24"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/animations.html": {
+    "mtime": 1770419903.0,
+    "ast_hash": "dd29548a93ec8511d38dc7f4c976bcca",
+    "semantic_hash": "dd29548a93ec8511d38dc7f4c976bcca"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/base.html": {
+    "mtime": 1781192562.4793732,
+    "ast_hash": "cc609cf105d826dca0ea7fdc300c1504",
+    "semantic_hash": "cc609cf105d826dca0ea7fdc300c1504"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/dashboard.html": {
+    "mtime": 1775769010.2658384,
+    "ast_hash": "68eba43be2343dc167c1ebb3aead055f",
+    "semantic_hash": "68eba43be2343dc167c1ebb3aead055f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/delete_confirm.html": {
+    "mtime": 1775172568.5001497,
+    "ast_hash": "3a2fed4989e8e50ae5318d8a2e295324",
+    "semantic_hash": "3a2fed4989e8e50ae5318d8a2e295324"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/delete_survey_confirm.html": {
+    "mtime": 1775172568.5003138,
+    "ast_hash": "608a626e440ca6763dbc675832599506",
+    "semantic_hash": "608a626e440ca6763dbc675832599506"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/import_detail.html": {
+    "mtime": 1776089819.9010532,
+    "ast_hash": "336a72908ee74c8cdc0551b3d47a0517",
+    "semantic_hash": "336a72908ee74c8cdc0551b3d47a0517"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/import_progress.html": {
+    "mtime": 1775172568.499713,
+    "ast_hash": "77bf88e61630cf7c81b5fdb716e26b10",
+    "semantic_hash": "77bf88e61630cf7c81b5fdb716e26b10"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/preview.html": {
+    "mtime": 1776089819.902053,
+    "ast_hash": "20bc6d322d41b1d4367764ab34244ceb",
+    "semantic_hash": "20bc6d322d41b1d4367764ab34244ceb"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/survey_detail.html": {
+    "mtime": 1775769010.259179,
+    "ast_hash": "969196bf3ae9e99b5d26e57ab83124b1",
+    "semantic_hash": "969196bf3ae9e99b5d26e57ab83124b1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/survey_list.html": {
+    "mtime": 1775766701.1160946,
+    "ast_hash": "9c24077d386462df77b94d1d5bba6c79",
+    "semantic_hash": "9c24077d386462df77b94d1d5bba6c79"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/toggle_publish_confirm.html": {
+    "mtime": 1775172568.5004747,
+    "ast_hash": "459437e1482d0c9f4c40fdaf9479316b",
+    "semantic_hash": "459437e1482d0c9f4c40fdaf9479316b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/topic_list.html": {
+    "mtime": 1775769010.2658384,
+    "ast_hash": "461f04c13d5dc291a5a3ce446e0062ae",
+    "semantic_hash": "461f04c13d5dc291a5a3ce446e0062ae"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataLoader/upload.html": {
+    "mtime": 1780330617.0151641,
+    "ast_hash": "c233dc1b628605e27baac8b278452ded",
+    "semantic_hash": "c233dc1b628605e27baac8b278452ded"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/manage_default_columns.html": {
+    "mtime": 1779893313.5150828,
+    "ast_hash": "5168e115370d6bed1b8b585c9b9439f6",
+    "semantic_hash": "5168e115370d6bed1b8b585c9b9439f6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/column_structures.html": {
+    "mtime": 1779892809.6614118,
+    "ast_hash": "65534c57138151eec51afe3a051a64ab",
+    "semantic_hash": "65534c57138151eec51afe3a051a64ab"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/create_folder_modal.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "524e739456094f702c55923103671e60",
+    "semantic_hash": "524e739456094f702c55923103671e60"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/folder_browser.html": {
+    "mtime": 1772822600.0,
+    "ast_hash": "0c5fca78f4c46e4c485c6523e552ca9c",
+    "semantic_hash": "0c5fca78f4c46e4c485c6523e552ca9c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/folder_tree_node.html": {
+    "mtime": 1772822600.0,
+    "ast_hash": "9bb1955fb88597c4ecfdc6170e78cbb1",
+    "semantic_hash": "9bb1955fb88597c4ecfdc6170e78cbb1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/manage_default_assessment_tree.html": {
+    "mtime": 1779893664.2710195,
+    "ast_hash": "9fc6214a6b045f0e5af0a8c4c314ccc3",
+    "semantic_hash": "9fc6214a6b045f0e5af0a8c4c314ccc3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/rename_modal.html": {
+    "mtime": 1772822600.0,
+    "ast_hash": "439433861e301a81f85e631531846af8",
+    "semantic_hash": "439433861e301a81f85e631531846af8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/save_list_modal.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "ea35c134f9ea5e83f9f97905a8a87b6a",
+    "semantic_hash": "ea35c134f9ea5e83f9f97905a8a87b6a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/save_query_modal.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "10f880f7889eca5b899b86ec415adc5d",
+    "semantic_hash": "10f880f7889eca5b899b86ec415adc5d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/save_success.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "1285f44ec8d4cc2889e88ebb8ea83f44",
+    "semantic_hash": "1285f44ec8d4cc2889e88ebb8ea83f44"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/share_modal.html": {
+    "mtime": 1772822600.0,
+    "ast_hash": "0194fac57e9fb8735de41f29e5b1b801",
+    "semantic_hash": "0194fac57e9fb8735de41f29e5b1b801"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/student_table.html": {
+    "mtime": 1775758375.443021,
+    "ast_hash": "a13ced613682cef8a6c53660bc53aa1f",
+    "semantic_hash": "a13ced613682cef8a6c53660bc53aa1f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/partials/student_test_summary_content.html": {
+    "mtime": 1772822600.0,
+    "ast_hash": "450588c4f5e9bcdc611a56380dfca27d",
+    "semantic_hash": "450588c4f5e9bcdc611a56380dfca27d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/student_test_summary.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "300258d4c8ed70e4047a2bbd1a0c1c85",
+    "semantic_hash": "300258d4c8ed70e4047a2bbd1a0c1c85"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataexploration/student_with_tests_list.html": {
+    "mtime": 1779893260.1711192,
+    "ast_hash": "7b6a819a8d76682a18aae7b74ffe94ed",
+    "semantic_hash": "7b6a819a8d76682a18aae7b74ffe94ed"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/charts/builder.html": {
+    "mtime": 1781649712.4918952,
+    "ast_hash": "4eb7ddaac6659a1a078c6ee02d1ff249",
+    "semantic_hash": "4eb7ddaac6659a1a078c6ee02d1ff249"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/charts/index.html": {
+    "mtime": 1781126518.2297227,
+    "ast_hash": "6b4ac6d9f6481ef2eeb9eb7241f2d0d8",
+    "semantic_hash": "6b4ac6d9f6481ef2eeb9eb7241f2d0d8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/charts/view.html": {
+    "mtime": 1781126520.2247465,
+    "ast_hash": "1d34b01ea2bce0aa3f1d58eefafe1e17",
+    "semantic_hash": "1d34b01ea2bce0aa3f1d58eefafe1e17"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/dashboards/builder.html": {
+    "mtime": 1781126524.2437942,
+    "ast_hash": "1b195a9ddd30fd6d03f19f3fee84c8d6",
+    "semantic_hash": "1b195a9ddd30fd6d03f19f3fee84c8d6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/dashboards/index.html": {
+    "mtime": 1781126523.5247858,
+    "ast_hash": "cf00f1f878e748a0ca1511c4c32144c1",
+    "semantic_hash": "cf00f1f878e748a0ca1511c4c32144c1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/datasets/builder.html": {
+    "mtime": 1781209527.7189355,
+    "ast_hash": "6f7184fd9a50fb52567eda611d1c0fc8",
+    "semantic_hash": "6f7184fd9a50fb52567eda611d1c0fc8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/datasets/index.html": {
+    "mtime": 1781127342.1232991,
+    "ast_hash": "61b019c27a9498dfa43b47a8f31b9d5d",
+    "semantic_hash": "61b019c27a9498dfa43b47a8f31b9d5d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/datasets/partials/preview_table.html": {
+    "mtime": 1781127275.0785568,
+    "ast_hash": "80f33ed0f1e20c669791b044036ac81e",
+    "semantic_hash": "80f33ed0f1e20c669791b044036ac81e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/drill/table.html": {
+    "mtime": 1781642733.189859,
+    "ast_hash": "bc8380fd1d941c21b856bc44b446e087",
+    "semantic_hash": "bc8380fd1d941c21b856bc44b446e087"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/pages/builder.html": {
+    "mtime": 1781132334.6913314,
+    "ast_hash": "0a4430854c1c56b5e624e559dd652262",
+    "semantic_hash": "0a4430854c1c56b5e624e559dd652262"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/pages/index.html": {
+    "mtime": 1781126521.0417562,
+    "ast_hash": "24d989b125ac24bbff64b3220e762961",
+    "semantic_hash": "24d989b125ac24bbff64b3220e762961"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/pages/view.html": {
+    "mtime": 1781126522.7227762,
+    "ast_hash": "880eb12e2226dac05e0f6930b1de9f82",
+    "semantic_hash": "880eb12e2226dac05e0f6930b1de9f82"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/partials/chart_picker_list.html": {
+    "mtime": 1779832723.7731824,
+    "ast_hash": "a65608d0e28aaef4e1c00ec6cc5f88e5",
+    "semantic_hash": "a65608d0e28aaef4e1c00ec6cc5f88e5"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/partials/chart_picker_tree_recursive.html": {
+    "mtime": 1779832723.7731824,
+    "ast_hash": "607a32a776eb42269ea342286b27a85f",
+    "semantic_hash": "607a32a776eb42269ea342286b27a85f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/partials/chart_preview.html": {
+    "mtime": 1781625462.9119377,
+    "ast_hash": "790a2debc805364b5455358dc0710b29",
+    "semantic_hash": "790a2debc805364b5455358dc0710b29"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/partials/drill_column_selector.html": {
+    "mtime": 1774880762.0800192,
+    "ast_hash": "d1eb05c348387a0743e9f33fed42cb2a",
+    "semantic_hash": "d1eb05c348387a0743e9f33fed42cb2a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/partials/drill_rows.html": {
+    "mtime": 1774880762.0800192,
+    "ast_hash": "c235b29c78f450d030827e921884b3a8",
+    "semantic_hash": "c235b29c78f450d030827e921884b3a8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/partials/error.html": {
+    "mtime": 1781127275.0805569,
+    "ast_hash": "aab6a0767fd617304356a8e171816b16",
+    "semantic_hash": "aab6a0767fd617304356a8e171816b16"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/partials/page_filter_options.html": {
+    "mtime": 1774880762.0800192,
+    "ast_hash": "13df76ffee5b4dee31ec5cfdab2147da",
+    "semantic_hash": "13df76ffee5b4dee31ec5cfdab2147da"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/partials/query_columns.html": {
+    "mtime": 1774880762.0800192,
+    "ast_hash": "0d2cc86a50f2ea093095b155259272b6",
+    "semantic_hash": "0d2cc86a50f2ea093095b155259272b6"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/dataviz/submenu.html": {
+    "mtime": 1781126393.981243,
+    "ast_hash": "d2672d9b071b314a5ba964abbbb28c61",
+    "semantic_hash": "d2672d9b071b314a5ba964abbbb28c61"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/landing.html": {
+    "mtime": 1772822598.0,
+    "ast_hash": "ce5aed50214df27535ecb2da3005739b",
+    "semantic_hash": "ce5aed50214df27535ecb2da3005739b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/landing/project_settings.html": {
+    "mtime": 1781191907.5106325,
+    "ast_hash": "bdcc30c6a32f45b523f5644067d0e222",
+    "semantic_hash": "bdcc30c6a32f45b523f5644067d0e222"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/landing_dashboard.html": {
+    "mtime": 1772822598.0,
+    "ast_hash": "ac6576c0486610c89fc6cb633ccd70c8",
+    "semantic_hash": "ac6576c0486610c89fc6cb633ccd70c8"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/mathr/home.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "0d87da831c9af8f009bf8e19b5224138",
+    "semantic_hash": "0d87da831c9af8f009bf8e19b5224138"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/mathr/partials/completion_table.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "c5c47eb3da1fab05d09d0df457c1301c",
+    "semantic_hash": "c5c47eb3da1fab05d09d0df457c1301c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/mathr/partials/student_detail.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "4be0ed895c369df9571d45225cd1423a",
+    "semantic_hash": "4be0ed895c369df9571d45225cd1423a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/mathr/partials/student_table.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "10edcf178c95162f47b035d23c4428e7",
+    "semantic_hash": "10edcf178c95162f47b035d23c4428e7"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/nextyearlist/partials/column_structures.html": {
+    "mtime": 1779893625.1624484,
+    "ast_hash": "75c764bdd57dd8953c0d743629ba40ac",
+    "semantic_hash": "75c764bdd57dd8953c0d743629ba40ac"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/nextyearlist/partials/folder_browser.html": {
+    "mtime": 1773442468.0,
+    "ast_hash": "e49ea538725dffbcd889d2bb91152e72",
+    "semantic_hash": "e49ea538725dffbcd889d2bb91152e72"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/nextyearlist/partials/folder_tree_node.html": {
+    "mtime": 1773442468.0,
+    "ast_hash": "54a71a10e0d1dac5d4fd6cec6f0e3532",
+    "semantic_hash": "54a71a10e0d1dac5d4fd6cec6f0e3532"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/nextyearlist/partials/save_list_modal.html": {
+    "mtime": 1773442468.0,
+    "ast_hash": "7b08c082ad43ae0b79aadc73af343271",
+    "semantic_hash": "7b08c082ad43ae0b79aadc73af343271"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/nextyearlist/partials/save_query_modal.html": {
+    "mtime": 1773442468.0,
+    "ast_hash": "3ddd95ad031243acf929f0b7e05e0f8b",
+    "semantic_hash": "3ddd95ad031243acf929f0b7e05e0f8b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/nextyearlist/partials/save_success.html": {
+    "mtime": 1773442468.0,
+    "ast_hash": "1285f44ec8d4cc2889e88ebb8ea83f44",
+    "semantic_hash": "1285f44ec8d4cc2889e88ebb8ea83f44"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/nextyearlist/partials/student_table.html": {
+    "mtime": 1773442468.0,
+    "ast_hash": "1f4b9bb892492eb53fbc2af6111a466e",
+    "semantic_hash": "1f4b9bb892492eb53fbc2af6111a466e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/nextyearlist/student_list.html": {
+    "mtime": 1773442468.0,
+    "ast_hash": "1837391b69f0736b088de674500f8eba",
+    "semantic_hash": "1837391b69f0736b088de674500f8eba"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/manage_classrooms.html": {
+    "mtime": 1780330621.0728478,
+    "ast_hash": "b37177338736544aa1cadcffc39ece4d",
+    "semantic_hash": "b37177338736544aa1cadcffc39ece4d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/manage_questions.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "8f9cb90b382601804348cc246226c6bc",
+    "semantic_hash": "8f9cb90b382601804348cc246226c6bc"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/manage_tags.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "1a843ff383b1b29791fd1d3b2d08667f",
+    "semantic_hash": "1a843ff383b1b29791fd1d3b2d08667f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/classroom_form.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "c8bc5d3dcf0b059b02d58db28387c2a0",
+    "semantic_hash": "c8bc5d3dcf0b059b02d58db28387c2a0"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/classroom_list.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "7de9fd274dab1f342954a35b34eadeb4",
+    "semantic_hash": "7de9fd274dab1f342954a35b34eadeb4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/classroom_stats.html": {
+    "mtime": 1777583591.365834,
+    "ast_hash": "2e21a5cb7eb9921ff9ce38c08299f1c5",
+    "semantic_hash": "2e21a5cb7eb9921ff9ce38c08299f1c5"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/placement_card_form.html": {
+    "mtime": 1777581847.9921846,
+    "ast_hash": "df4d158f02c96c5bfa06d75580f8a729",
+    "semantic_hash": "df4d158f02c96c5bfa06d75580f8a729"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/placement_filter_hidden_fields.html": {
+    "mtime": 1777583591.3619318,
+    "ast_hash": "8c05a072ff6826c5756f6b4cef2376a9",
+    "semantic_hash": "8c05a072ff6826c5756f6b4cef2376a9"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/placement_workspace.html": {
+    "mtime": 1777583220.8654914,
+    "ast_hash": "40c143ce4bdb216395ec427c96f397f5",
+    "semantic_hash": "40c143ce4bdb216395ec427c96f397f5"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/question_form.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "1f3855b905b83d10638a8f30e30961fd",
+    "semantic_hash": "1f3855b905b83d10638a8f30e30961fd"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/question_list.html": {
+    "mtime": 1777578960.478267,
+    "ast_hash": "206ae496cd83294c99ab2d133bdff24c",
+    "semantic_hash": "206ae496cd83294c99ab2d133bdff24c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/questions_panel.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "750169b8254162e2860094ccfb5af8f4",
+    "semantic_hash": "750169b8254162e2860094ccfb5af8f4"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/student_card_readonly_overlay.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "397c65a25d6cf1f6fb20f37088f6892f",
+    "semantic_hash": "397c65a25d6cf1f6fb20f37088f6892f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/student_table.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "5dffa77356d55c16ec23a7ea6ebec06d",
+    "semantic_hash": "5dffa77356d55c16ec23a7ea6ebec06d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/students_list.html": {
+    "mtime": 1777582541.1888685,
+    "ast_hash": "00e47eadb8ecee9c95b91f4867c969b0",
+    "semantic_hash": "00e47eadb8ecee9c95b91f4867c969b0"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/tag_badge.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "0ff997430a432d8fddc431eba0675c10",
+    "semantic_hash": "0ff997430a432d8fddc431eba0675c10"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/tag_form.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "c5f4c2f4a5ee0a44d1bbaac9c686689f",
+    "semantic_hash": "c5f4c2f4a5ee0a44d1bbaac9c686689f"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/partials/tags_table.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "eb667ed67061ec8f72ee8e7cb59dac91",
+    "semantic_hash": "eb667ed67061ec8f72ee8e7cb59dac91"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/place_students.html": {
+    "mtime": 1780330629.875331,
+    "ast_hash": "fbb50c17e9dcda04c1531234b181e6f1",
+    "semantic_hash": "fbb50c17e9dcda04c1531234b181e6f1"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/placement_configuration.html": {
+    "mtime": 1780330625.1435337,
+    "ast_hash": "84f3ca83f2e063a921199834dc4d20cc",
+    "semantic_hash": "84f3ca83f2e063a921199834dc4d20cc"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/print_cards.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "1df6c6f5e64a99422a43cebe0b9dc0f3",
+    "semantic_hash": "1df6c6f5e64a99422a43cebe0b9dc0f3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/placementcards/teacher_notes.html": {
+    "mtime": 1780330633.803993,
+    "ast_hash": "eee469793185b8532654e805f9850382",
+    "semantic_hash": "eee469793185b8532654e805f9850382"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/_user_table.html": {
+    "mtime": 1772822598.0,
+    "ast_hash": "095f79dd599ba3fe40432bc994394696",
+    "semantic_hash": "095f79dd599ba3fe40432bc994394696"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/manage_default_columns.html": {
+    "mtime": 1779893317.7077873,
+    "ast_hash": "459c48e4dccf99a6749fdda118db1f8c",
+    "semantic_hash": "459c48e4dccf99a6749fdda118db1f8c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/manage_pages.html": {
+    "mtime": 1779832723.774744,
+    "ast_hash": "6455bf9d4a8a30f8b9095aea144aecc2",
+    "semantic_hash": "6455bf9d4a8a30f8b9095aea144aecc2"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/column_structures.html": {
+    "mtime": 1779893628.2029593,
+    "ast_hash": "75c764bdd57dd8953c0d743629ba40ac",
+    "semantic_hash": "75c764bdd57dd8953c0d743629ba40ac"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/create_folder_modal.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "40b3c023a9af7701689fd30543c2ee9a",
+    "semantic_hash": "40b3c023a9af7701689fd30543c2ee9a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/folder_browser.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "362548d29c625fe0ea66e5c742dd2644",
+    "semantic_hash": "362548d29c625fe0ea66e5c742dd2644"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/manage_default_assessment_tree.html": {
+    "mtime": 1779893635.160128,
+    "ast_hash": "9fc6214a6b045f0e5af0a8c4c314ccc3",
+    "semantic_hash": "9fc6214a6b045f0e5af0a8c4c314ccc3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/rename_modal.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "47e52c8c5d3770e9ba234fd8de98442c",
+    "semantic_hash": "47e52c8c5d3770e9ba234fd8de98442c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/save_list_modal.html": {
+    "mtime": 1772822598.0,
+    "ast_hash": "ea35c134f9ea5e83f9f97905a8a87b6a",
+    "semantic_hash": "ea35c134f9ea5e83f9f97905a8a87b6a"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/save_query_modal.html": {
+    "mtime": 1772822598.0,
+    "ast_hash": "72a1be5afbef3e734cdc3df6b27a431b",
+    "semantic_hash": "72a1be5afbef3e734cdc3df6b27a431b"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/save_success.html": {
+    "mtime": 1772822598.0,
+    "ast_hash": "1285f44ec8d4cc2889e88ebb8ea83f44",
+    "semantic_hash": "1285f44ec8d4cc2889e88ebb8ea83f44"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/share_modal.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "47102207572c96eeaacb186f662ac5e2",
+    "semantic_hash": "47102207572c96eeaacb186f662ac5e2"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/student_table.html": {
+    "mtime": 1772822598.0,
+    "ast_hash": "1f4b9bb892492eb53fbc2af6111a466e",
+    "semantic_hash": "1f4b9bb892492eb53fbc2af6111a466e"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/partials/student_test_summary_content.html": {
+    "mtime": 1772822599.0,
+    "ast_hash": "450588c4f5e9bcdc611a56380dfca27d",
+    "semantic_hash": "450588c4f5e9bcdc611a56380dfca27d"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/usage.html": {
+    "mtime": 1777578960.479137,
+    "ast_hash": "2cfbfd589c537cfdf4152139987542d3",
+    "semantic_hash": "2cfbfd589c537cfdf4152139987542d3"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/user_detail.html": {
+    "mtime": 1777578960.4801369,
+    "ast_hash": "521dfc1c3769c60ee48f43f2ed75096c",
+    "semantic_hash": "521dfc1c3769c60ee48f43f2ed75096c"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/user_detail_modal.html": {
+    "mtime": 1777578960.4801369,
+    "ast_hash": "0e2f6d97d190aaaa0f493bb2a8dbb6a5",
+    "semantic_hash": "0e2f6d97d190aaaa0f493bb2a8dbb6a5"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/users/user_list.html": {
+    "mtime": 1772822598.0,
+    "ast_hash": "adb89503cdc14e7e6f81699fd6bf0bf9",
+    "semantic_hash": "adb89503cdc14e7e6f81699fd6bf0bf9"
+  },
+  "/home/karlos/Documents/projects/dw_clean/docker-compose.yml": {
+    "mtime": 1770925553.6496844,
+    "ast_hash": "58c7b524ff36578cad0270fcc05fb5e0",
+    "semantic_hash": "58c7b524ff36578cad0270fcc05fb5e0"
+  },
+  "/home/karlos/Documents/projects/dw_clean/instructions.md": {
+    "mtime": 1770925553.6496844,
+    "ast_hash": "e92eacecb6418b8c4f3dae37588251df",
+    "semantic_hash": "e92eacecb6418b8c4f3dae37588251df"
+  },
+  "/home/karlos/Documents/projects/dw_clean/requirements.txt": {
+    "mtime": 1774880762.0806923,
+    "ast_hash": "193eeb99324c37ce8f552388075be607",
+    "semantic_hash": "193eeb99324c37ce8f552388075be607"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/images/logo.svg": {
+    "mtime": 1772822599.0,
+    "ast_hash": "055fb57d0d175f2e6e0ee21c77fb3465",
+    "semantic_hash": "055fb57d0d175f2e6e0ee21c77fb3465"
+  },
+  "/home/karlos/Documents/projects/dw_clean/django_pro/templates/static/images/logo_old.svg": {
+    "mtime": 1772822599.0,
+    "ast_hash": "2ac2a2082ab8b6e2c8ccf51bef57e546",
+    "semantic_hash": "2ac2a2082ab8b6e2c8ccf51bef57e546"
+  }
+}

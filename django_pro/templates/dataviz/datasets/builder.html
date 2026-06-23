@@ -3,17 +3,13 @@
 
 {% block extra_head %}
 <style>
-    /* Dotted visual grid background for the visual canvas */
     .canvas-grid {
         background-color: #fafbfd;
         background-image: radial-gradient(#cbd5e1 1.2px, transparent 1.2px);
         background-size: 20px 20px;
     }
-    
     @keyframes flow-dash {
-        to {
-            stroke-dashoffset: -20;
-        }
+        to { stroke-dashoffset: -20; }
     }
     .flow-connector {
         stroke-dasharray: 6 4;
@@ -23,6 +19,7 @@
 {% endblock %}
 
 {% block content %}
+{% include "dataviz/submenu.html" %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" x-data="datasetBuilder()">
     <!-- Header -->
     <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-6">
@@ -30,12 +27,21 @@
             <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">
                 {% if dataset %}Edit Dataset: {{ dataset.name }}{% else %}Visual Dataset Designer{% endif %}
             </h1>
-            <p class="mt-1 text-sm text-slate-500">Drag tables onto the canvas. Drag key columns (🔑) to connect tables and establish joins.</p>
+        
         </div>
         <div class="mt-4 sm:mt-0 flex space-x-3">
-            <a href="{% url 'dataviz:dataset_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition">
+            <a href="{% url 'dataviz:dataset_index' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition">
                 Cancel
             </a>
+            <button @click="aliasPanelOpen = true"
+                    :disabled="columns.length === 0"
+                    class="inline-flex items-center px-4 py-2 border border-slate-400 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 focus:outline-none transition disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg class="h-4 w-4 mr-1.5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+                Column Aliases
+                <template x-if="mappedCount > 0">
+                    <span class="ml-1.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full" x-text="mappedCount"></span>
+                </template>
+            </button>
             <button @click="saveDataset()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none transition">
                 Save Dataset
             </button>
@@ -541,7 +547,171 @@
 {{ dataset.joins|json_script:"joins-data" }}
 {{ dataset.filters|json_script:"filters-data" }}
 {{ dataset.columns|json_script:"columns-data" }}
+{{ dataset.column_mappings|json_script:"mappings-data" }}
 {% endif %}
+
+<!-- ── Column Alias Mapper Panel ─────────────────────────────────────────── -->
+
+<!-- Backdrop -->
+<div x-show="aliasPanelOpen"
+     @click="aliasPanelOpen = false"
+     class="fixed inset-0 bg-slate-900/40 z-40 backdrop-blur-sm"
+     style="display:none"
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0"></div>
+
+<!-- Slide-out Panel -->
+<div x-show="aliasPanelOpen"
+     @keydown.escape.window="aliasPanelOpen = false"
+     class="fixed top-0 right-0 h-full w-full sm:w-[520px] bg-white shadow-2xl z-50 flex flex-col border-l border-slate-200"
+     style="display:none"
+     x-transition:enter="transition ease-out duration-250"
+     x-transition:enter-start="translate-x-full"
+     x-transition:enter-end="translate-x-0"
+     x-transition:leave="transition ease-in duration-200"
+     x-transition:leave-start="translate-x-0"
+     x-transition:leave-end="translate-x-full">
+
+    <!-- Panel Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
+        <div class="flex items-center space-x-2">
+            <svg class="h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+            <h2 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Column Alias Mapper</h2>
+        </div>
+        <button @click="aliasPanelOpen = false" class="text-slate-400 hover:text-slate-600 transition">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+    </div>
+
+    <!-- Panel Description + actions -->
+    <div class="px-6 py-3 border-b border-slate-100 bg-white shrink-0 space-y-3">
+        <p class="text-xs text-slate-500 leading-relaxed">
+            Give each dataset column a clean alias used in charts and drill-through tables.
+            Link to a <span class="font-semibold text-slate-700">Data Explorer column</span> so filters flow automatically,
+            or type a <span class="font-semibold text-slate-700">custom alias</span>.
+        </p>
+        <div class="flex items-center space-x-3">
+            <button @click="autoFillAliases()"
+                    class="flex items-center text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-wider transition">
+                <svg class="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                Auto-fill Empty
+            </button>
+            <span class="text-slate-300">|</span>
+            <button @click="fillAllAliases()"
+                    class="flex items-center text-xs font-bold text-slate-500 hover:text-slate-700 uppercase tracking-wider transition">
+                <svg class="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                Reset All
+            </button>
+            <span class="text-slate-300">|</span>
+            <button @click="clearAllAliases()"
+                    class="flex items-center text-xs font-bold text-red-500 hover:text-red-700 uppercase tracking-wider transition">
+                <svg class="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                Clear All
+            </button>
+        </div>
+    </div>
+
+    <!-- Column count badge -->
+    <div class="px-6 py-2 border-b border-slate-100 bg-slate-50/50 shrink-0">
+        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider"
+              x-text="columns.length + ' column' + (columns.length !== 1 ? 's' : '') + ' selected'"></span>
+    </div>
+
+    <!-- Rows (scrollable) -->
+    <div class="flex-1 overflow-y-auto divide-y divide-slate-100">
+        <template x-if="columns.length === 0">
+            <div class="px-6 py-16 text-center text-xs text-slate-400">
+                No columns selected yet. Check columns on the canvas first.
+            </div>
+        </template>
+
+        <template x-for="col in columns" :key="col">
+            <div class="px-6 py-4 hover:bg-slate-50/60 transition">
+                <!-- Source column label -->
+                <div class="flex items-start mb-2.5">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                            <span class="inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold bg-slate-100 text-slate-500 border border-slate-200 font-mono uppercase tracking-wide"
+                                  x-text="formatDsColDisplay(col).table"></span>
+                            <span class="text-[11px] font-mono font-semibold text-slate-700 truncate"
+                                  x-text="formatDsColDisplay(col).col"
+                                  :title="col"></span>
+                        </div>
+                        <!-- Show auto-generated preview when alias is empty -->
+                        <template x-if="!columnMappings[col]">
+                            <p class="mt-1 text-[10px] text-slate-400">
+                                Auto: <span class="font-mono text-slate-500" x-text="computeAutoAliasFor(col)"></span>
+                            </p>
+                        </template>
+                    </div>
+                    <!-- Clear this alias -->
+                    <template x-if="columnMappings[col]">
+                        <button @click="clearAlias(col)"
+                                class="ml-2 text-slate-300 hover:text-red-400 transition shrink-0"
+                                title="Clear alias — use auto-generated">
+                            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                    </template>
+                </div>
+
+                <!-- Alias controls: two columns -->
+                <div class="flex items-center space-x-2">
+                    <!-- Custom alias text field -->
+                    <div class="flex-1">
+                        <label class="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Alias / Custom Name</label>
+                        <input type="text"
+                               :value="columnMappings[col] || ''"
+                               @input="setAlias(col, $event.target.value)"
+                               :placeholder="computeAutoAliasFor(col)"
+                               class="w-full border border-slate-300 bg-white text-xs font-mono py-1.5 px-2.5 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 outline-none transition placeholder-slate-300"
+                               :class="columnMappings[col] ? 'border-indigo-300 text-indigo-700 bg-indigo-50/30' : ''">
+                    </div>
+
+                    <!-- Explorer column picker -->
+                    <div class="shrink-0 w-40">
+                        <label class="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Link Explorer Col</label>
+                        <select @change="linkExplorerCol(col, $event.target.value); $event.target.value = ''"
+                                class="w-full border border-slate-300 bg-white text-[11px] py-1.5 px-1.5 focus:border-indigo-400 outline-none transition text-slate-500">
+                            <option value="">— Link to Explorer —</option>
+                            <template x-for="grp in explorerGroups" :key="grp.title">
+                                <optgroup :label="grp.title">
+                                    <template x-for="ec in grp.columns" :key="ec.key">
+                                        <option :value="ec.key" x-text="ec.label + ' (' + ec.key + ')'"></option>
+                                    </template>
+                                </optgroup>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Active link badge -->
+                <template x-if="columnMappings[col] && isExplorerCol(columnMappings[col])">
+                    <div class="mt-1.5">
+                        <span class="inline-flex items-center text-[9px] font-bold px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200">
+                            <svg class="h-2.5 w-2.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                            Linked → Explorer: <span class="ml-1 font-mono" x-text="columnMappings[col]"></span>
+                        </span>
+                    </div>
+                </template>
+            </div>
+        </template>
+    </div>
+
+    <!-- Panel Footer -->
+    <div class="px-6 py-4 border-t border-slate-200 bg-slate-50 shrink-0 flex items-center justify-between">
+        <p class="text-[10px] text-slate-400">
+            <span x-text="mappedCount"></span> of <span x-text="columns.length"></span> columns have custom aliases.
+        </p>
+        <button @click="aliasPanelOpen = false"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider transition rounded-none">
+            Done
+        </button>
+    </div>
+</div>
 
 <script>
     function datasetBuilder() {
@@ -554,22 +724,27 @@
             joins: [],
             filters: [],
             columns: [],
-            
+
+            // Column alias state
+            columnMappings: {},      // { 'table.col': 'alias' }
+            aliasPanelOpen: false,
+            explorerGroups: {{ explorer_groups_json|safe }},
+
             // Canvas state variables
             nodes: [],
             draggingNode: null,
             dragOffset: { x: 0, y: 0 },
-            
+
             // Pan & Zoom state variables
             pan: { x: 0, y: 0 },
             zoom: 1,
             isPanning: false,
             panStart: { x: 0, y: 0 },
-            
+
             // Join linking state variables
             joinLinkActive: false,
             joinSourceNode: null,
-            
+
             // Modal config variables
             joinModalOpen: false,
             editingJoinIndex: null,
@@ -577,25 +752,25 @@
             joiningTargetNode: null,
             modalJoin: {
                 join_type: 'left',
-                conditions: [
-                    {
-                        on_left: '',
-                        on_right: ''
-                    }
-                ]
+                conditions: [{ on_left: '', on_right: '' }]
             },
             uniqueValuesCache: {},
-            
+
             // Preview & tabs
             previewTab: 'data',
             previewLoading: false,
             errorMessage: '',
             compiledSQL: '',
-            
+
             // Metadata whitelists
             schema: {{ schema_json|safe }},
             tablesList: {{ tables|safe }},
-            
+
+            // Computed: how many columns have a user-set alias
+            get mappedCount() {
+                return Object.keys(this.columnMappings).filter(k => this.columns.includes(k) && this.columnMappings[k]).length;
+            },
+
             init() {
                 // Initialize lists from backend scripts if editing
                 if (document.getElementById('joins-data')) {
@@ -606,6 +781,9 @@
                 }
                 if (document.getElementById('columns-data')) {
                     this.columns = JSON.parse(document.getElementById('columns-data').textContent);
+                }
+                if (document.getElementById('mappings-data')) {
+                    this.columnMappings = JSON.parse(document.getElementById('mappings-data').textContent) || {};
                 }
                 
                 // Normalize loaded joins to include the new conditions array
@@ -653,6 +831,16 @@
                 const keySuffixes = ['_id', '_key', 'ssid', 'student_id', 'state_id', 'dw_schoolkey'];
                 const name = col.toLowerCase();
                 return keySuffixes.some(s => name === s || name.endsWith(s));
+            },
+            
+            formatColExpr(tbl, col) {
+                if (col.includes('->')) {
+                    const parts = col.split('->');
+                    const baseCol = parts[0];
+                    const key = parts[1].replace(/['"]/g, '');
+                    return `"${tbl}"."${baseCol}"->>'${key}'`;
+                }
+                return `"${tbl}"."${col}"`;
             },
             
             getSortedColumns(tableName) {
@@ -1270,7 +1458,7 @@
                     columns: this.columns
                 };
                 
-                fetch("{% url 'dataviz:api_dataset_preview' %}", {
+                fetch("{% url 'dataviz:dataset_preview' %}", {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1285,7 +1473,13 @@
                     const selectKeyword = this.distinct ? 'SELECT DISTINCT' : 'SELECT';
                     const joinsSQL = this.joins.map(j => {
                         const conditions = j.conditions && j.conditions.length > 0 ? j.conditions : [{on_left: j.on_left, on_right: j.on_right}];
-                        const condSQL = conditions.map(c => `"${c.on_left.split('.')[0]}"."${c.on_left.split('.')[1]}" = "${c.on_right.split('.')[0]}"."${c.on_right.split('.')[1]}"`).join(' AND ');
+                        const condSQL = conditions.map(c => {
+                            const leftTbl = c.on_left.split('.')[0];
+                            const leftCol = c.on_left.split('.')[1];
+                            const rightTbl = c.on_right.split('.')[0];
+                            const rightCol = c.on_right.split('.')[1];
+                            return `${this.formatColExpr(leftTbl, leftCol)} = ${this.formatColExpr(rightTbl, rightCol)}`;
+                        }).join(' AND ');
                         return `\n${j.join_type.toUpperCase()} JOIN "${j.table}" ON ${condSQL}`;
                     }).join('');
                     
@@ -1293,32 +1487,33 @@
                     const filtersSQL = activeFilters.length > 0 ? `\nWHERE\n  ` + activeFilters.map(f => {
                         const tbl = f.column.split('.')[0];
                         const col = f.column.split('.')[1];
+                        const expr = this.formatColExpr(tbl, col);
                         if (f.operator === 'in') {
                             if (Array.isArray(f.value) && f.value.length > 0) {
                                 const escapedVals = f.value.map(v => `'${String(v).replace(/'/g, "''")}'`).join(', ');
-                                return `"${tbl}"."${col}" IN (${escapedVals})`;
+                                return `${expr} IN (${escapedVals})`;
                             } else {
                                 return "1=0";
                             }
                         } else {
                             const escapedVal = String(f.value || '').replace(/'/g, "''");
                             if (f.operator === 'icontains') {
-                                return `"${tbl}"."${col}" ILIKE '%${escapedVal}%'`;
+                                return `${expr} ILIKE '%${escapedVal}%'`;
                             } else if (f.operator === 'exact') {
-                                return `"${tbl}"."${col}" = '${escapedVal}'`;
+                                return `${expr} = '${escapedVal}'`;
                             } else if (f.operator === 'gt') {
-                                return `"${tbl}"."${col}" > '${escapedVal}'`;
+                                return `${expr} > '${escapedVal}'`;
                             } else { // 'lt'
-                                return `"${tbl}"."${col}" < '${escapedVal}'`;
+                                return `${expr} < '${escapedVal}'`;
                             }
                         }
                     }).join(' AND ') : '';
 
-                    this.compiledSQL = `${selectKeyword}\n  ` + this.columns.map(c => `"${c.split('.')[0]}"."${c.split('.')[1]}" AS "${c}"`).join(',\n  ') +
+                    this.compiledSQL = `${selectKeyword}\n  ` + this.columns.map(c => `${this.formatColExpr(c.split('.')[0], c.split('.')[1])} AS "${c}"`).join(',\n  ') +
                                        `\nFROM\n  "${this.baseTable}"` +
                                        joinsSQL +
                                        filtersSQL +
-                                       `\nLIMIT 50000;`;
+                                       `\nLIMIT 150000;`;
                 })
                 .catch(err => {
                     console.error(err);
@@ -1329,6 +1524,101 @@
                 });
             },
             
+            // ── Alias Panel Helpers ──────────────────────────────────────────
+
+            // Natural alias for a single column (mirrors server-side generate_column_aliases)
+            computeNaturalAlias(dsCol) {
+                if (!dsCol.includes('.')) return dsCol;
+                const dotIdx = dsCol.indexOf('.');
+                const col = dsCol.slice(dotIdx + 1);
+                if (col.includes('->')) {
+                    return col.split('->')[1].replace(/['"]/g, '').trim();
+                }
+                return col;
+            },
+
+            // Alias for a single column accounting for collisions across the full column list
+            computeAutoAliasFor(dsCol) {
+                const aliases = this._computeAutoAliasMap();
+                return aliases[dsCol] || this.computeNaturalAlias(dsCol);
+            },
+
+            _computeAutoAliasMap() {
+                const natural = {};
+                const counts = {};
+                for (const col of this.columns) {
+                    const alias = this.computeNaturalAlias(col);
+                    natural[col] = alias;
+                    counts[alias] = (counts[alias] || 0) + 1;
+                }
+                const result = {};
+                for (const [col, alias] of Object.entries(natural)) {
+                    if (counts[alias] > 1) {
+                        const tbl = col.split('.')[0];
+                        result[col] = `${tbl}_${alias}`;
+                    } else {
+                        result[col] = alias;
+                    }
+                }
+                return result;
+            },
+
+            // Decompose "table.column" into { table, col }
+            formatDsColDisplay(dsCol) {
+                if (!dsCol.includes('.')) return { table: '', col: dsCol };
+                const dotIdx = dsCol.indexOf('.');
+                return { table: dsCol.slice(0, dotIdx), col: dsCol.slice(dotIdx + 1) };
+            },
+
+            setAlias(col, alias) {
+                const trimmed = alias.trim();
+                if (trimmed) {
+                    this.columnMappings = { ...this.columnMappings, [col]: trimmed };
+                } else {
+                    this.clearAlias(col);
+                }
+            },
+
+            clearAlias(col) {
+                const m = { ...this.columnMappings };
+                delete m[col];
+                this.columnMappings = m;
+            },
+
+            clearAllAliases() {
+                if (confirm('Remove all column aliases?')) {
+                    this.columnMappings = {};
+                }
+            },
+
+            // Fill empty slots only
+            autoFillAliases() {
+                const auto = this._computeAutoAliasMap();
+                const updated = { ...this.columnMappings };
+                for (const [col, alias] of Object.entries(auto)) {
+                    if (!updated[col]) updated[col] = alias;
+                }
+                this.columnMappings = updated;
+            },
+
+            // Override everything with auto-generated aliases
+            fillAllAliases() {
+                this.columnMappings = this._computeAutoAliasMap();
+            },
+
+            // Link this column's alias to an explorer column key
+            linkExplorerCol(col, explorerKey) {
+                if (!explorerKey) return;
+                this.columnMappings = { ...this.columnMappings, [col]: explorerKey };
+            },
+
+            // Check whether an alias matches a known explorer column key
+            isExplorerCol(alias) {
+                return this.explorerGroups.some(g => g.columns.some(c => c.key === alias));
+            },
+
+            // ── Save ─────────────────────────────────────────────────────────
+
             saveDataset() {
                 if (!this.name) {
                     this.errorMessage = "Please specify a Dataset Name.";
@@ -1340,7 +1630,13 @@
                     window.scrollTo({top: 0, behavior: 'smooth'});
                     return;
                 }
-                
+
+                // Only send mappings for columns actually in the current column list
+                const activeMappings = {};
+                for (const col of this.columns) {
+                    if (this.columnMappings[col]) activeMappings[col] = this.columnMappings[col];
+                }
+
                 const payload = {
                     name: this.name,
                     description: this.description,
@@ -1348,10 +1644,11 @@
                     distinct: this.distinct,
                     joins: this.joins,
                     filters: this.filters,
-                    columns: this.columns
+                    columns: this.columns,
+                    column_mappings: activeMappings,
                 };
                 
-                const url = "{% if dataset %}{% url 'dataviz:dataset_save_id' dataset.pk %}{% else %}{% url 'dataviz:dataset_save' %}{% endif %}";
+                const url = "{% if dataset %}{% url 'dataviz:dataset_detail' dataset.pk %}{% else %}{% url 'dataviz:dataset_save' %}{% endif %}";
                 
                 fetch(url, {
                     method: 'POST',
@@ -1364,7 +1661,7 @@
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
-                        window.location.href = "{% url 'dataviz:dataset_list' %}";
+                        window.location.href = "{% url 'dataviz:dataset_index' %}";
                     } else {
                         this.errorMessage = data.error;
                         window.scrollTo({top: 0, behavior: 'smooth'});

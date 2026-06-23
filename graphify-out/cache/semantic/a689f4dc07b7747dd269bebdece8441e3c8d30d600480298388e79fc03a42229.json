@@ -1,0 +1,1 @@
+{"nodes": [{"id": "partials_query_columns", "label": "Query Columns Result Display Partial", "file_type": "code", "source_file": "django_pro/templates/dataviz/partials/query_columns.html", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

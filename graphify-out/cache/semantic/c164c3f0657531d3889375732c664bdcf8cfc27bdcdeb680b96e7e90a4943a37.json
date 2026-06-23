@@ -1,0 +1,1 @@
+{"nodes": [{"id": "partials_preview_table", "label": "Dataset SQL Preview Table Partial", "file_type": "code", "source_file": "django_pro/templates/dataviz/datasets/partials/preview_table.html", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

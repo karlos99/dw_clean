@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ chart.name }} – DataViz{% endblock %}
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+{% endblock %}
+
+{% block content %}
+{% include "dataviz/submenu.html" %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <a href="{% url 'dataviz:index' %}" class="text-blue-600 hover:underline text-sm">&larr; Charts</a>
+      <h1 class="text-2xl font-bold text-slate-800 mt-1">{{ chart.name }}</h1>
+      {% if chart.description %}
+      <p class="text-sm text-slate-500 mt-1">{{ chart.description }}</p>
+      {% endif %}
+    </div>
+    <div class="flex gap-2">
+      <a href="{% url 'dataviz:chart_edit' chart.id %}"
+         class="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
+        Edit
+      </a>
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden p-4">
+    <div class="min-h-[500px]"
+         hx-get="{% url 'dataviz:chart_render' chart.id %}?source=chart_view&source_id={{ chart.id }}&source_name={{ chart.name|urlencode }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div class="flex items-center justify-center h-[500px] text-slate-300 text-sm">Loading chart…</div>
+    </div>
+  </div>
+
+  <p class="text-xs text-slate-400 mt-3 text-center">Click on any data element (bar, point, slice) to drill through to the underlying data.</p>
+
+</div>
+
+<script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
+{% endblock %}

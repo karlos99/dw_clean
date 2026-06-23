@@ -1,1 +1,1 @@
-# Dataviz package init
+# dataviz package

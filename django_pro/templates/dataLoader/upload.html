@@ -49,7 +49,7 @@
                             class="w-full px-4 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200">
                         <option value="">Select school year...</option>
                         {% for value, label in school_year_choices %}
-                        <option value="{{ value }}" {% if value == "2025-2026" %}selected{% endif %}>{{ label }}</option>
+                        <option value="{{ value }}" {% if value == default_school_year %}selected{% endif %}>{{ label }}</option>
                         {% endfor %}
                     </select>
                 </div>

@@ -181,7 +181,19 @@ def teacher_notes_page(request: HttpRequest):
 
     is_school_admin = _is_school_admin(request.user)
     students_base = get_accessible_students(request)
-    school_year = request.GET.get('school_year') or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
+
+    project_default_year = None
+    try:
+        from landing.utils import get_project_config
+        project_default_year = get_project_config().default_school_year
+    except Exception:
+        pass
+
+    school_year = request.GET.get('school_year') or project_default_year or students_base.values_list('school_year', flat=True).order_by('-school_year').first()
+
+    available_years = sorted(list(set(students_base.values_list('school_year', flat=True).distinct())), reverse=True)
+    if project_default_year and project_default_year not in available_years:
+        available_years.insert(0, project_default_year)
     students = get_accessible_students(request, school_year=school_year)
 
     selected_homeroom_teachers = [value.strip() for value in request.GET.getlist('homeroom_teacher') if value.strip()]
@@ -227,6 +239,7 @@ def teacher_notes_page(request: HttpRequest):
         'is_school_admin': is_school_admin,
         'homeroom_teachers': homeroom_teachers,
         'selected_homeroom_teachers': selected_homeroom_teachers,
+        'available_years': available_years,
     }
 
     if request.headers.get('HX-Request') == 'true':

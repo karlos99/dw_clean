@@ -58,7 +58,30 @@ def export_students_csv(request):
     
     # Get filters - URL params take precedence over saved config
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
-    school_year = request.GET.get('school_year', '') or saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+    
+    _project_default_year = ''
+    try:
+        from landing.utils import get_project_config
+        _cfg = get_project_config()
+        _project_default_year = _cfg.default_school_year or ''
+    except Exception:
+        pass
+
+    _sy_in_export_url = 'school_year' in request.GET
+    if _sy_in_export_url:
+        school_year = request.GET.get('school_year', '')
+    elif _project_default_year:
+        school_year = _project_default_year
+    else:
+        school_year = saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+
+    # Resolve school-year aliases (e.g. '__sy_this__') to concrete year strings
+    try:
+        from dataexploration.school_year_utils import resolve_school_year
+        if school_year:
+            school_year = resolve_school_year(school_year)
+    except Exception:
+        pass
     grade = request.GET.get('grade', '') or saved_filters.get('grade', '') or saved_config.get('grade', '')
     
     status_param = request.GET.get('status')
@@ -129,7 +152,7 @@ def export_students_csv(request):
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     
                     val_params = list(exist_params_base)
-                    if metric_col == 'oi':
+                    if metric_col == 'oi' or metric_col == 'dfp':
                          val_params.append(test_info['other_info_key'])
                     val_params.append(real_values)
                     
@@ -282,7 +305,7 @@ def export_students_csv(request):
                             win_norm = _norm_part(test_window).strip('_')
                             key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
                             
-                            for metric in ('ss', 'pl'):
+                            for metric in ('ss', 'pl', 'dfp'):
                                 norm_key = f"test_{key_base}_{metric.upper()}"
                                 original_key = normalized_to_original.get(norm_key)
                                 if original_key:
@@ -290,6 +313,8 @@ def export_students_csv(request):
                                         'col_name': original_key, 'year': yr, 'test_name': (test_name or ''), 
                                         'subject': (subject or ''), 'test_window': (test_window or '').strip() or None, 'metric': metric
                                     }
+                                    if metric == 'dfp':
+                                        info['other_info_key'] = 'dfp'
                                     test_cols_info.append(info)
                                     test_col_map[original_key] = info
                                     test_col_map[original_key.replace('-', '_')] = info
@@ -416,7 +441,7 @@ def export_students_csv(request):
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
                 if test_cols_info:
                     for info in test_cols_info:
-                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
+                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
                         metric_label = metric_map.get(info['metric'], info['metric'])
                         
                         display_test = _get_display_name(info['test_name'])

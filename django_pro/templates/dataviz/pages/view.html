@@ -1,360 +1,583 @@
-{% extends 'base.html' %}
-{% block title %}{{ page.title }} - Reports Dashboard - DS Data{% endblock %}
+{% extends "base.html" %}
+{% load static %}
+{% load dataviz_tags %}
+
+{% block title %}{{ page.title }} – DataViz{% endblock %}
 
 {% block extra_head %}
-<!-- Apache ECharts -->
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-<!-- GridStack Styles -->
-<link href="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack.min.css" rel="stylesheet" />
-<!-- GridStack Script -->
-<script src="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack-all.js"></script>
-
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
 <style>
-    .grid-stack {
-        background: transparent;
+  /* Responsive grid: 12-col on desktop, single-col on mobile */
+  .page-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(12, 1fr);
+  }
+  .page-grid > div {
+    height: calc(var(--gs-h, 4) * 80px);
+  }
+  /* Chart sections can grow taller than their grid cell so content isn't clipped */
+  .page-grid > div.chart-section {
+    height: auto;
+    min-height: calc(var(--gs-h, 4) * 80px);
+  }
+  @media (min-width: 1025px) {
+    .page-grid > div {
+      grid-row: var(--gs-y) / span var(--gs-h);
     }
-    .grid-stack-item-content {
-        background: white;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  @media (max-width: 1024px) {
+    .page-grid {
+      grid-template-columns: repeat(6, 1fr);
     }
+    .page-grid > [style*="grid-column"] {
+      grid-column: 1 / -1 !important;
+    }
+    /* HTML blocks can expand vertically if text overflows on tablet/mobile */
+    .page-grid > div.html-section {
+      height: auto !important;
+      min-height: calc(var(--gs-h, 4) * 80px);
+    }
+  }
+  @media (max-width: 640px) {
+    .page-grid {
+      grid-template-columns: 1fr;
+    }
+    /* Ensure charts on mobile are not squished vertically */
+    .page-grid > div.chart-section {
+      min-height: max(calc(var(--gs-h, 4) * 80px), 220px);
+      height: auto;
+    }
+  }
+  /* Unified HTML prose styling */
+  .html-prose h1 { font-size: 1.5rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #0f172a; line-height: 1.2; }
+  .html-prose h2 { font-size: 1.25rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #1e293b; line-height: 1.3; }
+  .html-prose h3 { font-size: 1.1rem; font-weight: 700; margin: 0.75em 0 0.5em 0; color: #334155; line-height: 1.4; }
+  .html-prose p  { margin-bottom: 0.5em; line-height: 1.5; }
+  .html-prose ul { list-style-type: disc; padding-left: 1.5rem; margin: 0.5em 0; }
+  .html-prose ol { list-style-type: decimal; padding-left: 1.5rem; margin: 0.5em 0; }
+  .html-prose a  { color: #2563eb; text-decoration: underline; }
+  .html-prose a:hover { color: #1d4ed8; }
+  /* Tree menu transitions */
+  .filter-tree-values { max-height: 14rem; overflow-y: auto; }
+  .filter-tag { animation: tagIn .15s ease-out; }
+  @keyframes tagIn { from { opacity:0; transform: scale(.9); } to { opacity:1; transform: scale(1); } }
+  /* Chart skeleton shimmer */
+  @keyframes shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+  .chart-skeleton { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 400px 100%; animation: shimmer 1.4s infinite; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" x-data="pageViewer()">
-    <!-- Header -->
-    <div class="mb-8 border-b border-slate-200 pb-6 flex flex-col md:flex-row md:items-center md:justify-between">
-        <div>
-            <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">{{ page.title }}</h1>
-            <p class="mt-2 text-sm text-slate-500">{{ page.description }}</p>
-        </div>
-        {% if user.is_staff or user.active_role.name == 'Project Admin' %}
-        <div class="mt-4 md:mt-0">
-            <a href="{% url 'dataviz:page_edit' page.pk %}" class="inline-flex items-center px-4 py-2 border border-slate-300 text-xs font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition">
-                Edit Layout
-            </a>
-        </div>
-        {% endif %}
+<!-- Loading Progress Bar -->
+<div id="loading-bar" class="fixed top-0 left-0 right-0 z-[60] hidden" aria-hidden="true">
+    <div class="h-1 bg-blue-200 overflow-hidden">
+        <div id="loading-bar-progress" class="h-full bg-blue-600 transition-all duration-300 ease-out" style="width: 0%"></div>
     </div>
+</div>
+{% include "dataviz/submenu.html" %}
+<div class="{% if page.container_width == 'full' %}max-w-full{% elif page.container_width == 'wide' %}max-w-screen-2xl{% elif page.container_width == 'lg' %}max-w-5xl{% elif page.container_width == 'md' %}max-w-3xl{% else %}max-w-7xl{% endif %} mx-auto px-4 py-8"
+     x-data="pageFilters()"
+     x-init="init()">
 
-    <!-- Global Page Filters -->
-    {% if page.page_filters %}
-    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8">
-        <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-2">
-            <h3 class="text-xs font-bold text-slate-900 uppercase tracking-widest flex items-center">
-                <svg class="h-4 w-4 text-slate-500 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 8.293A1 1 0 013 7.586V4z" /></svg>
-                Filter Dashboard
-            </h3>
-            <div class="flex space-x-2">
-                <button @click="clearFilters()" class="text-xs font-semibold text-slate-500 hover:text-slate-700 uppercase tracking-wider">Clear</button>
-                <button @click="applyFilters()" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs uppercase tracking-widest transition rounded-none">Apply Filters</button>
+  <!-- Page header -->
+  {% if page.show_header %}
+  <div class="mb-4">
+    <h1 class="text-2xl font-bold text-slate-800">{{ page.title }}</h1>
+    {% if page.description %}
+    <p class="text-sm text-slate-500 mt-1">{{ page.description }}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if page.page_filters %}
+  <!-- Active filter tags -->
+  <div class="flex flex-wrap items-center gap-2 mb-4 min-h-[2rem]" x-show="tags.length > 0" x-cloak>
+    <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Active Filters:</span>
+    <template x-for="tag in tags" :key="tag.col + '::' + tag.value">
+      <span class="filter-tag inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full text-xs font-medium">
+        <span x-text="tag.label + ': ' + tag.value"></span>
+        <button @click="removeTag(tag.col, tag.value)"
+                class="ml-0.5 text-blue-400 hover:text-blue-700 transition" aria-label="Remove filter">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </span>
+    </template>
+    <button @click="clearAll()"
+            class="text-[10px] px-2 py-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition">
+      Clear all
+    </button>
+  </div>
+
+  <!-- Filter menu (navbar-style overlay) -->
+  <div class="relative mb-6">
+    <button @click="treeOpen = !treeOpen"
+            class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 transition shadow-sm">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M3 4a1 1 0 011-1h16a1 1 0 010 2H4a1 1 0 01-1-1zm3 6a1 1 0 011-1h10a1 1 0 010 2H7a1 1 0 01-1-1zm2 6a1 1 0 011-1h6a1 1 0 010 2H9a1 1 0 01-1-1z"/>
+      </svg>
+      <span x-text="treeOpen ? 'Hide Filters' : 'Filters'"></span>
+      <span x-show="tags.length > 0"
+            class="bg-blue-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center"
+            x-text="tags.length"></span>
+    </button>
+
+    <!-- Overlay dropdown panel -->
+    <div x-show="treeOpen"
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0 -translate-y-1"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100 translate-y-0"
+         x-transition:leave-end="opacity-0 -translate-y-1"
+         @click.outside="treeOpen = false"
+         @keydown.escape.window="treeOpen = false"
+         x-cloak
+         class="absolute left-0 top-full mt-2 z-50 w-full max-w-xl bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+      <div class="max-h-[28rem] overflow-y-auto divide-y divide-slate-100">
+        {% for fdef in page.page_filters %}
+        <div x-data="{ expanded: false, values: [], loading: false, loaded: false, search: '' }">
+          <button @click="expanded = !expanded; if (!loaded) { loadValues($el) }"
+                  class="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50 transition"
+                  data-filter-id="{{ fdef.id }}"
+                  data-filter-col="{{ fdef.source_col }}"
+                  data-filter-label="{{ fdef.label }}"
+                  data-filter-widget="{{ fdef.widget|default:'select' }}">
+            <div class="flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-slate-400 transition-transform duration-200"
+                   :class="{ 'rotate-90': expanded }"
+                   fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M9 5l7 7-7 7"/>
+              </svg>
+              <span class="text-sm font-semibold text-slate-700">{{ fdef.label }}</span>
+              <span class="text-[9px] text-slate-400 uppercase">{% if fdef.widget == 'multi' %}multi{% else %}single{% endif %}</span>
             </div>
-        </div>
-        
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-            {% for f in page.page_filters %}
-            <div>
-                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">{{ f.label }}</label>
-                <select x-model="filters['{{ f.column }}']" class="w-full border-slate-300 rounded-none text-xs py-1.5 px-2 border bg-white focus:ring-slate-500 focus:border-slate-500">
-                    <option value="">All {{ f.label }}s</option>
-                    {% with opts=filter_options|get_item:f.column %}
-                        {% for opt in opts %}
-                        <option value="{{ opt }}">{{ opt }}</option>
-                        {% endfor %}
-                    {% endwith %}
-                </select>
+            <span class="text-[10px] text-blue-500 font-medium" x-show="getFilterTagCount('{{ fdef.source_col }}') > 0"
+                  x-text="getFilterTagCount('{{ fdef.source_col }}') + ' selected'"></span>
+          </button>
+          <div x-show="expanded" x-collapse x-cloak class="px-4 pb-3">
+            <input type="text" x-model="search" placeholder="Search…"
+                   class="w-full text-xs border border-slate-200 rounded-lg px-3 py-1.5 mb-2 focus:ring-1 focus:ring-blue-400 focus:border-blue-400">
+            <div x-show="loading" class="text-xs text-slate-400 py-2 text-center">Loading…</div>
+            <div x-show="!loading" class="filter-tree-values space-y-0.5">
+              <template x-for="val in filteredValues(values, search)" :key="val">
+                <label class="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-blue-50 cursor-pointer text-sm text-slate-700"
+                       :class="{'bg-blue-50/60': isValueSelected('{{ fdef.source_col }}', val)}">
+                  {% if fdef.widget == 'multi' %}
+                  <input type="checkbox"
+                         :value="val"
+                         :checked="isValueSelected('{{ fdef.source_col }}', val)"
+                         @change="toggleValue('{{ fdef.source_col }}', '{{ fdef.label }}', val, $event.target.checked, 'multi')"
+                         class="rounded border-slate-300 text-blue-600 w-3.5 h-3.5 focus:ring-blue-400">
+                  {% else %}
+                  <input type="radio"
+                         :name="'pf_{{ fdef.source_col }}'"
+                         :value="val"
+                         :checked="isValueSelected('{{ fdef.source_col }}', val)"
+                         @change="toggleValue('{{ fdef.source_col }}', '{{ fdef.label }}', val, true, 'select')"
+                         class="border-slate-300 text-blue-600 w-3.5 h-3.5 focus:ring-blue-400">
+                  {% endif %}
+                  <span x-text="val"></span>
+                </label>
+              </template>
+              <div x-show="values.length === 0 && !loading"
+                   class="text-xs text-slate-400 text-center py-2">No values available</div>
             </div>
-            {% endfor %}
+          </div>
         </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Rows (layout sections) -->
+  <div class="space-y-6">
+    {% for row in rows %}
+    <section class="{% if row.bg_color %}{{ row.bg_color }}{% endif %} rounded-xl {% if row.bg_color %}p-4 -mx-2{% endif %}">
+      {% if row.label %}
+      <h2 class="text-lg font-semibold text-slate-700 mb-3">{{ row.label }}</h2>
+      {% endif %}
+
+      <div class="page-grid">
+        {% for section in row.sections.all %}
+        <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; --gs-h: {{ section.gs_h }}; --gs-y: {{ section.gs_y|add:1 }};"
+             class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto html-section html-prose{% else %}overflow-hidden chart-section{% endif %} flex flex-col">
+
+          {% if section.element_type == 'chart' and section.chart %}
+            {% if section.show_title %}
+            <div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 bg-slate-50/50">
+              <span class="text-xs font-semibold text-slate-600 truncate">{{ section.chart.name }}</span>
+            </div>
+            {% endif %}
+            <div id="chart-slot-{{ section.id }}"
+                 class="flex-1 min-h-0 page-chart-slot"
+                 data-chart-base-url="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                 data-filter-cols="{{ section_filter_cols_map|dict_get:section.id }}"
+                 data-container-width="{{ section.chart.config.container_width|default:'' }}"
+                 data-container-height="{{ section.chart.config.container_height|default:'' }}"
+                 hx-get="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                 hx-target="#chart-slot-{{ section.id }}"
+                 hx-trigger="intersect once, reload"
+                 hx-swap="innerHTML">
+              <div class="flex flex-col gap-2 p-3 h-full w-full">
+                <div class="chart-skeleton h-3 rounded w-2/5"></div>
+                <div class="flex-1 flex items-end gap-1.5 pt-2">
+                  <div class="chart-skeleton rounded-t flex-1" style="height:55%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:80%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:40%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:70%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:60%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:90%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:35%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:65%"></div>
+                </div>
+                <div class="chart-skeleton h-2 rounded w-3/4 mx-auto"></div>
+              </div>
+            </div>
+
+          {% elif section.element_type == 'html' %}
+            {# Render html_content directly — padding/centering is stored inside the content wrapper #}
+            <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %} html-prose">
+              {{ section.html_content|safe }}
+            </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+
+    {# Orphan sections (backward compat: sections not in any row) #}
+    {% if orphan_sections %}
+    <div class="page-grid">
+      {% for section in orphan_sections %}
+      <div style="grid-column: {{ section.gs_x|add:1 }} / span {{ section.gs_w }}; --gs-h: {{ section.gs_h }}; --gs-y: {{ section.gs_y|add:1 }};"
+           class="bg-white border border-slate-200 rounded-xl shadow-sm {% if section.element_type == 'html' %}overflow-auto html-section html-prose{% else %}overflow-hidden chart-section{% endif %} flex flex-col">
+
+        {% if section.element_type == 'chart' and section.chart %}
+          {% if section.show_title %}
+          <div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-100 bg-slate-50/50">
+            <span class="text-xs font-semibold text-slate-600 truncate">{{ section.chart.name }}</span>
+          </div>
+          {% endif %}
+          <div id="chart-slot-orphan-{{ section.id }}"
+               class="flex-1 min-h-0 page-chart-slot"
+               data-chart-base-url="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+               data-filter-cols="{{ section_filter_cols_map|dict_get:section.id }}"
+               hx-get="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+               hx-target="#chart-slot-orphan-{{ section.id }}"
+               hx-trigger="intersect once, reload"
+               hx-swap="innerHTML">
+            <div class="flex items-center justify-center h-full text-slate-300 text-sm">Loading chart…</div>
+          </div>
+
+        {% elif section.element_type == 'html' %}
+          <div class="text-sm text-slate-700 leading-relaxed h-full{% if 'data-pb-p' not in section.html_content and 'data-pb-center' not in section.html_content %} p-4{% endif %} html-prose">
+            {{ section.html_content|safe }}
+          </div>
+        {% endif %}
+      </div>
+      {% endfor %}
     </div>
     {% endif %}
 
-    <!-- GridStack Layout -->
-    <div class="grid-stack min-h-[500px]">
-        {% for section in sections %}
-        <div class="grid-stack-item" 
-             gs-x="{{ section.gs_x }}" 
-             gs-y="{{ section.gs_y }}" 
-             gs-w="{{ section.gs_w }}" 
-             gs-h="{{ section.gs_h }}"
-             data-type="{{ section.element_type }}"
-             {% if section.chart %}
-             data-chart-id="{{ section.chart.pk }}"
-             data-source-type="{{ section.chart.source_type }}"
-             data-source-id="{% if section.chart.source_type == 'dataset' %}{{ section.chart.dataset.pk }}{% else %}{{ section.chart.query_id }}{% endif %}"
-             data-chart-type="{{ section.chart.chart_type }}"
-             data-x-col="{{ section.chart.config.x_axis_column }}"
-             data-y-col="{{ section.chart.config.y_axis_column }}"
-             data-agg="{{ section.chart.config.y_axis_aggregation }}"
-             data-series-col="{{ section.chart.config.series_column }}"
-             {% endif %}>
-            {% if section.chart %}
-            {{ section.chart.config|json_script:section.pk }}
+    {# Legacy dashboard sections #}
+    {% for section in sections %}
+      {% if section.element_type == 'dashboard' and section.dashboard %}
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <h2 class="text-base font-semibold text-slate-700 mb-4">{{ section.dashboard.name }}</h2>
+        <div class="page-grid">
+          {% for slot in section.dashboard.chart_slots.all %}
+          <div style="grid-column: span {{ slot.gs_w }}; min-height: {% widthratio slot.gs_h 1 80 %}px;"
+               class="flex flex-col">
+            {% if slot.chart %}
+              {% if slot.show_title %}
+              <p class="text-xs font-semibold text-slate-600 mb-1 truncate">{{ slot.chart.name }}</p>
+              {% endif %}
+              <div id="chart-slot-dash-{{ slot.id }}"
+                   class="flex-1 min-h-[12rem] page-chart-slot"
+                   data-chart-base-url="{% url 'dataviz:chart_render' slot.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                   data-filter-cols="{{ section_filter_cols_map|dict_get:slot.id }}"
+                   hx-get="{% url 'dataviz:chart_render' slot.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
+                   hx-target="#chart-slot-dash-{{ slot.id }}"
+                   hx-trigger="intersect once, reload"
+                   hx-swap="innerHTML">
+                <div class="flex flex-col gap-2 p-3 h-full w-full">
+                <div class="chart-skeleton h-3 rounded w-2/5"></div>
+                <div class="flex-1 flex items-end gap-1.5 pt-2">
+                  <div class="chart-skeleton rounded-t flex-1" style="height:55%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:80%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:40%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:70%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:60%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:90%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:35%"></div>
+                  <div class="chart-skeleton rounded-t flex-1" style="height:65%"></div>
+                </div>
+                <div class="chart-skeleton h-2 rounded w-3/4 mx-auto"></div>
+              </div>
+              </div>
+            {% else %}
+              <div class="p-3 text-sm text-slate-600">{{ slot.html_content|safe }}</div>
             {% endif %}
-            
-            <div class="grid-stack-item-content flex flex-col justify-between h-full overflow-hidden">
-                {% if section.element_type == 'chart' %}
-                    <!-- Chart Header -->
-                    <div class="px-4 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between shrink-0">
-                        <span class="text-xs font-bold text-slate-700 uppercase tracking-wider truncate">
-                            {{ section.chart.name }}
-                        </span>
-                        <div class="flex items-center space-x-2">
-                            <span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" title="Live connection"></span>
-                        </div>
-                    </div>
-                    <!-- Chart Canvas -->
-                    <div class="flex-grow p-4 relative min-h-0 min-w-0">
-                        <div id="chart-canvas-{{ section.pk }}" class="w-full h-full min-h-[220px]"></div>
-                        <!-- Inner loading spinner -->
-                        <div class="absolute inset-0 bg-white/70 flex items-center justify-center text-xs text-slate-500 font-sans z-10 chart-loader" style="display: none;">
-                            Loading chart options...
-                        </div>
-                    </div>
-                {% else %}
-                    <!-- Text Section -->
-                    <div class="p-6 text-slate-700 overflow-y-auto h-full text-xs leading-relaxed">
-                        {{ section.html_content|safe }}
-                    </div>
-                {% endif %}
-            </div>
+          </div>
+          {% endfor %}
         </div>
-        {% endfor %}
-    </div>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
 </div>
 
+<script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
 <script>
-    function pageViewer() {
-        return {
-            filters: {},
-            chartInstances: {},
-            grid: null,
-            chartObserver: null,
-            loadedCharts: new Set(),
-            
-            get filtersJson() {
-                return JSON.stringify(this.filters);
-            },
+  const _PAGE_SLUG = "{{ page.slug|escapejs }}";
+  const _FILTER_OPTIONS_TPL = "/dataviz/api/pages/" + _PAGE_SLUG + "/filters/FILTERID/";
+  const _STORAGE_KEY = 'pf_global';
+  const _PAGE_FILTER_COLS = {{ page_filter_cols_json|safe }};  // columns that exist on this page
+  const _DEFAULT_FILTER_TAGS = {{ default_filter_tags_json|safe }};  // admin-configured defaults from the page builder
 
-            init() {
-                // Initialize default filter states
-                {% for f in page.page_filters %}
-                this.filters['{{ f.column }}'] = '';
-                {% endfor %}
-                
-                this.$nextTick(() => {
-                    this.initGridStack();
-                    this.lazyRenderCharts();
-                });
-                
-                // Handle resize
-                window.addEventListener('resize', () => {
-                    Object.values(this.chartInstances).forEach(chart => {
-                        chart.resize();
-                    });
-                });
-            },
-            
-            initGridStack() {
-                this.grid = GridStack.init({
-                    column: 12,
-                    margin: 8,
-                    staticGrid: true // Static read-only mode
-                });
-            },
-            
-            clearFilters() {
-                Object.keys(this.filters).forEach(k => {
-                    this.filters[k] = '';
-                });
-                this.applyFilters();
-            },
-            
-            applyFilters() {
-                // On filter change, reload ALL charts (data changed)
-                this.loadedCharts.clear();
-                this.renderAllCharts();
-            },
-            
-            lazyRenderCharts() {
-                const items = document.querySelectorAll('.grid-stack-item[data-type="chart"]');
-                if (!items.length) return;
-                
-                // IntersectionObserver: load charts as they scroll into view
-                this.chartObserver = new IntersectionObserver((entries) => {
-                    entries.forEach(entry => {
-                        if (!entry.isIntersecting) return;
-                        const item = entry.target;
-                        this.loadChartFromItem(item);
-                        this.chartObserver.unobserve(item);
-                    });
-                }, { rootMargin: '200px' });
-                
-                items.forEach(item => this.chartObserver.observe(item));
-            },
-            
-            loadChartFromItem(item) {
-                const canvas = item.querySelector('[id^="chart-canvas-"]');
-                if (!canvas) return;
-                const pk = canvas.id.split('-').pop();
-                if (this.loadedCharts.has(pk)) return;
-                this.loadedCharts.add(pk);
-                
-                const sourceType = item.getAttribute('data-source-type');
-                const sourceId = item.getAttribute('data-source-id');
-                const chartType = item.getAttribute('data-chart-type');
-                const xCol = item.getAttribute('data-x-col');
-                const yCol = item.getAttribute('data-y-col');
-                const aggregation = item.getAttribute('data-agg');
-                const seriesCol = item.getAttribute('data-series-col') || '';
-                
-                let config = {};
-                const configScript = document.getElementById(pk);
-                if (configScript) {
-                    try { config = JSON.parse(configScript.textContent); } catch(e) {}
-                }
-                
-                this.loadChart(pk, sourceType, sourceId, chartType, xCol, yCol, aggregation, seriesCol, config);
-            },
-            
-            renderAllCharts() {
-                // Non-lazy: render every chart immediately (used after filter change)
-                const items = document.querySelectorAll('.grid-stack-item[data-type="chart"]');
-                items.forEach(item => this.loadChartFromItem(item));
-            },
-            
-            loadChart(pk, sourceType, sourceId, chartType, xCol, yCol, aggregation, seriesCol, config) {
-                const canvas = document.getElementById(`chart-canvas-${pk}`);
-                const loader = canvas.parentElement.querySelector('.chart-loader');
-                if (!canvas) return;
-                
-                if (loader) loader.style.display = 'flex';
-                
-                // Merge current page dynamic filters
-                const params = new URLSearchParams({
-                    source_type: sourceType,
-                    source_id: sourceId,
-                    chart_type: chartType,
-                    x_col: xCol,
-                    y_col: yCol,
-                    aggregation: aggregation,
-                    series_col: seriesCol,
-                    variation: config.variation || 'standard',
-                    value_colors: JSON.stringify(config.value_colors || {}),
-                    value_labels: JSON.stringify(config.value_labels || {}),
-                    value_prefix: config.value_prefix || '',
-                    value_suffix: config.value_suffix || '',
-                    show_tooltip: config.show_tooltip !== undefined ? config.show_tooltip : true,
-                    tooltip_show_percent: config.tooltip_show_percent !== undefined ? config.tooltip_show_percent : false,
-                    stacked_percent: config.stacked_percent !== undefined ? config.stacked_percent : false,
-                    title_custom: config.title_custom || '',
-                    x_title: config.x_title || '',
-                    y_title: config.y_title || '',
-                    show_legend: config.show_legend !== undefined ? config.show_legend : true,
-                    legend_position: config.legend_position || 'horizontal',
-                    show_gridlines: config.show_gridlines !== undefined ? config.show_gridlines : true,
-                    stacked: config.stacked !== undefined ? config.stacked : false,
-                    colors: (config.colors || []).join(','),
-                    extra_filters: this.filtersJson
-                });
-                
-                fetch(`{% url 'dataviz:api_chart_preview' %}`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'X-CSRFToken': '{{ csrf_token }}'
-                    },
-                    body: params.toString()
-                }).then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json() })
-                    .then(option => {
-                        if (option.error) {
-                            canvas.innerHTML = `<div class="flex items-center justify-center h-full text-center text-xs text-red-500 font-sans p-4">${option.error}</div>`;
-                            return;
-                        }
-                        
-                        // Ensure tooltip is configured properly
-                        if (!option.tooltip) {
-                            option.tooltip = {};
-                        }
+  function pageFilters() {
+    return {
+      tags: [],
+      treeOpen: false,
 
-                        // Apply tooltip visibility & boundary confinement
-                        option.tooltip.show = config.show_tooltip !== undefined ? config.show_tooltip : true;
-                        option.tooltip.confine = true;
-                        option.tooltip.appendToBody = true;
-                        if (!option.tooltip.trigger) {
-                            option.tooltip.trigger = 'axis';
-                        }
-
-                        // Apply tooltip formatting if needed
-                        const prefix = option.tooltip._prefix || '';
-                        const suffix = option.tooltip._suffix || '';
-                        const showPercent = option.tooltip._show_percent || false;
-
-                        option.tooltip.formatter = (params) => {
-                            if (Array.isArray(params)) {
-                                const title = params[0] ? `<span style="font-weight: 600; color: #1e293b; margin-bottom: 4px; display: inline-block;">${params[0].name}</span><br/>` : '';
-                                const rows = params.map(p => {
-                                    if (!p || p.value === undefined || p.value === null) return '';
-                                    let val = String(p.value);
-                                    if (prefix || suffix) {
-                                        val = prefix + val + suffix;
-                                    }
-                                    if (showPercent && typeof p.value === 'number') {
-                                        val += ` (${p.value.toFixed(1)}%)`;
-                                    }
-                                    const marker = p.marker || '';
-                                    const seriesName = p.seriesName || '';
-                                    return `<span style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-                                        <span style="display: flex; align-items: center; gap: 6px; color: #64748b;">${marker} ${seriesName}</span>
-                                        <span style="font-weight: 600; color: #0f172a;">${val}</span>
-                                    </span>`;
-                                }).filter(s => s).join('');
-                                return `<div style="font-family: Inter, sans-serif; font-size: 12px; line-height: 1.5;">${title}${rows}</div>`;
-                            }
-                            if (!params || params.value === undefined || params.value === null) return '';
-                            let val = String(params.value);
-                            if (prefix || suffix) {
-                                val = prefix + val + suffix;
-                            }
-                            if (showPercent && typeof params.value === 'number') {
-                                val += ` (${params.value.toFixed(1)}%)`;
-                            }
-                            const name = params.name || '';
-                            const seriesName = params.seriesName || '';
-                            const marker = params.marker || '';
-                            return `<div style="font-family: Inter, sans-serif; font-size: 12px; line-height: 1.5;">
-                                ${name ? `<span style="font-weight: 600; color: #1e293b; margin-bottom: 4px; display: inline-block;">${name}</span><br/>` : ''}
-                                <span style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-                                    <span style="display: flex; align-items: center; gap: 6px; color: #64748b;">${marker} ${seriesName}</span>
-                                    <span style="font-weight: 600; color: #0f172a;">${val}</span>
-                                </span>
-                            </div>`;
-                        };
-
-                        // Clean up internal properties
-                        delete option.tooltip._prefix;
-                        delete option.tooltip._suffix;
-                        delete option.tooltip._show_percent;
-
-                        let chart = this.chartInstances[pk];
-                        if (!chart) {
-                            chart = echarts.init(canvas);
-                            this.chartInstances[pk] = chart;
-                        }
-                        
-                        chart.setOption(option, true);
-                        chart.resize();
-                    })
-                    .catch(err => {
-                        console.error("Error loading layout chart:", err);
-                        canvas.innerHTML = `<div class="flex items-center justify-center h-full text-center text-xs text-red-500 font-sans p-4">Error loading visualization data</div>`;
-                    })
-                    .finally(() => {
-                        if (loader) loader.style.display = 'none';
-                    });
+      init() {
+        // Restore global tags from sessionStorage, then filter to columns
+        // that exist on this page. Irrelevant tags are silently discarded.
+        try {
+          const saved = sessionStorage.getItem(_STORAGE_KEY);
+          if (saved) {
+            const allTags = JSON.parse(saved);
+            if (_PAGE_FILTER_COLS.length) {
+              const pageCols = new Set(_PAGE_FILTER_COLS);
+              this.tags = allTags.filter(t => pageCols.has(t.col));
+            } else {
+              this.tags = allTags;
             }
-        };
+          }
+        } catch (_) {}
+
+        // Seed admin-configured defaults for any filter the visitor hasn't
+        // already picked a value for this session — explicit past choices
+        // (restored above) always win over the page's defaults. Snapshot
+        // the restored columns *before* looping so multiple default tags
+        // for the same multi-select column (e.g. grade=03 and grade=04)
+        // don't shadow each other.
+        const existingCols = new Set(this.tags.map(t => t.col));
+        for (const dt of _DEFAULT_FILTER_TAGS) {
+          if (!existingCols.has(dt.col)) {
+            this.tags.push(dt);
+          }
+        }
+        if (_DEFAULT_FILTER_TAGS.length) this._persist();
+
+        // Set global QS immediately so initial chart loads include persisted filters
+        window._pageFilterQS = this.buildFilterQS();
+
+        // If we have persisted tags, update chart URLs before they fire
+        if (this.tags.length > 0) {
+          this.$nextTick(() => this._applyUrlsToSlots());
+        }
+      },
+
+      _persist() {
+        // Merge current page tags into global storage (preserve tags from other pages)
+        let allTags = [];
+        try {
+          const saved = sessionStorage.getItem(_STORAGE_KEY);
+          if (saved) allTags = JSON.parse(saved);
+        } catch (_) {}
+        // Remove existing tags for cols we're about to update
+        const updatedCols = new Set(_PAGE_FILTER_COLS.length ? _PAGE_FILTER_COLS : this.tags.map(t => t.col));
+        allTags = allTags.filter(t => !updatedCols.has(t.col));
+        // Add current page's tags
+        allTags = allTags.concat(this.tags);
+        try { sessionStorage.setItem(_STORAGE_KEY, JSON.stringify(allTags)); } catch (_) {}
+      },
+
+      /* ── Loading values for a tree node ── */
+      loadValues(btnEl) {
+        const parent = btnEl.closest('[x-data]');
+        const id = btnEl.dataset.filterId;
+        if (!parent || !id) return;
+        const scope = Alpine.$data(parent);
+        scope.loading = true;
+        fetch(_FILTER_OPTIONS_TPL.replace('FILTERID', encodeURIComponent(id)), { credentials: 'same-origin' })
+          .then(r => r.json())
+          .then(data => {
+            scope.values = (data.values || []).map(v => String(v));
+            scope.loaded = true;
+          })
+          .catch(() => { scope.values = []; })
+          .finally(() => { scope.loading = false; });
+      },
+
+      filteredValues(values, search) {
+        if (!search) return values;
+        const q = search.toLowerCase();
+        return values.filter(v => String(v).toLowerCase().includes(q));
+      },
+
+      /* ── Tag helpers ── */
+      isValueSelected(col, val) {
+        return this.tags.some(t => t.col === col && t.value === String(val));
+      },
+
+      getFilterTagCount(col) {
+        return this.tags.filter(t => t.col === col).length;
+      },
+
+      toggleValue(col, label, val, checked, widget) {
+        const v = String(val);
+        if (widget === 'select') {
+          this.tags = this.tags.filter(t => t.col !== col);
+          if (checked) {
+            this.tags.push({ col, label, value: v });
+          }
+        } else {
+          if (checked) {
+            if (!this.isValueSelected(col, v)) {
+              this.tags.push({ col, label, value: v });
+            }
+          } else {
+            this.tags = this.tags.filter(t => !(t.col === col && t.value === v));
+          }
+        }
+        this._persist();
+        this.refreshCharts([col]);
+      },
+
+      removeTag(col, val) {
+        this.tags = this.tags.filter(t => !(t.col === col && t.value === String(val)));
+        this._persist();
+        this.refreshCharts([col]);
+      },
+
+      clearAll() {
+        // Track all affected columns before clearing
+        const affectedCols = [...new Set(this.tags.map(t => t.col))];
+        this.tags = [];
+        this._persist();
+        this.refreshCharts(affectedCols);
+      },
+
+      buildFilterQS() {
+        const params = new URLSearchParams();
+        for (const t of this.tags) {
+          params.append('pf_' + t.col, t.value);
+        }
+        return params.toString();
+      },
+
+      _applyUrlsToSlots() {
+        const qs = this.buildFilterQS();
+        document.querySelectorAll('.page-chart-slot').forEach(el => {
+          const base = el.getAttribute('data-chart-base-url');
+          if (!base || !qs) return;
+          el.setAttribute('hx-get', base + '&' + qs);
+          htmx.process(el);
+          if (!el.querySelector('.chart-skeleton')) {
+            htmx.trigger(el, 'reload');
+          }
+        });
+      },
+
+      refreshCharts(affectedCols) {
+        const qs = this.buildFilterQS();
+        window._pageFilterQS = qs;
+        const changed = affectedCols && affectedCols.length ? new Set(affectedCols) : null;
+        const allSlots = document.querySelectorAll('.page-chart-slot');
+        allSlots.forEach(el => {
+          const base = el.getAttribute('data-chart-base-url');
+          if (!base) return;
+          // Skip charts that don't reference any of the changed filter column(s) —
+          // data-filter-cols is precomputed server-side (section_filter_cols_map) so we
+          // don't have to re-render every chart on the page for an unrelated filter change.
+          if (changed) {
+            const filterCols = (el.getAttribute('data-filter-cols') || '').split(',').filter(Boolean);
+            if (!filterCols.some(c => changed.has(c))) return;
+          }
+          const url = qs ? base + '&' + qs : base;
+          el.setAttribute('hx-get', url);
+          el.innerHTML = '<div class="flex flex-col gap-2 p-3 h-full w-full"><div class="chart-skeleton h-3 rounded w-2/5"></div><div class="flex-1 flex items-end gap-1.5 pt-2"><div class="chart-skeleton rounded-t flex-1" style="height:55%"></div><div class="chart-skeleton rounded-t flex-1" style="height:80%"></div><div class="chart-skeleton rounded-t flex-1" style="height:40%"></div><div class="chart-skeleton rounded-t flex-1" style="height:70%"></div><div class="chart-skeleton rounded-t flex-1" style="height:60%"></div><div class="chart-skeleton rounded-t flex-1" style="height:90%"></div></div><div class="chart-skeleton h-2 rounded w-3/4 mx-auto"></div></div>';
+          htmx.process(el);
+          htmx.trigger(el, 'reload');
+        });
+      },
+    };
+  }
+
+  // Loading progress bar logic for chart slots
+  (function() {
+    let activeRequests = 0;
+    let progressTimer = null;
+    let progressVal = 0;
+
+    function startProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (!bar || !progress) return;
+
+      bar.classList.remove('hidden');
+      bar.setAttribute('aria-hidden', 'false');
+      
+      progressVal = 0;
+      progress.style.width = '0%';
+      
+      if (progressTimer) clearInterval(progressTimer);
+      
+      progressTimer = setInterval(() => {
+        if (progressVal < 90) {
+          progressVal += (90 - progressVal) * 0.1;
+          progress.style.width = Math.round(progressVal) + '%';
+        }
+      }, 150);
     }
+
+    function completeProgress() {
+      const bar = document.getElementById('loading-bar');
+      const progress = document.getElementById('loading-bar-progress');
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+      if (progress) {
+        progress.style.width = '100%';
+      }
+      setTimeout(() => {
+        if (bar) {
+          bar.classList.add('hidden');
+          bar.setAttribute('aria-hidden', 'true');
+        }
+        if (progress) {
+          progress.style.width = '0%';
+        }
+      }, 300);
+    }
+
+    document.addEventListener('htmx:beforeRequest', (evt) => {
+      if (evt.detail.elt && evt.detail.elt.classList.contains('page-chart-slot')) {
+        if (activeRequests === 0) {
+          startProgress();
+        }
+        activeRequests++;
+      }
+    });
+
+    document.addEventListener('htmx:afterRequest', (evt) => {
+      if (evt.detail.elt && evt.detail.elt.classList.contains('page-chart-slot')) {
+        activeRequests--;
+        if (activeRequests <= 0) {
+          activeRequests = 0;
+          completeProgress();
+        }
+      }
+    });
+  })();
 </script>
 {% endblock %}

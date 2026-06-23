@@ -1,1 +1,0 @@
-# Templatetags package init

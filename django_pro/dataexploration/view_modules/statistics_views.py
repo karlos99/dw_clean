@@ -75,7 +75,30 @@ def get_column_statistics(request):
     saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
     
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
-    school_year = request.GET.get('school_year', '') or saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+    
+    _project_default_year = ''
+    try:
+        from landing.utils import get_project_config
+        _cfg = get_project_config()
+        _project_default_year = _cfg.default_school_year or ''
+    except Exception:
+        pass
+
+    _sy_in_stats_url = 'school_year' in request.GET
+    if _sy_in_stats_url:
+        school_year = request.GET.get('school_year', '')
+    elif _project_default_year:
+        school_year = _project_default_year
+    else:
+        school_year = saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+
+    # Resolve school-year aliases (e.g. '__sy_this__') to concrete year strings
+    try:
+        from dataexploration.school_year_utils import resolve_school_year
+        if school_year:
+            school_year = resolve_school_year(school_year)
+    except Exception:
+        pass
     grade = request.GET.get('grade', '') or saved_filters.get('grade', '') or saved_config.get('grade', '')
     
     status_param = request.GET.get('status')
@@ -173,7 +196,7 @@ def get_column_statistics(request):
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     val_params = list(exist_params_base)
-                    if metric_col == 'oi':
+                    if metric_col == 'oi' or metric_col == 'dfp':
                         val_params.append(test_info['other_info_key'])
                     val_params.append(real_values)
                     conditions.append(f"EXISTS ({val_clause})")
