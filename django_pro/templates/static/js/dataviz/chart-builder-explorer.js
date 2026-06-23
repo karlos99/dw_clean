@@ -148,7 +148,7 @@ function chartBuilderExplorerMethods() {
       this.dvYearMode = mode;
       localStorage.setItem('dwYearMode', mode);
       this._syncExplorerCols();
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     /* ─── Drill-through methods ─────────────────────────────── */

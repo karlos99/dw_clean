@@ -28,7 +28,7 @@ function chartBuilderFilterMethods() {
       if (this.chartFilters[col].length === 0) delete this.chartFilters[col];
       this.chartFilters = { ...this.chartFilters };
       this._refreshFilterOptions();
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     removeFilterValue(col, val) {
@@ -36,13 +36,13 @@ function chartBuilderFilterMethods() {
       if (this.chartFilters[col].length === 0) delete this.chartFilters[col];
       this.chartFilters = { ...this.chartFilters };
       this._refreshFilterOptions();
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     clearAllFilters() {
       this.chartFilters = {};
       this._refreshFilterOptions();
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     _refreshFilterOptions() {
@@ -92,7 +92,7 @@ function chartBuilderFilterMethods() {
       this.pgScaleText = items.join(', ');
       this._pgLastAutoScale = '';
       this._pgDragIdx = null; this._pgDragOverIdx = null;
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     _pgScaleRemove(i) {
@@ -100,7 +100,7 @@ function chartBuilderFilterMethods() {
       items.splice(i, 1);
       this.pgScaleText = items.join(', ');
       this._pgLastAutoScale = '';
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     /* ─── Year context ───────────────────────────────────── */
@@ -119,7 +119,7 @@ function chartBuilderFilterMethods() {
       } else {
         this._refreshFilterOptions();
       }
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     toggleCustomYear(year) {
@@ -142,7 +142,7 @@ function chartBuilderFilterMethods() {
         this.chartFilters = f;
       }
       this._refreshFilterOptions();
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     /* ─── Query summary ──────────────────────────────────── */

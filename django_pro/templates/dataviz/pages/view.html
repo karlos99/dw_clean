@@ -16,6 +16,11 @@
   .page-grid > div {
     height: calc(var(--gs-h, 4) * 80px);
   }
+  /* Chart sections can grow taller than their grid cell so content isn't clipped */
+  .page-grid > div.chart-section {
+    height: auto;
+    min-height: calc(var(--gs-h, 4) * 80px);
+  }
   @media (min-width: 1025px) {
     .page-grid > div {
       grid-row: var(--gs-y) / span var(--gs-h);
@@ -40,7 +45,8 @@
     }
     /* Ensure charts on mobile are not squished vertically */
     .page-grid > div.chart-section {
-      height: max(calc(var(--gs-h, 4) * 80px), 220px);
+      min-height: max(calc(var(--gs-h, 4) * 80px), 220px);
+      height: auto;
     }
   }
   /* Unified HTML prose styling */
@@ -210,6 +216,8 @@
                  class="flex-1 min-h-0 page-chart-slot"
                  data-chart-base-url="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
                  data-filter-cols="{{ section_filter_cols_map|dict_get:section.id }}"
+                 data-container-width="{{ section.chart.config.container_width|default:'' }}"
+                 data-container-height="{{ section.chart.config.container_height|default:'' }}"
                  hx-get="{% url 'dataviz:chart_render' section.chart.id %}?source=page&source_id={{ page.slug }}&source_name={{ page.title|urlencode }}"
                  hx-target="#chart-slot-{{ section.id }}"
                  hx-trigger="intersect once, reload"
