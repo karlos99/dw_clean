@@ -359,6 +359,20 @@
                                    class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3">
                             Show title bar
                           </label>
+                          <!-- Container Width/Height in pixels -->
+                          <div>
+                            <div class="text-[9px] text-slate-500 mb-1 font-semibold uppercase tracking-wider">Chart Size (px — leave blank for auto)</div>
+                            <div class="flex gap-1.5">
+                              <input type="number" min="0" max="4000" placeholder="Width"
+                                     :value="getSection(selectedSection)?.chart?.config?.container_width || ''"
+                                     @change="updateChartContainerSize(selectedSection, 'container_width', $event.target.value)"
+                                     class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              <input type="number" min="0" max="4000" placeholder="Height"
+                                     :value="getSection(selectedSection)?.chart?.config?.container_height || ''"
+                                     @change="updateChartContainerSize(selectedSection, 'container_height', $event.target.value)"
+                                     class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                            </div>
+                          </div>
                           <a :href="'/dataviz/charts/' + getSection(selectedSection)?.chart_id + '/edit/'"
                              target="_blank"
                              class="flex items-center gap-1 text-[10px] text-blue-500 hover:underline">

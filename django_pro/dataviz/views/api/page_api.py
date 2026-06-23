@@ -199,6 +199,17 @@ def section_detail_api(request, section_id):
         if 'chart_name' in body and section.chart:
             section.chart.name = body['chart_name'].strip()
             section.chart.save()
+        # Per-chart container sizing (persisted to chart config)
+        if section.chart and ('container_width' in body or 'container_height' in body):
+            cfg = section.chart.config or {}
+            if 'container_width' in body:
+                val = body['container_width']
+                cfg['container_width'] = int(val) if val not in (None, '', 'null') else None
+            if 'container_height' in body:
+                val = body['container_height']
+                cfg['container_height'] = int(val) if val not in (None, '', 'null') else None
+            section.chart.config = cfg
+            section.chart.save()
         if 'position' in body:
             section.position = int(body['position'])
         if 'slot_filters' in body:

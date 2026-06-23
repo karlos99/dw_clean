@@ -23,7 +23,7 @@ function chartBuilderUIMethods() {
         this.comparePlCols.push(col);
       }
       this.comparePlCols = [...this.comparePlCols];
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
     toggleStRowCol(col) {
       const idx = this.stRowCols.indexOf(col);
@@ -33,7 +33,7 @@ function chartBuilderUIMethods() {
         this.stRowCols.push(col);
       }
       this.stRowCols = [...this.stRowCols];
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
     toggleStColCol(col) {
       const idx = this.stColCols.indexOf(col);
@@ -43,7 +43,7 @@ function chartBuilderUIMethods() {
         this.stColCols.push(col);
       }
       this.stColCols = [...this.stColCols];
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
     plColLabel(col) {
       return this.colLabel(col);
@@ -125,11 +125,11 @@ function chartBuilderUIMethods() {
     },
     _syncXCols() {
       this.xCols = [...this.xCols];
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
     _syncSeriesCols() {
       this.seriesCols = [...this.seriesCols];
-      this._schedulePreview();
+      this._schedulePreview(true);
     },
 
     /* ─── Interactive Layout Editor ─────────────────────────── */
@@ -204,18 +204,19 @@ function chartBuilderUIMethods() {
       this._explorerKeySetVersion = 0;
     },
 
-    _schedulePreview() {
-      if (this.previewHtml) {
-        this._scheduleStylePreview();
-      } else {
+    _schedulePreview(forData) {
+      // forData=true → full server round-trip; false/undefined → try fast style path first
+      if (forData || !this.previewHtml) {
         this._scheduleDataPreview();
+      } else {
+        this._scheduleStylePreview();
       }
     },
     _scheduleStylePreview() {
       if (this._editorFiring) return;
       if (this.previewHtml) {
         clearTimeout(this._styleApplyTimer);
-        this._styleApplyTimer = setTimeout(() => this._applyStyleLive(), 120);
+        this._styleApplyTimer = setTimeout(() => this._applyStyleLive(), 80);
         return;
       }
       clearTimeout(this._autoTimer);
@@ -228,7 +229,7 @@ function chartBuilderUIMethods() {
       clearTimeout(this._autoTimer);
       this._autoTimer = setTimeout(() => {
         if (this.canPreview && !this.previewLoading) this.doPreview();
-      }, 600);
+      }, 250);
     },
 
     _applyStyleLive() {

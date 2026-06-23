@@ -83,6 +83,23 @@
     const raw = container.dataset.chartOption;
     if (!raw) return;
 
+    // Apply per-chart container sizing from the page builder (chart-slot data attrs)
+    var chartSlot = container.closest('.page-chart-slot');
+    if (chartSlot) {
+      var cw = chartSlot.dataset.containerWidth;
+      var ch = chartSlot.dataset.containerHeight;
+      if (cw) container.style.width  = cw + 'px';
+      if (ch) container.style.height = ch + 'px';
+      // If the parent chart-section has auto height, ensure the container fills it
+      var chartSection = container.closest('.chart-section');
+      if (chartSection) {
+        if (!ch) {
+          // No explicit height → fill the available space
+          container.style.height = '100%';
+        }
+      }
+    }
+
     let option;
     try {
       option = (typeof raw === 'string') ? JSON.parse(raw) : raw;

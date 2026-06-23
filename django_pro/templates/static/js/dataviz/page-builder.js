@@ -291,9 +291,10 @@ function pageBuilder() {
         </div>
       `;
       return titleBar
-        + '<div id="builder-chart-slot-' + sec.id + '" class="flex-1 min-h-0" hx-get="' + renderUrl + '" hx-trigger="load" hx-target="#builder-chart-slot-' + sec.id + '" hx-swap="innerHTML">'
-        + '<div class="flex items-center justify-center h-full text-slate-300 text-xs">Loading…</div>'
-        + '</div>';
+        + '<div id="builder-chart-slot-' + sec.id + '" class="flex-1 min-h-0" hx-get="' + renderUrl + '" hx-trigger="intersect once" hx-target="#builder-chart-slot-' + sec.id + '" hx-swap="innerHTML">'
+        + '<div class="flex items-center justify-center h-full text-slate-300 text-xs">'
+        + '<span class="inline-block w-3 h-3 border border-slate-300 border-t-blue-500 rounded-full animate-spin mr-1.5"></span>Loading\u2026'
+        + '</div></div>';
     },
 
     _esc(s) {
@@ -811,6 +812,17 @@ function pageBuilder() {
         if (grid && widget) grid.update(widget, { h });
         await this._post(_SECTION_URL_TPL.replace('SECTIONID', sectionId), { gs_h: h });
       }
+    },
+
+    async updateChartContainerSize(sectionId, key, val) {
+      const sec = this.getSection(sectionId);
+      if (!sec || !sec.chart) return;
+      const numVal = val === '' || val === null ? null : parseInt(val, 10);
+      if (!sec.chart.config) sec.chart.config = {};
+      sec.chart.config[key] = numVal;
+      await this._post(_SECTION_URL_TPL.replace('SECTIONID', sectionId), { [key]: numVal });
+      // Update the cached section chart name to trigger reactivity
+      sec.chart_name = sec.chart_name || sec.chart.name;
     },
 
     /* ── Rich text editor (modal) ───────────────────────────────── */

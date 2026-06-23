@@ -14,11 +14,11 @@ function chartBuilderPreviewMethods(urls) {
     async doPreview() {
       if (!this.canPreview) return;
       const now = Date.now();
-      if (now - this._lastPreviewTime < 1500) {
+      if (now - this._lastPreviewTime < 400) {
         clearTimeout(this._autoTimer);
         this._autoTimer = setTimeout(() => {
           if (this.canPreview && !this.previewLoading) this.doPreview();
-        }, 1500 - (now - this._lastPreviewTime) + 50);
+        }, 400 - (now - this._lastPreviewTime) + 20);
         return;
       }
       this._lastPreviewTime = now;
@@ -27,8 +27,9 @@ function chartBuilderPreviewMethods(urls) {
       if (this._previewAbortCtrl) this._previewAbortCtrl.abort();
       this._previewAbortCtrl = new AbortController();
 
+      // Don't blank previewHtml — keep the old preview visible so the user
+      // never sees a flash and the fast style path stays active between fetches.
       this.previewLoading = true;
-      this.previewHtml = '';
       try {
         const fd = new FormData(document.getElementById('chart-form'));
         const r = await fetch(urls.preview, {
@@ -187,6 +188,10 @@ function chartBuilderPreviewMethods(urls) {
 
     async fetchAutoDescription() {
       if (!this.chartType) return;
+      // Throttle: only re-fetch description every 30 seconds
+      const now = Date.now();
+      if (this._lastDescFetch && now - this._lastDescFetch < 30000) return;
+      this._lastDescFetch = now;
       try {
         const cfg = this._buildConfig();
         const r = await fetch(urls.describe, {
