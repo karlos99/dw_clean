@@ -1,3 +1,4 @@
+from pathlib import Path
 from django.test import SimpleTestCase
 from django.template.loader import get_template
 
@@ -36,6 +37,29 @@ class StudentListConfigTests(SimpleTestCase):
 		# with SSIDs in config['student_ids'].
 		config = {"student_ids": ["123", "456"]}
 		self.assertEqual(config.get("student_ids"), ["123", "456"])
+
+
+class StudentListFilterScriptTests(SimpleTestCase):
+	def test_student_list_script_exposes_global_load_data(self):
+		script_path = Path(__file__).resolve().parent.parent / "templates" / "static" / "js" / "student_tests_app.js"
+		self.assertTrue(script_path.exists(), msg=f"Missing script at {script_path}")
+		content = script_path.read_text(encoding="utf-8")
+		self.assertIn("window.loadData = loadData", content)
+
+	def test_filter_dropdowns_call_window_load_data(self):
+		# loadData() is a closure-local const inside student_tests_app.js, so Alpine's
+		# inline @change handlers (evaluated in global scope) can only reach it via
+		# window.loadData. A bare @change="loadData()" silently no-ops the filter.
+		templates_dir = Path(__file__).resolve().parent.parent / "templates"
+		for relative_path in (
+			"dataexploration/student_with_tests_list.html",
+			"nextyearlist/student_list.html",
+		):
+			content = (templates_dir / relative_path).read_text(encoding="utf-8")
+			self.assertNotIn(
+				'@change="loadData()"', content,
+				msg=f"{relative_path} calls loadData() directly; use window.loadData() so Alpine can resolve it",
+			)
 
 
 from unittest.mock import patch
