@@ -67,11 +67,34 @@ def chart_index(request):
     subfolders = sorted(display_curr['folders'].keys())
     folder_charts = display_curr['charts']
 
+    # ── Page usage: which pages embed each chart ──────────────────────
+    chart_ids = [c.pk for c in folder_charts]
+    page_usage = {}
+    if chart_ids:
+        from dataviz.models import DataVizPageSection
+        sections = (
+            DataVizPageSection.objects
+            .filter(element_type=DataVizPageSection.TYPE_CHART, chart_id__in=chart_ids)
+            .select_related('page')
+            .values('chart_id', 'page_id', 'page__title', 'page__slug')
+            .order_by('page__title')
+        )
+        from collections import defaultdict
+        usage = defaultdict(list)
+        for s in sections:
+            usage[s['chart_id']].append({
+                'id': s['page_id'],
+                'title': s['page__title'],
+                'slug': s['page__slug'],
+            })
+        page_usage = dict(usage)
+
     return render(request, 'dataviz/charts/index.html', {
         'subfolders': subfolders,
         'charts': folder_charts,
         'current_path': current_path,
         'breadcrumbs': breadcrumbs,
+        'page_usage': page_usage,
     })
 
 
