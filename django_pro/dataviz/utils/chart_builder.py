@@ -5,6 +5,7 @@ Extracted from the original dataviz/views.py and upgraded for ECharts 6.
 Call `build_option(rows, col_defs, cfg)` to get an ECharts option dict.
 """
 import json
+import random
 import re
 
 import pandas as pd
@@ -1468,6 +1469,192 @@ def _scatter_option(df, x_col, y_col, stack_col, size_col, cfg, labels, bubble=F
     return option
 
 
+def _jitter_option(df, x_col, y_col, stack_col, size_col, cfg, labels):
+    """Jitter chart: scatter with random horizontal jitter to spread points
+    within each category band.  Good for showing individual data-point
+    distributions without overplotting.
+
+    Supports two modes via ``jitter_mode`` config key:
+      - ``'raw'`` (default) — show every individual point with jitter
+      - ``'aggregate'`` — group by X and aggregate Y (mean/median/count etc.)
+
+    Supports overlay via ``jitter_overlay`` config key:
+      - ``'none'`` (default) — no overlay
+      - ``'mean'`` — diamond marker at the mean of each category
+      - ``'median'`` — line marker at the median of each category
+      - ``'box'`` — box-like visual showing Q1-median-Q3 per category
+      - ``'mean+box'`` — both mean marker and box overlay
+
+    All x-axis values are treated as strings so numeric-looking categories
+    (e.g. grade \"01\", \"02\") sort and display correctly.
+    """
+    if not x_col or not y_col:
+        return _message_option('X (category) and Y (numeric) are required for Jitter', cfg, error=True)
+    option = _base_option(cfg)
+    ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
+    dfc = df.copy()
+    # Force x_col to string so numeric codes like "01" stay as categories
+    dfc[x_col] = dfc[x_col].astype(str)
+    dfc[y_col] = pd.to_numeric(dfc[y_col], errors='coerce')
+    dfc = dfc.dropna(subset=[y_col])
+    if dfc.empty:
+        return _message_option('No numeric data for jitter', cfg)
+    pt = int(cfg.get('point_size', 6) or 6)
+    mode = cfg.get('jitter_mode', 'raw')
+    overlay = cfg.get('jitter_overlay', 'none')
+    categories = _ordered_categories(sorted(dfc[x_col].unique().tolist()), cfg)
+    cat_index = {v: i for i, v in enumerate(categories)}
+
+    # ── Build formatter as a JS string so it survives JSON serialization ──
+    cat_map_js = '{' + ', '.join(f'{json.dumps(str(i))}: {json.dumps(c)}' for i, c in enumerate(categories)) + '}'
+    fmt_body = f'var m={cat_map_js};return m[Math.round(value)]||"";'
+    x_axis_label = {
+        'show': True,
+        '__formatter_js__': fmt_body,
+        'interval': 1,
+        'rotate': 30 if len(categories) > 8 else 0,
+    }
+    x_axis_label.update({k: v for k, v in x_lbl.items() if k != 'formatter'})
+
+    # ── Aggregate mode: grouped bars/strip with summary stats ────────────
+    if mode == 'aggregate':
+        agg_func = cfg.get('agg', 'avg')
+        adf = _agg(dfc, x_col, y_col, agg_func, stack_col=stack_col, cfg=cfg)
+        x_vals = [c for c in categories if c in adf[x_col].values]
+        if stack_col and stack_col in adf.columns:
+            stacks = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
+            series = []
+            for g in stacks:
+                sub = adf[adf[stack_col].astype(str) == g]
+                data = [float(sub[sub[x_col] == c]['_value'].iloc[0]) if c in sub[x_col].values else None
+                        for c in x_vals]
+                series.append({'name': str(g), 'type': 'bar', 'data': data,
+                               'itemStyle': {'borderRadius': [4, 4, 0, 0]}})
+        else:
+            data = [float(adf[adf[x_col] == c]['_value'].iloc[0]) if c in adf[x_col].values else None
+                    for c in x_vals]
+            series = [{'name': labels.get('y', y_col), 'type': 'bar', 'data': data,
+                       'itemStyle': {'borderRadius': [4, 4, 0, 0]}}]
+        option.update({
+            'xAxis': {**ax, 'type': 'category', 'data': x_vals, 'axisLabel': x_lbl},
+            'yAxis': {**ax, 'type': 'value', 'name': labels.get('y', y_col)},
+            'series': series,
+        })
+        return option
+
+    # ── Raw mode: individual points with jitter ──────────────────────────
+    jitter_width = float(cfg.get('jitter_width', 0.3) or 0.3)
+    rng = random.Random(42)
+
+    series = []
+    groups = [None]
+    if stack_col and stack_col in dfc.columns:
+        groups = _ordered_stacks(dfc[stack_col].astype(str).unique().tolist(), cfg)
+    for g in groups:
+        sub = dfc if g is None else dfc[dfc[stack_col].astype(str) == g]
+        jittered = []
+        for _, row in sub.iterrows():
+            cat = str(row[x_col])
+            if cat not in cat_index:
+                continue
+            idx = cat_index[cat]
+            val = float(row[y_col])
+            offset = rng.uniform(-jitter_width, jitter_width)
+            jittered.append([idx + offset, val])
+        name = (labels.get('y') or 'Values') if g is None else str(g)
+        series.append({'name': name, 'type': 'scatter', 'symbolSize': pt, 'data': jittered,
+                       'z': 1})
+
+    # ── Overlay: summary statistics markers per category ────────────────
+    if overlay != 'none' and len(categories) > 0:
+        mean_points = []
+        median_points = []
+        box_points_data = []  # [[x, y], ...] for IQR box centers
+        box_sizes = []        # [[w, h], ...] for each box
+
+        for ci, cat in enumerate(categories):
+            cat_data = dfc[dfc[x_col] == cat][y_col]
+            if cat_data.empty:
+                continue
+            vals = sorted(cat_data.dropna().tolist())
+            if not vals:
+                continue
+            n = len(vals)
+            mean_val = sum(vals) / n
+            median_val = vals[n // 2] if n % 2 == 1 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+
+            if overlay in ('mean', 'mean+box'):
+                mean_points.append([float(ci), mean_val])
+
+            if overlay in ('median', 'mean+box'):
+                median_points.append([float(ci), median_val])
+
+            if overlay in ('box', 'mean+box') and n >= 4:
+                q1 = vals[n // 4]
+                q3 = vals[3 * n // 4]
+                box_center = (q1 + q3) / 2
+                box_h = q3 - q1
+                box_points_data.append([float(ci), box_center])
+                box_sizes.append([int(jitter_width * 60), float(box_h)])
+
+        if mean_points:
+            series.append({
+                'name': 'Mean',
+                'type': 'scatter',
+                'symbol': 'diamond',
+                'symbolSize': pt + 8,
+                'data': mean_points,
+                'itemStyle': {'color': '#ef4444', 'borderColor': '#b91c1c', 'borderWidth': 1.5},
+                'z': 10,
+            })
+
+        if median_points:
+            series.append({
+                'name': 'Median',
+                'type': 'scatter',
+                'symbol': 'rect',
+                'symbolSize': [int(jitter_width * 50), 3],
+                'data': median_points,
+                'itemStyle': {'color': '#3b82f6', 'borderColor': '#1d4ed8', 'borderWidth': 1},
+                'z': 10,
+            })
+
+        if box_points_data:
+            for i, (pt_data, pt_size) in enumerate(zip(box_points_data, box_sizes)):
+                # Each box rendered as a rectangle scatter marker
+                pass  # boxes are per-category with different heights; use custom series
+            # Use a single series with customSymbol if ECharts supports it,
+            # otherwise render each box as its own series with unique symbolSize
+            for i, (pt_data, pt_size) in enumerate(zip(box_points_data, box_sizes)):
+                series.append({
+                    'name': 'IQR' if i == 0 else '',
+                    'type': 'scatter',
+                    'symbol': 'rect',
+                    'symbolSize': pt_size,
+                    'data': [pt_data],
+                    'itemStyle': {'color': 'rgba(59,130,246,0.15)', 'borderColor': '#3b82f6', 'borderWidth': 1},
+                    'z': 5,
+                })
+
+    option.update({
+        'xAxis': {
+            **ax,
+            'type': 'value',
+            'min': -0.6,
+            'max': len(categories) - 0.4,
+            'axisLabel': x_axis_label,
+            'axisTick': {'show': False},
+            'splitLine': {'show': False},
+        },
+        'yAxis': {**ax, 'type': 'value', 'name': labels.get('y', y_col)},
+        'series': series,
+    })
+    option['grid'] = {**(option.get('grid', {})), 'bottom': '12%'}
+    _add_zoom(option, cfg)
+    return option
+
+
 def _heatmap_option(df, x_col, y_col, agg, cfg, labels):
     if not x_col or not y_col:
         return _message_option('X and Y are required for heatmap', cfg, error=True)
@@ -2905,6 +3092,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'pie':          lambda: _pie_option(df, x_col, y_col, agg, cfg, donut=False),
         'donut':        lambda: _pie_option(df, x_col, y_col, agg, cfg, donut=True),
         'scatter':      lambda: _scatter_option(df, x_col, y_col, stack_col, size_col, cfg, labels, bubble=False),
+        'jitter':       lambda: _jitter_option(df, x_col, y_col, stack_col, size_col, cfg, labels),
         'bubble':       lambda: _scatter_option(df, x_col, y_col, stack_col, size_col, cfg, labels, bubble=True),
         'heatmap':      lambda: _heatmap_option(df, x_col, y_col, agg, cfg, labels),
         'histogram':    lambda: _histogram_option(df, x_col, stack_col, cfg, labels),
@@ -3011,6 +3199,7 @@ CHART_TYPES = [
     ('funnel',       'Funnel',        'chart-funnel',        'Proportion'),
     ('treemap',      'Treemap',       'chart-treemap',       'Proportion'),
     ('scatter',      'Scatter',       'chart-scatter',       'Relationship'),
+    ('jitter',       'Jitter',        'chart-jitter',        'Relationship'),
     ('bubble',       'Bubble',        'chart-bubble',        'Relationship'),
     ('heatmap',      'Heatmap',       'chart-heatmap',       'Relationship'),
     ('histogram',    'Histogram',     'chart-histogram',     'Distribution'),

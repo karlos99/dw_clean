@@ -39,11 +39,15 @@
           {# Filter dropdown (positioned absolutely) #}
           <div x-show="openFilter === '{{ col }}'" x-transition
                @click.away="openFilter = null"
+               @keydown.escape.window="openFilter = null"
                class="absolute left-0 top-full mt-1 z-50 w-56 bg-white border border-slate-200 rounded-lg shadow-lg p-2"
                x-cloak>
-            <p class="text-[10px] font-bold text-slate-600 mb-1 uppercase">
-              Filter: {% if col_labels %}{{ col_labels|get_item:col|default:col }}{% else %}{{ col }}{% endif %}
-            </p>
+            <div class="flex items-center justify-between mb-1">
+              <p class="text-[10px] font-bold text-slate-600 uppercase">
+                Filter: {% if col_labels %}{{ col_labels|get_item:col|default:col }}{% else %}{{ col }}{% endif %}
+              </p>
+              <button @click="openFilter = null" class="w-4 h-4 flex items-center justify-center text-slate-400 hover:text-slate-600 rounded text-xs leading-none">&times;</button>
+            </div>
             <div class="flex gap-2 text-[10px] text-blue-600 mb-1">
               <button @click="filterSelectAll('{{ col }}')" class="hover:underline">All</button>
               <button @click="filterClearAll('{{ col }}')" class="hover:underline">None</button>

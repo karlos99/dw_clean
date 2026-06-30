@@ -3,7 +3,6 @@ import json
 import logging
 import re
 from collections import Counter
-from decimal import Decimal
 from django.db import connection
 from django.core.cache import cache
 from dataexploration.utils import get_user_roles
@@ -762,47 +761,14 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
 
 def execute_compiled_query(sql, params):
     """
-    Executes a compiled SQL query in a read-only transaction.
+    Executes a compiled SQL query, routing through ClickHouse when available.
     Returns {'columns': [...], 'rows': [...], 'row_count': N, 'error': None}
     """
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("BEGIN READ ONLY")
-            try:
-                cursor.execute(sql, params)
-                if cursor.description is None:
-                    return {
-                        'columns': [],
-                        'rows': [],
-                        'row_count': 0,
-                        'error': None
-                    }
-                columns = [col[0] for col in cursor.description]
-                raw = cursor.fetchall()
-                rows = []
-                for row in raw:
-                    row_dict = dict(zip(columns, row))
-                    for k, v in row_dict.items():
-                        if isinstance(v, Decimal):
-                            row_dict[k] = float(v)
-                    rows.append(row_dict)
-            finally:
-                cursor.execute("ROLLBACK")
+    from clickhouse_utils.executor import QueryExecutor
 
-        return {
-            'columns': columns,
-            'rows': rows,
-            'row_count': len(rows),
-            'error': None
-        }
-    except Exception as exc:
-        logger.exception("Error executing compiled visual dataset query")
-        return {
-            'columns': [],
-            'rows': [],
-            'row_count': 0,
-            'error': str(exc)
-        }
+    executor = QueryExecutor()
+    result = executor.execute(sql, params)
+    return result
 
 
 def execute_compiled_query_aliased(sql, params, column_mappings):
@@ -815,43 +781,19 @@ def execute_compiled_query_aliased(sql, params, column_mappings):
     (drill-through, dataset preview) need the raw "table.column" keys and
     must keep using execute_compiled_query() + apply_column_aliases().
     """
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("BEGIN READ ONLY")
-            try:
-                cursor.execute(sql, params)
-                if cursor.description is None:
-                    return {
-                        'columns': [],
-                        'rows': [],
-                        'row_count': 0,
-                        'error': None
-                    }
-                columns = [col[0] for col in cursor.description]
-                aliased_columns = [column_mappings.get(c, c) for c in columns] if column_mappings else columns
-                raw = cursor.fetchall()
-                rows = []
-                for row in raw:
-                    row_dict = dict(zip(aliased_columns, row))
-                    # Convert Decimal values to float for JSON serialization
-                    for k, v in row_dict.items():
-                        if isinstance(v, Decimal):
-                            row_dict[k] = float(v)
-                    rows.append(row_dict)
-            finally:
-                cursor.execute("ROLLBACK")
+    from clickhouse_utils.executor import QueryExecutor
 
-        return {
-            'columns': columns,
-            'rows': rows,
-            'row_count': len(rows),
-            'error': None
-        }
-    except Exception as exc:
-        logger.exception("Error executing compiled visual dataset query")
-        return {
-            'columns': [],
-            'rows': [],
-            'row_count': 0,
-            'error': str(exc)
-        }
+    executor = QueryExecutor()
+    result = executor.execute(sql, params)
+
+    if result['error']:
+        return result
+
+    if column_mappings:
+        aliased_rows = []
+        for row in result['rows']:
+            aliased_row = {column_mappings.get(k, k): v for k, v in row.items()}
+            aliased_rows.append(aliased_row)
+        result['rows'] = aliased_rows
+
+    return result

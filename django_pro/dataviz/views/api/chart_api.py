@@ -668,7 +668,7 @@ def chart_render_api(request, chart_id):
     if chart.source_type == SavedChart.SOURCE_COLUMNS:
         sel_cols_hash = hashlib.md5(json.dumps(chart.config.get('selected_columns', []), sort_keys=True).encode()).hexdigest()[:8]
     
-    source_part = f'{chart.source_type}:{chart.source_id or "_"}:{chart.source_sql or "_"}:{sel_cols_hash}:{pf_hash}'
+    source_part = f'{chart.source_type}:{chart.source_id or "_"}:{chart.source_sql or "_"}:{sel_cols_hash}:{pf_hash}:{updated_ts}'
     data_cache_key = f'chart_data:{source_part}'
     data_cached = cache.get(data_cache_key)
     if data_cached is not None:

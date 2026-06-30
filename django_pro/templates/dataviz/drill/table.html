@@ -3,6 +3,10 @@
 
 {% block title %}Drill-Through – {{ chart.name }}{% endblock %}
 
+{% block extra_head %}
+<style>[x-cloak] { display: none !important; }</style>
+{% endblock %}
+
 {% block content %}
 {% include "dataviz/submenu.html" %}
 <div x-data="drillTable()" class="max-w-[98vw] mx-auto px-4 py-6">

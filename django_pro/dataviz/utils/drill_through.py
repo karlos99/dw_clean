@@ -338,7 +338,7 @@ def execute_drill_query(
         error = result.get('error')
     elif chart.source_type == 'dataset':
         from dataviz.models import Dataset
-        from dataviz.utils.compiler import compile_dataset_to_sql, execute_compiled_query, COLUMN_WHITELIST, get_columns_for_table
+        from dataviz.utils.compiler import compile_dataset_to_sql, execute_compiled_query, execute_compiled_query_aliased, COLUMN_WHITELIST, get_columns_for_table
         from dataviz.utils.data_loader import _run_saved_query_sql
         try:
             ds = Dataset.objects.get(pk=chart.source_id)
@@ -438,7 +438,9 @@ def execute_drill_query(
             
             mock_ds = MockDataset(ds, dataset_columns)
             sql, params = compile_dataset_to_sql(mock_ds, user=user, interactive_filters=dataset_filters, limit=150000)
-            ds_result = execute_compiled_query(sql, params)
+            # Use aliased executor so column_mappings are applied to result keys
+            _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
+            ds_result = execute_compiled_query_aliased(sql, params, _col_mappings)
             
             error = ds_result.get('error')
             if error:
@@ -448,28 +450,30 @@ def execute_drill_query(
                 ds_rows = ds_result.get('rows', [])
                 keys = []
                 if key_col:
-                    keys = list(set(str(r.get(key_col) or '').strip() for r in ds_rows))
+                    _key_alias = _col_mappings.get(key_col, key_col.split('.')[-1])
+                    keys = list(set(str(r.get(_key_alias) or '').strip() for r in ds_rows))
                     keys = [k for k in keys if k]
                 
                 ssids = []
                 if student_identifier_col:
-                    ssids = list(set(str(r.get(student_identifier_col) or '').strip() for r in ds_rows))
+                    _sid_alias = _col_mappings.get(student_identifier_col, student_identifier_col.split('.')[-1])
+                    ssids = list(set(str(r.get(_sid_alias) or '').strip() for r in ds_rows))
                     ssids = [s for s in ssids if s]
 
                 # Determine default columns from the dataset columns if none are requested
                 if not extra_columns:
                     ds_cols = []
                     for c in (ds.columns or []):
-                        col_name = c.split('.')[-1]
+                        col_name = _col_mappings.get(c, c.split('.')[-1])
                         if col_name not in ds_cols:
                             ds_cols.append(col_name)
                     for base_col in ['student_id', 'student_name', 'grade', 'school', 'school_year']:
                         if base_col not in ds_cols:
                             ds_cols.append(base_col)
-                    # Include test_*/mark_* column_mappings aliases so the explorer
+                    # Include all column_mappings aliases so the explorer
                     # fetches assessment scores via its results/tests join logic.
                     for alias in (ds.column_mappings or {}).values():
-                        if alias and (alias.startswith('test_') or alias.startswith('mark_')) and alias not in ds_cols:
+                        if alias and alias not in ds_cols:
                             ds_cols.append(alias)
                     extra_columns = ds_cols
                 else:
@@ -529,17 +533,17 @@ def execute_drill_query(
                     for r in ds_rows:
                         new_row = {}
                         
-                        # 1. Add dataset columns (with prefix stripped)
+                        # Dataset columns already have column_mappings applied via
+                        # execute_compiled_query_aliased — use keys as-is.
                         for dk, dval in r.items():
-                            clean_dk = dk.split('.')[-1]
-                            new_row[clean_dk] = dval
+                            new_row[dk] = dval
                         
-                        # 2. Merge explorer columns
+                        # Merge explorer columns
                         match_val = None
-                        if key_col and r.get(key_col):
-                            match_val = str(r.get(key_col)).strip()
-                        elif student_identifier_col and r.get(student_identifier_col):
-                            match_val = str(r.get(student_identifier_col)).strip()
+                        if key_col and r.get(_key_alias):
+                            match_val = str(r.get(_key_alias)).strip()
+                        elif student_identifier_col and r.get(_sid_alias):
+                            match_val = str(r.get(_sid_alias)).strip()
                         
                         if match_val and match_val in lookup:
                             exp_row = lookup[match_val]
@@ -549,10 +553,10 @@ def execute_drill_query(
                         
                         rows.append(new_row)
 
-                    # Build final ordered columns: dataset columns first, then explorer columns
+                    # Build final ordered columns: dataset columns first (aliased), then explorer columns
                     cols = []
                     for c in dataset_columns:
-                        clean_c = c.split('.')[-1]
+                        clean_c = _col_mappings.get(c, c.split('.')[-1])
                         if clean_c not in cols:
                             cols.append(clean_c)
                     for c in extra_columns:

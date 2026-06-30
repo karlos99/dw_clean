@@ -7,19 +7,33 @@
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
 <style>
-  /* Responsive grid: 12-col on desktop, single-col on mobile */
+  /* Responsive grid: 12-col on desktop, single-col on mobile.
+     Matches builder GridStack: cellHeight=80px, margin=8px, overflow=hidden */
   .page-grid {
     display: grid;
-    gap: 1rem;
+    gap: 8px;
     grid-template-columns: repeat(12, 1fr);
   }
   .page-grid > div {
     height: calc(var(--gs-h, 4) * 80px);
+    overflow: hidden;
   }
-  /* Chart sections can grow taller than their grid cell so content isn't clipped */
-  .page-grid > div.chart-section {
+  /* HTML sections auto-grow to fit content */
+  .page-grid > div.html-section {
     height: auto;
     min-height: calc(var(--gs-h, 4) * 80px);
+    overflow-y: auto;
+  }
+  /* Chart sections: fixed grid height; chart fills 100% inside */
+  .page-grid > div.chart-section {
+    height: calc(var(--gs-h, 4) * 80px);
+    overflow: hidden;
+  }
+  .page-grid > div.chart-section .page-chart-slot {
+    display: flex; flex-direction: column; height: 100%;
+  }
+  .page-grid > div.chart-section .chart-container {
+    flex: 1; min-height: 0;
   }
   @media (min-width: 1025px) {
     .page-grid > div {
@@ -33,8 +47,7 @@
     .page-grid > [style*="grid-column"] {
       grid-column: 1 / -1 !important;
     }
-    /* HTML blocks can expand vertically if text overflows on tablet/mobile */
-    .page-grid > div.html-section {
+    .page-grid > div {
       height: auto !important;
       min-height: calc(var(--gs-h, 4) * 80px);
     }
@@ -43,7 +56,6 @@
     .page-grid {
       grid-template-columns: 1fr;
     }
-    /* Ensure charts on mobile are not squished vertically */
     .page-grid > div.chart-section {
       min-height: max(calc(var(--gs-h, 4) * 80px), 220px);
       height: auto;
@@ -449,13 +461,13 @@
           }
         }
         this._persist();
-        this.refreshCharts();
+        this.refreshCharts([col]);
       },
 
       removeTag(col, val) {
         this.tags = this.tags.filter(t => !(t.col === col && t.value === String(val)));
         this._persist();
-        this.refreshCharts();
+        this.refreshCharts([col]);
       },
 
       clearAll() {
@@ -463,7 +475,7 @@
         const affectedCols = [...new Set(this.tags.map(t => t.col))];
         this.tags = [];
         this._persist();
-        this.refreshCharts();
+        this.refreshCharts(affectedCols);
       },
 
       buildFilterQS() {
@@ -487,7 +499,7 @@
         });
       },
 
-      refreshCharts() {
+      refreshCharts(affectedCols) {
         const qs = this.buildFilterQS();
         window._pageFilterQS = qs;
         const allSlots = document.querySelectorAll('.page-chart-slot');

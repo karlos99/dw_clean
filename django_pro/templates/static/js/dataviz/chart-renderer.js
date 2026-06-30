@@ -90,14 +90,14 @@
       var ch = chartSlot.dataset.containerHeight;
       if (cw) container.style.width  = cw + 'px';
       if (ch) container.style.height = ch + 'px';
-      // If the parent chart-section has auto height, ensure the container fills it
-      var chartSection = container.closest('.chart-section');
-      if (chartSection) {
-        if (!ch) {
-          // No explicit height → fill the available space
-          container.style.height = '100%';
-        }
-      }
+      // Fill available space in both directions unless explicitly sized.
+      // Also reset the standalone min-height so the chart fits inside grid cells.
+      if (!cw) container.style.width = '100%';
+      if (!ch) { container.style.height = '100%'; container.style.minHeight = '0'; }
+      // Ensure the slot itself fills the grid item
+      chartSlot.style.display = 'flex';
+      chartSlot.style.flexDirection = 'column';
+      chartSlot.style.height = '100%';
     }
 
     let option;
@@ -396,12 +396,31 @@
     }
   }
 
+  var _lazyObserver = null;
+
+  function _getLazyObserver() {
+    if (!_lazyObserver) {
+      _lazyObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          var el = entry.target;
+          _lazyObserver.unobserve(el);
+          if (!el._echartsInited) {
+            el._echartsInited = true;
+            initChart(el);
+          }
+        });
+      }, { rootMargin: '300px 0px' });
+    }
+    return _lazyObserver;
+  }
+
   function initAll() {
+    var observer = _getLazyObserver();
     document.querySelectorAll('.chart-container').forEach(function (el) {
-      if (!el._echartsInited) {
-        el._echartsInited = true;
-        initChart(el);
-      }
+      if (el._echartsInited || el._echartsObserved) return;
+      el._echartsObserved = true;
+      observer.observe(el);
     });
   }
 

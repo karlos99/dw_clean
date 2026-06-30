@@ -263,7 +263,8 @@ def export_students_csv(request):
         import logging
         logger = logging.getLogger(__name__)
         try:
-            with connections['default'].cursor() as cursor:
+            from clickhouse_utils.executor import QueryExecutor
+            with QueryExecutor().cursor() as cursor:
                 # Re-implement helper logic inline or simplified
                 def _parse_year_from_test_col(col_key):
                     s = (col_key or '').replace('-', '_')
