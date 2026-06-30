@@ -402,7 +402,7 @@
                                 <template x-for="(metrics, testName) in winObj" :key="'am_flat_'+assessName+'_'+subjectName+'_'+winName+'_'+testName">
                                   <div class="space-y-0.5">
                                     <p x-show="testName && testName !== subjectName" class="text-[10px] text-slate-500 font-medium" x-text="testName"></p>
-                                    <template x-for="mKey in ['SS','PL']" :key="'amk_flat_'+metrics[mKey]">
+                                    <template x-for="mKey in Object.keys(metrics)" :key="'amk_flat_'+metrics[mKey]">
                                       <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
                                         <input type="checkbox"
                                                :checked="_dvIsColSelected(metrics[mKey])"
@@ -432,7 +432,7 @@
                                     <template x-for="(metrics, testName) in winObj" :key="'am_'+assessName+'_'+subjectName+'_'+year+'_'+winName+'_'+testName">
                                       <div class="space-y-0.5">
                                         <p x-show="testName && testName !== subjectName" class="text-[10px] text-slate-500 font-medium" x-text="testName"></p>
-                                        <template x-for="mKey in ['SS','PL']" :key="'amk_'+metrics[mKey]">
+                                        <template x-for="mKey in Object.keys(metrics)" :key="'amk_'+metrics[mKey]">
                                           <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
                                             <input type="checkbox"
                                                    :checked="_dvIsColSelected(metrics[mKey])"
@@ -557,7 +557,7 @@
                             <template x-for="(metrics, testingName) in winObj" :key="'tt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
                               <div class="space-y-0.5">
                                 <p class="text-[10px] text-slate-500 font-medium" x-text="testingName"></p>
-                                <template x-for="mKey in ['SS','PL']" :key="'tm_'+metrics[mKey]">
+                                <template x-for="mKey in Object.keys(metrics)" :key="'tm_'+metrics[mKey]">
                                   <label x-show="metrics[mKey]" class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
                                     <input type="checkbox"
                                            :checked="_dvIsColSelected(metrics[mKey])"
@@ -2369,7 +2369,7 @@
                                 <p x-show="winName" class="text-[8px] font-bold text-slate-400 uppercase mt-1 mb-0.5" x-text="winName"></p>
                                 <template x-for="(metrics, testingName) in winObj" :key="'dr_tt_'+year+'_'+assessName+'_'+winName+'_'+testingName">
                                   <div class="space-y-0.5">
-                                    <template x-for="mKey in ['SS','PL']" :key="'dr_tm_'+metrics[mKey]">
+                                    <template x-for="mKey in Object.keys(metrics)" :key="'dr_tm_'+metrics[mKey]">
                                       <label x-show="metrics[mKey] && (!drillSearch || (explorerStructure?.definitions?.[metrics[mKey]] || metrics[mKey]).toLowerCase().includes(drillSearch.toLowerCase()))"
                                              class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white cursor-pointer transition">
                                         <input type="checkbox" :checked="drillPreviewList.includes(metrics[mKey])" @change="toggleDrillCol(metrics[mKey])"

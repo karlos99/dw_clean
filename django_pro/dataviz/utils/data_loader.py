@@ -11,7 +11,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from django.core.cache import cache
-from django.db import connection, connections
+from django.db import connections
 
 
 # ── SQL safety guards (copied verbatim from original views.py) ────────────────
@@ -48,18 +48,17 @@ def run_raw_sql(sql: str) -> dict:
         return cached
 
     try:
-        with connection.cursor() as cursor:
-            cursor.execute("BEGIN READ ONLY")
-            try:
-                cursor.execute(sql)
-                if cursor.description is None:
-                    return {'columns': [], 'rows': [], 'row_count': 0, 'has_more': False}
-                columns = [col[0] for col in cursor.description]
-                raw = cursor.fetchmany(MAX_SQL_ROWS)
-                rows = [dict(zip(columns, row)) for row in raw]
-                has_more = len(raw) == MAX_SQL_ROWS
-            finally:
-                cursor.execute("ROLLBACK")
+        from clickhouse_utils.executor import QueryExecutor
+
+        executor = QueryExecutor()
+        result = executor.execute(sql)
+
+        if result['error']:
+            return {'columns': [], 'rows': [], 'row_count': 0, 'has_more': False, 'error': result['error']}
+
+        columns = result['columns']
+        rows = result['rows']
+        has_more = result['row_count'] >= MAX_SQL_ROWS
 
         col_types: dict = {}
         for col in columns:
@@ -367,9 +366,17 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                     val = str(pl).strip() if pl else '\u2014'
                 elif metric == 'oi' or metric == 'dfp':
                     oi_key = info.get('other_info_key')
-                    if oi_key and isinstance(oi, dict):
-                        v = oi.get(oi_key)
-                        val = str(v).strip() if v is not None else '\u2014'
+                    if oi_key:
+                        if isinstance(oi, str):
+                            try:
+                                oi = json.loads(oi)
+                            except (json.JSONDecodeError, TypeError):
+                                oi = None
+                        if isinstance(oi, dict):
+                            v = oi.get(oi_key)
+                            val = str(v).strip() if v is not None else '\u2014'
+                        else:
+                            val = '\u2014'
                     else:
                         val = '\u2014'
                 else:
@@ -450,22 +457,16 @@ def run_saved_query_preview(saved_query) -> dict:
     sql = f'SELECT {col_sql} FROM current_student cs WHERE cs.status = %s LIMIT 5'
 
     try:
-        with connection.cursor() as cursor:
-            cursor.execute("BEGIN READ ONLY")
-            try:
-                cursor.execute(sql, ['Active'])
-                if cursor.description is None:
-                    return {'columns': base_cols, 'rows': [], 'row_count': 0}
-                db_cols = [col[0] for col in cursor.description]
-                raw = cursor.fetchmany(5)
-                rows = [dict(zip(db_cols, row)) for row in raw]
-            finally:
-                cursor.execute("ROLLBACK")
+        from clickhouse_utils.executor import QueryExecutor
 
+        executor = QueryExecutor()
+        result = executor.execute(sql, ['Active'])
+        if result['error']:
+            return {'error': result['error'], 'rows': [], 'columns': []}
         return {
             'columns': base_cols,
-            'rows': rows,
-            'row_count': len(rows),
+            'rows': result['rows'],
+            'row_count': result['row_count'],
         }
     except Exception as exc:
         return {'error': str(exc), 'rows': [], 'columns': []}
@@ -808,17 +809,32 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     sql       = f'SELECT {col_sql} FROM current_student cs{join_sql} {where_sql} LIMIT {MAX_CHART_ROWS}'
 
     try:
-        with connection.cursor() as cursor:
-            # Phase 1: fetch base rows from current_student
-            cursor.execute(sql, params)
-            if cursor.description is None:
-                return {'columns': base_cols, 'rows': [], 'row_count': 0, 'error': None}
-            db_cols = [col[0] for col in cursor.description]
-            raw     = cursor.fetchmany(MAX_CHART_ROWS)
-            rows    = [dict(zip(db_cols, row)) for row in raw]
+        from clickhouse_utils.executor import QueryExecutor
 
-            # Phase 2: resolve test/mark column metadata & bulk-fetch
-            if rows and (need_test or need_mark):
+        # Phase 1: fetch base rows from current_student (ClickHouse when available)
+        phase1_executor = QueryExecutor()
+        phase1_result = phase1_executor.execute(sql, params)
+        if phase1_result['error']:
+            return {'error': phase1_result['error'], 'rows': [], 'columns': []}
+        db_cols = phase1_result['columns']
+        rows = phase1_result['rows']
+        raw = rows  # for has_more check below
+
+        if not rows:
+            res = {
+                'columns': base_cols,
+                'col_types': {},
+                'rows': [],
+                'row_count': 0,
+                'has_more': False,
+                'error': None,
+            }
+            cache.set(cache_key, res, 1800)
+            return res
+
+        # Phase 2: resolve test/mark column metadata & bulk-fetch (PostgreSQL — queries system catalogs)
+        if rows and (need_test or need_mark):
+            with connections['default'].cursor() as cursor:
                 # When multiple school years are selected, the column key encodes only
                 # the year that was visible in the picker (usually the most recent).
                 # Expand infos to cover all selected years so each enrolled-year row
@@ -859,33 +875,27 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                     student_keys = [r['stu_annual_key'] for r in rows if r.get('stu_annual_key')]
 
                 # Run test and mark data fetches in parallel when both are needed
+                from clickhouse_utils.executor import QueryExecutor
+
                 if need_test and need_mark:
                     def _fetch_tests():
-                        with connections['default'].cursor() as cur:
-                            cur.execute("BEGIN READ ONLY")
-                            try:
-                                _fetch_test_data(cur, test_infos, student_ids, rows,
-                                                 tested_school_codes=tested_school_filter)
-                            finally:
-                                cur.execute("ROLLBACK")
+                        cur = QueryExecutor().cursor()
+                        _fetch_test_data(cur, test_infos, student_ids, rows,
+                                         tested_school_codes=tested_school_filter)
 
                     def _fetch_marks():
-                        with connections['default'].cursor() as cur:
-                            cur.execute("BEGIN READ ONLY")
-                            try:
-                                _fetch_mark_data(cur, mark_infos, student_keys, rows)
-                            finally:
-                                cur.execute("ROLLBACK")
+                        cur = QueryExecutor().cursor()
+                        _fetch_mark_data(cur, mark_infos, student_keys, rows)
 
                     with ThreadPoolExecutor(max_workers=2) as executor:
                         futures = [executor.submit(_fetch_tests), executor.submit(_fetch_marks)]
                         for f in futures:
                             f.result()  # wait for both, propagate exceptions
                 elif need_test:
-                    _fetch_test_data(cursor, test_infos, student_ids, rows,
+                    _fetch_test_data(QueryExecutor().cursor(), test_infos, student_ids, rows,
                                      tested_school_codes=tested_school_filter)
                 elif need_mark:
-                    _fetch_mark_data(cursor, mark_infos, student_keys, rows)
+                    _fetch_mark_data(QueryExecutor().cursor(), mark_infos, student_keys, rows)
 
             if rows and dynamic_filters:
                 rows = [

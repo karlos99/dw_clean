@@ -110,6 +110,52 @@ function pageBuilder() {
         }
       });
 
+      // Inline canvas controls — edit and delete sections directly on canvas
+      document.addEventListener('click', (e) => {
+        const editBtn = e.target.closest('[data-action="edit-section"]');
+        const deleteBtn = e.target.closest('[data-action="delete-section"]');
+        if (editBtn) {
+          e.stopPropagation();
+          const secId = parseInt(editBtn.dataset.secId, 10);
+          const row = this.rows.find(r => r.sections.some(s => s.id === secId));
+          if (row) {
+            this.activeRow = row.id;
+            this.selectedSection = secId;
+            // Scroll sidebar into view on mobile
+            const sidebar = document.querySelector('#page-builder-sidebar');
+            if (sidebar && window.innerWidth < 1024) {
+              sidebar.scrollIntoView({ behavior: 'smooth' });
+            }
+          }
+        }
+        if (deleteBtn) {
+          e.stopPropagation();
+          const secId = parseInt(deleteBtn.dataset.secId, 10);
+          const row = this.rows.find(r => r.sections.some(s => s.id === secId));
+          if (row && confirm('Delete this section? This cannot be undone.')) {
+            this.removeSection(row.id, secId);
+          }
+        }
+      });
+
+      // Double-click on grid items to edit
+      document.addEventListener('dblclick', (e) => {
+        const gridItem = e.target.closest('.grid-stack-item');
+        if (!gridItem) return;
+        const gsId = gridItem.getAttribute('gs-id');
+        if (!gsId) return;
+        const secId = parseInt(gsId, 10);
+        if (isNaN(secId)) return;
+        const row = this.rows.find(r => r.sections.some(s => s.id === secId));
+        if (row) {
+          this.activeRow = row.id;
+          this.selectedSection = secId;
+          if (row.sections.find(s => s.id === secId)?.element_type === 'html') {
+            this.openEditorModal(secId);
+          }
+        }
+      });
+
       this.$nextTick(() => {
         if (this.pageId) {
           this._initAllGrids();
@@ -250,16 +296,27 @@ function pageBuilder() {
     },
 
     _buildSectionHtml(sec) {
+      // Inline controls overlay (edit + delete) — shown on hover
+      const controlsHtml = `
+        <div class="gs-inline-controls">
+          <button class="gs-ctrl-btn gs-ctrl-edit" data-action="edit-section" data-sec-id="${sec.id}" title="Edit section">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+          </button>
+          <button class="gs-ctrl-btn gs-ctrl-delete" data-action="delete-section" data-sec-id="${sec.id}" title="Delete section">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>`;
+
       if (sec.element_type === 'html') {
         const placeholder = '<p class="text-slate-400 italic">Empty text block — click Edit Content to add text</p>';
         const content = sec.html_content || placeholder;
-        // Use default p-4 only when no explicit wrapper (avoids double-padding)
         const hasPadWrapper = content.includes('data-pb-p=') || content.includes('data-pb-center=');
         const padClass = hasPadWrapper ? '' : 'p-4 ';
         const centerStyle = sec.center_content
           ? 'display:flex;align-items:center;justify-content:center;height:100%;'
           : 'height:100%;';
-        return `<div class="${padClass}text-sm text-slate-700 leading-relaxed overflow-y-auto html-prose" style="${centerStyle}">${content}</div>`;
+        return controlsHtml
+          + `<div class="${padClass}text-sm text-slate-700 leading-relaxed overflow-y-auto html-prose" style="${centerStyle}">${content}</div>`;
       }
       const pageSlug = encodeURIComponent(this.pageSlug);
       const chartId = sec.chart_id;
@@ -290,8 +347,8 @@ function pageBuilder() {
           </div>
         </div>
       `;
-      return titleBar
-        + '<div id="builder-chart-slot-' + sec.id + '" class="flex-1 min-h-0" hx-get="' + renderUrl + '" hx-trigger="intersect once" hx-target="#builder-chart-slot-' + sec.id + '" hx-swap="innerHTML">'
+      return controlsHtml + titleBar
+        + '<div id="builder-chart-slot-' + sec.id + '" class="flex-1 min-h-0 page-chart-slot" hx-get="' + renderUrl + '" hx-trigger="intersect once" hx-target="#builder-chart-slot-' + sec.id + '" hx-swap="innerHTML">'
         + '<div class="flex items-center justify-center h-full text-slate-300 text-xs">'
         + '<span class="inline-block w-3 h-3 border border-slate-300 border-t-blue-500 rounded-full animate-spin mr-1.5"></span>Loading\u2026'
         + '</div></div>';

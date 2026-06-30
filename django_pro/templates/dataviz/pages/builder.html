@@ -4,16 +4,40 @@
 {% block title %}Page Builder – DataViz{% endblock %}
 
 {% block extra_head %}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack.min.css"/>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack-extra.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack-extra.min.css"/>
 <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack-all.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack-all.js"></script>
 <style>
   .grid-stack { min-height: 80px !important; }
   .grid-stack-item-content { overflow: hidden; }
   /* HTML/text sections scroll rather than clip */
   .grid-stack-item-content.pb-html-block { overflow-y: auto; overflow-x: hidden; }
   .row-container { transition: box-shadow 0.15s, border-color 0.15s; }
+  /* Inline canvas controls — appear on hover */
+  .grid-stack-item { position: relative; }
+  .gs-inline-controls {
+    position: absolute; top: 4px; right: 4px; z-index: 30;
+    display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s;
+    pointer-events: none;
+  }
+  .grid-stack-item:hover .gs-inline-controls,
+  .gs-inline-controls.gs-controls-visible { opacity: 1; pointer-events: auto; }
+  .gs-ctrl-btn {
+    width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; border: 1px solid #e2e8f0; background: white; cursor: pointer;
+    font-size: 12px; color: #64748b; transition: all 0.12s; line-height: 1;
+  }
+  .gs-ctrl-btn:hover { background: #f1f5f9; border-color: #cbd5e1; }
+  .gs-ctrl-btn.gs-ctrl-delete:hover { background: #fef2f2; border-color: #fecaca; color: #ef4444; }
+  .gs-ctrl-btn.gs-ctrl-edit:hover { background: #eff6ff; border-color: #bfdbfe; color: #3b82f6; }
+  /* Make charts fill grid item height */
+  .grid-stack-item-content > .page-chart-slot {
+    display: flex; flex-direction: column; height: 100%;
+  }
+  .grid-stack-item-content > .page-chart-slot > .chart-container {
+    flex: 1; min-height: 0;
+  }
   .row-lbl { background:transparent; border:none; outline:none; font-weight:700;
              font-size:.7rem; letter-spacing:.07em; text-transform:uppercase;
              color:#334155; width:100%; }
@@ -450,7 +474,14 @@
     <!-- Main canvas                                               -->
     <!-- ══════════════════════════════════════════════════════════ -->
     <div class="flex-1 bg-slate-100 overflow-auto p-6">
-      <div class="space-y-4 max-w-none">
+      <div class="space-y-4 mx-auto"
+           :class="{
+             'max-w-full': containerWidth === 'full',
+             'max-w-screen-2xl': containerWidth === 'wide',
+             'max-w-5xl': containerWidth === 'lg',
+             'max-w-3xl': containerWidth === 'md',
+             'max-w-7xl': containerWidth === 'xl' || !containerWidth
+           }">
 
         <template x-for="(row, ri) in rows" :key="row.id">
           <div class="row-container bg-white border border-slate-200 rounded-xl shadow-sm overflow-visible"

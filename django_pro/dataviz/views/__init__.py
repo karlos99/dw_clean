@@ -31,6 +31,7 @@ from .api.page_api import (
     page_filter_columns_api,
     section_detail_api,
     row_detail_api,
+    clear_cache_api,
 )
 from .api.drill_api import (
     drill_rows_api, drill_columns_api, drill_filter_values_api,

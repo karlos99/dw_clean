@@ -804,9 +804,13 @@ def load_students(request):
                 f" ORDER BY {order_by_expr} {sort_dir} NULLS LAST"
                 f" LIMIT {limit} OFFSET {offset}"
             )
-            cursor.execute(query, select_params + params)
-            columns = [d[0] for d in cursor.description]
-            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            from clickhouse_utils.executor import QueryExecutor
+
+            ny_exec = QueryExecutor()
+            ny_result = ny_exec.execute(query, select_params + params)
+            columns = ny_result['columns']
+            rows = ny_result['rows']
             cache.set(page_cache_key, rows, 60)
 
         if columns is None and rows:

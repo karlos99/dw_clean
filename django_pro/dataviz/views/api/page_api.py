@@ -320,3 +320,25 @@ def row_detail_api(request, row_id):
         return JsonResponse({'row': row.to_dict(), 'success': True})
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+@require_GET
+def clear_cache_api(request):
+    """Clear all dataviz-related Redis caches. Returns JSON so the
+    frontend can call it and then reload the page."""
+    from django.core.cache import cache
+
+    patterns = ['chart_*', 'dv:*', 'drill_*', 'dataexp:*', 'nextyear:*']
+    deleted = 0
+    try:
+        for pattern in patterns:
+            keys = cache.keys(pattern)
+            if keys:
+                cache.delete_many(keys)
+                deleted += len(keys)
+    except Exception:
+        pass
+
+    return JsonResponse({'success': True, 'cleared': deleted})
+
+    return JsonResponse({'error': 'Method not allowed'}, status=405)

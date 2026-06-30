@@ -1187,9 +1187,14 @@ def load_students(request):
                 # 2. Sort them in Python to match the cached order.
                 # 3. Proceed to fetch Test/Mark data as usual.
                 
-                cursor.execute(f"SELECT {base_col_sql} FROM current_student cs {join_sql} WHERE cs.ssid = ANY(%s)", [cached_ssids])
-                cols = [desc[0] for desc in cursor.description]
-                unordered_students = {row[cols.index('ssid')]: dict(zip(cols, row)) for row in cursor.fetchall()}
+                from clickhouse_utils.executor import QueryExecutor
+
+                cached_exec = QueryExecutor()
+                cached_result = cached_exec.execute(f"SELECT {base_col_sql} FROM current_student cs {join_sql} WHERE cs.ssid = ANY(%s)", [cached_ssids])
+                cols = cached_result['columns']
+                unordered_students = {}
+                for row_dict in cached_result['rows']:
+                    unordered_students[row_dict.get('ssid')] = row_dict
                 
                 # Reconstruct ordered list
                 students = []
@@ -1203,7 +1208,7 @@ def load_students(request):
         else:
             # MISS: Run expensive sort query
             query = f"""
-            SELECT /*+ Leading(cs) */ {base_col_sql}
+            SELECT {base_col_sql}
             FROM current_student cs
             {join_sql}
             WHERE {where_sql}
@@ -1211,15 +1216,15 @@ def load_students(request):
             LIMIT %s OFFSET %s
             """
             
-            # We need to preserve params for the full query
-            # (params already contains where_params + sort_params)
             query_params = list(params)
             query_params.extend([limit, offset])
             
-            cursor.execute(query, query_params)
-            
-            columns = [desc[0] for desc in cursor.description]
-            students = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            from clickhouse_utils.executor import QueryExecutor
+
+            main_exec = QueryExecutor()
+            main_result = main_exec.execute(query, query_params)
+            columns = main_result['columns']
+            students = main_result['rows']
             
             # Cache the SSIDs of this result page
             result_ssids = [s.get('ssid') for s in students if s.get('ssid')]
@@ -1229,6 +1234,9 @@ def load_students(request):
         # Proceed with Detail Fetching (Test/Marks) for the identified students
         student_ids = [s.get('student_id') for s in students if s.get('student_id')]
         student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
+        
+        from clickhouse_utils.executor import QueryExecutor
+        _fetch_cursor = QueryExecutor().cursor()
         
         # Fetch test data in bulk for selected test columns
         if test_cols_info and student_ids:
@@ -1260,7 +1268,7 @@ def load_students(request):
                       AND t.subject ILIKE %s
                       {window_clause}
                 """
-                cursor.execute(query, [
+                _fetch_cursor.execute(query, [
                     *extra_params,
                     student_ids,
                     test_info['year'],
@@ -1269,7 +1277,7 @@ def load_students(request):
                     *window_params,
                 ])
                 
-                test_data = {row[0]: row[1] for row in cursor.fetchall()}
+                test_data = {row[0]: row[1] for row in _fetch_cursor.fetchall()}
                 
                 # Add test data to each student
                 for student in students:
@@ -1296,7 +1304,7 @@ def load_students(request):
                       AND sm.course_name ILIKE %s
                       {period_clause}
                 """
-                cursor.execute(query, [
+                _fetch_cursor.execute(query, [
                     student_keys,
                     mark_info['year'],
                     f"%{mark_info['subject']}%",
@@ -1304,7 +1312,7 @@ def load_students(request):
                     *period_params,
                 ])
 
-                mark_data = {row[0]: row[1] for row in cursor.fetchall()}
+                mark_data = {row[0]: row[1] for row in _fetch_cursor.fetchall()}
 
                 for student in students:
                     student_key = student.get('stu_annual_key')
@@ -1340,8 +1348,8 @@ def load_students(request):
                 AND sl.period = '0'
                 AND sch.school_group = 'Elementary School'
             """
-            cursor.execute(q_eht, [student_keys])
-            eht_map = {row[0]: row[1] for row in cursor.fetchall()}
+            _fetch_cursor.execute(q_eht, [student_keys])
+            eht_map = {row[0]: row[1] for row in _fetch_cursor.fetchall()}
             for student in students:
                 key = student.get('stu_annual_key')
                 if key:

@@ -15,7 +15,7 @@ from .views import (
     column_structures_api, column_filter_options_api,
     # Page API
     page_save_api, page_delete_api, page_sections_api, page_filter_options_api,
-    page_filter_columns_api, section_detail_api,
+    page_filter_columns_api, section_detail_api, clear_cache_api,
     # Row API
     row_detail_api,
     # Drill-through API
@@ -100,6 +100,7 @@ urlpatterns = [
     path('api/pages/filter-columns/',                             page_filter_columns_api, name='page_filter_columns'),
     path('api/pages/<slug>/filters/<str:filter_id>/',            page_filter_options_api, name='page_filter_options'),
     path('api/sections/<int:section_id>/',                       section_detail_api,      name='section_detail'),
+    path('api/cache/clear/',                                     clear_cache_api,         name='clear_cache'),
 
     # ── Drill API ────────────────────────────────────────────────────────
     path('api/drill/<int:chart_id>/rows/',           drill_rows_api,           name='drill_rows'),

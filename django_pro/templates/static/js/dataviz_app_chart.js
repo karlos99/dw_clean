@@ -50,6 +50,12 @@
                 yPool = pools.number;
                 stackPool = pools.nonNumber;
                 showSize = false;
+            } else if (chartType === 'jitter') {
+                xPool = allCols;
+                yPool = pools.number;
+                stackPool = pools.nonNumber;
+                showSize = false;
+                showStack = true;
             } else if (chartType === 'bubble') {
                 xPool = pools.number;
                 yPool = pools.number;
@@ -140,6 +146,7 @@
                 histogram: ['count'],
                 box: ['count'],
                 scatter: ['count'],
+                jitter: ['count'],
                 bubble: ['count'],
             };
             const numericAggs = new Set(['sum', 'avg', 'min', 'max', 'median']);
@@ -184,13 +191,13 @@
             const supports = {
                 bins: chartType === 'histogram',
                 curve: ['line', 'area', 'stacked_area', 'radar'].includes(chartType),
-                markers: ['line', 'area', 'stacked_area', 'scatter', 'bubble', 'radar'].includes(chartType),
-                pointSize: ['line', 'area', 'stacked_area', 'scatter', 'bubble', 'radar'].includes(chartType),
-                lineWidth: ['line', 'area', 'stacked_area', 'scatter', 'bubble', 'radar'].includes(chartType),
+                markers: ['line', 'area', 'stacked_area', 'scatter', 'jitter', 'bubble', 'radar'].includes(chartType),
+                pointSize: ['line', 'area', 'stacked_area', 'scatter', 'jitter', 'bubble', 'radar'].includes(chartType),
+                lineWidth: ['line', 'area', 'stacked_area', 'scatter', 'jitter', 'bubble', 'radar'].includes(chartType),
                 radius: ['bar', 'grouped_bar', 'stacked_bar', 'pie', 'donut', 'funnel', 'treemap'].includes(chartType),
                 stackMode: ['stacked_bar', 'stacked_area'].includes(chartType),
                 tooltipShared: !['pie', 'donut', 'treemap', 'funnel', 'gauge'].includes(chartType),
-                polar: ['line', 'area', 'stacked_area', 'bar', 'grouped_bar', 'stacked_bar', 'scatter', 'radar'].includes(chartType),
+                polar: ['line', 'area', 'stacked_area', 'bar', 'grouped_bar', 'stacked_bar', 'scatter', 'jitter', 'radar'].includes(chartType),
                 inverted: !['pie', 'donut', 'treemap', 'funnel', 'gauge', 'radar'].includes(chartType),
                 zoomPan: !['gauge', 'pie', 'donut', 'funnel'].includes(chartType),
             };

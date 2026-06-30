@@ -1976,69 +1976,78 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    let _scrollSyncResizeObserver = null;
+    let _scrollSyncInitialized = false;
+    let _scrollSyncTopScrolling = false;
+    let _scrollSyncMainScrolling = false;
+
+    const updateTopScrollWidth = () => {
+        const topScrollContent = document.getElementById('h-scroll-content-top');
+        const table = document.querySelector('#student-table table');
+        if (topScrollContent && table) {
+            topScrollContent.style.width = `${table.offsetWidth}px`;
+        }
+    };
+
+    const updateScrollIndicators = () => {
+        const mainContainer = document.getElementById('table-scroll-container');
+        const leftShadow = document.getElementById('scroll-shadow-left');
+        const rightShadow = document.getElementById('scroll-shadow-right');
+        if (!mainContainer || !leftShadow || !rightShadow) return;
+        const scrollLeft = mainContainer.scrollLeft;
+        const maxScroll = mainContainer.scrollWidth - mainContainer.clientWidth;
+        leftShadow.style.opacity = scrollLeft > 10 ? '1' : '0';
+        rightShadow.style.opacity = scrollLeft < maxScroll - 10 ? '1' : '0';
+    };
+
     const initializeScrollSync = () => {
         const mainContainer = document.getElementById('table-scroll-container');
         const topScrollBar = document.getElementById('h-scroll-top');
         const topScrollContent = document.getElementById('h-scroll-content-top');
-        const table = document.querySelector('#student-table table');
-        
-        if (!mainContainer || !topScrollBar || !topScrollContent || !table) return;
-        
-        // Set the width of the top scroll content to match table width
-        const updateTopScrollWidth = () => {
-            const tableWidth = table.offsetWidth;
-            topScrollContent.style.width = `${tableWidth}px`;
-        };
-        
-        updateTopScrollWidth();
-        
-        // Sync scroll positions
-        let isTopScrolling = false;
-        let isMainScrolling = false;
-        
-        topScrollBar.addEventListener('scroll', () => {
-            if (isMainScrolling) return;
-            isTopScrolling = true;
-            mainContainer.scrollLeft = topScrollBar.scrollLeft;
-            updateScrollIndicators();
-            setTimeout(() => { isTopScrolling = false; }, 50);
+        if (!mainContainer || !topScrollBar || !topScrollContent) return;
+
+        // Disconnect old resize observer before creating a new one
+        if (_scrollSyncResizeObserver) {
+            _scrollSyncResizeObserver.disconnect();
+            _scrollSyncResizeObserver = null;
+        }
+
+        // Only attach scroll listeners once
+        if (!_scrollSyncInitialized) {
+            _scrollSyncInitialized = true;
+
+            topScrollBar.addEventListener('scroll', () => {
+                if (_scrollSyncMainScrolling) return;
+                _scrollSyncTopScrolling = true;
+                mainContainer.scrollLeft = topScrollBar.scrollLeft;
+                updateScrollIndicators();
+                setTimeout(() => { _scrollSyncTopScrolling = false; }, 50);
+            });
+
+            mainContainer.addEventListener('scroll', () => {
+                if (_scrollSyncTopScrolling) return;
+                _scrollSyncMainScrolling = true;
+                topScrollBar.scrollLeft = mainContainer.scrollLeft;
+                updateScrollIndicators();
+                setTimeout(() => { _scrollSyncMainScrolling = false; }, 50);
+            });
+        }
+
+        // Wait for layout, then set width and observe the table
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                updateTopScrollWidth();
+                updateScrollIndicators();
+                const table = document.querySelector('#student-table table');
+                if (table) {
+                    _scrollSyncResizeObserver = new ResizeObserver(() => {
+                        updateTopScrollWidth();
+                        updateScrollIndicators();
+                    });
+                    _scrollSyncResizeObserver.observe(table);
+                }
+            });
         });
-        
-        mainContainer.addEventListener('scroll', () => {
-            if (isTopScrolling) return;
-            isMainScrolling = true;
-            topScrollBar.scrollLeft = mainContainer.scrollLeft;
-            updateScrollIndicators();
-            setTimeout(() => { isMainScrolling = false; }, 50);
-        });
-        
-        // Update scroll indicators
-        const updateScrollIndicators = () => {
-            const leftShadow = document.getElementById('scroll-shadow-left');
-            const rightShadow = document.getElementById('scroll-shadow-right');
-            
-            if (!leftShadow || !rightShadow) return;
-            
-            const scrollLeft = mainContainer.scrollLeft;
-            const maxScroll = mainContainer.scrollWidth - mainContainer.clientWidth;
-            
-            // Show left shadow if scrolled right
-            leftShadow.style.opacity = scrollLeft > 10 ? '1' : '0';
-            
-            // Show right shadow if can scroll more right
-            rightShadow.style.opacity = scrollLeft < maxScroll - 10 ? '1' : '0';
-        };
-        
-        // Initial check
-        updateScrollIndicators();
-        
-        // Update on window resize
-        const resizeObserver = new ResizeObserver(() => {
-            updateTopScrollWidth();
-            updateScrollIndicators();
-        });
-        
-        resizeObserver.observe(table);
     };
 
     renderSelectedColumns();

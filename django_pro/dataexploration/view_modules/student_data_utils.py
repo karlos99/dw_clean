@@ -103,35 +103,35 @@ def _build_student_info_for_ssid(ssid: str):
 
 def _fetch_test_records_for_ssid(ssid: str):
     """Fetch all test records for a student from the database."""
-    with connections['default'].cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT
-                r.school_year AS school_year,
-                t.test_name AS test_name,
-                t.subject AS subject,
-                t.test_window AS test_window,
-                cs.grade AS grade,
-                cs.school AS school,
-                cs.school_state_id AS school_state_id,
-                sch.short_name AS school_short_name,
-                r.pl AS pl,
-                r.ss AS ss,
-                r.school_code AS school_code,
-                r.other_info AS other_info
-            FROM results r
-            INNER JOIN tests t ON r.test_group_key = t.test_group_key
-            LEFT JOIN current_student cs
-                ON cs.ssid = r.ssid AND cs.school_year = r.school_year
-            LEFT JOIN school sch
-                ON sch.assessment_school_code = r.school_code
-            WHERE r.ssid = %s
-            ORDER BY r.school_year DESC, t.test_name, t.subject
-            """,
-            [ssid],
-        )
-        cols = [c[0] for c in cursor.description]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+    from clickhouse_utils.executor import QueryExecutor
+
+    sql = """
+        SELECT
+            r.school_year AS school_year,
+            t.test_name AS test_name,
+            t.subject AS subject,
+            t.test_window AS test_window,
+            cs.grade AS grade,
+            cs.school AS school,
+            cs.school_state_id AS school_state_id,
+            sch.short_name AS school_short_name,
+            r.pl AS pl,
+            r.ss AS ss,
+            r.school_code AS school_code,
+            r.other_info AS other_info
+        FROM results r
+        INNER JOIN tests t ON r.test_group_key = t.test_group_key
+        LEFT JOIN current_student cs
+            ON cs.ssid = r.ssid AND cs.school_year = r.school_year
+        LEFT JOIN school sch
+            ON sch.assessment_school_code = r.school_code
+        WHERE r.ssid = %s
+        ORDER BY r.school_year DESC, t.test_name, t.subject
+    """
+    result = QueryExecutor().execute(sql, [ssid])
+    if result.get('error'):
+        return []
+    return result.get('rows', [])
 
 
 def _fetch_student_marks_for_ssid(ssid: str):

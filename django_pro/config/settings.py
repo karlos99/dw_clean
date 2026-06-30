@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     'assesments',
     'dataviz.apps.DatavizConfig',
     'dataLoader.apps.DataloaderConfig',
+    'clickhouse_utils',
     # Allauth
     'allauth',
     'allauth.account',
@@ -128,8 +129,29 @@ DATABASES = {
         'PASSWORD': os.getenv('POSTGRES_PASSWORD'),
         'HOST': os.getenv('POSTGRES_HOST'),
         'PORT': os.getenv('POSTGRES_PORT'),
-    }
+    },
+    'clickhouse': {
+        'ENGINE': 'django.db.backends.dummy',
+        'NAME': os.getenv('CLICKHOUSE_DB', 'fastapi_clickhouse_db'),
+        'USER': os.getenv('CLICKHOUSE_USER', 'clickhouse_user'),
+        'PASSWORD': os.getenv('CLICKHOUSE_PASSWORD', ''),
+        'HOST': os.getenv('CLICKHOUSE_HOST', 'clickhouse'),
+        'PORT': os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'),
+    },
 }
+
+# ClickHouse Analytics Configuration
+USE_CLICKHOUSE_ANALYTICS = os.getenv('USE_CLICKHOUSE_ANALYTICS', 'True').lower() == 'true'
+CLICKHOUSE_HOST = os.getenv('CLICKHOUSE_HOST', 'clickhouse')
+CLICKHOUSE_DB = os.getenv('CLICKHOUSE_DB', 'fastapi_clickhouse_db')
+CLICKHOUSE_USER = os.getenv('CLICKHOUSE_USER', 'clickhouse_user')
+CLICKHOUSE_PASSWORD = os.getenv('CLICKHOUSE_PASSWORD', '')
+CLICKHOUSE_PORT = int(os.getenv('CLICKHOUSE_PORT', '8123'))
+CLICKHOUSE_NATIVE_PORT = int(os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'))
+
+# Database router: ClickHouse is read-only for analytics queries only.
+# All migrations and writes stay on PostgreSQL.
+DATABASE_ROUTERS = ['clickhouse_utils.router.AnalyticsRouter']
 
 
 # Password validation
