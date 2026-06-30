@@ -572,7 +572,7 @@ def chart_save_api(request):
 
 @login_required
 def chart_detail_api(request, chart_id):
-    """GET a chart's full dict; DELETE to remove it."""
+    """GET a chart's full dict; PUT to update description; DELETE to remove it."""
     if not is_project_admin(request.user):
         return FORBIDDEN
 
@@ -580,6 +580,16 @@ def chart_detail_api(request, chart_id):
 
     if request.method == 'GET':
         return JsonResponse({'chart': chart.to_dict()})
+    if request.method == 'PUT':
+        try:
+            body = json.loads(request.body)
+        except (json.JSONDecodeError, ValueError):
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+        if 'description' in body:
+            chart.description = body['description']
+            chart.save(update_fields=['description'])
+            return JsonResponse({'success': True, 'description': chart.description})
+        return JsonResponse({'error': 'No updatable fields provided'}, status=400)
     if request.method == 'DELETE':
         chart.delete()
         return JsonResponse({'success': True})

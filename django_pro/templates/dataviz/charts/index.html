@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load dataviz_tags %}
 {% block title %}Charts – DataViz{% endblock %}
 
 {% block content %}
@@ -87,7 +88,32 @@
             </div>
             <span class="ml-2 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex-shrink-0 group-hover/card:bg-blue-100 group-hover/card:text-blue-700 transition-colors">{{ chart.chart_type }}</span>
           </div>
-          <p class="text-xs text-slate-500 flex-1 line-clamp-2 leading-relaxed">{{ chart.description|default:'No description' }}</p>
+          {# Inline-editable description #}
+          <div class="text-xs text-slate-500 flex-1 leading-relaxed relative group/desc">
+            <p class="cursor-text hover:bg-slate-50 rounded px-1 py-0.5 -mx-1 -my-0.5 transition-colors line-clamp-2"
+               title="Click to edit description"
+               onclick="editDescription(this, {{ chart.id }})">{{ chart.description|default:'No description — click to add one' }}</p>
+          </div>
+
+          {# Page usage badges #}
+          {% with pages=page_usage|get_item:chart.id %}
+          {% if pages %}
+          <div class="mt-2 flex flex-wrap gap-1">
+            <span class="text-[9px] font-bold uppercase tracking-wider text-slate-400">Pages:</span>
+            {% for p in pages|slice:":4" %}
+            {% if p.slug %}
+            <a href="{% url 'dataviz:page_view' p.slug %}" title="{{ p.title }}"
+               class="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 transition-colors truncate max-w-[140px]">{{ p.title }}</a>
+            {% else %}
+            <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100 truncate max-w-[140px]">{{ p.title }}</span>
+            {% endif %}
+            {% endfor %}
+            {% if pages|length > 4 %}
+            <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100">+{{ pages|length|add:"-4" }} more</span>
+            {% endif %}
+          </div>
+          {% endif %}
+          {% endwith %}
           
           <div class="mt-4 flex items-center gap-1.5 border-t border-slate-100 pt-3">
             <a href="{% url 'dataviz:chart_view' chart.id %}"
@@ -181,6 +207,39 @@
       }
     }
     return cookieValue;
+  }
+
+  async function editDescription(el, chartId) {
+    const current = el.textContent.trim();
+    const isPlaceholder = current === 'No description — click to add one';
+    const input = document.createElement('textarea');
+    input.value = isPlaceholder ? '' : current;
+    input.rows = 3;
+    input.className = 'w-full text-xs border border-blue-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none';
+    input.placeholder = 'Add a description…';
+    el.replaceWith(input);
+    input.focus();
+    const finish = async () => {
+      const desc = input.value.trim();
+      input.replaceWith(el);
+      try {
+        const resp = await fetch(`/dataviz/api/charts/${chartId}/`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+          body: JSON.stringify({ description: desc }),
+        });
+        if (resp.ok) {
+          el.textContent = desc || 'No description — click to add one';
+        }
+      } catch (e) {
+        el.textContent = current;
+      }
+    };
+    input.addEventListener('blur', finish);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = isPlaceholder ? '' : current; input.blur(); }
+    });
   }
 </script>
 {% endblock %}
