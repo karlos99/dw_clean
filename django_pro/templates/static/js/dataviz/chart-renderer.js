@@ -347,12 +347,14 @@
         var cnt = cells[c];
         var cv  = colHeaders[c];
         var cc  = colHeaderCols[c] || '';
-        if (canDrill && cnt > 0) {
+        var cntNum = Number(cnt);
+        var hasDisplayValue = !(cnt === null || cnt === undefined || String(cnt).trim() === '');
+        if (canDrill && Number.isFinite(cntNum) && cntNum > 0) {
           var rvKey = rowVals.join(SEPS);
           var cvKey = cc ? (cc + SEPS + cv) : cv;
           html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100" data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '">' + cnt + '</td>';
         } else {
-          html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500">' + (cnt > 0 ? cnt : '<span class="text-slate-300">\u2014</span>') + '</td>';
+          html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500">' + (hasDisplayValue ? cnt : '<span class="text-slate-300">\u2014</span>') + '</td>';
         }
       }
       if (showRowTotals) {
