@@ -269,8 +269,9 @@ class DataVizPageRow(models.Model):
     page     = models.ForeignKey(DataVizPage, on_delete=models.CASCADE, related_name='rows')
     label    = models.CharField(max_length=200, blank=True, default='')
     position = models.IntegerField(default=0)
-    bg_color = models.CharField(max_length=30, blank=True, default='')  # e.g. '#f8fafc', 'bg-slate-50'
-    collapsed = models.BooleanField(default=False)  # allow collapsible rows
+    bg_color  = models.CharField(max_length=30, blank=True, default='')  # e.g. '#f8fafc', 'bg-slate-50'
+    collapsed = models.BooleanField(default=False)  # builder-only collapse state
+    col_guide = models.IntegerField(default=0)  # visual column guide: 0=off, 2/3/4/6=N equal columns
 
     class Meta:
         ordering = ['position']
@@ -285,6 +286,7 @@ class DataVizPageRow(models.Model):
             'position':  self.position,
             'bg_color':  self.bg_color,
             'collapsed': self.collapsed,
+            'col_guide': self.col_guide,
             'sections':  [s.to_dict() for s in self.sections.select_related('chart', 'dashboard').all()],
         }
 

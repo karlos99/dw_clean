@@ -2,9 +2,9 @@
 {% if error %}
 <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">{{ error }}</div>
 {% else %}
-{# When used standalone (chart builder), add min-height so ECharts has room. #}
-{# When injected into an existing container (dashboard/page), the outer element provides height. #}
-<div class="chart-container w-full min-h-[460px]"
+{# In embed context (page/dashboard) the outer slot provides height via flex. #}
+{# In standalone context (chart builder preview), enforce a min-height so ECharts has room. #}
+<div class="chart-container w-full{% if not embed %} min-h-[460px]{% endif %}"
      data-chart-option="{{ option_json|default:'{}' }}"
      data-chart-id="{{ chart_id }}"
      data-drill-enabled="{{ drill_enabled|default:'0' }}"
