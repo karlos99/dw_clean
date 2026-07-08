@@ -373,7 +373,7 @@ def load_students(request):
                 exist_query_base = (
                     "SELECT 1 FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.local_student_id = cs.student_id "
+                    "WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) "
                     "AND r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
@@ -1121,7 +1121,7 @@ def load_students(request):
                 order_by_expr = (
                     f"(SELECT {select_expr} FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.local_student_id = cs.student_id "
+                    "WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) "
                     "AND r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
@@ -1240,6 +1240,7 @@ def load_students(request):
         
         # Fetch test data in bulk for selected test columns
         if test_cols_info and student_ids:
+            student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
             for test_info in test_cols_info:
                 metric_col = test_info['metric']
                 test_name_db = test_info['test_name'].replace(' ', '_')
@@ -1259,10 +1260,10 @@ def load_students(request):
                     extra_params = [test_info.get('other_info_key', '')]
 
                 query = f"""
-                    SELECT /*+ IndexScan(r) */ r.local_student_id, {select_expr}
+                    SELECT /*+ IndexScan(r) */ r.local_student_id, r.ssid, {select_expr}
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.local_student_id = ANY(%s)
+                    WHERE (r.local_student_id = ANY(%s) OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
                       AND r.school_year = %s
                       AND t.test_name ILIKE %s
                       AND t.subject ILIKE %s
@@ -1271,18 +1272,34 @@ def load_students(request):
                 _fetch_cursor.execute(query, [
                     *extra_params,
                     student_ids,
+                    student_ssids,
                     test_info['year'],
                     f"%{test_info['test_name']}%",
                     f"%{test_info['subject']}%",
                     *window_params,
                 ])
                 
-                test_data = {row[0]: row[1] for row in _fetch_cursor.fetchall()}
+                test_data_by_id = {}
+                test_data_by_ssid = {}
+                for row in _fetch_cursor.fetchall():
+                    local_id = row[0]
+                    ssid = row[1]
+                    val = row[2]
+                    if local_id:
+                        test_data_by_id[local_id] = val
+                    if ssid:
+                        test_data_by_ssid[ssid] = val
                 
                 # Add test data to each student
                 for student in students:
                     student_id = student.get('student_id')
-                    student[test_info['col_name']] = test_data.get(student_id, '—')
+                    ssid = student.get('ssid')
+                    val = '—'
+                    if student_id in test_data_by_id:
+                        val = test_data_by_id[student_id]
+                    elif ssid in test_data_by_ssid:
+                        val = test_data_by_ssid[ssid]
+                    student[test_info['col_name']] = val
 
         # Fetch mark data in bulk for selected mark columns
         if mark_cols_info and student_keys:
@@ -1498,7 +1515,7 @@ def load_students(request):
                     SELECT r.pl AS v
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    INNER JOIN current_student cs ON r.local_student_id = cs.student_id
+                    INNER JOIN current_student cs ON (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid))
                     {join_sql}
                     WHERE {option_where_sql}
                       AND r.school_year = %s
@@ -1520,7 +1537,7 @@ def load_students(request):
                     SELECT (r.other_info ->> %s) AS v
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    INNER JOIN current_student cs ON r.local_student_id = cs.student_id
+                    INNER JOIN current_student cs ON (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid))
                     {join_sql}
                     WHERE {option_where_sql}
                       AND r.school_year = %s
@@ -1558,7 +1575,7 @@ def load_students(request):
                     AND NOT EXISTS (
                         SELECT 1 FROM results r
                         INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                        WHERE r.local_student_id = cs.student_id
+                        WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid))
                         AND r.school_year = %s
                         AND t.test_name ILIKE %s
                         AND t.subject ILIKE %s

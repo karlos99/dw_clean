@@ -1045,6 +1045,37 @@ class ChartAccessControlTests(TestCase):
         self.assertIsNone(called_kwargs.get('user'))
 
 
+class DynamicSummaryTableOptionTests(TestCase):
+    def test_dynamic_summary_table_calculations_mode(self):
+        import pandas as pd
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pd.DataFrame([
+            {'grade': '5', 'ssid': '123', 'scale_score': 300.0},
+            {'grade': '5', 'ssid': '456', 'scale_score': 400.0},
+            {'grade': '6', 'ssid': '789', 'scale_score': 500.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'agg_func': 'count', 'value_col': 'ssid', 'label': 'My Count', 'decimals': None},
+                {'agg_func': 'avg', 'value_col': 'scale_score', 'label': 'My Avg', 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='', agg_decimals=None, cfg=cfg, col_defs=None)
+        
+        self.assertEqual(res['__type__'], 'table')
+        self.assertEqual(res['col_headers'], ['My Count', 'My Avg'])
+        self.assertEqual(res['rows'], [
+            ['5', 2.0, 350.0],
+            ['6', 1.0, 500.0],
+        ])
+
+
 
 
 

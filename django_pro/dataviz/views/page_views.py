@@ -138,6 +138,10 @@ def page_view(request, slug):
                     for item in v:
                         if isinstance(item, str) and item:
                             cols.add(item)
+            elif k == 'dyn_calculations' and isinstance(v, list):
+                for item in v:
+                    if isinstance(item, dict) and item.get('value_col'):
+                        cols.add(item['value_col'])
         sf = chart_obj.source_filters or {}
         for k in sf:
             if isinstance(k, str) and k:

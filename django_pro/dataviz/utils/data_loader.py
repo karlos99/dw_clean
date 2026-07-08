@@ -290,17 +290,20 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
 
     # Compound key: (student_id, school_year) — a student may appear in
     # multiple rows when multi-year enrollment is queried. Each key maps to a
-    # LIST so that all enrollment rows for the same (student, year) get data
-    # (e.g. a student who transferred mid-year has two rows, same year).
-    # Test results only populate rows whose school_year equals the result's year,
-    # preventing 2023-2024 results from appearing on 2024-2025 rows and vice versa.
+    # LIST so that all enrollment rows for the same (student, year) get data.
+    # We also keep a mapping of (ssid, school_year) in case local_student_id is not set.
     student_map: dict[tuple, list] = {}
+    student_ssid_map: dict[tuple, list] = {}
     for s in students:
         sid = s.get('student_id')
+        ssid = s.get('ssid')
         sy = s.get('school_year')
         if sid and sy:
             key = (str(sid).strip(), str(sy).strip())
             student_map.setdefault(key, []).append(s)
+        if ssid and sy:
+            key = (str(ssid).strip(), str(sy).strip())
+            student_ssid_map.setdefault(key, []).append(s)
     where_parts = []
     params = []
     for info in test_cols_info:
@@ -322,31 +325,36 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
             tested_school_clause = f"AND r.school_code = ANY(%s)"
             params.append(codes)
 
+    student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
     sql = f"""
-        SELECT r.local_student_id, r.ss, r.pl, r.other_info,
+        SELECT r.local_student_id, r.ssid, r.ss, r.pl, r.other_info,
                r.school_year, t.test_name, t.subject, t.test_window
         FROM results r
         INNER JOIN tests t ON r.test_group_key = t.test_group_key
-        WHERE r.local_student_id = ANY(%s)
+        WHERE (r.local_student_id = ANY(%s) OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
           AND ({" OR ".join(where_parts)})
           {tested_school_clause}
     """
-    cursor.execute(sql, [student_ids, *params])
+    cursor.execute(sql, [student_ids, student_ssids, *params])
 
     # Group infos by year so each row only scans the (small) subset of infos
     # that could possibly match its year, instead of every info every time.
     # `info['year'] == ry` was already the first condition checked below, so
-    # this changes nothing about which infos match \u2014 only how many get checked.
+    # this changes nothing about which infos match — only how many get checked.
     infos_by_year: dict = {}
     for info in test_cols_info:
         infos_by_year.setdefault(info['year'], []).append(info)
 
     for row in cursor.fetchall():
-        sid, ss, pl, oi, ry, rt, rs, rw = row
-        # Look up by compound (student_id, result_school_year). Result can only
-        # populate enrollment rows for the exact same year \u2014 no cross-year bleed.
-        lookup_key = (str(sid).strip(), str(ry).strip())
-        s_objs = student_map.get(lookup_key)
+        sid, ssid, ss, pl, oi, ry, rt, rs, rw = row
+        # Look up by compound key. Try local_student_id first, then ssid
+        s_objs = []
+        if sid:
+            lookup_key = (str(sid).strip(), str(ry).strip())
+            s_objs = student_map.get(lookup_key) or []
+        if not s_objs and ssid:
+            lookup_key = (str(ssid).strip(), str(ry).strip())
+            s_objs = student_ssid_map.get(lookup_key) or []
         if not s_objs:
             continue
         for info in infos_by_year.get(ry, ()):

@@ -65,6 +65,21 @@ function chartBuilderUIMethods() {
       this.dynColCols = [...this.dynColCols];
       this._schedulePreview(true);
     },
+    addDynCalculation() {
+      this.dynCalculations.push({
+        value_col: '',
+        agg_func: 'count',
+        label: '',
+        decimals: null
+      });
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    removeDynCalculation(idx) {
+      this.dynCalculations.splice(idx, 1);
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
     plColLabel(col) {
       return this.colLabel(col);
     },

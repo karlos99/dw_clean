@@ -241,6 +241,8 @@ function chartBuilderPreviewMethods(urls) {
         dyn_agg_decimals: this.dynAggDecimals,
         dyn_show_row_totals: this.dynShowRowTotals,
         dyn_show_col_totals: this.dynShowColTotals,
+        dyn_col_mode: this.dynColMode,
+        dyn_calculations: this.dynCalculations,
         sort_col: this.sortCol,
         sort_dir: this.sortDir,
         limit: this.limit,
