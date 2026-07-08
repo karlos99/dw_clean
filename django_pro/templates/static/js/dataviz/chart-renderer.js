@@ -88,16 +88,28 @@
     if (chartSlot) {
       var cw = chartSlot.dataset.containerWidth;
       var ch = chartSlot.dataset.containerHeight;
-      if (cw) container.style.width  = cw + 'px';
-      if (ch) container.style.height = ch + 'px';
-      // Fill available space in both directions unless explicitly sized.
-      // Also reset the standalone min-height so the chart fits inside grid cells.
-      if (!cw) container.style.width = '100%';
-      if (!ch) { container.style.height = '100%'; container.style.minHeight = '0'; }
-      // Ensure the slot itself fills the grid item
-      chartSlot.style.display = 'flex';
+      if (cw) {
+        container.style.width = cw + 'px';
+        container.style.flex  = 'none';
+      } else {
+        container.style.width = '100%';
+      }
+      if (ch) {
+        container.style.height    = ch + 'px';
+        container.style.minHeight = '0';
+        container.style.flex      = 'none';
+      } else {
+        // Use flex:1 to fill the slot — avoids percentage-height resolution
+        // ambiguity when the parent slot is itself sized by flex (flex:1).
+        container.style.flex      = '1';
+        container.style.height    = '';
+        container.style.minHeight = '0';
+      }
+      // Ensure the slot is a flex column so the chart container stretches into it.
+      // Do NOT set height:100% here — the slot's flex:1 (set in CSS/HTML) already
+      // fills the grid cell correctly without creating a percentage-height cycle.
+      chartSlot.style.display       = 'flex';
       chartSlot.style.flexDirection = 'column';
-      chartSlot.style.height = '100%';
     }
 
     let option;
@@ -156,6 +168,11 @@
       return null;
     }
 
+    // Initialise ECharts with the container's current dimensions.
+    // When the container is flex-sized (page builder / page view), the browser
+    // may not have committed the final flex layout yet, so we also schedule a
+    // resize after the next paint (requestAnimationFrame) to guarantee the chart
+    // fills its grid cell on first render.
     const chart = echarts.init(container, null, { renderer: 'canvas' });
 
     // Extract custom drill metadata before setOption (ECharts drops unknown keys)
@@ -175,6 +192,16 @@
 
     // Expose instance for external tools (e.g. chart-editor.js)
     container._echartsInstance = chart;
+
+    // Correct size after the browser commits the flex / grid layout.
+    // This is the primary fix for charts in page-builder grid cells where
+    // clientHeight may be 0 or stale at the time echarts.init() runs.
+    requestAnimationFrame(function () {
+      chart.resize();
+      if (option && option.__is_parliament__) {
+        adjustParliamentAspectRatio(chart, container, option);
+      }
+    });
 
     // Auto-resize when container dimensions change
     const ro = new ResizeObserver(() => {

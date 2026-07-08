@@ -659,6 +659,12 @@ def chart_render_api(request, chart_id):
     chart = get_object_or_404(SavedChart, pk=chart_id)
 
     # ── Build cache key ────────────────────────────────────────────
+    # source/source_id/source_name are breadcrumb-only and do NOT affect
+    # query results. But embed mode (source=page/dashboard) changes the
+    # rendered HTML (no min-height on the chart container), so it must
+    # be included in the render cache key.
+    is_embed = request.GET.get('source') in ('page', 'dashboard')
+
     # Only pf_* params affect query results — source/source_id/source_name
     # are breadcrumb-only and must NOT be part of the key.
     pf_params = sorted(
@@ -692,7 +698,8 @@ def chart_render_api(request, chart_id):
     else:
         data_hash = 'raw'
     config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
-    render_cache_key = f'chart_render:{chart_id}:{updated_ts}:{data_hash}:{config_hash}:{pf_hash}'
+    embed_suffix = 'e' if is_embed else 's'
+    render_cache_key = f'chart_render:{chart_id}:{updated_ts}:{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
     etag = f'W/"{render_cache_key[-16:]}"'
 
     # Support conditional requests (If-None-Match)
@@ -818,6 +825,7 @@ def chart_render_api(request, chart_id):
         'drill_source_id':   request.GET.get('source_id', ''),
         'drill_source_name': request.GET.get('source_name', ''),
         'error':             error,
+        'embed':             is_embed,
     }
     html = render_to_string('dataviz/partials/chart_preview.html', ctx, request=request)
 
@@ -827,7 +835,7 @@ def chart_render_api(request, chart_id):
             data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True).encode()).hexdigest()[:12]
         else:
             data_hash = 'raw'
-        render_cache_key = f'chart_render:{chart_id}:{updated_ts}:{data_hash}:{config_hash}:{pf_hash}'
+        render_cache_key = f'chart_render:{chart_id}:{updated_ts}:{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
         etag = f'W/"{render_cache_key[-16:]}"'
         cache.set(render_cache_key, html, timeout=3600)
 

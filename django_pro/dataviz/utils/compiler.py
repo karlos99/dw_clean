@@ -547,6 +547,20 @@ def compile_dataset_to_sql(dataset, user=None, limit=MAX_CHART_ROWS, interactive
                     where_parts.append('"student_enroll"."grade" = ANY(%s)')
                     params.append(delegated_grades)
 
+        # Inject teacher / homeroom student-key restrictions
+        if hasattr(user, 'get_accessible_student_keys'):
+            keys = user.get_accessible_student_keys()
+            if keys is not None:
+                if keys:
+                    if 'current_student' in active_tables:
+                        where_parts.append('"current_student"."stu_annual_key" = ANY(%s)')
+                        params.append(list(keys))
+                    elif 'student_enroll' in active_tables:
+                        where_parts.append('"student_enroll"."stu_annual_key" = ANY(%s)')
+                        params.append(list(keys))
+                else:
+                    where_parts.append("1=0")  # No students assigned
+
     # Construct interactive filters
     if interactive_filters:
         allowed_tables = get_allowed_dataset_tables()
@@ -750,6 +764,20 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
                 elif 'student_enroll' in active_tables:
                     where_parts.append('"student_enroll"."grade" = ANY(%s)')
                     params.append(delegated_grades)
+
+        # Inject teacher / homeroom student-key restrictions
+        if hasattr(user, 'get_accessible_student_keys'):
+            keys = user.get_accessible_student_keys()
+            if keys is not None:
+                if keys:
+                    if 'current_student' in active_tables:
+                        where_parts.append('"current_student"."stu_annual_key" = ANY(%s)')
+                        params.append(list(keys))
+                    elif 'student_enroll' in active_tables:
+                        where_parts.append('"student_enroll"."stu_annual_key" = ANY(%s)')
+                        params.append(list(keys))
+                else:
+                    where_parts.append("1=0")  # No students assigned
 
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)

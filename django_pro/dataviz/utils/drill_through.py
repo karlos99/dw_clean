@@ -247,6 +247,89 @@ def build_drill_filter(chart, params: dict) -> dict:
     return final_filters
 
 
+def _apply_user_access_filter(rows, cols, user):
+    """Post-fetch filter: remove rows the user should not see.
+    Only applies to non-admin users; checks for accessible student keys
+    or permitted schools in the result columns.
+    Returns (filtered_rows, cols).
+    """
+    if user.is_superuser:
+        return rows, cols
+    if getattr(user, 'is_project_admin', False):
+        return rows, cols
+    # Check all user roles for District/Admin access (not just active_role)
+    user_roles = [r.name for r in user.roles.all()]
+    unrestricted_names = {'Project Admin', 'District Admin', 'District View'}
+    if any(name in unrestricted_names or 'District' in name for name in user_roles):
+        return rows, cols
+
+    # Try to match student identifiers in the columns
+    student_id_cols = [c for c in cols if c in ('ssid', 'student_id', 'stu_annual_key', 'local_student_id')
+                       or c.endswith('.ssid') or c.endswith('.student_id')
+                       or c.endswith('.stu_annual_key') or c.endswith('.local_student_id')]
+    if not student_id_cols:
+        return rows, cols  # No student columns found — can't filter
+
+    # Get accessible student keys
+    accessible_keys = None
+    has_accessible_method = hasattr(user, 'get_accessible_student_keys')
+    if has_accessible_method:
+        keys = user.get_accessible_student_keys()
+        if keys is not None:
+            accessible_keys = set(keys)
+
+    # Get permitted school IDs for school-level filtering
+    permitted_schools = None
+    has_school_filter = False
+    if hasattr(user, 'active_school') and user.active_school:
+        permitted_schools = {user.active_school.state_id}
+        has_school_filter = True
+    elif hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
+        permitted_schools = set(user.schools)
+        has_school_filter = True
+    else:
+        # No schools assigned → user should see nothing (deny-by-default)
+        has_school_filter = True
+
+    school_id_cols = [c for c in cols if c in ('school_state_id', 'school_code', 'state_school_id')
+                      or c.endswith('.school_state_id') or c.endswith('.school_code')]
+
+    filtered = []
+    for row in rows:
+        # Check student key access (teacher-level)
+        if accessible_keys is not None:
+            matched = False
+            for col in student_id_cols:
+                val = str(row.get(col, '')).strip()
+                if val and val in accessible_keys:
+                    matched = True
+                    break
+            if not matched:
+                continue  # Skip — student not in teacher's roster
+
+        # Check school access (school-level).  If permitted_schools is
+        # None the user is truly unrestricted (already returned above).
+        # An empty set means deny-all (no schools assigned).
+        if has_school_filter:
+            if not permitted_schools:
+                continue  # Empty set → deny all
+            if school_id_cols:
+                matched = False
+                for col in school_id_cols:
+                    val = str(row.get(col, '')).strip()
+                    if val and val in permitted_schools:
+                        matched = True
+                        break
+                if not matched:
+                    continue  # Skip — not in permitted school
+            # If no school_id_cols found but has_school_filter, we can't
+            # verify school membership.  Allow through (lenient).
+
+        filtered.append(row)
+
+    return filtered, cols
+
+
 def execute_drill_query(
     chart,
     drill_filters: dict,
@@ -320,6 +403,9 @@ def execute_drill_query(
         rows = result.get('rows', [])
         cols = result.get('columns', [])
         error = result.get('error')
+        # Post-fetch user access filtering for SQL-source charts
+        if user and rows and not error:
+            rows, cols = _apply_user_access_filter(rows, cols, user)
     elif chart.source_type == 'columns':
         # Column Picker source: merge source_filters + drill_filters
         merged_filters = dict(chart.source_filters or {})

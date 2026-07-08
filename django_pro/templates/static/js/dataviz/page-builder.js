@@ -54,6 +54,7 @@ function pageBuilder() {
       position:  r.position ?? 0,
       bg_color:  r.bg_color || '',
       collapsed: r.collapsed || false,
+      col_guide: r.col_guide || 0,
       sections:  (r.sections || []).map(s => _mapSection(s)),
     })),
 
@@ -208,6 +209,11 @@ function pageBuilder() {
           this._post(url, {
             gs_x: node.x, gs_y: node.y, gs_w: node.w, gs_h: node.h,
           });
+          // Ensure ECharts fills the new cell size after animation completes
+          const chartEl = gsEl.querySelector('.chart-container');
+          if (chartEl && chartEl._echartsInstance) {
+            chartEl._echartsInstance.resize();
+          }
         });
 
         if (row.sections.length > 0) {
@@ -510,6 +516,7 @@ function pageBuilder() {
         position: this.rows.length,
         bg_color: '',
         collapsed: false,
+        col_guide: 0,
         sections: [],
       };
       this.rows.push(row);
@@ -541,6 +548,38 @@ function pageBuilder() {
       if (row) row[prop] = value;
       const url = _ROW_URL_TPL.replace('ROWID', rowId);
       await this._post(url, { [prop]: value });
+    },
+
+    colGuideStyle(n) {
+      if (!n) return '';
+      const pct = (100 / n).toFixed(6) + '%';
+      return `background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(${pct} - 1px), rgba(99,102,241,0.18) calc(${pct} - 1px), rgba(99,102,241,0.18) ${pct});`;
+    },
+
+    toggleRowCollapsed(rowId) {
+      const row = this.getRow(rowId);
+      if (!row) return;
+      row.collapsed = !row.collapsed;
+      this.updateRowProp(rowId, 'collapsed', row.collapsed);
+      if (!row.collapsed) {
+        // After expanding, let Alpine finish painting then re-layout the grid
+        // and trigger any pending HTMX chart loads (IntersectionObserver may
+        // have missed them while the row was hidden).
+        this.$nextTick(() => {
+          const grid = this.grids[rowId];
+          if (grid) {
+            try { grid.onParentResize(); } catch (_) {}
+          }
+          const el = document.getElementById('row-grid-' + rowId);
+          if (el && window.htmx) htmx.process(el);
+          // Re-fire resize on any already-initialized charts in this row
+          el && el.querySelectorAll('.chart-container').forEach(c => {
+            if (c._echartsInstance) {
+              requestAnimationFrame(() => c._echartsInstance.resize());
+            }
+          });
+        });
+      }
     },
 
     /* ── Add chart to row (via picker) ──────────────────────────── */

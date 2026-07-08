@@ -316,6 +316,8 @@ def row_detail_api(request, row_id):
             row.bg_color = body['bg_color']
         if 'collapsed' in body:
             row.collapsed = bool(body['collapsed'])
+        if 'col_guide' in body:
+            row.col_guide = int(body['col_guide'])
         row.save()
         return JsonResponse({'row': row.to_dict(), 'success': True})
 
