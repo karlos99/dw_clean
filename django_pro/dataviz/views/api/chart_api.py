@@ -21,6 +21,7 @@ _CONFIG_COL_KEYS = frozenset({
     'x_col', 'y_col', 'stack_col', 'series_col', 'group_col',
     'pg_before_col', 'pg_after_col', 'st_row_col', 'st_col_col',
     'st_row_cols', 'st_col_cols', 'st_value_col',
+    'dyn_row_cols', 'dyn_col_cols', 'dyn_value_col',
     'sort_col', 'compare_pl_cols',
 })
 
@@ -194,6 +195,13 @@ def _cfg_from_post(post):
         'st_agg_func':       post.get('st_agg_func', 'count'),
         'st_value_col':      post.get('st_value_col', ''),
         'st_agg_decimals':   _parse_int(post.get('st_agg_decimals'), None),
+        'dyn_row_cols':      _parse_json_list('dyn_row_cols'),
+        'dyn_col_cols':      _parse_json_list('dyn_col_cols'),
+        'dyn_agg_func':      post.get('dyn_agg_func', 'count'),
+        'dyn_value_col':     post.get('dyn_value_col', ''),
+        'dyn_agg_decimals':  _parse_int(post.get('dyn_agg_decimals'), None),
+        'dyn_show_row_totals': post.get('dyn_show_row_totals', '1') == '1',
+        'dyn_show_col_totals': post.get('dyn_show_col_totals', '1') == '1',
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
         'limit':             _parse_int(post.get('limit'), None),

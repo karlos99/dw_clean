@@ -8,7 +8,7 @@ User = get_user_model()
 
 class DatasetDrillThroughTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user(username='testuser', password='password')
+        self.user = User.objects.create_user(username='testuser', password='password', is_superuser=True)
         self.dataset = Dataset.objects.create(
             name="Test Dataset",
             base_table="current_student",
@@ -24,16 +24,16 @@ class DatasetDrillThroughTests(TestCase):
         )
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
-    @patch('dataviz.utils.compiler.execute_compiled_query')
+    @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
     @patch('dataviz.utils.data_loader._run_saved_query_sql')
     def test_dataset_drill_through_with_ssids(self, mock_run_sql, mock_execute_query, mock_compile):
         # 1. Mock dataset query result returning ssids
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
-            'columns': ['current_student.ssid', 'current_student.student_name', 'current_student.grade'],
+            'columns': ['ssid', 'student_name', 'grade'],
             'rows': [
-                {'current_student.ssid': '12345', 'current_student.student_name': 'Alice In Dataset', 'current_student.grade': '5'},
-                {'current_student.ssid': '67890', 'current_student.student_name': 'Bob In Dataset', 'current_student.grade': '6'}
+                {'ssid': '12345', 'student_name': 'Alice In Dataset', 'grade': '5'},
+                {'ssid': '67890', 'student_name': 'Bob In Dataset', 'grade': '6'}
             ],
             'row_count': 2
         }
@@ -99,14 +99,14 @@ class DatasetDrillThroughTests(TestCase):
         self.assertEqual(filters.get('current_student.gender'), 'Male')
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
-    @patch('dataviz.utils.compiler.execute_compiled_query')
+    @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
     @patch('dataviz.utils.data_loader._run_saved_query_sql')
     def test_dataset_drill_through_with_multiple_x_axis(self, mock_run_sql, mock_execute_query, mock_compile):
         # 1. Mock dataset query result returning ssids
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
-            'columns': ['current_student.ssid'],
-            'rows': [{'current_student.ssid': '12345'}],
+            'columns': ['ssid'],
+            'rows': [{'ssid': '12345'}],
             'row_count': 1
         }
 
@@ -254,13 +254,13 @@ class DatasetDrillThroughTests(TestCase):
         self.assertEqual(resolve_exploration_column(self.dataset, 'custom_table.gr'), 'grade')
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
-    @patch('dataviz.utils.compiler.execute_compiled_query')
+    @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
     @patch('dataviz.utils.data_loader._run_saved_query_sql')
     def test_dataset_drill_through_with_jsonb_filter_key(self, mock_run_sql, mock_execute_query, mock_compile):
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
-            'columns': ['current_student.ssid'],
-            'rows': [{'current_student.ssid': '12345'}],
+            'columns': ['ssid'],
+            'rows': [{'ssid': '12345'}],
             'row_count': 1,
         }
         mock_run_sql.return_value = {
@@ -282,13 +282,13 @@ class DatasetDrillThroughTests(TestCase):
         self.assertEqual(result['rows'][0]['ssid'], '12345')
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
-    @patch('dataviz.utils.compiler.execute_compiled_query')
+    @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
     @patch('dataviz.utils.data_loader._run_saved_query_sql')
     def test_dataset_drill_through_with_custom_column_mapping(self, mock_run_sql, mock_execute_query, mock_compile):
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
-            'columns': ['current_student.ssid'],
-            'rows': [{'current_student.ssid': '12345'}],
+            'columns': ['ssid'],
+            'rows': [{'ssid': '12345'}],
             'row_count': 1
         }
         mock_run_sql.return_value = {
@@ -724,7 +724,7 @@ class DatasetDrillThroughTests(TestCase):
 
 class DrillThroughResultAlignmentTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_user(username='testuser', password='password')
+        self.user = User.objects.create_user(username='testuser', password='password', is_superuser=True)
         self.chart = SavedChart.objects.create(
             name="Test Chart",
             chart_type="bar",

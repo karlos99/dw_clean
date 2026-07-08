@@ -72,8 +72,12 @@ def build_drill_filter(chart, params: dict) -> dict:
     # Multi-column mode: st_col_val is "col_name ▸ value" per clicked cell group.
     if chart.chart_type == 'dynamic_summary_table':
         _SEP = ' \u25b8 '
-        row_cols = chart.config.get('st_row_cols', [])
-        col_cols = chart.config.get('st_col_cols', [])
+        row_cols = chart.config.get('dyn_row_cols')
+        if row_cols is None:
+            row_cols = chart.config.get('st_row_cols', [])
+        col_cols = chart.config.get('dyn_col_cols')
+        if col_cols is None:
+            col_cols = chart.config.get('st_col_cols', [])
         row_val = params.get('st_row_val', '')
         col_val = params.get('st_col_val', '')
         # Multi-column mode: st_col_val encodes "col_name ▸ cell_value"

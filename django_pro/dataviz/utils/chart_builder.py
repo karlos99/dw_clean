@@ -2072,8 +2072,12 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
 
     _VALID_AGGS = {'count', 'sum', 'avg', 'min', 'max', 'median'}
     agg_func = agg_func if agg_func in _VALID_AGGS else 'count'
-    st_show_row_totals = cfg.get('st_show_row_totals', True)
-    st_show_col_totals = cfg.get('st_show_col_totals', True)
+    st_show_row_totals = cfg.get('dyn_show_row_totals')
+    if st_show_row_totals is None:
+        st_show_row_totals = cfg.get('st_show_row_totals', True)
+    st_show_col_totals = cfg.get('dyn_show_col_totals')
+    if st_show_col_totals is None:
+        st_show_col_totals = cfg.get('st_show_col_totals', True)
 
     _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
     _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
@@ -2982,11 +2986,21 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     st_show_row_totals = cfg.get('st_show_row_totals', True)
     st_show_col_totals = cfg.get('st_show_col_totals', True)
     # Dynamic Summary Table extra fields
-    st_row_cols    = cfg.get('st_row_cols', [])
-    st_col_cols    = cfg.get('st_col_cols', [])
-    st_agg_func    = cfg.get('st_agg_func', 'count')
-    st_value_col   = cfg.get('st_value_col', '')
-    _st_raw_decimals = cfg.get('st_agg_decimals')
+    st_row_cols    = cfg.get('dyn_row_cols')
+    if st_row_cols is None:
+        st_row_cols = cfg.get('st_row_cols', [])
+    st_col_cols    = cfg.get('dyn_col_cols')
+    if st_col_cols is None:
+        st_col_cols = cfg.get('st_col_cols', [])
+    st_agg_func    = cfg.get('dyn_agg_func')
+    if st_agg_func is None:
+        st_agg_func = cfg.get('st_agg_func', 'count')
+    st_value_col   = cfg.get('dyn_value_col')
+    if st_value_col is None:
+        st_value_col = cfg.get('st_value_col', '')
+    _st_raw_decimals = cfg.get('dyn_agg_decimals')
+    if _st_raw_decimals is None:
+        _st_raw_decimals = cfg.get('st_agg_decimals')
     st_agg_decimals = int(_st_raw_decimals) if _st_raw_decimals is not None else None
 
     df = pd.DataFrame(rows)

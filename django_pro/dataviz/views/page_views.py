@@ -121,7 +121,8 @@ def page_view(request, slug):
     _CONFIG_COL_KEYS = frozenset({
         'x_col', 'y_col', 'stack_col', 'series_col', 'group_col', 'size_col',
         'st_row_col', 'st_col_col', 'st_row_cols', 'st_col_cols',
-        'st_value_col', 'pg_before_col', 'pg_after_col',
+        'st_value_col', 'dyn_row_cols', 'dyn_col_cols', 'dyn_value_col',
+        'pg_before_col', 'pg_after_col',
     })
     def _chart_filter_cols(chart_obj):
         """Return sorted list of column names referenced by a chart."""

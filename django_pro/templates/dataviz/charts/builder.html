@@ -1203,14 +1203,14 @@
             <div class="flex rounded overflow-hidden border border-slate-200 text-xs">
               <button type="button" @click="stColMode='values'; _schedulePreview()"
                 :class="stColMode==='values' ? 'bg-violet-100 text-violet-800 font-semibold' : 'bg-white text-slate-600'"
-                class="flex-1 px-3 py-1.5 transition-colors">Values</button>
+                class="flex-1 px-3 py-1.5 transition-colors">Pivot Mode (Values)</button>
               <button type="button" @click="stColMode='columns'; _schedulePreview()"
                 :class="stColMode==='columns' ? 'bg-teal-100 text-teal-800 font-semibold' : 'bg-white text-slate-600'"
-                class="flex-1 px-3 py-1.5 transition-colors">Columns</button>
+                class="flex-1 px-3 py-1.5 transition-colors">Columns Mode (Aggregate)</button>
             </div>
             <p class="text-[9px] text-slate-400 mt-1">
-              <span x-show="stColMode==='values'">Distinct values of the Column Header column become table columns.</span>
-              <span x-show="stColMode==='columns'">Selected dataset columns become table column headers.</span>
+              <span x-show="stColMode==='values'">Cross-tabulate a Row column by the distinct values of a Column Header.</span>
+              <span x-show="stColMode==='columns'">Display aggregate statistics for multiple selected columns side-by-side.</span>
             </p>
           </div>
 
@@ -1372,14 +1372,14 @@
                 Row Columns
                 <span class="text-red-400 text-[9px] font-bold">*</span>
               </label>
-              <span class="text-[9px] text-slate-400" x-text="stRowCols.length + ' selected'"></span>
+              <span class="text-[9px] text-slate-400" x-text="dynRowCols.length + ' selected'"></span>
             </div>
             <div class="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-1.5 space-y-0.5">
               <template x-for="c in activeCols" :key="'dstr_'+c">
                 <label class="flex items-center gap-2 text-xs px-2 py-1 rounded hover:bg-violet-50 cursor-pointer"
-                       :class="stRowCols.includes(c) ? 'bg-violet-50 text-violet-800' : ''">
-                  <input type="checkbox" :checked="stRowCols.includes(c)"
-                         @change="toggleStRowCol(c)"
+                       :class="dynRowCols.includes(c) ? 'bg-violet-50 text-violet-800' : ''">
+                  <input type="checkbox" :checked="dynRowCols.includes(c)"
+                         @change="toggleDynRowCol(c)"
                          class="rounded text-violet-600 w-3 h-3 border-slate-300 focus:ring-violet-200">
                   <span x-text="colLabel(c)" class="truncate"></span>
                 </label>
@@ -1396,14 +1396,14 @@
                 Column Headers
                 <span class="text-red-400 text-[9px] font-bold">*</span>
               </label>
-              <span class="text-[9px] text-slate-400" x-text="stColCols.length + ' selected'"></span>
+              <span class="text-[9px] text-slate-400" x-text="dynColCols.length + ' selected'"></span>
             </div>
             <div class="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-1.5 space-y-0.5">
               <template x-for="c in activeCols" :key="'dstc_'+c">
                 <label class="flex items-center gap-2 text-xs px-2 py-1 rounded hover:bg-teal-50 cursor-pointer"
-                       :class="stColCols.includes(c) ? 'bg-teal-50 text-teal-800' : ''">
-                  <input type="checkbox" :checked="stColCols.includes(c)"
-                         @change="toggleStColCol(c)"
+                       :class="dynColCols.includes(c) ? 'bg-teal-50 text-teal-800' : ''">
+                  <input type="checkbox" :checked="dynColCols.includes(c)"
+                         @change="toggleDynColCol(c)"
                          class="rounded text-teal-600 w-3 h-3 border-slate-300 focus:ring-teal-200">
                   <span x-text="colLabel(c)" class="truncate"></span>
                 </label>
@@ -1418,7 +1418,7 @@
               <span class="w-5 h-5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex items-center justify-center">F</span>
               Cell Value
             </label>
-            <select x-model="stAggFunc" @change="_schedulePreview()"
+            <select x-model="dynAggFunc" @change="_schedulePreview()"
                     class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
               <option value="count">Count (students per cell)</option>
               <option value="sum">Sum</option>
@@ -1430,13 +1430,13 @@
           </div>
 
           {# Value column — shown for numeric aggregation functions #}
-          <div x-show="['sum','avg','min','max','median'].includes(stAggFunc)">
+          <div x-show="['sum','avg','min','max','median'].includes(dynAggFunc)">
             <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
               <span class="w-5 h-5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex items-center justify-center">V</span>
               Value Column
               <span class="text-red-400 text-[9px] font-bold">*</span>
             </label>
-            <select x-model="stValueCol" @change="_schedulePreview()"
+            <select x-model="dynValueCol" @change="_schedulePreview()"
                     class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
               <option value="">— choose column —</option>
               <template x-for="c in activeCols" :key="'stv_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
@@ -1444,22 +1444,22 @@
           </div>
 
           {# Decimal precision #}
-          <div x-show="['avg','median'].includes(stAggFunc) && stValueCol" class="flex items-center gap-2">
+          <div x-show="['avg','median'].includes(dynAggFunc) && dynValueCol" class="flex items-center gap-2">
             <label class="text-xs font-semibold text-slate-600 whitespace-nowrap">Decimal Places</label>
             <input type="number" min="0" max="10" placeholder="1"
-                   x-model.number="stAggDecimals" @change="_schedulePreview()"
+                   x-model.number="dynAggDecimals" @change="_schedulePreview()"
                    class="w-20 text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-amber-400">
           </div>
 
           {# Totals toggles #}
           <div class="flex items-center gap-4 pt-1 border-t border-slate-100">
             <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-              <input type="checkbox" x-model="stShowRowTotals" @change="_schedulePreview()"
+              <input type="checkbox" x-model="dynShowRowTotals" @change="_schedulePreview()"
                      class="rounded text-violet-600 w-3 h-3 border-slate-300 focus:ring-violet-200">
               Row Totals
             </label>
             <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-              <input type="checkbox" x-model="stShowColTotals" @change="_schedulePreview()"
+              <input type="checkbox" x-model="dynShowColTotals" @change="_schedulePreview()"
                      class="rounded text-violet-600 w-3 h-3 border-slate-300 focus:ring-violet-200">
               Column Totals
             </label>
@@ -2665,6 +2665,13 @@
     <input type="hidden" name="st_agg_func"    x-bind:value="stAggFunc">
     <input type="hidden" name="st_value_col"   x-bind:value="stValueCol">
     <input type="hidden" name="st_agg_decimals" x-bind:value="stAggDecimals">
+    <input type="hidden" name="dyn_row_cols"    x-bind:value="JSON.stringify(dynRowCols)">
+    <input type="hidden" name="dyn_col_cols"    x-bind:value="JSON.stringify(dynColCols)">
+    <input type="hidden" name="dyn_agg_func"    x-bind:value="dynAggFunc">
+    <input type="hidden" name="dyn_value_col"   x-bind:value="dynValueCol">
+    <input type="hidden" name="dyn_agg_decimals" x-bind:value="dynAggDecimals">
+    <input type="hidden" name="dyn_show_row_totals" x-bind:value="dynShowRowTotals ? '1' : '0'">
+    <input type="hidden" name="dyn_show_col_totals" x-bind:value="dynShowColTotals ? '1' : '0'">
     <input type="hidden" name="stack_order"     x-bind:value="JSON.stringify(stackOrder)">
     <input type="hidden" name="drill_through_columns_str" x-bind:value="drillColumns">
     <input type="hidden" name="source_filters" x-bind:value="JSON.stringify(cleanSourceFilters())">
@@ -2857,12 +2864,19 @@ function chartBuilder() {
     stColMode:        existing?.config?.st_col_mode ?? 'values',
     stShowRowTotals:  existing ? (existing.config?.st_show_row_totals !== false) : true,
     stShowColTotals:  existing ? (existing.config?.st_show_col_totals !== false) : true,
-    /* Dynamic Summary Table columns */
-    stRowCols:        existing?.config?.st_row_cols ?? [],
     stColCols:        existing?.config?.st_col_cols ?? [],
     stAggFunc:        existing?.config?.st_agg_func ?? 'count',
     stValueCol:       existing?.config?.st_value_col ?? '',
     stAggDecimals:    existing?.config?.st_agg_decimals ?? null,
+    /* Dynamic Summary Table columns */
+    dynRowCols:       existing?.config?.dyn_row_cols ?? existing?.config?.st_row_cols ?? [],
+    dynColCols:       existing?.config?.dyn_col_cols ?? existing?.config?.st_col_cols ?? [],
+    dynAggFunc:       existing?.config?.dyn_agg_func ?? existing?.config?.st_agg_func ?? 'count',
+    dynValueCol:      existing?.config?.dyn_value_col ?? existing?.config?.st_value_col ?? '',
+    dynAggDecimals:   existing?.config?.dyn_agg_decimals ?? existing?.config?.st_agg_decimals ?? null,
+    dynShowRowTotals: existing ? (existing.config?.dyn_show_row_totals !== undefined ? (existing.config.dyn_show_row_totals !== false) : (existing.config.st_show_row_totals !== false)) : true,
+    dynShowColTotals: existing ? (existing.config?.dyn_show_col_totals !== undefined ? (existing.config.dyn_show_col_totals !== false) : (existing.config.st_show_col_totals !== false)) : true,
+    stRowCols:        existing?.config?.st_row_cols ?? [],
     aggFunc:      existing?.config?.agg ?? existing?.config?.agg_func ?? 'count',
     aggDecimals:  existing?.config?.agg_decimals ?? null,
     sortCol:      existing?.config?.sort_col ?? '',
@@ -3058,11 +3072,17 @@ function chartBuilder() {
       if (!this.hasData || !this.chartType) return false;
       if (this.chartType === 'assessment_compare' && this.comparePlCols.length < 2) return false;
       if (this.chartType === 'progress_growth') return !!this.pgBeforeCol && !!this.pgAfterCol;
-      if (this.chartType === 'summary_table') return !!this.stRowCol && !!this.stColCol;
+      if (this.chartType === 'summary_table') {
+        if (this.stColMode === 'columns') {
+          return !!this.stRowCol && this.stColCols.length > 0;
+        } else {
+          return !!this.stRowCol && !!this.stColCol;
+        }
+      }
       if (this.chartType === 'dynamic_summary_table') {
-        const hasAxes = this.stRowCols.length > 0 && this.stColCols.length > 0;
-        const needsVal = !['count'].includes(this.stAggFunc);
-        return hasAxes && (!needsVal || !!this.stValueCol);
+        const hasAxes = this.dynRowCols.length > 0 && this.dynColCols.length > 0;
+        const needsVal = !['count'].includes(this.dynAggFunc);
+        return hasAxes && (!needsVal || !!this.dynValueCol);
       }
       const m = this.meta;
       if (m.x?.req && this.xCols.length === 0) return false;
@@ -3080,11 +3100,13 @@ function chartBuilder() {
       if (this.chartType === 'progress_growth') {
         colsDone = !!this.pgBeforeCol && !!this.pgAfterCol;
       } else if (this.chartType === 'summary_table') {
-        colsDone = !!this.stRowCol && !!this.stColCol;
+        colsDone = this.stColMode === 'columns'
+          ? (!!this.stRowCol && this.stColCols.length > 0)
+          : (!!this.stRowCol && !!this.stColCol);
       } else if (this.chartType === 'dynamic_summary_table') {
-        const hasAxes = this.stRowCols.length > 0 && this.stColCols.length > 0;
-        const needsVal = !['count'].includes(this.stAggFunc);
-        colsDone = hasAxes && (!needsVal || !!this.stValueCol);
+        const hasAxes = this.dynRowCols.length > 0 && this.dynColCols.length > 0;
+        const needsVal = !['count'].includes(this.dynAggFunc);
+        colsDone = hasAxes && (!needsVal || !!this.dynValueCol);
       } else {
         colsDone = (!m.x?.req || this.xCols.length > 0) && (!m.y?.req || !!this.yCol) && !!(this.xCols.length > 0 || this.yCol);
       }

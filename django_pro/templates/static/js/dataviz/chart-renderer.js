@@ -376,7 +376,7 @@
         var cc  = colHeaderCols[c] || '';
         var cntNum = Number(cnt);
         var hasDisplayValue = !(cnt === null || cnt === undefined || String(cnt).trim() === '');
-        if (canDrill && Number.isFinite(cntNum) && cntNum > 0) {
+        if (canDrill && Number.isFinite(cntNum) && cntNum !== 0) {
           var rvKey = rowVals.join(SEPS);
           var cvKey = cc ? (cc + SEPS + cv) : cv;
           html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100" data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '">' + cnt + '</td>';
