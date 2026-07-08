@@ -840,6 +840,26 @@ def _message_option(text: str, cfg: dict, error: bool = False) -> dict:
     return opt
 
 
+def _format_cell_with_tooltip(val, alt_val, agg_func, show_tooltips, decimals=None):
+    if not show_tooltips:
+        return val
+
+    if alt_val is None:
+        return val
+
+    if agg_func == 'count':
+        d = decimals if decimals is not None else 2
+        alt_rounded = round(alt_val, d)
+        tooltip = f"Average: {alt_rounded}"
+    else:
+        tooltip = f"Count: {int(alt_val)}"
+
+    return {
+        'val': val,
+        'tooltip': tooltip
+    }
+
+
 # ── Chart type builders ───────────────────────────────────────────────────────
 
 def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, col_defs, group_col=''):
@@ -1884,6 +1904,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     st_agg_decimals = int(_st_raw_decimals) if _st_raw_decimals is not None else None
     st_show_row_totals = cfg.get('st_show_row_totals', True)
     st_show_col_totals = cfg.get('st_show_col_totals', True)
+    show_tooltips = cfg.get('st_show_tooltips', False)
     st_col_cols_raw = cfg.get('st_col_cols', [])
     st_col_cols = [c for c in (st_col_cols_raw if isinstance(st_col_cols_raw, list) else []) if c and c in df.columns]
 
@@ -1916,29 +1937,45 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
             if _dup_key and st_agg_func == 'count':
                 sub = sub.drop_duplicates(subset=[_dup_key, row_col], keep='first')
             cell_vals = []
+            row_cells = []
             for ci, cc in enumerate(st_col_cols):
                 if cc not in sub.columns:
                     cell_vals.append(0.0)
+                    row_cells.append(_format_cell_with_tooltip(0.0, None, st_agg_func, show_tooltips, st_agg_decimals))
                     continue
                 col_data = sub[cc]
                 if st_agg_func == 'count':
                     raw = float((~col_data.astype(str).str.strip().isin(_BLANK)).sum())
+                    num_data = pd.to_numeric(col_data, errors='coerce').dropna()
+                    alt_raw = float(num_data.mean()) if not num_data.empty else None
                 else:
                     num_data = pd.to_numeric(col_data, errors='coerce').dropna()
                     if num_data.empty:
                         raw = 0.0
                     else:
                         raw = float(num_data.agg(_agg_map[st_agg_func]))
+                    if _dup_key:
+                        valid_sub = sub[~col_data.astype(str).str.strip().isin(_BLANK)]
+                        alt_raw = float(valid_sub[_dup_key].nunique())
+                    else:
+                        alt_raw = float((~col_data.astype(str).str.strip().isin(_BLANK)).sum())
+
+                if st_agg_decimals is not None and st_agg_func != 'count':
+                    raw = round(raw, st_agg_decimals)
+
                 col_totals[ci] += raw
                 cell_vals.append(raw)
-            rows_data.append([rv] + cell_vals + ([sum(cell_vals)] if st_show_row_totals else []))
+                
+                formatted = _format_cell_with_tooltip(raw, alt_raw, st_agg_func, show_tooltips, st_agg_decimals)
+                row_cells.append(formatted)
+
+            rows_data.append([rv] + row_cells + ([sum(cell_vals)] if st_show_row_totals else []))
 
         if st_agg_decimals is not None:
-            for row in rows_data:
-                for i in range(1, len(row)):
-                    if isinstance(row[i], float):
-                        row[i] = round(row[i], st_agg_decimals)
             col_totals = [round(v, st_agg_decimals) for v in col_totals]
+            for row in rows_data:
+                if st_show_row_totals:
+                    row[-1] = round(row[-1], st_agg_decimals)
 
         row_label = _label(row_col, col_defs) if col_defs else row_col
         col_label = ' / '.join(col_vals)
@@ -1954,6 +1991,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
             'rows':        rows_data,
             'st_show_row_totals': st_show_row_totals,
             'st_show_col_totals': st_show_col_totals,
+            'show_tooltips': show_tooltips,
             '_drillMeta': {
                 'stType':      'summary_table',
                 'stRowCol':    row_col,
@@ -1965,6 +2003,8 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
 
         if st_show_col_totals:
             grand_total = sum(col_totals)
+            if st_agg_decimals is not None:
+                grand_total = round(grand_total, st_agg_decimals)
             result['total_row'] = ['Total'] + col_totals + [grand_total]
         else:
             result['total_row'] = []
@@ -1982,12 +2022,12 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         ~df[col_col].astype(str).str.strip().isin(_BLANK)
     )
     keep_cols = [row_col, col_col] + ([_dup_key] if _dup_key else [])
-    if st_agg_func != 'count' and st_value_col and st_value_col in df.columns:
+    if (st_agg_func != 'count' or (show_tooltips and st_value_col)) and st_value_col and st_value_col in df.columns:
         keep_cols.append(st_value_col)
     work = df.loc[mask, keep_cols].copy()
     work[row_col] = work[row_col].astype(str).str.strip()
     work[col_col] = work[col_col].astype(str).str.strip()
-    if st_agg_func != 'count' and st_value_col and st_value_col in keep_cols:
+    if st_value_col and st_value_col in work.columns:
         work[st_value_col] = pd.to_numeric(work[st_value_col], errors='coerce')
 
     if work.empty:
@@ -2001,6 +2041,24 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     # and to ensure all values are strings for sorting.
     row_vals = _auto_detect_pl_scale(work[row_col].unique())
     col_vals = _auto_detect_pl_scale(work[col_col].unique())
+
+    ct_alt = None
+    if show_tooltips:
+        if st_agg_func == 'count':
+            if st_value_col and st_value_col in df.columns:
+                work_alt = work.copy()
+                work_alt[st_value_col] = pd.to_numeric(work_alt[st_value_col], errors='coerce')
+                ct_alt = work_alt.groupby([row_col, col_col])[st_value_col].mean().unstack(fill_value=0)
+                ct_alt = ct_alt.reindex(index=row_vals, columns=col_vals, fill_value=0)
+        else:
+            work_alt = work.copy()
+            if st_value_col and st_value_col in work_alt.columns:
+                work_alt = work_alt[~work_alt[st_value_col].isna()]
+            if _dup_key:
+                ct_alt = work_alt.groupby([row_col, col_col])[_dup_key].nunique().unstack(fill_value=0)
+            else:
+                ct_alt = work_alt.groupby([row_col, col_col]).size().unstack(fill_value=0)
+            ct_alt = ct_alt.reindex(index=row_vals, columns=col_vals, fill_value=0)
 
     if st_agg_func == 'count':
         ct = work.groupby([row_col, col_col]).size().unstack(fill_value=0)
@@ -2018,9 +2076,26 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         counts = [float(ct.at[rv, cv]) for cv in col_vals]
         for i, v in enumerate(counts):
             col_totals[i] += v
-        rows_data.append([rv] + counts + ([sum(counts)] if st_show_row_totals else []))
+
+        row_cells = []
+        for i, cv in enumerate(col_vals):
+            v = counts[i]
+            alt_v = float(ct_alt.at[rv, cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
+            formatted = _format_cell_with_tooltip(v, alt_v, st_agg_func, show_tooltips, st_agg_decimals)
+            row_cells.append(formatted)
+
+        rows_data.append([rv] + row_cells + ([sum(counts)] if st_show_row_totals else []))
+
+    if st_agg_decimals is not None:
+        col_totals = [round(v, st_agg_decimals) for v in col_totals]
+        for row in rows_data:
+            if st_show_row_totals:
+                row[-1] = round(row[-1], st_agg_decimals)
 
     grand_total = sum(col_totals)
+    if st_agg_decimals is not None:
+        grand_total = round(grand_total, st_agg_decimals)
+
     total_row = (['Total'] + col_totals + [grand_total]) if st_show_col_totals else []
 
     row_label = _label(row_col, col_defs) if col_defs else row_col
@@ -2038,6 +2113,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         'total_row':   total_row,
         'st_show_row_totals': st_show_row_totals,
         'st_show_col_totals': st_show_col_totals,
+        'show_tooltips': show_tooltips,
         '_drillMeta': {
             'stType':      'summary_table',
             'stRowCol':    row_col,
@@ -2046,6 +2122,90 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         },
     }
     return result
+
+
+def _convert_table_to_echarts(result, cfg, valid_row):
+    _SEP = ' \u25b8 '
+    x_data = []
+    rows_data = result.get('rows', [])
+    for r in rows_data:
+        x_val = _SEP.join(str(x) for x in r[:len(valid_row)])
+        x_data.append(x_val)
+
+    series_names = []
+    if result.get('col_header_groups'):
+        for grp in result['col_header_groups']:
+            for h in grp['headers']:
+                series_names.append(f"{grp['label']}{_SEP}{h}")
+    else:
+        series_names = result.get('col_headers', [])
+
+    series_list = []
+    dyn_display_type = cfg.get('dyn_display_type', 'table')
+    is_stacked = dyn_display_type in ('stacked_bar', 'stacked_line')
+    stype = 'bar' if 'bar' in dyn_display_type else 'line'
+
+    for ci, sname in enumerate(series_names):
+        s_data = []
+        for r in rows_data:
+            val = r[len(valid_row) + ci]
+            s_data.append(val)
+
+        s_obj = {
+            'name': sname,
+            'type': stype,
+            'data': s_data,
+        }
+        if is_stacked:
+            s_obj['stack'] = 'total'
+        series_list.append(s_obj)
+
+    title_text = cfg.get('title', '')
+    echarts_option = {
+        'title': {
+            'text': title_text,
+            'left': 'center',
+            'textStyle': {'fontSize': 14, 'color': '#334155'}
+        },
+        'tooltip': {
+            'trigger': 'axis',
+            'axisPointer': {'type': 'shadow' if stype == 'bar' else 'line'}
+        },
+        'legend': {
+            'data': series_names,
+            'bottom': 0,
+            'type': 'scroll',
+            'textStyle': {'fontSize': 10}
+        },
+        'grid': {
+            'top': 40,
+            'bottom': 40,
+            'left': 50,
+            'right': 20,
+            'containLabel': True
+        },
+        'xAxis': {
+            'type': 'category',
+            'data': x_data,
+            'axisLabel': {'fontSize': 10, 'rotate': 15}
+        },
+        'yAxis': {
+            'type': 'value',
+            'axisLabel': {'fontSize': 10}
+        },
+        'series': series_list,
+        '_drillMeta': {
+            'stType':      'dynamic_summary_table',
+            'stRowCol':    valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
+            'stColCol':    result.get('col_col', '__calc_cols__'),
+            'stRowCols':   valid_row,
+            'stColCols':   result.get('_drillMeta', {}).get('stColCols', []),
+            'stRowVals':   result.get('_drillMeta', {}).get('stRowVals', []),
+            'colHeaders':  result.get('col_headers', []),
+            'colHeaderCols': result.get('col_header_cols', []),
+        }
+    }
+    return echarts_option
 
 
 def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, agg_decimals, cfg, col_defs):
@@ -2066,6 +2226,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     st_show_col_totals = cfg.get('dyn_show_col_totals')
     if st_show_col_totals is None:
         st_show_col_totals = cfg.get('st_show_col_totals', True)
+    show_tooltips = cfg.get('dyn_show_tooltips', False)
 
     # ── Calculations mode: user selects multiple calculations as columns ────────────────
     if dyn_col_mode == 'calculations':
@@ -2117,6 +2278,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 sub = sub[sub[r_col] == r_val]
 
             cell_vals = []
+            row_cells = []
             for ci, calc in enumerate(dyn_calculations):
                 fn = calc.get('agg_func', 'count')
                 vc = calc.get('value_col', '')
@@ -2131,6 +2293,11 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                         raw = float(sub.drop_duplicates(subset=[_dup_key] + valid_row, keep='first').shape[0])
                     else:
                         raw = float(sub.shape[0])
+                    if vc and vc in sub.columns:
+                        num_data = pd.to_numeric(sub[vc], errors='coerce').dropna()
+                        alt_raw = float(num_data.mean()) if not num_data.empty else None
+                    else:
+                        alt_raw = None
                 else:
                     if vc and vc in sub.columns:
                         num_data = pd.to_numeric(sub[vc], errors='coerce').dropna()
@@ -2140,16 +2307,27 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                             raw = float(num_data.agg(_agg_map.get(fn, 'mean')))
                     else:
                         raw = 0.0
+                    if _dup_key:
+                        valid_sub = sub.copy()
+                        if vc and vc in valid_sub.columns:
+                            valid_sub[vc] = pd.to_numeric(valid_sub[vc], errors='coerce')
+                            valid_sub = valid_sub.dropna(subset=[vc])
+                        alt_raw = float(valid_sub[_dup_key].nunique())
+                    else:
+                        alt_raw = float(sub.shape[0])
 
                 if dec is not None:
                     raw = round(raw, dec)
                 col_totals[ci] += raw
                 cell_vals.append(raw)
 
+                formatted = _format_cell_with_tooltip(raw, alt_raw, fn, show_tooltips, dec)
+                row_cells.append(formatted)
+
             if st_show_row_totals:
-                rows_data.append(list(combo) + cell_vals + [sum(cell_vals)])
+                rows_data.append(list(combo) + row_cells + [sum(cell_vals)])
             else:
-                rows_data.append(list(combo) + cell_vals)
+                rows_data.append(list(combo) + row_cells)
 
         for ci, calc in enumerate(dyn_calculations):
             dec = calc.get('decimals')
@@ -2178,6 +2356,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             'total_row':   total_row,
             'st_show_row_totals': st_show_row_totals,
             'st_show_col_totals': st_show_col_totals,
+            'show_tooltips': show_tooltips,
             '_drillMeta': {
                 'stType':      'dynamic_summary_table',
                 'stRowCol':    valid_row[0],
@@ -2188,6 +2367,8 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 'colHeaders':  col_headers,
             },
         }
+        if cfg.get('dyn_display_type', 'table') != 'table':
+            return _convert_table_to_echarts(result, cfg, valid_row)
         return result
 
     if not row_cols:
@@ -2209,7 +2390,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     # ── Multi-column mode: each column column independently pivoted into its own header group ──
     if len(valid_col) > 1:
         keep_cols = list(dict.fromkeys(valid_row + valid_col + ([_dup_key] if _dup_key else [])))
-        if agg_func != 'count' and value_col and value_col in df.columns:
+        if (agg_func != 'count' or (show_tooltips and value_col)) and value_col and value_col in df.columns:
             keep_cols.append(value_col)
 
         mask = pd.Series(True, index=df.index)
@@ -2219,7 +2400,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         work = df.loc[mask, keep_cols].copy()
         for c in valid_row + valid_col:
             work[c] = work[c].astype(str).str.strip()
-        if agg_func != 'count' and value_col and value_col in keep_cols:
+        if value_col and value_col in work.columns:
             work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
 
         if work.empty:
@@ -2242,14 +2423,39 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         all_cell_cols = []   # column name tracked per header for drill-through
 
         for cc in valid_col:
+            vals = _auto_detect_pl_scale(work[cc].unique())
             if agg_func == 'count':
                 ct = work.groupby(valid_row + [cc]).size().unstack(fill_value=0)
             else:
                 ct = work.groupby(valid_row + [cc])[value_col].agg(_agg_map[agg_func]).unstack(fill_value=0)
-            vals = _auto_detect_pl_scale(work[cc].unique())
             ct = ct.reindex(columns=vals, fill_value=0)
+
+            ct_alt = None
+            if show_tooltips:
+                if agg_func == 'count':
+                    if value_col and value_col in df.columns:
+                        work_alt = work.copy()
+                        work_alt[value_col] = pd.to_numeric(work_alt[value_col], errors='coerce')
+                        ct_alt = work_alt.groupby(valid_row + [cc])[value_col].mean().unstack(fill_value=0)
+                        ct_alt = ct_alt.reindex(columns=vals, fill_value=0)
+                else:
+                    work_alt = work.copy()
+                    if value_col and value_col in work_alt.columns:
+                        work_alt = work_alt[~work_alt[value_col].isna()]
+                    if _dup_key:
+                        ct_alt = work_alt.groupby(valid_row + [cc])[_dup_key].nunique().unstack(fill_value=0)
+                    else:
+                        ct_alt = work_alt.groupby(valid_row + [cc]).size().unstack(fill_value=0)
+                    ct_alt = ct_alt.reindex(columns=vals, fill_value=0)
+
             group_label = _label(cc, col_defs) if col_defs else cc
-            col_groups.append({'label': group_label, 'col': cc, 'headers': vals, 'pivot': ct})
+            col_groups.append({
+                'label': group_label,
+                'col': cc,
+                'headers': vals,
+                'pivot': ct,
+                'pivot_alt': ct_alt
+            })
             all_col_headers.extend(vals)
             all_cell_cols.extend([cc] * len(vals))
 
@@ -2259,26 +2465,50 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         for combo in row_combos:
             idx_tuple = tuple(combo)
             cell_vals = []
+            row_cells = []
             ci = 0
             for grp in col_groups:
                 ct = grp['pivot']
+                ct_alt = grp.get('pivot_alt')
                 for cv in grp['headers']:
                     if len(valid_row) == 1:
                         raw = float(ct.at[idx_tuple[0], cv]) if cv in ct.columns else 0.0
+                        alt_raw = float(ct_alt.at[idx_tuple[0], cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
                     else:
                         try:
                             raw = float(ct.loc[idx_tuple, cv]) if cv in ct.columns else 0.0
                         except KeyError:
                             raw = 0.0
+                        try:
+                            alt_raw = float(ct_alt.loc[idx_tuple, cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
+                        except KeyError:
+                            alt_raw = None
+
+                    if agg_decimals is not None:
+                        raw = round(raw, agg_decimals)
+
                     col_totals[ci] += raw
                     cell_vals.append(raw)
+
+                    formatted = _format_cell_with_tooltip(raw, alt_raw, agg_func, show_tooltips, agg_decimals)
+                    row_cells.append(formatted)
                     ci += 1
+
             if st_show_row_totals:
-                rows_data.append(list(combo) + cell_vals + [sum(cell_vals)])
+                rows_data.append(list(combo) + row_cells + [sum(cell_vals)])
             else:
-                rows_data.append(list(combo) + cell_vals)
+                rows_data.append(list(combo) + row_cells)
+
+        if agg_decimals is not None:
+            col_totals = [round(v, agg_decimals) for v in col_totals]
+            for row in rows_data:
+                if st_show_row_totals:
+                    row[-1] = round(row[-1], agg_decimals)
 
         grand_total = sum(col_totals)
+        if agg_decimals is not None:
+            grand_total = round(grand_total, agg_decimals)
+
         total_row = (['Total'] + [''] * (len(valid_row) - 1) + col_totals + [grand_total]) if st_show_col_totals else []
         row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
 
@@ -2307,6 +2537,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             'total_row':   total_row,
             'st_show_row_totals': st_show_row_totals,
             'st_show_col_totals': st_show_col_totals,
+            'show_tooltips': show_tooltips,
             '_drillMeta': {
                 'stType':      'dynamic_summary_table',
                 'stRowCol':    valid_row[0],
@@ -2318,6 +2549,8 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 'colHeaderCols': all_cell_cols,
             },
         }
+        if cfg.get('dyn_display_type', 'table') != 'table':
+            return _convert_table_to_echarts(result, cfg, valid_row)
         return result
 
     # ── Single column column: pivoted cross-tabulation (original behavior) ──
@@ -2330,14 +2563,14 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     mask &= ~df[col_col].astype(str).str.strip().isin(_BLANK)
 
     keep_cols = list(dict.fromkeys(valid_row + [col_col] + ([_dup_key] if _dup_key else [])))
-    if agg_func != 'count' and value_col and value_col in df.columns:
+    if (agg_func != 'count' or (show_tooltips and value_col)) and value_col and value_col in df.columns:
         keep_cols.append(value_col)
     work = df.loc[mask, keep_cols].copy()
 
     for c in valid_row:
         work[c] = work[c].astype(str).str.strip()
     work[col_col] = work[col_col].astype(str).str.strip()
-    if agg_func != 'count' and value_col and value_col in keep_cols:
+    if value_col and value_col in work.columns:
         work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
 
     if work.empty:
@@ -2354,12 +2587,31 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
 
     group_cols = valid_row + [col_col]
     _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+    col_vals = _auto_detect_pl_scale(work[col_col].unique())
+
+    ct_alt = None
+    if show_tooltips:
+        if agg_func == 'count':
+            if value_col and value_col in df.columns:
+                work_alt = work.copy()
+                work_alt[value_col] = pd.to_numeric(work_alt[value_col], errors='coerce')
+                ct_alt = work_alt.groupby(group_cols)[value_col].mean().unstack(fill_value=0)
+                ct_alt = ct_alt.reindex(columns=col_vals, fill_value=0)
+        else:
+            work_alt = work.copy()
+            if value_col and value_col in work_alt.columns:
+                work_alt = work_alt[~work_alt[value_col].isna()]
+            if _dup_key:
+                ct_alt = work_alt.groupby(group_cols)[_dup_key].nunique().unstack(fill_value=0)
+            else:
+                ct_alt = work_alt.groupby(group_cols).size().unstack(fill_value=0)
+            ct_alt = ct_alt.reindex(columns=col_vals, fill_value=0)
+
     if agg_func == 'count':
         ct = work.groupby(group_cols).size().unstack(fill_value=0)
     else:
         ct = work.groupby(group_cols)[value_col].agg(_agg_map[agg_func]).unstack(fill_value=0)
 
-    col_vals = _auto_detect_pl_scale(work[col_col].unique())
     ct = ct.reindex(columns=col_vals, fill_value=0)
 
     rows_data = []
@@ -2367,28 +2619,51 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     for combo in row_combos:
         idx_tuple = tuple(combo)
         cell_vals = []
+        row_cells = []
         for cv in col_vals:
             if len(valid_row) == 1:
                 raw = float(ct.at[idx_tuple[0], cv]) if cv in ct.columns else 0.0
+                alt_raw = float(ct_alt.at[idx_tuple[0], cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
             else:
                 try:
                     raw = float(ct.loc[idx_tuple, cv]) if cv in ct.columns else 0.0
                 except KeyError:
                     raw = 0.0
+                try:
+                    alt_raw = float(ct_alt.loc[idx_tuple, cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
+                except KeyError:
+                    alt_raw = None
+
+            if agg_decimals is not None:
+                raw = round(raw, agg_decimals)
+
             col_totals[col_vals.index(cv)] += raw
             cell_vals.append(raw)
+
+            formatted = _format_cell_with_tooltip(raw, alt_raw, agg_func, show_tooltips, agg_decimals)
+            row_cells.append(formatted)
+
         if st_show_row_totals:
-            rows_data.append(list(combo) + cell_vals + [sum(cell_vals)])
+            rows_data.append(list(combo) + row_cells + [sum(cell_vals)])
         else:
-            rows_data.append(list(combo) + cell_vals)
+            rows_data.append(list(combo) + row_cells)
+
+    if agg_decimals is not None:
+        col_totals = [round(v, agg_decimals) for v in col_totals]
+        for row in rows_data:
+            if st_show_row_totals:
+                row[-1] = round(row[-1], agg_decimals)
 
     grand_total = sum(col_totals)
+    if agg_decimals is not None:
+        grand_total = round(grand_total, agg_decimals)
+
     total_row = (['Total'] + [''] * (len(valid_row) - 1) + col_totals + [grand_total]) if st_show_col_totals else []
 
     row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
     col_label = _SEP.join(_label(c, col_defs) if col_defs else c for c in valid_col)
 
-    return {
+    result = {
         '__type__': 'table',
         '__series_names__': [],
         'row_col':     valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
@@ -2402,6 +2677,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         'total_row':   total_row,
         'st_show_row_totals': st_show_row_totals,
         'st_show_col_totals': st_show_col_totals,
+        'show_tooltips': show_tooltips,
         '_drillMeta': {
             'stType':      'dynamic_summary_table',
             'stRowCol':    valid_row[0],
@@ -2412,6 +2688,10 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             'colHeaders':  col_vals,
         },
     }
+
+    if cfg.get('dyn_display_type', 'table') != 'table':
+        return _convert_table_to_echarts(result, cfg, valid_row)
+    return result
 
 
 def _build_row_combos(val_lists, cols):

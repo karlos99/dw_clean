@@ -78,8 +78,8 @@ def build_drill_filter(chart, params: dict) -> dict:
         col_cols = chart.config.get('dyn_col_cols')
         if col_cols is None:
             col_cols = chart.config.get('st_col_cols', [])
-        row_val = params.get('st_row_val', '')
-        col_val = params.get('st_col_val', '')
+        row_val = params.get('st_row_val', '') or params.get('x_val', '')
+        col_val = params.get('st_col_val', '') or params.get('series_val', '')
         # Multi-column mode: st_col_val encodes "col_name ▸ cell_value"
         if col_val and _SEP in col_val and len(col_cols) > 1:
             parts = col_val.split(_SEP, 1)

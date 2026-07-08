@@ -1075,6 +1075,107 @@ class DynamicSummaryTableOptionTests(TestCase):
             ['6', 1.0, 500.0],
         ])
 
+    def test_dynamic_summary_table_echarts_mode(self):
+        import pandas as pd
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pd.DataFrame([
+            {'grade': '5', 'ssid': '123', 'scale_score': 300.0},
+            {'grade': '5', 'ssid': '456', 'scale_score': 400.0},
+            {'grade': '6', 'ssid': '789', 'scale_score': 500.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'agg_func': 'count', 'value_col': 'ssid', 'label': 'My Count', 'decimals': None},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'dyn_display_type': 'stacked_bar',
+        }
+
+        res = _dynamic_summary_table_option(df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='', agg_decimals=None, cfg=cfg, col_defs=None)
+
+        self.assertNotIn('__type__', res)
+        self.assertEqual(res['xAxis']['data'], ['5', '6'])
+        self.assertEqual(res['series'][0]['name'], 'My Count')
+        self.assertEqual(res['series'][0]['type'], 'bar')
+        self.assertEqual(res['series'][0]['stack'], 'total')
+        self.assertEqual(res['series'][0]['data'], [2.0, 1.0])
+
+    def test_dynamic_summary_table_pivot_decimals(self):
+        import pandas as pd
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pd.DataFrame([
+            {'grade': '5', 'gender': 'F', 'scale_score': 300.567},
+            {'grade': '5', 'gender': 'F', 'scale_score': 400.123},
+            {'grade': '6', 'gender': 'M', 'scale_score': 500.000},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'pivot',
+            'dyn_show_row_totals': True,
+            'dyn_show_col_totals': True,
+        }
+
+        # Test single column pivot category decimals rounding
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=['gender'], agg_func='avg', value_col='scale_score',
+            agg_decimals=1, cfg=cfg, col_defs=None
+        )
+
+        self.assertEqual(res['__type__'], 'table')
+        # Row 1: '5', F=350.345 -> rounded to 350.3, M=0.0, RowTotal=350.3
+        self.assertEqual(res['rows'][0], ['5', 350.3, 0.0, 350.3])
+        self.assertEqual(res['total_row'], ['Total', 350.3, 500.0, 850.3])
+
+    def test_summary_table_and_dynamic_table_tooltips(self):
+        import pandas as pd
+        from dataviz.utils.chart_builder import _summary_table_option, _dynamic_summary_table_option
+
+        df = pd.DataFrame([
+            {'grade': '5', 'gender': 'F', 'scale_score': 300.0, 'ssid': '1'},
+            {'grade': '5', 'gender': 'F', 'scale_score': 400.0, 'ssid': '1'},
+            {'grade': '5', 'gender': 'F', 'scale_score': 500.0, 'ssid': '2'},
+            {'grade': '6', 'gender': 'M', 'scale_score': 500.0, 'ssid': '3'},
+        ])
+
+        # 1. Summary Table (Values mode, count agg, showing tooltips)
+        cfg_st = {
+            'st_col_mode': 'values',
+            'st_agg_func': 'count',
+            'st_value_col': 'scale_score',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'st_show_tooltips': True,
+        }
+        res_st = _summary_table_option(df, row_col='grade', col_col='gender', cfg=cfg_st, col_defs=None)
+        # Expected: grade 5, Female count=2 (student 1 counted once, student 2 once)
+        # Alt Average of the deduplicated student scores: (300+500)/2 = 400.0
+        self.assertEqual(res_st['rows'][0][1], {'val': 2.0, 'tooltip': 'Average: 400.0'})
+
+        # 2. Dynamic Table (Calculations mode, count agg & avg agg, showing tooltips)
+        cfg_dyn = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'agg_func': 'count', 'value_col': 'scale_score', 'label': 'My Count'},
+                {'agg_func': 'avg', 'value_col': 'scale_score', 'label': 'My Avg', 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'dyn_show_tooltips': True,
+        }
+        res_dyn = _dynamic_summary_table_option(df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='', agg_decimals=None, cfg=cfg_dyn, col_defs=None)
+        # Expected row 1 (grade 5):
+        # Column 1 (Count of scale_score): val=2.0 (unique ssid count), Alt Avg = (300+500)/2 = 400.0 -> {'val': 2.0, 'tooltip': 'Average: 400.0'}
+        # Column 2 (Avg of scale_score): val=400.0 (all 3 scores averaged), Alt unique count = 2 -> {'val': 400.0, 'tooltip': 'Count: 2'}
+        self.assertEqual(res_dyn['rows'][0][1], {'val': 2.0, 'tooltip': 'Average: 400.0'})
+        self.assertEqual(res_dyn['rows'][0][2], {'val': 400.0, 'tooltip': 'Count: 2'})
+
+
+
 
 
 

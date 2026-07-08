@@ -206,6 +206,7 @@ def _cfg_from_post(post):
         'st_col_mode':       post.get('st_col_mode', 'values'),
         'st_show_row_totals': post.get('st_show_row_totals', '1') == '1',
         'st_show_col_totals': post.get('st_show_col_totals', '1') == '1',
+        'st_show_tooltips':   post.get('st_show_tooltips', '1') == '1',
         # Dynamic Summary Table fields
         'st_row_cols':       _parse_json_list('st_row_cols'),
         'st_col_cols':       _parse_json_list('st_col_cols'),
@@ -219,8 +220,10 @@ def _cfg_from_post(post):
         'dyn_agg_decimals':  _parse_int(post.get('dyn_agg_decimals'), None),
         'dyn_show_row_totals': post.get('dyn_show_row_totals', '1') == '1',
         'dyn_show_col_totals': post.get('dyn_show_col_totals', '1') == '1',
+        'dyn_show_tooltips':  post.get('dyn_show_tooltips', '1') == '1',
         'dyn_col_mode':      post.get('dyn_col_mode', 'pivot'),
         'dyn_calculations':  _parse_json_list('dyn_calculations'),
+        'dyn_display_type':  post.get('dyn_display_type', 'table'),
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
         'limit':             _parse_int(post.get('limit'), None),
@@ -439,10 +442,14 @@ def chart_preview_api(request):
         resolved_filters = resolve_dataset_filters(source_filters or {}, ds, active_tables)
         # Parse limit from config if present to avoid returning too many records from query
         limit_val = cfg.get('limit')
+        is_table = cfg.get('chart_type') in ('summary_table', 'dynamic_summary_table')
         try:
-            limit_val = int(limit_val) if limit_val is not None and str(limit_val).strip() != '' else 150000
+            if limit_val is not None and str(limit_val).strip() != '':
+                limit_val = int(limit_val)
+            else:
+                limit_val = None if is_table else 150000
         except (ValueError, TypeError):
-            limit_val = 150000
+            limit_val = None if is_table else 150000
         sql, params = compile_dataset_to_sql(ds, user=None, interactive_filters=resolved_filters, limit=limit_val)
         res = execute_compiled_query_aliased(sql, params, col_mappings)
         if res.get('error'):
@@ -784,10 +791,14 @@ def chart_render_api(request, chart_id):
                 active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                 resolved_filters = resolve_dataset_filters(raw_filters, ds, active_tables)
                 limit_val = chart_cfg.get('limit')
+                is_table = chart.config.get('chart_type') in ('summary_table', 'dynamic_summary_table')
                 try:
-                    limit_val = int(limit_val) if limit_val is not None and str(limit_val).strip() != '' else 150000
+                    if limit_val is not None and str(limit_val).strip() != '':
+                        limit_val = int(limit_val)
+                    else:
+                        limit_val = None if is_table else 150000
                 except (ValueError, TypeError):
-                    limit_val = 150000
+                    limit_val = None if is_table else 150000
                 ds_updated = int(ds.updated_at.timestamp())
                 ds_filter_hash = hashlib.md5(json.dumps(resolved_filters, sort_keys=True).encode()).hexdigest()[:12]
                 ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}'
