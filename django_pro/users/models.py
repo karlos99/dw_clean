@@ -77,8 +77,13 @@ class User(AbstractUser):
         if active_role_name is None and self.roles.count() == 1:
             active_role_name = self.roles.first().name
             
-        # Unrestricted roles get full access
         unrestricted_roles = ['Project Admin', 'District Admin', 'School Admin', 'School Gr View', 'School View']
+        
+        # Fallback: if active_role_name is still None, check if user has any unrestricted roles
+        if active_role_name is None:
+            if self.roles.filter(name__in=unrestricted_roles).exists() or self.roles.filter(name__icontains='District').exists():
+                return None
+
         if active_role_name and (active_role_name in unrestricted_roles or 'District' in active_role_name):
             return None
         

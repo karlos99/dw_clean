@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     'placementcards',
     'mathr.apps.MathrConfig',
     'assesments',
+    'desi.apps.DesiConfig',
     'dataviz.apps.DatavizConfig',
     'dataLoader.apps.DataloaderConfig',
     'clickhouse_utils',
@@ -199,6 +200,7 @@ CSRF_COOKIE_SECURE = True
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'SAMEORIGIN'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 # HSTS Settings
 SECURE_HSTS_SECONDS = 31536000

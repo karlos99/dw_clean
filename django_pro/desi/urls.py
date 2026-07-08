@@ -1,0 +1,32 @@
+from django.urls import path
+from .views import (
+    student_list,
+    assign_accommodations,
+    admin_dashboard,
+    create_assessment,
+    edit_assessment,
+    clone_assessment,
+    delete_assessment,
+    create_accommodation,
+    edit_accommodation,
+    delete_accommodation,
+    export_data,
+    export_data_endpoint,
+)
+
+app_name = 'desi'
+
+urlpatterns = [
+    path('', student_list, name='student_list'),
+    path('student/<str:stu_annual_key>/', assign_accommodations, name='assign_accommodations'),
+    path('admin-dashboard/', admin_dashboard, name='admin_dashboard'),
+    path('admin-dashboard/export/', export_data, name='export_data'),
+    path('admin-dashboard/export/endpoint/', export_data_endpoint, name='export_data_endpoint'),
+    path('admin-dashboard/create/', create_assessment, name='create_assessment'),
+    path('admin-dashboard/<int:id>/edit/', edit_assessment, name='edit_assessment'),
+    path('admin-dashboard/<int:id>/clone/', clone_assessment, name='clone_assessment'),
+    path('admin-dashboard/<int:id>/delete/', delete_assessment, name='delete_assessment'),
+    path('accommodations/create/', create_accommodation, name='create_accommodation'),
+    path('accommodations/<int:id>/edit/', edit_accommodation, name='edit_accommodation'),
+    path('accommodations/<int:id>/delete/', delete_accommodation, name='delete_accommodation'),
+]
