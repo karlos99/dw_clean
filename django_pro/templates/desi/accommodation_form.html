@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+{% load desi_tags %}
+
+{% block title %}{% if is_edit %}Edit{% else %}Create{% endif %} Designated Support - DESI - DS Data{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
+     x-data="{
+        options: [
+            {% if is_edit %}
+                {% for opt in accommodation.options.all %}
+                { id: '{{ opt.id }}', name: '{{ opt.name|escapejs }}', code: '{{ opt.code|escapejs }}' }{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            {% endif %}
+        ],
+        assignedMap: {
+            {% if is_edit %}
+                {% for ast_id, opt_list in assigned_assessment_opts.items %}
+                    '{{ ast_id }}': [{% for name in opt_list %}'{{ name|escapejs }}'{% if not forloop.last %},{% endif %}{% endfor %}],
+                {% endfor %}
+            {% endif %}
+        },
+        customMap: {
+            {% if is_edit %}
+                {% for ast_id, val in assigned_custom_opts.items %}
+                    '{{ ast_id }}': '{{ val|escapejs }}',
+                {% endfor %}
+            {% endif %}
+        },
+        addOption() {
+            this.options.push({ id: '', name: '', code: '' });
+        },
+        removeOption(index) {
+            this.options.splice(index, 1);
+        },
+        isOptionAssigned(astId, optName) {
+            const list = this.assignedMap[astId];
+            return list ? list.includes(optName) : false;
+        }
+     }">
+
+    <!-- Back Button -->
+    <div class="mb-6">
+        <a href="{% url 'desi:admin_dashboard' %}" class="text-sm font-semibold text-slate-500 hover:text-blue-600 transition flex items-center gap-1">
+            &larr; Back to configurations
+        </a>
+    </div>
+
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900">
+            {% if is_edit %}Edit Designated Support: {{ accommodation.name }}{% else %}Create New Designated Support{% endif %}
+        </h1>
+        <p class="mt-2 text-sm text-slate-600">Configure global designated support details and specific select options.</p>
+    </div>
+
+    <form method="POST" class="space-y-8">
+        {% csrf_token %}
+
+        <!-- CORE DESIGNATED SUPPORT DETAILS -->
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-6">
+            <h2 class="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">1. Designated Support Information</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Name -->
+                <div class="col-span-2">
+                    <label for="name" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Designated Support Name</label>
+                    <input type="text" name="name" id="name" required value="{% if is_edit %}{{ accommodation.name }}{% endif %}" 
+                           placeholder="e.g. Calculator, Text-to-Speech"
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+
+                <!-- Code -->
+                <div>
+                    <label for="code" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Reporting Code (Optional)</label>
+                    <input type="text" name="code" id="code" value="{% if is_edit %}{{ accommodation.code }}{% endif %}" 
+                           placeholder="e.g. CALC, TTS"
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+
+                <!-- Category -->
+                <div>
+                    <label for="category" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Category</label>
+                    <input type="text" name="category" id="category" value="{% if is_edit %}{{ accommodation.category }}{% endif %}" 
+                           placeholder="e.g. Presentation, Response, Timing"
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+
+                <!-- Description -->
+                <div class="col-span-2">
+                    <label for="description" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Description</label>
+                    <textarea name="description" id="description" rows="3" placeholder="Briefly describe what this support entails..."
+                              class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">{% if is_edit %}{{ accommodation.description }}{% endif %}</textarea>
+                </div>
+
+                <!-- YouTube Video Link -->
+                <div>
+                    <label for="video_url" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Explanation Video Link (YouTube)</label>
+                    <input type="url" name="video_url" id="video_url" value="{% if is_edit and accommodation.video_url %}{{ accommodation.video_url }}{% endif %}" 
+                           placeholder="e.g. https://www.youtube.com/watch?v=..."
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+
+                <!-- Order -->
+                <div>
+                    <label for="order" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Display Order</label>
+                    <input type="number" name="order" id="order" value="{% if is_edit %}{{ accommodation.order }}{% else %}0{% endif %}" 
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+
+                <!-- Dependency Support -->
+                <div class="col-span-2 border-t border-slate-100 pt-4">
+                    <h3 class="text-sm font-bold text-slate-800 mb-3">Conditional Dependency (Optional)</h3>
+                    <p class="text-xs text-slate-500 mb-4">Hide this support and remove its saved entry when a specific option is selected on another support.</p>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="depends_on_accommodation" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Depends on Support</label>
+                            <select name="depends_on_accommodation" id="depends_on_accommodation" class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                                <option value="">-- None --</option>
+                                {% for dep_acc in dependency_supports %}
+                                <option value="{{ dep_acc.id }}" {% if selected_dependency_support_id == dep_acc.id %}selected{% endif %}>
+                                    {{ dep_acc.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="depends_on_option" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Trigger Option</label>
+                            <select name="depends_on_option" id="depends_on_option" class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                                <option value="">-- None --</option>
+                                {% for dep_acc in dependency_supports %}
+                                    {% for dep_opt in dep_acc.options.all %}
+                                    <option value="{{ dep_opt.id }}" data-support-id="{{ dep_acc.id }}" {% if selected_dependency_option_id == dep_opt.id %}selected{% endif %}>
+                                        {{ dep_acc.name }} → {{ dep_opt.name }}
+                                    </option>
+                                    {% endfor %}
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mt-4" id="dependency-assessment-scope">
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Dependency Applies To Assessments</label>
+                        <p class="text-[11px] text-slate-500 mb-2">Leave all unchecked to apply to all assessments where this support appears.</p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-36 overflow-y-auto border border-slate-200 rounded-md p-3 bg-slate-50">
+                            {% for ast in assessments %}
+                            <label class="inline-flex items-center text-xs text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    class="dependency-assessment-checkbox h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-2"
+                                    name="dependency_assessments"
+                                    value="{{ ast.id }}"
+                                    {% if ast.id in selected_dependency_assessment_ids %}checked{% endif %}>
+                                {{ ast.name }} ({{ ast.school_year }})
+                            </label>
+                            {% empty %}
+                            <span class="text-xs text-slate-500 italic">No active assessments available.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DESIGNATED SUPPORT OPTIONS LIST -->
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-6">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-2">
+                <h2 class="text-lg font-bold text-slate-900">2. Designated Support Options</h2>
+                <button type="button" @click="addOption" 
+                        class="inline-flex items-center px-3 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm">
+                    ➕ Add Option
+                </button>
+            </div>
+            
+            <p class="text-xs text-slate-500 mt-1">
+                Configure option sub-categories (e.g. "Scientific" for Calculator or "1.5x" for Extra Time).
+                If no options are defined, it will render as a simple checkbox for users.
+            </p>
+
+            <div class="{% if is_edit %}space-y-2 max-h-80 overflow-y-auto pr-1{% else %}space-y-4{% endif %}">
+                {% if is_edit %}
+                <div class="hidden md:grid md:grid-cols-[1fr_10rem_auto] gap-2 px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    <div>Option Name</div>
+                    <div>Code</div>
+                    <div class="text-right">Action</div>
+                </div>
+                {% endif %}
+                <!-- Alpine Option Row Loop -->
+                <template x-for="(optRow, index) in options" :key="index">
+                    <div class="grid grid-cols-1 md:grid-cols-[1fr_10rem_auto] items-end gap-2 bg-slate-50 border border-slate-200 rounded {% if is_edit %}p-2{% else %}p-4{% endif %} relative">
+                        <input type="hidden" name="option_id[]" x-model="optRow.id">
+                        <div>
+                            <label class="sr-only">Option Name</label>
+                            <input type="text" name="option_name[]" x-model="optRow.name" required
+                                   placeholder="e.g. Scientific, 1.5x, Spanish" 
+                                   class="block w-full rounded border-slate-300 text-sm py-1.5 px-3 focus:border-blue-500 focus:ring-blue-500">
+                        </div>
+
+                        <div>
+                            <label class="sr-only">Option Code (Optional)</label>
+                            <input type="text" name="option_code[]" x-model="optRow.code" 
+                                   placeholder="e.g. SCI, 1.5X" 
+                                   class="block w-full rounded border-slate-300 text-sm py-1.5 px-3 focus:border-blue-500 focus:ring-blue-500">
+                        </div>
+
+                        <div class="shrink-0 {% if is_edit %}pb-1{% else %}pt-4{% endif %} text-right">
+                            <button type="button" @click="removeOption(index)" 
+                                    class="text-red-600 hover:text-red-800 text-sm font-semibold uppercase tracking-wider transition">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </template>
+                
+                <div x-show="options.length === 0" class="text-center py-6 text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-200 rounded-lg">
+                    No option sub-categories defined. (This designated support will render as a simple checkbox toggle)
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 3: ASSESSMENT SUPPORT MAPPING -->
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-6">
+            <div class="border-b border-slate-100 pb-2">
+                <h2 class="text-lg font-bold text-slate-900">3. Assessment Support Mapping</h2>
+                <p class="text-xs text-slate-500 mt-1">Select which assessments support this designated support question. If sub-options are defined, specify which options are allowed on each assessment. Leave options unchecked to allow all.</p>
+            </div>
+
+            <div class="space-y-4">
+                {% for ast in assessments %}
+                <div class="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-4"
+                     x-data="{ 
+                        enabled: {% if is_edit %}{% if ast.id in assigned_assessment_opts or ast.id in assigned_custom_opts %}true{% else %}false{% endif %}{% else %}false{% endif %},
+                        hasCustom: {% if is_edit %}{% if ast.id in assigned_custom_opts %}true{% else %}false{% endif %}{% else %}false{% endif %}
+                     }">
+                    
+                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div class="flex items-start">
+                            <input type="checkbox" name="supported_assessments" id="ast_{{ ast.id }}" value="{{ ast.id }}" 
+                                   x-model="enabled"
+                                   class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mt-1">
+                            <div class="ml-3">
+                                <label for="ast_{{ ast.id }}" class="font-bold text-slate-800 text-sm cursor-pointer">{{ ast.name }}</label>
+                                <div class="text-[10px] text-slate-400">School Year: {{ ast.school_year }} | Subject: {{ ast.subject|default:"All" }}</div>
+                            </div>
+                        </div>
+
+                        <!-- Options are different toggle (Only visible if enabled) -->
+                        <div x-show="enabled" x-transition class="flex items-center">
+                            <input type="checkbox" id="custom_toggle_{{ ast.id }}" 
+                                   x-model="hasCustom"
+                                   class="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                            <label for="custom_toggle_{{ ast.id }}" class="ml-2 block text-xs font-semibold text-slate-700 uppercase tracking-wider cursor-pointer">
+                                Options are different for this assessment
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Option Configurations Container -->
+                    <div x-show="enabled" x-transition class="bg-white border border-slate-200 rounded p-4 space-y-3" style="display: none;">
+                        
+                        <!-- 1. Custom Option text input -->
+                        <div x-show="hasCustom" x-transition>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Custom Options (Comma-separated list)</label>
+                            <input type="text" name="assessment_opts_custom_{{ ast.id }}" 
+                                   value="{% if is_edit %}{{ assigned_custom_opts|get_item:ast.id|default:'' }}{% endif %}"
+                                   placeholder="e.g. Option A, Option B, Option C"
+                                   class="block w-full rounded border-slate-300 text-xs py-1.5 px-3 focus:border-blue-500 focus:ring-blue-500">
+                            <p class="text-[9px] text-slate-400 mt-1">Leave blank to inherit master options. Entering options here overrides the master list for this assessment.</p>
+                        </div>
+
+                        <!-- 2. Master Options Selector (Only visible if NOT custom options) -->
+                        <div x-show="!hasCustom" x-transition>
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Select allowed master options:</span>
+                            <div class="flex flex-wrap gap-x-4 gap-y-2">
+                                <template x-for="(opt, optIdx) in options" :key="optIdx">
+                                    <label x-show="opt.name.trim() !== ''" class="inline-flex items-center text-xs font-semibold text-slate-700">
+                                        <input type="checkbox" :name="'assessment_opts_' + {{ ast.id }}" :value="opt.name"
+                                               :checked="isOptionAssigned({{ ast.id }}, opt.name)"
+                                               class="h-3 w-3 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-1.5">
+                                        <span x-text="opt.name"></span>
+                                    </label>
+                                </template>
+                                <div x-show="options.filter(o => o.name.trim() !== '').length === 0" class="text-[10px] text-slate-400 italic">
+                                    Standard (all master options allowed by default)
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+                {% empty %}
+                <div class="text-center py-6 text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-200 rounded-lg">
+                    No active assessments configured. Please create an assessment first.
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- FORM ACTIONS -->
+        <div class="flex justify-end gap-3 pt-4 border-t border-slate-200">
+            <a href="{% url 'desi:admin_dashboard' %}" class="inline-flex justify-center items-center px-4 py-2.5 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                Cancel
+            </a>
+            <button type="submit" class="inline-flex justify-center items-center px-8 py-2.5 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                Save Designated Support
+            </button>
+        </div>
+
+    </form>
+
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const supportSelect = document.getElementById('depends_on_accommodation');
+        const optionSelect = document.getElementById('depends_on_option');
+        const scopeContainer = document.getElementById('dependency-assessment-scope');
+        if (!supportSelect || !optionSelect || !scopeContainer) return;
+        const scopeCheckboxes = Array.from(scopeContainer.querySelectorAll('.dependency-assessment-checkbox'));
+
+        const filterDependencyOptions = () => {
+            const selectedSupportId = supportSelect.value;
+            let hasVisible = false;
+
+            Array.from(optionSelect.options).forEach((opt, idx) => {
+                if (idx === 0) {
+                    opt.hidden = false;
+                    return;
+                }
+                const visible = selectedSupportId && opt.dataset.supportId === selectedSupportId;
+                opt.hidden = !visible;
+                if (visible) hasVisible = true;
+            });
+
+            const current = optionSelect.options[optionSelect.selectedIndex];
+            if (!current || (current.dataset.supportId && current.dataset.supportId !== selectedSupportId)) {
+                optionSelect.value = '';
+            }
+            optionSelect.disabled = !selectedSupportId || !hasVisible;
+
+            const dependencyEnabled = !!optionSelect.value;
+            scopeCheckboxes.forEach((checkbox) => {
+                checkbox.disabled = !dependencyEnabled;
+                if (!dependencyEnabled) checkbox.checked = false;
+            });
+            scopeContainer.classList.toggle('opacity-50', !dependencyEnabled);
+        };
+
+        supportSelect.addEventListener('change', filterDependencyOptions);
+        optionSelect.addEventListener('change', filterDependencyOptions);
+        filterDependencyOptions();
+    });
+</script>
+{% endblock %}

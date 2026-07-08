@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}DESI Admin Dashboard - DS Data{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-8 pb-4 border-b border-slate-200">
+        <div>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900">DESI Configurations</h1>
+            <p class="mt-2 text-sm text-slate-600">Configure tests, eligibility conditions, supports, and screening questions.</p>
+        </div>
+        <div class="mt-4 md:mt-0 flex gap-3 flex-wrap">
+            <a href="{% url 'desi:student_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                &larr; Student List
+            </a>
+            <a href="{% url 'desi:create_accommodation' %}" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 transition">
+                ➕ Add Designated Support
+            </a>
+            <a href="{% url 'desi:create_assessment' %}" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 transition">
+                ➕ Create Assessment
+            </a>
+        </div>
+    </div>
+
+    <!-- Active Assessments List -->
+    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-12">
+        <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+            <h2 class="text-lg font-bold">Configured Assessments</h2>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                {{ assessments|length }} Total
+            </span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Assessment Name</th>
+                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Subject</th>
+                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">School Year</th>
+                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Rules</th>
+                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Questions</th>
+                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                        <th scope="col" class="relative px-6 py-3.5">
+                            <span class="sr-only">Actions</span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for ast in assessments %}
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="px-6 py-4">
+                            <div class="text-sm font-semibold text-slate-900">{{ ast.name }}</div>
+                            <div class="text-xs text-slate-500 max-w-sm truncate">{{ ast.description|default:"No description" }}</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
+                            {{ ast.subject|default:"N/A" }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
+                            {{ ast.school_year }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                {{ ast.criteria.count }} Criteria Rules
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-100">
+                                {{ ast.questions.count }} Support Qs
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            {% if ast.is_active %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+                            {% else %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <div class="flex justify-end gap-2">
+                                <a href="{% url 'desi:edit_assessment' ast.pk %}" class="inline-flex items-center px-2.5 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                                    Edit
+                                </a>
+                                <a href="{% url 'desi:clone_assessment' ast.pk %}" class="inline-flex items-center px-2.5 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                                    Clone
+                                </a>
+                                <a href="{% url 'desi:delete_assessment' ast.pk %}" onclick="return confirm('Are you sure you want to delete this assessment?');" 
+                                   class="inline-flex items-center px-2.5 py-1 border border-red-200 rounded text-xs font-semibold uppercase tracking-wider text-red-700 bg-red-50 hover:bg-red-100 transition">
+                                    Delete
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="px-6 py-12 text-center text-sm text-slate-500 italic">
+                            No assessments configured yet. Click "Create Assessment" above to add one.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Master Designated Supports Pool -->
+    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+            <h2 class="text-lg font-bold">Master Designated Supports Pool</h2>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                {{ accommodations|length }} Registered
+            </span>
+        </div>
+
+        <details class="p-6" open>
+            <summary class="cursor-pointer list-none text-sm font-semibold text-slate-700">
+                Expand Designated Supports Pool
+            </summary>
+
+            <div class="mt-4">
+                <p class="text-sm text-slate-600 mb-6">These are the global supports available. You can register, edit, and delete them here.</p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {% for acc in accommodations %}
+                    <div class="border border-slate-200 rounded-lg p-5 bg-slate-50 hover:shadow-sm transition flex flex-col justify-between">
+                        <div>
+                            <div class="flex justify-between items-start gap-2 mb-2">
+                                <h3 class="text-sm font-bold text-slate-900">{{ acc.name }}</h3>
+                                {% if acc.code %}
+                                <span class="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold uppercase rounded">
+                                    {{ acc.code }}
+                                </span>
+                                {% endif %}
+                            </div>
+                            {% if acc.category %}
+                            <span class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">{{ acc.category }}</span>
+                            {% endif %}
+                            <p class="text-xs text-slate-600 leading-relaxed mb-4">{{ acc.description|default:"No description provided." }}</p>
+                            
+                            <div class="mb-4">
+                                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Options</label>
+                                <select class="block w-full rounded border-slate-300 bg-white text-xs py-1.5 px-2.5 text-slate-700">
+                                    {% for opt in acc.options.all %}
+                                    <option>
+                                        {{ opt.name }}{% if opt.code %} ({{ opt.code }}){% endif %}
+                                    </option>
+                                    {% empty %}
+                                    <option>No options configured</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end gap-2 pt-3 border-t border-slate-100 mt-auto">
+                            <a href="{% url 'desi:edit_accommodation' acc.pk %}" class="inline-flex items-center px-2.5 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                                Edit
+                            </a>
+                            <a href="{% url 'desi:delete_accommodation' acc.pk %}" onclick="return confirm('Are you sure you want to delete this designated support? It will remove it from all assessments and students.');" 
+                               class="inline-flex items-center px-2.5 py-1 border border-red-200 rounded text-xs font-semibold uppercase tracking-wider text-red-700 bg-red-50 hover:bg-red-100 transition">
+                                Delete
+                            </a>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <div class="col-span-full py-8 text-center text-sm text-slate-500 italic">
+                        No designated supports registered in the master pool.
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </details>
+    </div>
+
+</div>
+{% endblock %}

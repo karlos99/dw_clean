@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+
+{% block title %}DESI Designated Supports - DS Data{% endblock %}
+
+{% block content %}
+<!-- Master-Detail Split Pane Container -->
+<div class="flex h-[calc(100vh-4rem)] overflow-hidden bg-slate-100">
+    
+    <!-- LEFT PANEL: Student Sidebar -->
+    <aside class="w-80 md:w-96 border-r border-slate-200 bg-white flex flex-col shrink-0 h-full shadow-sm">
+        
+        <!-- Sidebar Header / Title & Actions -->
+        <div class="p-4 border-b border-slate-200 bg-slate-900 text-white shrink-0">
+            <div class="flex justify-between items-center mb-2">
+                <h1 class="text-sm font-bold tracking-tight text-white">DESI Designated Supports</h1>
+                {% if is_project_admin %}
+                <a href="{% url 'desi:admin_dashboard' %}" class="inline-flex items-center px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition">
+                    🔧 Admin
+                </a>
+                {% endif %}
+            </div>
+            <p class="text-[10px] text-slate-400">Manage student eligibility & assign supports.</p>
+        </div>
+
+        <!-- Filters & Search Form -->
+        <div class="p-4 border-b border-slate-200 bg-slate-50 shrink-0">
+            <form method="GET" action="{% url 'desi:student_list' %}" class="space-y-3">
+                <!-- Search Input -->
+                <div>
+                    <label for="search" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Search Student</label>
+                    <input type="text" name="search" id="search" value="{{ search_query }}" placeholder="Name, local ID, or SSID..." 
+                           class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1.5 px-2.5">
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <!-- Grade Dropdown -->
+                    <div>
+                        <label for="grade" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Grade</label>
+                        <select name="grade" id="grade" class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1 px-2">
+                            <option value="">All</option>
+                            {% for grade in grades %}
+                            <option value="{{ grade }}" {% if grade_filter == grade %}selected{% endif %}>Gr {{ grade }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- School Dropdown -->
+                    <div>
+                        <label for="school" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">School</label>
+                        {% if active_school %}
+                            <input type="text" value="{{ active_school.school_name|truncatechars:10 }}" disabled class="block w-full rounded border-slate-200 bg-slate-100 text-slate-500 text-xs py-1 px-2">
+                            <input type="hidden" name="school" value="{{ active_school.state_id }}">
+                        {% else %}
+                            <select name="school" id="school" class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1 px-2">
+                                <option value="">All</option>
+                                {% for sch in schools %}
+                                <option value="{{ sch.state_id }}" {% if school_filter == sch.state_id %}selected{% endif %}>{{ sch.school_name|truncatechars:10 }}</option>
+                                {% endfor %}
+                            </select>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Submit / Clear Buttons -->
+                <div class="flex gap-2 justify-end pt-1">
+                    <a href="{% url 'desi:student_list' %}" class="inline-flex justify-center items-center px-2.5 py-1 border border-slate-300 rounded text-[10px] font-bold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-100 transition">
+                        Clear
+                    </a>
+                    <button type="submit" class="inline-flex justify-center items-center px-4 py-1 border border-transparent rounded text-[10px] font-bold uppercase tracking-wider text-white bg-slate-900 hover:bg-slate-800 transition">
+                        Filter
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Scrollable Student List Container -->
+        <div class="flex-1 overflow-y-auto divide-y divide-slate-100">
+            {% for s in page_obj %}
+            {% include "desi/partials/student_list_item.html" with student=s selected_student_key=student.stu_annual_key request=request has_multiple_schools=has_multiple_schools %}
+            {% empty %}
+            <div class="p-8 text-center text-slate-400 italic text-xs">
+                No students found matching the filters.
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Sidebar Pagination Footer -->
+        <div class="p-3 bg-slate-50 border-t border-slate-200 shrink-0 flex items-center justify-between text-[11px] text-slate-500">
+            <div>
+                Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+            </div>
+            <div class="flex gap-2">
+                {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}&{% for k, v in request.GET.items %}{% if k != 'page' %}{{ k }}={{ v }}&{% endif %}{% endfor %}"
+                   class="px-2 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 transition font-bold">&larr; Prev</a>
+                {% endif %}
+                {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}&{% for k, v in request.GET.items %}{% if k != 'page' %}{{ k }}={{ v }}&{% endif %}{% endfor %}"
+                   class="px-2 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 transition font-bold">Next &rarr;</a>
+                {% endif %}
+            </div>
+        </div>
+    </aside>
+
+    <!-- RIGHT PANEL: Workspace View (Scrollable) -->
+    <main id="workspace-container" class="flex-1 overflow-y-auto p-6 md:p-8">
+        {% if student %}
+            {% include "desi/partials/workspace_form.html" %}
+        {% else %}
+            <!-- PLACEHOLDER WHEN NO STUDENT IS SELECTED -->
+            <div class="h-full flex flex-col items-center justify-center text-slate-400 py-16 bg-white rounded-lg border border-dashed border-slate-300">
+                <span class="text-6xl mb-4">👥</span>
+                <p class="font-bold text-lg text-slate-700">No Student Selected</p>
+                <p class="text-sm mt-1">Select a student from the left panel to manage designated supports.</p>
+            </div>
+        {% endif %}
+    </main>
+
+    <!-- CLIENT-SIDE OPTION SYNCHRONIZATION AND SIDEBAR INTERACTION -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 1. Highlight clicked student link client-side immediately
+            document.body.addEventListener('click', (e) => {
+                const link = e.target.closest('.student-link');
+                if (link) {
+                    document.querySelectorAll('.student-link').forEach(a => {
+                        a.classList.remove('bg-blue-50/70', 'border-blue-600');
+                        a.classList.add('border-transparent', 'hover:bg-slate-50');
+                    });
+                    link.classList.remove('border-transparent', 'hover:bg-slate-50');
+                    link.classList.add('bg-blue-50/70', 'border-blue-600');
+                }
+            });
+
+            // 2. Shared option synchronization across select dropdowns
+            window.isSyncing = false;
+            function sync(accommodationId, optionValue) {
+                if (window.isSyncing) return;
+                window.isSyncing = true;
+
+                try {
+                    document.querySelectorAll(`select.acc-option-select[data-accommodation-id="${accommodationId}"]`).forEach(select => {
+                        const hasOption = Array.from(select.options).some(o => o.value == optionValue);
+                        if (hasOption || optionValue === '') {
+                            if (select.value != optionValue) {
+                                select.value = optionValue;
+                            }
+                        }
+                    });
+                } finally {
+                    window.isSyncing = false;
+                }
+            }
+
+            function applyDependencies() {
+                const selectedOptionIds = new Set(
+                    Array.from(document.querySelectorAll('select.acc-option-select'))
+                        .map(s => s.value)
+                        .filter(v => v)
+                );
+
+                let changed = false;
+                document.querySelectorAll('.support-card').forEach((card) => {
+                    const depOptionId = card.getAttribute('data-depends-on-option-id');
+                    const isHidden = depOptionId && selectedOptionIds.has(depOptionId);
+                    card.style.display = isHidden ? 'none' : '';
+
+                    if (isHidden) {
+                        card.querySelectorAll('select.acc-option-select').forEach((select) => {
+                            if (select.value !== '') {
+                                select.value = '';
+                                changed = true;
+                            }
+                        });
+                    }
+                });
+
+                if (changed) {
+                    applyDependencies();
+                }
+            }
+
+            document.addEventListener('change', (e) => {
+                if (e.target.matches('.acc-option-select')) {
+                    const accId = e.target.getAttribute('data-accommodation-id');
+                    sync(accId, e.target.value);
+                    applyDependencies();
+                }
+            });
+
+            document.body.addEventListener('htmx:afterSwap', (e) => {
+                if (e.target && e.target.id === 'workspace-container') {
+                    applyDependencies();
+                }
+            });
+
+            applyDependencies();
+        });
+    </script>
+
+</div>
+{% endblock %}
