@@ -121,7 +121,8 @@ def page_view(request, slug):
     _CONFIG_COL_KEYS = frozenset({
         'x_col', 'y_col', 'stack_col', 'series_col', 'group_col', 'size_col',
         'st_row_col', 'st_col_col', 'st_row_cols', 'st_col_cols',
-        'st_value_col', 'pg_before_col', 'pg_after_col',
+        'st_value_col', 'dyn_row_cols', 'dyn_col_cols', 'dyn_value_col',
+        'pg_before_col', 'pg_after_col',
     })
     def _chart_filter_cols(chart_obj):
         """Return sorted list of column names referenced by a chart."""
@@ -137,6 +138,10 @@ def page_view(request, slug):
                     for item in v:
                         if isinstance(item, str) and item:
                             cols.add(item)
+            elif k == 'dyn_calculations' and isinstance(v, list):
+                for item in v:
+                    if isinstance(item, dict) and item.get('value_col'):
+                        cols.add(item['value_col'])
         sf = chart_obj.source_filters or {}
         for k in sf:
             if isinstance(k, str) and k:

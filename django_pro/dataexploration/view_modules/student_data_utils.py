@@ -131,7 +131,19 @@ def _fetch_test_records_for_ssid(ssid: str):
     result = QueryExecutor().execute(sql, [ssid])
     if result.get('error'):
         return []
-    return result.get('rows', [])
+    
+    import json
+    rows = result.get('rows', [])
+    for row in rows:
+        oi = row.get('other_info')
+        if isinstance(oi, str) and oi.strip():
+            try:
+                row['other_info'] = json.loads(oi)
+            except Exception:
+                row['other_info'] = {}
+        elif not isinstance(oi, dict):
+            row['other_info'] = {}
+    return rows
 
 
 def _fetch_student_marks_for_ssid(ssid: str):

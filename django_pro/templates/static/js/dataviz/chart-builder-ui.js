@@ -45,6 +45,41 @@ function chartBuilderUIMethods() {
       this.stColCols = [...this.stColCols];
       this._schedulePreview(true);
     },
+    toggleDynRowCol(col) {
+      const idx = this.dynRowCols.indexOf(col);
+      if (idx >= 0) {
+        this.dynRowCols.splice(idx, 1);
+      } else {
+        this.dynRowCols.push(col);
+      }
+      this.dynRowCols = [...this.dynRowCols];
+      this._schedulePreview(true);
+    },
+    toggleDynColCol(col) {
+      const idx = this.dynColCols.indexOf(col);
+      if (idx >= 0) {
+        this.dynColCols.splice(idx, 1);
+      } else {
+        this.dynColCols.push(col);
+      }
+      this.dynColCols = [...this.dynColCols];
+      this._schedulePreview(true);
+    },
+    addDynCalculation() {
+      this.dynCalculations.push({
+        value_col: '',
+        agg_func: 'count',
+        label: '',
+        decimals: null
+      });
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    removeDynCalculation(idx) {
+      this.dynCalculations.splice(idx, 1);
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
     plColLabel(col) {
       return this.colLabel(col);
     },

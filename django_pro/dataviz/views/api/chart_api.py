@@ -21,6 +21,7 @@ _CONFIG_COL_KEYS = frozenset({
     'x_col', 'y_col', 'stack_col', 'series_col', 'group_col',
     'pg_before_col', 'pg_after_col', 'st_row_col', 'st_col_col',
     'st_row_cols', 'st_col_cols', 'st_value_col',
+    'dyn_row_cols', 'dyn_col_cols', 'dyn_value_col',
     'sort_col', 'compare_pl_cols',
 })
 
@@ -45,7 +46,24 @@ def _remap_config_cols(config: dict, column_mappings: dict | None) -> dict:
             return [column_mappings.get(v, v) if isinstance(v, str) else v for v in val]
         return val
 
-    return {k: (_remap(v) if k in _CONFIG_COL_KEYS else v) for k, v in config.items()}
+    res = {}
+    for k, v in config.items():
+        if k in _CONFIG_COL_KEYS:
+            res[k] = _remap(v)
+        elif k == 'dyn_calculations' and isinstance(v, list):
+            new_calcs = []
+            for item in v:
+                if isinstance(item, dict):
+                    new_item = dict(item)
+                    if 'value_col' in new_item and isinstance(new_item['value_col'], str):
+                        new_item['value_col'] = column_mappings.get(new_item['value_col'], new_item['value_col'])
+                    new_calcs.append(new_item)
+                else:
+                    new_calcs.append(item)
+            res[k] = new_calcs
+        else:
+            res[k] = v
+    return res
 
 
 def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, user) -> list:
@@ -194,6 +212,15 @@ def _cfg_from_post(post):
         'st_agg_func':       post.get('st_agg_func', 'count'),
         'st_value_col':      post.get('st_value_col', ''),
         'st_agg_decimals':   _parse_int(post.get('st_agg_decimals'), None),
+        'dyn_row_cols':      _parse_json_list('dyn_row_cols'),
+        'dyn_col_cols':      _parse_json_list('dyn_col_cols'),
+        'dyn_agg_func':      post.get('dyn_agg_func', 'count'),
+        'dyn_value_col':     post.get('dyn_value_col', ''),
+        'dyn_agg_decimals':  _parse_int(post.get('dyn_agg_decimals'), None),
+        'dyn_show_row_totals': post.get('dyn_show_row_totals', '1') == '1',
+        'dyn_show_col_totals': post.get('dyn_show_col_totals', '1') == '1',
+        'dyn_col_mode':      post.get('dyn_col_mode', 'pivot'),
+        'dyn_calculations':  _parse_json_list('dyn_calculations'),
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
         'limit':             _parse_int(post.get('limit'), None),

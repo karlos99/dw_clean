@@ -2056,6 +2056,139 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     A single column column produces a pivoted cross-tab with column headers.
     """
     _SEP = ' \u25b8 '  # ▸ separator for combining multi-column headers
+    _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+    _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
+
+    dyn_col_mode = cfg.get('dyn_col_mode', 'pivot')
+    st_show_row_totals = cfg.get('dyn_show_row_totals')
+    if st_show_row_totals is None:
+        st_show_row_totals = cfg.get('st_show_row_totals', True)
+    st_show_col_totals = cfg.get('dyn_show_col_totals')
+    if st_show_col_totals is None:
+        st_show_col_totals = cfg.get('st_show_col_totals', True)
+
+    # ── Calculations mode: user selects multiple calculations as columns ────────────────
+    if dyn_col_mode == 'calculations':
+        dyn_calculations = cfg.get('dyn_calculations', [])
+        if not dyn_calculations:
+            return _message_option('Dynamic Summary Table: add at least one calculation column', cfg)
+        if not row_cols:
+            return _message_option('Dynamic Summary Table: select at least one Row column', cfg)
+        valid_row = [c for c in row_cols if c and c in df.columns]
+        if not valid_row:
+            return _message_option('Dynamic Summary Table: no valid Row columns in data', cfg)
+
+        mask = pd.Series(True, index=df.index)
+        for c in valid_row:
+            mask &= ~df[c].astype(str).str.strip().isin(_BLANK)
+
+        calc_value_cols = [calc.get('value_col') for calc in dyn_calculations if calc.get('value_col') and calc.get('value_col') in df.columns]
+        keep_cols = list(dict.fromkeys(valid_row + calc_value_cols + ([_dup_key] if _dup_key else [])))
+        work = df.loc[mask, keep_cols].copy()
+        for c in valid_row:
+            work[c] = work[c].astype(str).str.strip()
+
+        if work.empty:
+            return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
+
+        row_val_lists = {}
+        for c in valid_row:
+            row_val_lists[c] = _auto_detect_pl_scale(work[c].unique())
+        row_combos = _build_row_combos(row_val_lists, valid_row)
+
+        _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+
+        col_headers = []
+        for idx, calc in enumerate(dyn_calculations):
+            lbl = calc.get('label', '').strip()
+            if not lbl:
+                fn = calc.get('agg_func', 'count')
+                vc = calc.get('value_col', '')
+                vc_lbl = _label(vc, col_defs) if (col_defs and vc) else vc
+                lbl = f"{fn.capitalize()} of {vc_lbl}" if vc else fn.capitalize()
+            col_headers.append(lbl)
+
+        rows_data = []
+        col_totals = [0.0] * len(dyn_calculations)
+
+        for combo in row_combos:
+            sub = work
+            for r_col, r_val in zip(valid_row, combo):
+                sub = sub[sub[r_col] == r_val]
+
+            cell_vals = []
+            for ci, calc in enumerate(dyn_calculations):
+                fn = calc.get('agg_func', 'count')
+                vc = calc.get('value_col', '')
+                dec = calc.get('decimals')
+                try:
+                    dec = int(dec) if dec is not None and str(dec).strip() != '' else None
+                except ValueError:
+                    dec = None
+
+                if fn == 'count':
+                    if _dup_key:
+                        raw = float(sub.drop_duplicates(subset=[_dup_key] + valid_row, keep='first').shape[0])
+                    else:
+                        raw = float(sub.shape[0])
+                else:
+                    if vc and vc in sub.columns:
+                        num_data = pd.to_numeric(sub[vc], errors='coerce').dropna()
+                        if num_data.empty:
+                            raw = 0.0
+                        else:
+                            raw = float(num_data.agg(_agg_map.get(fn, 'mean')))
+                    else:
+                        raw = 0.0
+
+                if dec is not None:
+                    raw = round(raw, dec)
+                col_totals[ci] += raw
+                cell_vals.append(raw)
+
+            if st_show_row_totals:
+                rows_data.append(list(combo) + cell_vals + [sum(cell_vals)])
+            else:
+                rows_data.append(list(combo) + cell_vals)
+
+        for ci, calc in enumerate(dyn_calculations):
+            dec = calc.get('decimals')
+            try:
+                dec = int(dec) if dec is not None and str(dec).strip() != '' else None
+            except ValueError:
+                dec = None
+            if dec is not None:
+                col_totals[ci] = round(col_totals[ci], dec)
+
+        grand_total = sum(col_totals)
+        total_row = (['Total'] + [''] * (len(valid_row) - 1) + col_totals + [grand_total]) if st_show_col_totals else []
+        row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
+
+        result = {
+            '__type__': 'table',
+            '__series_names__': [],
+            'row_col':     valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
+            'col_col':     '__calc_cols__',
+            'row_labels':  row_labels,
+            'row_label':   row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels),
+            'col_label':   'Calculations',
+            'num_row_labels': len(valid_row),
+            'col_headers': col_headers,
+            'rows':        rows_data,
+            'total_row':   total_row,
+            'st_show_row_totals': st_show_row_totals,
+            'st_show_col_totals': st_show_col_totals,
+            '_drillMeta': {
+                'stType':      'dynamic_summary_table',
+                'stRowCol':    valid_row[0],
+                'stColCol':    '__calc_cols__',
+                'stRowCols':   valid_row,
+                'stColCols':   [],
+                'stRowVals':   row_combos,
+                'colHeaders':  col_headers,
+            },
+        }
+        return result
 
     if not row_cols:
         return _message_option('Dynamic Summary Table: select at least one Row column', cfg)
@@ -2072,11 +2205,6 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
 
     _VALID_AGGS = {'count', 'sum', 'avg', 'min', 'max', 'median'}
     agg_func = agg_func if agg_func in _VALID_AGGS else 'count'
-    st_show_row_totals = cfg.get('st_show_row_totals', True)
-    st_show_col_totals = cfg.get('st_show_col_totals', True)
-
-    _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
-    _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
 
     # ── Multi-column mode: each column column independently pivoted into its own header group ──
     if len(valid_col) > 1:
@@ -2982,11 +3110,21 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     st_show_row_totals = cfg.get('st_show_row_totals', True)
     st_show_col_totals = cfg.get('st_show_col_totals', True)
     # Dynamic Summary Table extra fields
-    st_row_cols    = cfg.get('st_row_cols', [])
-    st_col_cols    = cfg.get('st_col_cols', [])
-    st_agg_func    = cfg.get('st_agg_func', 'count')
-    st_value_col   = cfg.get('st_value_col', '')
-    _st_raw_decimals = cfg.get('st_agg_decimals')
+    st_row_cols    = cfg.get('dyn_row_cols')
+    if st_row_cols is None:
+        st_row_cols = cfg.get('st_row_cols', [])
+    st_col_cols    = cfg.get('dyn_col_cols')
+    if st_col_cols is None:
+        st_col_cols = cfg.get('st_col_cols', [])
+    st_agg_func    = cfg.get('dyn_agg_func')
+    if st_agg_func is None:
+        st_agg_func = cfg.get('st_agg_func', 'count')
+    st_value_col   = cfg.get('dyn_value_col')
+    if st_value_col is None:
+        st_value_col = cfg.get('st_value_col', '')
+    _st_raw_decimals = cfg.get('dyn_agg_decimals')
+    if _st_raw_decimals is None:
+        _st_raw_decimals = cfg.get('st_agg_decimals')
     st_agg_decimals = int(_st_raw_decimals) if _st_raw_decimals is not None else None
 
     df = pd.DataFrame(rows)
