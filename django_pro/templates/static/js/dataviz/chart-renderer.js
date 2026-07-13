@@ -374,14 +374,24 @@
         var cnt = cells[c];
         var cv  = colHeaders[c];
         var cc  = colHeaderCols[c] || '';
-        var cntNum = Number(cnt);
-        var hasDisplayValue = !(cnt === null || cnt === undefined || String(cnt).trim() === '');
+        
+        var cellVal = cnt;
+        var tooltipText = '';
+        if (cnt && typeof cnt === 'object' && cnt.val !== undefined) {
+          cellVal = cnt.val;
+          tooltipText = cnt.tooltip || '';
+        }
+        
+        var cntNum = Number(cellVal);
+        var hasDisplayValue = !(cellVal === null || cellVal === undefined || String(cellVal).trim() === '');
+        var titleAttr = (option.show_tooltips !== false && tooltipText) ? ' title="' + _esc(tooltipText) + '"' : '';
+
         if (canDrill && Number.isFinite(cntNum) && cntNum !== 0) {
           var rvKey = rowVals.join(SEPS);
           var cvKey = cc ? (cc + SEPS + cv) : cv;
-          html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100" data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '">' + cnt + '</td>';
+          html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100"' + titleAttr + ' data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '">' + cellVal + '</td>';
         } else {
-          html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500">' + (hasDisplayValue ? cnt : '<span class="text-slate-300">\u2014</span>') + '</td>';
+          html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500"' + titleAttr + '>' + (hasDisplayValue ? cellVal : '<span class="text-slate-300">\u2014</span>') + '</td>';
         }
       }
       if (showRowTotals) {

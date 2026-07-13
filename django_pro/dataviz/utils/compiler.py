@@ -245,7 +245,7 @@ def get_columns_for_table(table_name: str) -> set:
                 dtype = col_types.get(c)
                 if dtype in ('json', 'jsonb'):
                     # Fetch keys
-                    key_query = f'SELECT DISTINCT key FROM (SELECT jsonb_object_keys(CAST("{c}" AS jsonb)) AS key FROM "{table_name}" WHERE "{c}" IS NOT NULL LIMIT 500) sub'
+                    key_query = f'SELECT DISTINCT key FROM (SELECT jsonb_object_keys(CAST("{c}" AS jsonb)) AS key FROM "{table_name}" WHERE "{c}" IS NOT NULL LIMIT 100000) sub'
                     cursor.execute(key_query)
                     keys = [row[0] for row in cursor.fetchall() if row[0]]
                     for k in keys:
@@ -607,7 +607,8 @@ def compile_dataset_to_sql(dataset, user=None, limit=MAX_CHART_ROWS, interactive
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
         
-    sql += f" LIMIT {limit}"
+    if limit is not None:
+        sql += f" LIMIT {limit}"
     
     result = (sql, params)
     try:
