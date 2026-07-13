@@ -22,7 +22,7 @@ from .views import (
     drill_rows_api, drill_columns_api, drill_filter_values_api,
     drill_export_csv_api, drill_available_columns_api,
     # Dataset API
-    dataset_save_api, dataset_detail_api, dataset_list_api, dataset_preview_api, api_column_unique_values, dataset_filter_options_api, dataset_duplicate_api,
+    dataset_save_api, dataset_detail_api, dataset_list_api, dataset_preview_api, api_column_unique_values, dataset_filter_options_api, dataset_duplicate_api, dataset_export_csv_api,
     # Color-mapping preset API
     colormap_preset_save_api, colormap_preset_detail_api, colormap_preset_list_api,
 )
@@ -72,6 +72,7 @@ urlpatterns = [
     # ── Dataset API ────────────────────────────────────────────────────────
     path('api/datasets/save/',          dataset_save_api,   name='dataset_save'),
     path('api/datasets/preview/',       dataset_preview_api, name='dataset_preview'),
+    path('api/datasets/export-csv/',    dataset_export_csv_api, name='dataset_export_csv'),
     path('api/datasets/list/',          dataset_list_api,   name='dataset_list'),
     path('api/datasets/<int:dataset_id>/', dataset_detail_api, name='dataset_detail'),
     path('api/datasets/<int:dataset_id>/duplicate/', dataset_duplicate_api, name='dataset_duplicate'),

@@ -333,6 +333,50 @@ def dataset_preview_api(request):
 
 
 @login_required
+@require_POST
+def dataset_export_csv_api(request):
+    """Compile a transient dataset and return all rows as a streamed CSV download."""
+    if not is_project_admin(request.user):
+        return HttpResponseForbidden("Access Denied.")
+
+    try:
+        data = json.loads(request.body)
+        dataset = Dataset(
+            base_table=data.get('base_table'),
+            distinct=data.get('distinct', True),
+            joins=data.get('joins', []),
+            filters=data.get('filters', []),
+            columns=data.get('columns', [])
+        )
+        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=None)
+        res = execute_compiled_query(sql, params)
+
+        if res.get('error'):
+            from django.http import HttpResponse
+            return HttpResponse(res['error'], status=400)
+
+        rows = res.get('rows', [])
+        columns = res.get('columns', [])
+
+        from django.http import StreamingHttpResponse
+        def stream_csv():
+            yield ','.join(f'"{str(c).replace(chr(34), chr(34)+chr(34))}"' for c in columns) + '\n'
+            for row in rows:
+                yield ','.join(
+                    f'"{str(row.get(c, "")).replace(chr(34), chr(34)+chr(34))}"'
+                    if row.get(c) is not None else '""'
+                    for c in columns
+                ) + '\n'
+
+        response = StreamingHttpResponse(stream_csv(), content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="dataset_export.csv"'
+        return response
+    except Exception as e:
+        from django.http import HttpResponse
+        return HttpResponse(str(e), status=400)
+
+
+@login_required
 @require_GET
 def api_column_unique_values(request):
     """Returns JSON list of unique values for a given table.column."""

@@ -413,9 +413,14 @@
     <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
         <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
             <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Live SQL & Preview Results</h3>
-            <button @click="runPreview()" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-widest transition rounded-none">
-                Run Query
-            </button>
+            <div class="flex space-x-2">
+                <button @click="runPreview()" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-widest transition rounded-none">
+                    Run Query
+                </button>
+                <button @click="exportCSV()" class="px-3 py-1 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs uppercase tracking-widest transition rounded-none disabled:opacity-40" :disabled="previewLoading">
+                    Export CSV
+                </button>
+            </div>
         </div>
         
         <div class="border-b border-slate-200 mb-4 flex space-x-4">
@@ -1518,6 +1523,55 @@
                 .catch(err => {
                     console.error(err);
                     this.errorMessage = "Error running preview: " + err;
+                })
+                .finally(() => {
+                    this.previewLoading = false;
+                });
+            },
+
+            exportCSV() {
+                if (this.nodes.length === 0 || this.columns.length === 0) {
+                    this.errorMessage = "Please drag at least one table onto the canvas and select columns.";
+                    return;
+                }
+                this.errorMessage = "";
+                this.previewLoading = true;
+
+                const payload = {
+                    base_table: this.baseTable,
+                    distinct: this.distinct,
+                    joins: this.joins,
+                    filters: this.filters,
+                    columns: this.columns
+                };
+
+                fetch("{% url 'dataviz:dataset_export_csv' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify(payload)
+                })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => { throw new Error(text); });
+                    }
+                    return res.blob();
+                })
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `dataset_${this.name.trim().replace(/\s+/g, '_') || 'export'}_${new Date().toISOString().slice(0, 10)}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.error(err);
+                    this.errorMessage = "Error exporting CSV: " + err.message;
                 })
                 .finally(() => {
                     this.previewLoading = false;
