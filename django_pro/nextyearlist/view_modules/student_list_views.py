@@ -182,6 +182,9 @@ class NextYearListView(LoginRequiredMixin, ListView):
         else:
             selected_year = filters.get('school_year', '')
 
+        if not selected_year and school_years:
+            selected_year = school_years[0]
+
         try:
             from dataexploration.school_year_utils import resolve_school_year
             if selected_year:
@@ -263,6 +266,17 @@ def load_students(request):
             saved_filters.get('school_year', ''),
             _parse_multi(saved_config.get('school_year', ''), '')
         )
+
+    if not school_year:
+        # Get latest year from DB/cache
+        school_year_cache = cache.get("nyl:school_years")
+        if school_year_cache and isinstance(school_year_cache, list):
+            school_year = school_year_cache[0]
+        else:
+            with connections['default'].cursor() as cursor:
+                cursor.execute("SELECT DISTINCT school_year FROM current_student WHERE school_year IS NOT NULL ORDER BY school_year DESC LIMIT 1")
+                row = cursor.fetchone()
+                school_year = row[0] if row else ''
 
     grade = _parse_multi(request.GET.get('grade', ''), _parse_multi(saved_filters.get('grade', ''), _parse_multi(saved_config.get('grade', ''), '')))
 
@@ -347,7 +361,7 @@ def load_students(request):
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
-                exist_params_base = [test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%", *window_params]
+                exist_params_base = [test_info['year'], test_info['test_name'], test_info['subject'], *window_params]
                 conditions = []
                 if real_values:
                     val_clause = exist_query_base
@@ -724,7 +738,7 @@ def load_students(request):
                     f"{window_clause} LIMIT 1)"
                 )
                 params.extend(extra_params)
-                params.extend([test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%"])
+                params.extend([test_info['year'], test_info['test_name'], test_info['subject']])
                 params.extend(window_params)
 
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
@@ -769,8 +783,8 @@ def load_students(request):
                 )
                 test_selects.append(test_sub)
                 select_params.append(ti['year'])
-                select_params.append(f"%{ti['test_name']}%")
-                select_params.append(f"%{ti['subject']}%")
+                select_params.append(ti['test_name'])
+                select_params.append(ti['subject'])
                 select_params.extend(window_params)
 
             mark_selects = []
@@ -943,7 +957,7 @@ def load_students(request):
                         f" WHERE r.local_student_id IN ({student_subquery})"
                         f" AND r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s {win_cl}"
                         f" GROUP BY v ORDER BY v ASC NULLS FIRST LIMIT 30",
-                        opt_params + [ti['year'], f"%{ti['test_name']}%", f"%{ti['subject']}%"] + win_p,
+                        opt_params + [ti['year'], ti['test_name'], ti['subject']] + win_p,
                     )
                 else:
                     cursor.execute(
@@ -952,7 +966,7 @@ def load_students(request):
                         f" WHERE r.local_student_id IN ({student_subquery})"
                         f" AND r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s {win_cl}"
                         f" GROUP BY v ORDER BY v ASC NULLS FIRST LIMIT 30",
-                        [ti.get('other_info_key', '')] + opt_params + [ti['year'], f"%{ti['test_name']}%", f"%{ti['subject']}%"] + win_p,
+                        [ti.get('other_info_key', '')] + opt_params + [ti['year'], ti['test_name'], ti['subject']] + win_p,
                     )
                 values = ['' if r[0] is None else r[0] for r in cursor.fetchall()]
                 if values:

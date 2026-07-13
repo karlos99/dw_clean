@@ -324,10 +324,8 @@
                         <label for="school_year" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">School Year</label>
                         <select id="school_year" name="school_year" @change="window.loadData && window.loadData()"
                             class="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
-                            <option value="">All Years</option>
                             {% for year in school_years %}
-                            <option value="{{ year }}" {% if selected_school_year == year %}selected{% endif %}>{{ year }}
-                            </option>
+                            <option value="{{ year }}" {% if selected_school_year == year %}selected{% endif %}>{{ year }}</option>
                             {% endfor %}
                         </select>
                     </div>

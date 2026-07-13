@@ -282,7 +282,7 @@ def export_students_csv(request):
                     f"{window_clause}"
                 )
                 exist_params_base = [
-                    test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%",
+                    test_info['year'], test_info['test_name'], test_info['subject'],
                     *window_params,
                 ]
 
@@ -553,7 +553,7 @@ def export_students_csv(request):
                         f" AND t.test_name ILIKE %s AND t.subject ILIKE %s {wc}LIMIT 1)"
                         f' AS "{ti["col_name"]}"'
                     )
-                    select_params += [ti['year'], f"%{ti['test_name']}%", f"%{ti['subject']}%"]
+                    select_params += [ti['year'], ti['test_name'], ti['subject']]
                     if ti.get('test_window'):
                         select_params.append(ti['test_window'])
 

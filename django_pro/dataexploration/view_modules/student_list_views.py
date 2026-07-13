@@ -156,6 +156,9 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         else:
             selected_year = filters.get('school_year', '')
 
+        if not selected_year:
+            selected_year = '__sy_this__'
+
         # Resolve selected_school_year to concrete school year if it is an alias
         try:
             from dataexploration.school_year_utils import resolve_school_year
@@ -262,6 +265,9 @@ def load_students(request):
             saved_filters.get('school_year', ''),
             _parse_multi(saved_config.get('school_year', ''), '')
         )
+
+    if not school_year:
+        school_year = '__sy_this__'
 
     # Resolve school-year aliases to concrete year strings
     try:
@@ -381,8 +387,8 @@ def load_students(request):
                 )
                 exist_params_base = [
                     test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
+                    test_info['test_name'],
+                    test_info['subject'],
                     *window_params,
                 ]
 
@@ -1131,8 +1137,8 @@ def load_students(request):
                 params.extend(extra_params)
                 params.extend([
                     test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
+                    test_info['test_name'],
+                    test_info['subject'],
                 ])
                 params.extend(window_params)
 
@@ -1274,8 +1280,8 @@ def load_students(request):
                     student_ids,
                     student_ssids,
                     test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
+                    test_info['test_name'],
+                    test_info['subject'],
                     *window_params,
                 ])
                 
@@ -1528,8 +1534,8 @@ def load_students(request):
                 """
                     cursor.execute(options_query, option_params + [
                         test_info['year'],
-                        f"%{test_info['test_name']}%",
-                        f"%{test_info['subject']}%",
+                        test_info['test_name'],
+                        test_info['subject'],
                         *window_params,
                     ])
                 else:
@@ -1553,8 +1559,8 @@ def load_students(request):
                         other_key,
                         *option_params,
                         test_info['year'],
-                        f"%{test_info['test_name']}%",
-                        f"%{test_info['subject']}%",
+                        test_info['test_name'],
+                        test_info['subject'],
                         *window_params,
                     ])
                 
@@ -1585,8 +1591,8 @@ def load_students(request):
                 """
                 check_params = option_params + [
                     test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
+                    test_info['test_name'],
+                    test_info['subject'],
                     *window_params,
                 ]
                 cursor.execute(check_blank_query, check_params)

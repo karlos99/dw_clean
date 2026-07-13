@@ -308,7 +308,7 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     params = []
     for info in test_cols_info:
         part = "(r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s"
-        part_params = [info['year'], f"%{info['test_name']}%", f"%{info['subject']}%"]
+        part_params = [info['year'], info['test_name'], info['subject']]
         if info.get('test_window'):
             part += " AND t.test_window ILIKE %s"
             part_params.append(info['test_window'])
