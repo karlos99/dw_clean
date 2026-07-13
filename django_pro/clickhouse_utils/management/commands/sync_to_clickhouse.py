@@ -102,6 +102,9 @@ class Command(BaseCommand):
             self.stdout.write(f'Syncing {table}...')
 
             try:
+                # Truncate table first to prevent duplicate accumulation
+                ch.command(f"TRUNCATE TABLE {ch_db}.{table}")
+
                 insert_sql = f"""
                     INSERT INTO {ch_db}.{table}
                     SELECT * FROM postgresql(
