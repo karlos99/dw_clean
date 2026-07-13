@@ -35,50 +35,7 @@ def translate_pg_to_clickhouse(sql, params):
     if sql is None:
         raise SQLTranslationError("SQL is None")
 
-    param_index = 0
-
-    def _next_param(val):
-        nonlocal param_index
-        name = f'p{param_index}'
-        param_index += 1
-        return f'%({name})s', name, val
-
-    ch_params = {}
-
-    # ── Pre-process: expand ANY(%s) with list params ───────────────────
-    # PostgreSQL: col = ANY(%s)  with params = [['A','B']]
-    # ClickHouse: col IN ({p0},{p1})
-    # We need to handle this BEFORE replacing %s placeholders.
-    pos = 0
-    idx = 0
-    new_sql_parts = []
-    new_params = []
-    last_end = 0
-    for m in re.finditer(r'=\s*ANY\s*\(\s*%s\s*\)', sql):
-        new_sql_parts.append(sql[last_end:m.start()])
-        if idx < len(params) and isinstance(params[idx], list):
-            vals = params[idx]
-            ph_parts = []
-            for v in vals:
-                ph, name, _ = _next_param(v)
-                ph_parts.append(ph)
-                ch_params[name] = v
-            new_sql_parts.append('IN (' + ', '.join(ph_parts) + ')')
-            idx += 1
-        else:
-            ph, name, _ = _next_param(params[idx] if idx < len(params) else None)
-            ph_parts.append(ph)
-            ch_params[name] = params[idx] if idx < len(params) else None
-            new_sql_parts.append('IN (' + ph + ')')
-            idx += 1
-        last_end = m.end()
-
-    new_sql_parts.append(sql[last_end:])
-    sql = ''.join(new_sql_parts)
-
-    # Remaining params that weren't consumed by ANY expansion
-    remaining = params[idx:] if idx > 0 else params
-    new_params = list(remaining)
+    # Pre-processing block removed. Placeholders will be processed in a single pass at the end.
 
     # ── Remove BEGIN READ ONLY / ROLLBACK ──────────────────────────────
     sql = re.sub(r'\bBEGIN\s+READ\s+ONLY\b\s*;?', '', sql, flags=re.IGNORECASE)
@@ -190,22 +147,53 @@ def translate_pg_to_clickhouse(sql, params):
     sql = re.sub(r'\bDATE_PART\s*\(\s*\'month\'\s*,\s*([^)]+)\s*\)', r'toMonth(\1)', sql, flags=re.IGNORECASE)
     sql = re.sub(r'\bDATE_PART\s*\(\s*\'day\'\s*,\s*([^)]+)\s*\)', r'toDayOfMonth(\1)', sql, flags=re.IGNORECASE)
 
-    # ── Replace remaining %s placeholders with %(pN)s ──────────────────
-    remaining_new = list(new_params)
-    rem_idx = 0
-
-    def _replace_placeholder(m):
-        nonlocal rem_idx, param_index
-        if rem_idx < len(remaining_new):
-            val = remaining_new[rem_idx]
+    # ── Replace all placeholders (both ANY and %s) in a single pass ───
+    param_index = 0
+    ch_params = {}
+    
+    pos = 0
+    new_sql_parts = []
+    idx = 0
+    
+    # Matches: '= ANY(%s)' (with optional spaces) OR '%s'
+    placeholder_re = re.compile(r'(?i)=\s*ANY\s*\(\s*%s\s*\)|%s')
+    
+    for m in placeholder_re.finditer(sql):
+        new_sql_parts.append(sql[pos:m.start()])
+        matched_str = m.group(0)
+        
+        if idx < len(params):
+            val = params[idx]
+        else:
+            val = None
+            
+        if matched_str.startswith('='):
+            # It's an '= ANY(%s)' placeholder
+            if isinstance(val, list):
+                ph_parts = []
+                for v in val:
+                    name = f'p{param_index}'
+                    param_index += 1
+                    ph_parts.append(f'%({name})s')
+                    ch_params[name] = v
+                new_sql_parts.append('IN (' + ', '.join(ph_parts) + ')')
+            else:
+                name = f'p{param_index}'
+                param_index += 1
+                new_sql_parts.append(f'IN (%({name})s)')
+                ch_params[name] = val
+        else:
+            # It's a '%s' placeholder
             name = f'p{param_index}'
-            rem_idx += 1
             param_index += 1
+            new_sql_parts.append(f'%({name})s')
             ch_params[name] = val
-            return f'%({name})s'
-        return '%s'
-
-    sql = re.sub(r'%s', _replace_placeholder, sql)
+            
+        idx += 1
+        pos = m.end()
+        
+    new_sql_parts.append(sql[pos:])
+    sql = ''.join(new_sql_parts)
 
     # Handle ILIKE params: if original SQL had ILIKE, the LIKE pattern needs lower()
     # We already transformed ILIKE → lower() LIKE; the param value needs to be lowered too

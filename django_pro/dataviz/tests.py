@@ -1175,6 +1175,49 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res_dyn['rows'][0][2], {'val': 400.0, 'tooltip': 'Count: 2'})
 
 
+class DatasetExportCSVTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='testadmin', password='password', is_superuser=True)
+
+    @patch('dataviz.views.dataset_views.compile_dataset_to_sql')
+    @patch('dataviz.views.dataset_views.execute_compiled_query')
+    def test_dataset_export_csv_api(self, mock_execute, mock_compile):
+        mock_compile.return_value = ("SELECT * FROM ...", [])
+        mock_execute.return_value = {
+            'columns': ['ssid', 'student_name', 'grade'],
+            'rows': [
+                {'ssid': '123', 'student_name': 'Alice', 'grade': '5'}
+            ]
+        }
+        self.client.force_login(self.user)
+
+        payload = {
+            'base_table': 'current_student',
+            'distinct': True,
+            'joins': [],
+            'filters': [],
+            'columns': ['current_student.ssid', 'current_student.student_name', 'current_student.grade']
+        }
+
+        response = self.client.post(
+            '/dataviz/api/datasets/export-csv/',
+            data=payload,
+            content_type='application/json'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertIn('attachment; filename="dataset_export.csv"', response['Content-Disposition'])
+
+        # Consume the streaming content
+        content = b"".join(response.streaming_content).decode('utf-8')
+        lines = content.strip().split('\n')
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0], '"ssid","student_name","grade"')
+        self.assertEqual(lines[1], '"123","Alice","5"')
+
+
+
 
 
 
