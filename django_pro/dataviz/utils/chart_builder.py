@@ -1861,10 +1861,48 @@ def _waterfall_option(df, x_col, y_col, agg, cfg, labels):
     return option
 
 
+def _normalize_pl_val(v):
+    if v is None:
+        return ''
+    
+    try:
+        import pandas as pd
+        if pd.isna(v):
+            return ''
+    except Exception:
+        pass
+
+    try:
+        import numpy as np
+        if isinstance(v, (int, float, np.integer, np.floating)):
+            val_float = float(v)
+            if val_float.is_integer():
+                return str(int(val_float))
+            return str(v)
+    except Exception:
+        pass
+
+    val_str = str(v).strip()
+    if val_str == '' or val_str in {'nan', 'NaN', 'None', 'null', 'NULL', '<NA>', '<na>'}:
+        return ''
+    if val_str.endswith('.0'):
+        try:
+            float(val_str)
+            return val_str[:-2]
+        except ValueError:
+            pass
+    return val_str
+
+
 def _auto_detect_pl_scale(values) -> list:
     """Try to order PL values using known scales; fall back to alphabetical."""
     # Ensure all values are strings and filter out empty/null ones, but keep '0'
-    val_set = {str(v).strip() for v in values if v is not None and str(v).strip() != ''}
+    normalized_vals = []
+    for v in values:
+        norm = _normalize_pl_val(v)
+        if norm != '':
+            normalized_vals.append(norm)
+    val_set = set(normalized_vals)
     for scale in _KNOWN_PL_SCALES:
         if val_set.issubset(set(scale)):
             return [s for s in scale if s in val_set]
@@ -2741,13 +2779,13 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     all_vals = set()
     for col in (pg_before_col, pg_after_col):
         all_vals.update(
-            v.strip() for v in df[col].dropna().astype(str).unique()
-            if v.strip() not in _BLANK
+            _normalize_pl_val(v) for v in df[col].dropna().astype(str).unique()
+            if _normalize_pl_val(v) not in _BLANK
         )
 
     # Build ordered scale
     if pl_scale:
-        ordered = [str(v).strip() for v in pl_scale if str(v).strip()]
+        ordered = [_normalize_pl_val(v) for v in pl_scale if str(v).strip()]
     else:
         ordered = _auto_detect_pl_scale(list(all_vals))
     if not ordered:
@@ -2757,8 +2795,8 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
 
     # Classify each row
     dfc = df.copy()
-    dfc['_before'] = dfc[pg_before_col].astype(str).str.strip()
-    dfc['_after']  = dfc[pg_after_col].astype(str).str.strip()
+    dfc['_before'] = dfc[pg_before_col].astype(str).apply(_normalize_pl_val)
+    dfc['_after']  = dfc[pg_after_col].astype(str).apply(_normalize_pl_val)
     valid = dfc['_before'].isin(rank) & dfc['_after'].isin(rank)
     dfc = dfc[valid].copy()
 
@@ -3381,7 +3419,19 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Progress Growth extra fields
     pg_before_col = cfg.get('pg_before_col', '')
     pg_after_col  = cfg.get('pg_after_col', '')
-    pl_scale      = cfg.get('pl_scale', [])
+    pl_scale_raw = cfg.get('pl_scale', [])
+    pl_scale = []
+    if isinstance(pl_scale_raw, list):
+        pl_scale = pl_scale_raw
+    elif isinstance(pl_scale_raw, str) and pl_scale_raw.strip():
+        val_str = pl_scale_raw.strip()
+        if val_str.startswith('['):
+            try:
+                pl_scale = json.loads(val_str)
+            except Exception:
+                pl_scale = [v.strip() for v in val_str.split(',') if v.strip()]
+        else:
+            pl_scale = [v.strip() for v in val_str.split(',') if v.strip()]
     pg_display    = cfg.get('pg_display', 'stacked_bar') or 'stacked_bar'
     # Summary Table extra fields
     st_row_col    = cfg.get('st_row_col', '')
@@ -3414,13 +3464,22 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     if _row_limit and _row_limit > 0:
         df = df.head(_row_limit)
 
+    def _norm_col_name(c):
+        return str(c).replace('-', '_').lower()
+
+    col_map = {_norm_col_name(c): c for c in df.columns}
+
     def _resolve_cfg_col(col):
         if not isinstance(col, str):
             return col
-        if col in df.columns:
-            return col
+        norm_col = _norm_col_name(col)
+        if norm_col in col_map:
+            return col_map[norm_col]
         resolved = resolve_relative_column_key(col)
-        return resolved if resolved in df.columns else col
+        norm_resolved = _norm_col_name(resolved)
+        if norm_resolved in col_map:
+            return col_map[norm_resolved]
+        return col
 
     # Resolve relative-year config keys against the loaded dataframe columns.
     x_col = _resolve_cfg_col(x_col)

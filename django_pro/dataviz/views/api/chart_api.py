@@ -90,7 +90,18 @@ def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, user) -> l
         return rows
 
     explorer_filters: dict = {id_key: ids}
-    years = list({str(r.get('school_year') or '').strip() for r in rows if r.get('school_year')})
+    # Extract years robustly
+    raw_years = []
+    for r in rows:
+        sy = r.get('school_year')
+        if not sy:
+            for k in r:
+                if k.endswith('school_year'):
+                    sy = r[k]
+                    break
+        if sy:
+            raw_years.append(str(sy).strip())
+    years = list(set(raw_years))
     if years:
         explorer_filters['school_year'] = years
 
@@ -102,10 +113,46 @@ def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, user) -> l
         match = str(row.get(id_key) or '').strip()
         if match and match in lookup:
             exp_row = lookup[match]
+            norm_exp_row = {str(col).replace('-', '_').lower(): val for col, val in exp_row.items()}
             for k in needed_keys:
                 if k not in row or row[k] is None:
-                    row[k] = exp_row.get(k)
+                    k_norm = str(k).replace('-', '_').lower()
+                    row[k] = norm_exp_row.get(k_norm)
     return rows
+
+
+def _get_missing_assessment_cols(cfg: dict, col_mappings: dict, aliased_rows: list) -> list:
+    cols = list(col_mappings.values())
+    cfg_cols = []
+    for k, v in cfg.items():
+        if k in _CONFIG_COL_KEYS:
+            if isinstance(v, str):
+                cfg_cols.extend([p.strip() for p in v.split(',') if p.strip()])
+            elif isinstance(v, list):
+                cfg_cols.extend([str(item).strip() for item in v if isinstance(item, str)])
+    
+    from dataexploration.school_year_utils import resolve_relative_column_key
+    resolved_cfg_cols = [resolve_relative_column_key(c) for c in cfg_cols]
+    cols.extend(resolved_cfg_cols)
+
+    seen = set()
+    missing = []
+    existing_cols = set()
+    if aliased_rows:
+        def _norm(c):
+            return str(c).replace('-', '_').lower()
+        existing_cols = {_norm(c) for c in aliased_rows[0].keys()}
+
+    for c in cols:
+        if not c:
+            continue
+        c_norm = str(c).replace('-', '_').lower()
+        if c_norm in seen:
+            continue
+        seen.add(c_norm)
+        if (c.startswith('test_') or c.startswith('mark_')) and c_norm not in existing_cols:
+            missing.append(c)
+    return missing
 
 
 def _cfg_from_post(post):
@@ -457,11 +504,7 @@ def chart_preview_api(request):
         aliased_rows = res.get('rows', [])
         # Fetch test_*/mark_* columns via data explorer for any alias that wasn't
         # returned by the dataset SQL (dataset without a results/tests JOIN).
-        _missing_assessment = [
-            v for v in col_mappings.values()
-            if v and (v.startswith('test_') or v.startswith('mark_'))
-            and (not aliased_rows or v not in aliased_rows[0])
-        ]
+        _missing_assessment = _get_missing_assessment_cols(cfg, col_mappings, aliased_rows)
         if _missing_assessment:
             aliased_rows = _augment_rows_with_assessment_cols(aliased_rows, _missing_assessment, None)
         cfg = _remap_config_cols(cfg, col_mappings)
@@ -822,11 +865,7 @@ def chart_render_api(request, chart_id):
                 # might require different assessment columns.
                 if not result.get('error') and result.get('rows'):
                     aliased_rows = result['rows']
-                    _missing_assessment = [
-                        v for v in col_mappings.values()
-                        if v and (v.startswith('test_') or v.startswith('mark_'))
-                        and (not aliased_rows or v not in aliased_rows[0])
-                    ]
+                    _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
                     if _missing_assessment:
                         aliased_rows = _augment_rows_with_assessment_cols(aliased_rows, _missing_assessment, None)
                         result['rows'] = aliased_rows

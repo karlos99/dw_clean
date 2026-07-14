@@ -53,6 +53,34 @@ function chartBuilderFilterMethods() {
 
     /* ─── Progress Growth scale helpers ─────────────────── */
     _pgAutoScale() {
+      const needed = [];
+      if (this.pgBeforeCol && !this.filterOptions[this.pgBeforeCol]) needed.push(this.pgBeforeCol);
+      if (this.pgAfterCol  && !this.filterOptions[this.pgAfterCol])  needed.push(this.pgAfterCol);
+
+      if (needed.length > 0) {
+        const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+        fetch('/dataviz/api/columns/filter-options/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrf,
+          },
+          body: JSON.stringify({
+            columns: needed,
+            filters: this.cleanSourceFilters(),
+          })
+        })
+        .then(r => r.json())
+        .then(d => {
+          if (d.filter_options) {
+            this.filterOptions = { ...this.filterOptions, ...d.filter_options };
+            this._pgAutoScale();
+          }
+        })
+        .catch(e => console.error('Fetch extra filter options:', e));
+        return;
+      }
+
       const _KNOWN_PL_SCALES = [
         ['Well Below Benchmark', 'Below Benchmark', 'At Benchmark', 'Above Benchmark'],
         ['Not Met', 'Nearly Met', 'Met', 'Exceeded'],

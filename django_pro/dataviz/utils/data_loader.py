@@ -292,18 +292,15 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     # multiple rows when multi-year enrollment is queried. Each key maps to a
     # LIST so that all enrollment rows for the same (student, year) get data.
     # We also keep a mapping of (ssid, school_year) in case local_student_id is not set.
-    student_map: dict[tuple, list] = {}
-    student_ssid_map: dict[tuple, list] = {}
+    student_map: dict[str, list] = {}
+    student_ssid_map: dict[str, list] = {}
     for s in students:
         sid = s.get('student_id')
         ssid = s.get('ssid')
-        sy = s.get('school_year')
-        if sid and sy:
-            key = (str(sid).strip(), str(sy).strip())
-            student_map.setdefault(key, []).append(s)
-        if ssid and sy:
-            key = (str(ssid).strip(), str(sy).strip())
-            student_ssid_map.setdefault(key, []).append(s)
+        if sid:
+            student_map.setdefault(str(sid).strip(), []).append(s)
+        if ssid:
+            student_ssid_map.setdefault(str(ssid).strip(), []).append(s)
     where_parts = []
     params = []
     for info in test_cols_info:
@@ -350,11 +347,9 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
         # Look up by compound key. Try local_student_id first, then ssid
         s_objs = []
         if sid:
-            lookup_key = (str(sid).strip(), str(ry).strip())
-            s_objs = student_map.get(lookup_key) or []
+            s_objs = student_map.get(str(sid).strip()) or []
         if not s_objs and ssid:
-            lookup_key = (str(ssid).strip(), str(ry).strip())
-            s_objs = student_ssid_map.get(lookup_key) or []
+            s_objs = student_ssid_map.get(str(ssid).strip()) or []
         if not s_objs:
             continue
         for info in infos_by_year.get(ry, ()):
@@ -860,11 +855,16 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                         _seen = set()
                         _expanded = []
                         for _info in test_infos:
-                            for _yr in _multi_years:
-                                _key = (_yr, _info['test_name'], _info['subject'], _info.get('test_window'), _info['metric'])
-                                if _key not in _seen:
-                                    _seen.add(_key)
-                                    _expanded.append({**_info, 'year': _yr})
+                            col_key = _info['col_name']
+                            col_year = _parse_year(col_key, 'test_')
+                            if col_year:
+                                _expanded.append({**_info, 'year': col_year})
+                            else:
+                                for _yr in _multi_years:
+                                    _key = (_yr, _info['test_name'], _info['subject'], _info.get('test_window'), _info['metric'])
+                                    if _key not in _seen:
+                                        _seen.add(_key)
+                                        _expanded.append({**_info, 'year': _yr})
                         test_infos = _expanded
                     student_ids = [r['student_id'] for r in rows if r.get('student_id')]
 
@@ -874,11 +874,16 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                         _seen = set()
                         _expanded = []
                         for _info in mark_infos:
-                            for _yr in _multi_years:
-                                _key = (_yr, _info['subject'], _info['course_name'], _info.get('mark_period'))
-                                if _key not in _seen:
-                                    _seen.add(_key)
-                                    _expanded.append({**_info, 'year': _yr})
+                            col_key = _info['col_name']
+                            col_year = _parse_year(col_key, 'mark_')
+                            if col_year:
+                                _expanded.append({**_info, 'year': col_year})
+                            else:
+                                for _yr in _multi_years:
+                                    _key = (_yr, _info['subject'], _info['course_name'], _info.get('mark_period'))
+                                    if _key not in _seen:
+                                        _seen.add(_key)
+                                        _expanded.append({**_info, 'year': _yr})
                         mark_infos = _expanded
                     student_keys = [r['stu_annual_key'] for r in rows if r.get('stu_annual_key')]
 
