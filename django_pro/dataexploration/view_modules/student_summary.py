@@ -12,6 +12,7 @@ from .student_data_utils import (
     get_student_info_cached,
     get_test_records_cached,
     get_student_summary_partial_html_cached,
+    _resolve_ssid,
 )
 
 
@@ -23,12 +24,12 @@ class StudentTestSummaryView(LoginRequiredMixin, ListView):
     paginate_by = None
 
     def get_queryset(self):
-        ssid = self.kwargs.get('ssid')
+        ssid = _resolve_ssid(self.kwargs.get('ssid'))
         return StudentWithTests.objects.filter(ssid=ssid).none()
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        ssid = self.kwargs.get('ssid')
+        ssid = _resolve_ssid(self.kwargs.get('ssid'))
         context['ssid'] = ssid
 
         user_id = getattr(getattr(self.request, 'user', None), 'pk', None)
@@ -43,7 +44,7 @@ class StudentTestSummaryPartialView(StudentTestSummaryView):
     template_name = 'dataexploration/partials/student_test_summary_content.html'
 
     def get(self, request, *args, **kwargs):
-        ssid = kwargs.get('ssid')
+        ssid = _resolve_ssid(kwargs.get('ssid'))
         html = get_student_summary_partial_html_cached(request, ssid)
         return self._html_response(html)
 

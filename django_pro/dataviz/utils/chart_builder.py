@@ -2762,6 +2762,8 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     """
     if not pg_before_col or not pg_after_col:
         return _message_option('Select a Before PL and an After PL column', cfg, error=True)
+    before_label = cfg.get('pg_before_label') or 'Before PL'
+    after_label  = cfg.get('pg_after_label') or 'After PL'
     if pg_before_col not in df.columns or pg_after_col not in df.columns:
         missing = [c for c in (pg_before_col, pg_after_col) if c not in df.columns]
         return _message_option(f'PL column(s) not found in data: {", ".join(missing)}', cfg, error=True)
@@ -2910,15 +2912,17 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             'textStyle': {'color': t['text']},
         }
         mat_opt['grid'] = {
-            'top': 50 if cfg.get('title') else 30,
-            'left': 10, 'right': 10, 'bottom': 55,
+            'top':    int(cfg.get('grid_top', 50 if cfg.get('title') else 30) or (50 if cfg.get('title') else 30)),
+            'left':   int(cfg.get('grid_left', 55) or 55),
+            'right':  int(cfg.get('grid_right', 20) or 20),
+            'bottom': int(cfg.get('grid_bottom', 55) or 55),
             'containLabel': True,
         }
         mat_opt.update({
             'xAxis': {
                 'type': 'category',
                 'data': ordered,
-                'name': 'After PL',
+                'name': after_label,
                 'nameLocation': 'middle',
                 'nameGap': 42,
                 'nameTextStyle': {'fontWeight': 'bold', 'color': t['text']},
@@ -2927,7 +2931,7 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             'yAxis': {
                 'type': 'category',
                 'data': ordered,
-                'name': 'Before PL',
+                'name': before_label,
                 'nameLocation': 'middle',
                 'nameGap': 60,
                 'nameTextStyle': {'fontWeight': 'bold', 'color': t['text']},

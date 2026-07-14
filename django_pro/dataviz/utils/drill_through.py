@@ -729,6 +729,26 @@ def execute_drill_query(
         pl_scale   = cfg.get('pl_scale', [])
         x_col      = cfg.get('x_col', '')
         if before_col and after_col:
+            # Resolve before_col and after_col against the row keys
+            row_keys = list(rows[0].keys()) if rows else []
+            from dataexploration.school_year_utils import resolve_relative_column_key
+            def _norm_col(c):
+                return str(c).replace('-', '_').lower()
+            key_map = {_norm_col(k): k for k in row_keys}
+            def resolve_col(col):
+                if not col:
+                    return col
+                norm = _norm_col(col)
+                if norm in key_map:
+                    return key_map[norm]
+                resolved = resolve_relative_column_key(col)
+                norm_res = _norm_col(resolved)
+                if norm_res in key_map:
+                    return key_map[norm_res]
+                return col
+            before_col = resolve_col(before_col)
+            after_col  = resolve_col(after_col)
+
             # Replicate build_option's _BLANK_VALUES filter for x_col.
             # The chart drops rows with blank x_col before counting; the drill
             # must do the same so totals match when no x_col SQL filter was added
@@ -738,20 +758,21 @@ def execute_drill_query(
                 # x_col is not already being filtered by SQL — drop blank x_col rows
                 rows = [r for r in rows if str(r.get(x_col) or '').strip() not in _BLANK]
 
+            from dataviz.utils.chart_builder import _normalize_pl_val
             if not pl_scale:
                 from dataviz.utils.chart_builder import _auto_detect_pl_scale
                 all_vals: set = set()
                 for r in rows:
                     for c in (before_col, after_col):
-                        v = str(r.get(c) or '').strip()
+                        v = _normalize_pl_val(r.get(c))
                         if v and v not in _BLANK:
                             all_vals.add(v)
                 pl_scale = _auto_detect_pl_scale(list(all_vals))
-            rank = {v: i for i, v in enumerate(pl_scale)}
+            rank = {v: i for i, v in enumerate([_normalize_pl_val(s) for s in pl_scale])}
 
             def _pg_class(row):
-                b = rank.get(str(row.get(before_col) or '').strip())
-                a = rank.get(str(row.get(after_col) or '').strip())
+                b = rank.get(_normalize_pl_val(row.get(before_col)))
+                a = rank.get(_normalize_pl_val(row.get(after_col)))
                 if b is None or a is None:
                     return None
                 if a > b:
@@ -782,10 +803,31 @@ def execute_drill_query(
         before_col = cfg.get('pg_before_col', '')
         after_col  = cfg.get('pg_after_col', '')
         if before_col and after_col:
+            # Resolve before_col and after_col against the row keys
+            row_keys = list(rows[0].keys()) if rows else []
+            from dataexploration.school_year_utils import resolve_relative_column_key
+            def _norm_col(c):
+                return str(c).replace('-', '_').lower()
+            key_map = {_norm_col(k): k for k in row_keys}
+            def resolve_col(col):
+                if not col:
+                    return col
+                norm = _norm_col(col)
+                if norm in key_map:
+                    return key_map[norm]
+                resolved = resolve_relative_column_key(col)
+                norm_res = _norm_col(resolved)
+                if norm_res in key_map:
+                    return key_map[norm_res]
+                return col
+            before_col = resolve_col(before_col)
+            after_col  = resolve_col(after_col)
+
+            from dataviz.utils.chart_builder import _normalize_pl_val
             rows = [
                 r for r in rows
-                if str(r.get(before_col) or '').strip() == pg_before_val.strip()
-                and str(r.get(after_col)  or '').strip() == (pg_after_val or '').strip()
+                if _normalize_pl_val(r.get(before_col)) == _normalize_pl_val(pg_before_val)
+                and _normalize_pl_val(r.get(after_col)) == _normalize_pl_val(pg_after_val)
             ]
 
     # Keep a snapshot of all available columns before column restriction
@@ -848,6 +890,13 @@ def execute_drill_query(
             new_rows.append(new_row)
         rows = new_rows
         cols = [c for c in columns if c in col_to_row_key]
+
+    # Add flat student identifier keys for template ease
+    for r in rows:
+        for k, v in list(r.items()):
+            k_clean = k.split('.')[-1].lower()
+            if k_clean in ('ssid', 'student_id', 'stu_annual_key') and k_clean not in r:
+                r[k_clean] = v
 
     total = len(rows)
     start = (page - 1) * per_page
