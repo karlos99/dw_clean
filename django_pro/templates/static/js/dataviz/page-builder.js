@@ -17,7 +17,7 @@ function pageBuilder() {
     status:   _PAGE_STATUS,
     containerWidth: (typeof _PAGE_CONTAINER_WIDTH !== 'undefined' ? _PAGE_CONTAINER_WIDTH : 'xl') || 'xl',
     showHeader: typeof _PAGE_SHOW_HEADER !== 'undefined' ? _PAGE_SHOW_HEADER : true,
-    filters:  (_PAGE_FILTERS || []).map(f => ({ ...f })),
+    filters:  (_PAGE_FILTERS || []).map(f => ({ ...f, hidden: !!f.hidden })),
     filtersEnabled: (_PAGE_FILTERS || []).length > 0,
     filterCategories: [],
 
@@ -26,7 +26,9 @@ function pageBuilder() {
 
     /* Filter modal */
     filterModalOpen: false,
+    filterModalMode: 'user', // 'user' or 'page'
     filterColumnSearch: '',
+    filterOptionsMap: {},
 
     /* Text editor modal */
     htmlEditorMode: 'visual',
@@ -167,8 +169,13 @@ function pageBuilder() {
         if (open) this.loadChartList();
       });
 
-      // Load available filter columns
+      // Load available filter columns and options
       this.loadFilterColumns();
+      this.filters.forEach(f => {
+        if (f.source_col) {
+          this.loadFilterOptions(f.source_col);
+        }
+      });
     },
 
     /* ── Grid management ────────────────────────────────────────── */
@@ -326,8 +333,10 @@ function pageBuilder() {
       }
       const pageSlug = encodeURIComponent(this.pageSlug);
       const chartId = sec.chart_id;
+      const qs = this.buildFilterQS();
       const renderUrl = _CHART_RENDER_TPL.replace('CHARTID', chartId)
-        + '?source=page&source_id=' + encodeURIComponent(this.pageId) + '&source_name=' + pageSlug;
+        + '?source=page&source_id=' + encodeURIComponent(this.pageId) + '&source_name=' + pageSlug
+        + (qs ? '&' + qs : '');
       const isChecked = sec.show_title !== false ? 'checked' : '';
       const titleOpacity = sec.show_title !== false ? 'opacity-100' : 'opacity-60 bg-slate-100/70';
       const titleBar = `
@@ -402,7 +411,52 @@ function pageBuilder() {
           source_table: f.source_table || 'current_student',
           widget: f.widget || 'select',
           default_val: f.default_val || '',
+          hidden: !!f.hidden,
         }));
+    },
+
+    buildFilterQS() {
+      if (!this.filtersEnabled) return '';
+      const params = new URLSearchParams();
+      for (const f of this.filters) {
+        const val = typeof f.default_val === 'string' ? f.default_val.trim() : (f.default_val || '');
+        if (val) {
+          params.append('pf_' + f.source_col, val);
+        }
+      }
+      return params.toString();
+    },
+
+    refreshCharts() {
+      const qs = this.buildFilterQS();
+      document.querySelectorAll('.page-chart-slot').forEach(el => {
+        const hxGet = el.getAttribute('hx-get');
+        if (!hxGet) return;
+        try {
+          // Parse hx-get URL and clean up any existing pf_ keys
+          const url = new URL(hxGet, window.location.origin);
+          const newParams = new URLSearchParams();
+          for (const [key, val] of url.searchParams.entries()) {
+            if (!key.startsWith('pf_')) {
+              newParams.append(key, val);
+            }
+          }
+          const filterParams = new URLSearchParams(qs);
+          for (const [key, val] of filterParams.entries()) {
+            newParams.append(key, val);
+          }
+          url.search = newParams.toString();
+          
+          el.setAttribute('hx-get', url.pathname + url.search);
+          el.innerHTML = '<div class="flex items-center justify-center h-full text-slate-300 text-xs">'
+            + '<span class="inline-block w-3 h-3 border border-slate-300 border-t-blue-500 rounded-full animate-spin mr-1.5"></span>Refreshing…'
+            + '</div>';
+          htmx.process(el);
+          htmx.trigger(el, 'reload');
+        } catch (e) {
+          console.error(e);
+        }
+      });
     },
 
     async autoSave() {
@@ -420,6 +474,7 @@ function pageBuilder() {
       });
       this.lastSaved = new Date().toLocaleTimeString();
       this.saving = false;
+      this.refreshCharts();
     },
 
     async savePage(status) {
@@ -1087,14 +1142,37 @@ function pageBuilder() {
       }
     },
 
+    async loadFilterOptions(colKey) {
+      if (this.filterOptionsMap[colKey]) return; // already loaded
+      try {
+        const r = await fetch('/dataviz/api/columns/filter-options/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _CSRF },
+          body: JSON.stringify({ columns: [colKey] }),
+        });
+        const data = await r.json();
+        if (data.filter_options && data.filter_options[colKey]) {
+          this.filterOptionsMap[colKey] = data.filter_options[colKey];
+        }
+      } catch (e) {
+        console.warn('Failed to load filter options for ' + colKey, e);
+      }
+    },
+
     isFilterSelected(colKey) {
       return this.filters.some(f => f.source_col === colKey);
     },
 
     toggleFilter(col) {
       const idx = this.filters.findIndex(f => f.source_col === col.key);
+      const isHidden = this.filterModalMode === 'page';
       if (idx >= 0) {
-        this.filters.splice(idx, 1);
+        if (this.filters[idx].hidden === isHidden) {
+          this.filters.splice(idx, 1);
+        } else {
+          this.filters[idx].hidden = isHidden;
+          this.loadFilterOptions(col.key);
+        }
       } else {
         this.filters.push({
           id: 'filter_' + col.key,
@@ -1103,14 +1181,18 @@ function pageBuilder() {
           source_table: 'current_student',
           widget: 'select',
           default_val: '',
+          hidden: isHidden,
         });
+        this.loadFilterOptions(col.key);
       }
       this.autoSave();
     },
 
     removeFilter(idx) {
-      this.filters.splice(idx, 1);
-      this.autoSave();
+      if (idx >= 0 && idx < this.filters.length) {
+        this.filters.splice(idx, 1);
+        this.autoSave();
+      }
     },
 
     /* ── Toast ──────────────────────────────────────────────────── */

@@ -89,8 +89,11 @@ def page_view(request, slug):
     # removeTag() in view.html) — seeded client-side on first load, only for
     # filters the visitor hasn't already picked a value for this session.
     default_filter_tags = []
+    hidden_filter_cols = []
     for f in dv_page.page_filters:
         default_val = (f.get('default_val') or '').strip()
+        if f.get('hidden'):
+            hidden_filter_cols.append(f.get('source_col', ''))
         if not default_val:
             continue
         col = f.get('source_col', '')
@@ -101,8 +104,9 @@ def page_view(request, slug):
             [v.strip() for v in default_val.split(',') if v.strip()]
             if f.get('widget') == 'multi' else [default_val]
         )
+        is_hidden = bool(f.get('hidden'))
         for v in values:
-            default_filter_tags.append({'col': col, 'label': label, 'value': v})
+            default_filter_tags.append({'col': col, 'label': label, 'value': v, 'hidden': is_hidden})
 
     sections = dv_page.sections.select_related('dashboard', 'chart', 'row').prefetch_related(
         'dashboard__chart_slots__chart'
@@ -172,6 +176,11 @@ def page_view(request, slug):
 
     # Available filter columns on this page (for cross-page filter matching in JS)
     page_filter_cols = sorted(set(f.get('source_col', '') for f in dv_page.page_filters if f.get('source_col')))
+    has_visible_filters = any(not f.get('hidden') for f in dv_page.page_filters)
+    has_hidden_filters = any(bool(f.get('hidden')) for f in dv_page.page_filters)
+
+    from django.utils.http import urlencode
+    default_qs = urlencode([('pf_' + t['col'], t['value']) for t in default_filter_tags])
 
     return render(request, 'dataviz/pages/view.html', {
         'page':         dv_page,
@@ -180,6 +189,10 @@ def page_view(request, slug):
         'sections':     sections,
         'orphan_sections': orphan_sections,
         'default_filter_tags_json': json.dumps(default_filter_tags),
+        'hidden_filter_cols_json': json.dumps(hidden_filter_cols),
+        'default_qs':   default_qs,
+        'has_visible_filters': has_visible_filters,
+        'has_hidden_filters': has_hidden_filters,
         'page_filter_cols': page_filter_cols,
         'page_filter_cols_json': json.dumps(page_filter_cols),
         'section_filter_cols_map': section_filter_cols_map,
