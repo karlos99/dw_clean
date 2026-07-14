@@ -218,7 +218,7 @@ def get_column_statistics(request):
                     f' GROUP BY val ORDER BY val LIMIT 50'
                 )
                 q_params = list(base_params) + [
-                    test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%"
+                    test_info['year'], test_info['test_name'], test_info['subject']
                 ] + win_p
                 is_string = (metric == 'pl')
 

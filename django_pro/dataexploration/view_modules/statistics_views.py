@@ -186,7 +186,7 @@ def get_column_statistics(request):
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
-                exist_params_base = [test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%", *window_params]
+                exist_params_base = [test_info['year'], test_info['test_name'], test_info['subject'], *window_params]
 
                 conditions = []
                 if real_values:
@@ -627,7 +627,7 @@ def get_column_statistics(request):
                     GROUP BY val
                     ORDER BY val
                 """
-                q_params = base_params + [info['year'], f"%{info['test_name']}%", f"%{info['subject']}%"] + win_params
+                q_params = base_params + [info['year'], info['test_name'], info['subject']] + win_params
 
             # --- Mark Columns ---
             elif col.startswith('mark_'):

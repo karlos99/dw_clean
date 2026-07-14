@@ -474,8 +474,8 @@ def query_filter_options_api(request, query_id):
                             f"ORDER BY val LIMIT 30"
                         )
                         pl_params = [*demo_params, info['year'],
-                                     f"%{info['test_name']}%",
-                                     f"%{info['subject']}%",
+                                     info['test_name'],
+                                     info['subject'],
                                      *win_params]
                     else:
                         pl_sql = (
@@ -489,8 +489,8 @@ def query_filter_options_api(request, query_id):
                             f"ORDER BY val LIMIT 30"
                         )
                         pl_params = [info['year'],
-                                     f"%{info['test_name']}%",
-                                     f"%{info['subject']}%",
+                                     info['test_name'],
+                                     info['subject'],
                                      *win_params]
                     cursor.execute(pl_sql, pl_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
@@ -514,8 +514,8 @@ def query_filter_options_api(request, query_id):
                             "ORDER BY school_label LIMIT 100"
                         )
                         ts_params = [*demo_params, info['year'],
-                                     f"%{info['test_name']}%",
-                                     f"%{info['subject']}%",
+                                     info['test_name'],
+                                     info['subject'],
                                      *win_params]
                     else:
                         ts_sql = (
@@ -531,8 +531,8 @@ def query_filter_options_api(request, query_id):
                             "ORDER BY school_label LIMIT 100"
                         )
                         ts_params = [info['year'],
-                                     f"%{info['test_name']}%",
-                                     f"%{info['subject']}%",
+                                     info['test_name'],
+                                     info['subject'],
                                      *win_params]
                     cursor.execute(ts_sql, ts_params)
                     for code, label in cursor.fetchall():
@@ -859,8 +859,8 @@ def column_filter_options_api(request):
                             f"ORDER BY val LIMIT 30"
                         )
                         pl_params = [*demo_params, info['year'],
-                                     f"%{info['test_name']}%",
-                                     f"%{info['subject']}%",
+                                     info['test_name'],
+                                     info['subject'],
                                      *win_params]
                     else:
                         pl_sql = (
@@ -874,8 +874,8 @@ def column_filter_options_api(request):
                             f"ORDER BY val LIMIT 30"
                         )
                         pl_params = [info['year'],
-                                     f"%{info['test_name']}%",
-                                     f"%{info['subject']}%",
+                                     info['test_name'],
+                                     info['subject'],
                                      *win_params]
                     cursor.execute(pl_sql, pl_params)
                     vals = [str(row[0]) for row in cursor.fetchall()]
@@ -898,8 +898,8 @@ def column_filter_options_api(request):
                             "ORDER BY school_label LIMIT 100"
                         )
                         ts_params = [*demo_params, info['year'],
-                                     f"%{info['test_name']}%",
-                                     f"%{info['subject']}%",
+                                     info['test_name'],
+                                     info['subject'],
                                      *win_params]
                     else:
                         ts_sql = (
@@ -915,8 +915,8 @@ def column_filter_options_api(request):
                             "ORDER BY school_label LIMIT 100"
                         )
                         ts_params = [info['year'],
-                                     f"%{info['test_name']}%",
-                                     f"%{info['subject']}%",
+                                     info['test_name'],
+                                     info['subject'],
                                      *win_params]
                     cursor.execute(ts_sql, ts_params)
                     for code, label in cursor.fetchall():

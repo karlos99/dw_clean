@@ -138,7 +138,7 @@ def export_students_csv(request):
                     f"{window_clause}"
                 )
                 exist_params_base = [
-                    test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%",
+                    test_info['year'], test_info['test_name'], test_info['subject'],
                     *window_params,
                 ]
 
@@ -641,7 +641,7 @@ def export_students_csv(request):
                             """
                             cursor.execute(tquery, [
                                 *extra_params, student_ids, test_info['year'], 
-                                f"%{test_info['test_name']}%", f"%{test_info['subject']}%", *window_params
+                                test_info['test_name'], test_info['subject'], *window_params
                             ])
                             tdata = {row[0]: row[1] for row in cursor.fetchall()}
                             for student in chunk_students:
