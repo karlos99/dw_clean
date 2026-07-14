@@ -245,6 +245,8 @@ def _cfg_from_post(post):
         # Progress Growth fields
         'pg_before_col':     post.get('pg_before_col', ''),
         'pg_after_col':      post.get('pg_after_col', ''),
+        'pg_before_label':   post.get('pg_before_label', ''),
+        'pg_after_label':    post.get('pg_after_label', ''),
         'pl_scale':          pl_scale,
         'pg_display':        post.get('pg_display', 'stacked_bar'),
         # Summary Table fields

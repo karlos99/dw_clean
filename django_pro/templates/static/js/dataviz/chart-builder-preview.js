@@ -223,6 +223,8 @@ function chartBuilderPreviewMethods(urls) {
         agg_decimals: this.aggDecimals,
         pg_before_col: this.pgBeforeCol,
         pg_after_col: this.pgAfterCol,
+        pg_before_label: this.pgBeforeLabel,
+        pg_after_label: this.pgAfterLabel,
         pl_scale: this.pgScaleParsed,
         pg_display: this.pgDisplay,
         st_row_col: this.stRowCol,

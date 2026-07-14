@@ -1593,6 +1593,11 @@
               <option value="">— choose column —</option>
               <template x-for="c in activeCols" :key="'pgb_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
             </select>
+            <div class="mt-1 flex items-center gap-1">
+              <span class="text-[9px] font-semibold text-slate-400 w-16">Custom Label</span>
+              <input type="text" x-model="pgBeforeLabel" @input.debounce.300ms="_schedulePreview()" placeholder="Before PL"
+                     class="flex-1 text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-sky-400">
+            </div>
           </div>
           {# After PL #}
           <div>
@@ -1606,6 +1611,11 @@
               <option value="">— choose column —</option>
               <template x-for="c in activeCols" :key="'pga_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
             </select>
+            <div class="mt-1 flex items-center gap-1">
+              <span class="text-[9px] font-semibold text-slate-400 w-16">Custom Label</span>
+              <input type="text" x-model="pgAfterLabel" @input.debounce.300ms="_schedulePreview()" placeholder="After PL"
+                     class="flex-1 text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+            </div>
           </div>
           {# PL Scale — drag-to-reorder list #}
           <div>
@@ -2762,6 +2772,8 @@
     <input type="hidden" name="container_height"    x-bind:value="containerHeight || ''">
     <input type="hidden" name="pg_before_col"  x-bind:value="pgBeforeCol">
     <input type="hidden" name="pg_after_col"   x-bind:value="pgAfterCol">
+    <input type="hidden" name="pg_before_label" x-bind:value="pgBeforeLabel">
+    <input type="hidden" name="pg_after_label"  x-bind:value="pgAfterLabel">
     <input type="hidden" name="pl_scale"       x-bind:value="JSON.stringify(pgScaleParsed)">
     <input type="hidden" name="pg_display"     x-bind:value="pgDisplay">
     <input type="hidden" name="st_row_col"     x-bind:value="stRowCol">
@@ -2967,6 +2979,8 @@ function chartBuilder() {
     /* Progress Growth */
     pgBeforeCol:      existing?.config?.pg_before_col ?? '',
     pgAfterCol:       existing?.config?.pg_after_col  ?? '',
+    pgBeforeLabel:    existing?.config?.pg_before_label ?? '',
+    pgAfterLabel:     existing?.config?.pg_after_label  ?? '',
     pgScaleText:      existing?.config?.pl_scale ? (Array.isArray(existing.config.pl_scale) ? existing.config.pl_scale.join(', ') : existing.config.pl_scale) : '',
     _pgLastAutoScale:  '',   // tracks last auto-detected scale so we don't clobber manual edits
     _pgDragIdx:       null,

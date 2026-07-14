@@ -19,8 +19,27 @@ def _student_summary_cache_version():
     return f"v2:{mtime}"
 
 
+def _resolve_ssid(ssid: str) -> str:
+    """If the provided ssid is actually a student_id, look up the real SSID."""
+    if not ssid:
+        return ssid
+    from studata.models import CurrentStudent
+    try:
+        # Check if the identifier exists as an SSID
+        if CurrentStudent.objects.filter(ssid=ssid).exists():
+            return ssid
+        # Fallback to student_id lookup
+        match = CurrentStudent.objects.filter(student_id=ssid).first()
+        if match and match.ssid:
+            return match.ssid
+    except Exception:
+        pass
+    return ssid
+
+
 def _student_summary_cache_keys(ssid: str, user_id=None, embedded: bool = False):
     """Generate cache keys for student summary data."""
+    ssid = _resolve_ssid(ssid)
     v = _student_summary_cache_version()
     user_part = f"u{user_id}:" if user_id else ""
     return {
@@ -155,6 +174,7 @@ def _fetch_student_marks_for_ssid(ssid: str):
 
 def get_student_info_cached(ssid: str, timeout: int = 300, user_id=None):
     """Get student info with caching."""
+    ssid = _resolve_ssid(ssid)
     keys = _student_summary_cache_keys(ssid, user_id=user_id)
     cached = cache.get(keys['student_info'])
     if cached is not None:
@@ -166,6 +186,7 @@ def get_student_info_cached(ssid: str, timeout: int = 300, user_id=None):
 
 def get_test_records_cached(ssid: str, timeout: int = 300, user_id=None):
     """Get test records with caching."""
+    ssid = _resolve_ssid(ssid)
     keys = _student_summary_cache_keys(ssid, user_id=user_id)
     cached = cache.get(keys['test_records'])
     if cached is not None:
@@ -177,6 +198,7 @@ def get_test_records_cached(ssid: str, timeout: int = 300, user_id=None):
 
 def get_student_marks_cached(ssid: str, timeout: int = 300, user_id=None):
     """Get student marks with caching."""
+    ssid = _resolve_ssid(ssid)
     keys = _student_summary_cache_keys(ssid, user_id=user_id)
     cached = cache.get(keys['student_marks'])
     if cached is not None:
@@ -188,6 +210,7 @@ def get_student_marks_cached(ssid: str, timeout: int = 300, user_id=None):
 
 def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 300, embedded: bool = False):
     """Get rendered HTML for student summary with caching."""
+    ssid = _resolve_ssid(ssid)
     user_id = getattr(getattr(request, 'user', None), 'pk', None)
     keys = _student_summary_cache_keys(ssid, user_id=user_id, embedded=embedded)
     cached = cache.get(keys['partial_html'])
