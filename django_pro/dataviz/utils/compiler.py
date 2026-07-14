@@ -109,6 +109,10 @@ def _resolve_year_token(val):
     return val
 
 
+def _allowed(tbl: str) -> set:
+    return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
+
+
 def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
     """
     Resolve a mixed filter dict (keys may be bare exploration names, JSONB key
@@ -123,10 +127,8 @@ def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
     """
     col_index = build_dataset_col_index(dataset)
 
-    def _allowed(tbl: str) -> set:
-        return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
-
     priority = [dataset.base_table] + [t for t in active_tables if t != dataset.base_table]
+    allowed_tables = get_allowed_dataset_tables()
 
     out: dict = {}
     for fk, fval in filters.items():
@@ -140,13 +142,20 @@ def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
         if '.' in fk:
             tbl, col = fk.split('.', 1)
             base = col.split('->', 1)[0]
-            if tbl in active_tables and (col in _allowed(tbl) or base in _allowed(tbl)):
+            if tbl in allowed_tables and (col in _allowed(tbl) or base in _allowed(tbl)):
                 out[fk] = fval
         else:
             resolved = col_index.get(fk)
             if not resolved:
                 for tbl in priority:
                     if fk in _allowed(tbl):
+                        resolved = f"{tbl}.{fk}"
+                        break
+            if not resolved:
+                # Resolve to current_student or student_enroll if they exist in schema and allowed,
+                # so we can dynamically join them during SQL compilation.
+                for tbl in ('current_student', 'student_enroll'):
+                    if tbl in allowed_tables and fk in _allowed(tbl):
                         resolved = f"{tbl}.{fk}"
                         break
             if resolved:
@@ -409,6 +418,59 @@ def compile_dataset_to_sql(dataset, user=None, limit=MAX_CHART_ROWS, interactive
         if join_table not in allowed_tables:
             raise SQLCompilationError(f"Joined table '{join_table}' is not whitelisted.")
         active_tables.add(join_table)
+
+    # Dynamic join injection for unjoined whitelisted tables referenced in filters
+    if interactive_filters:
+        for target_tbl in ('current_student', 'student_enroll'):
+            has_filter = any(fkey.startswith(f'{target_tbl}.') for fkey in interactive_filters)
+            if has_filter and target_tbl not in active_tables:
+                join_target = None
+                join_col_self = None
+                join_col_target = None
+                
+                # Priority 1: stu_annual_key
+                for t in active_tables:
+                    if 'stu_annual_key' in _allowed(t) and 'stu_annual_key' in _allowed(target_tbl):
+                        join_target = t
+                        join_col_self = 'stu_annual_key'
+                        join_col_target = 'stu_annual_key'
+                        break
+                # Priority 2: student_id
+                if not join_target:
+                    for t in active_tables:
+                        if 'student_id' in _allowed(t) and 'student_id' in _allowed(target_tbl):
+                            join_target = t
+                            join_col_self = 'student_id'
+                            join_col_target = 'student_id'
+                            break
+                # Priority 3: ssid
+                if not join_target:
+                    for t in active_tables:
+                        if 'ssid' in _allowed(t) and 'ssid' in _allowed(target_tbl):
+                            join_target = t
+                            join_col_self = 'ssid'
+                            join_col_target = 'ssid'
+                            break
+                            
+                if join_target:
+                    extra_join_conds = []
+                    if 'school_year' in _allowed(join_target) and 'school_year' in _allowed(target_tbl):
+                        extra_join_conds.append({
+                            'on_left': f'{target_tbl}.school_year',
+                            'on_right': f'{join_target}.school_year'
+                        })
+                    joins_list = list(joins_list)
+                    joins_list.append({
+                        'table': target_tbl,
+                        'join_type': 'left',
+                        'conditions': [
+                            {
+                                'on_left': f'{target_tbl}.{join_col_self}',
+                                'on_right': f'{join_target}.{join_col_target}'
+                            }
+                        ] + extra_join_conds
+                    })
+                    active_tables.add(target_tbl)
         
     columns_list = dataset.columns or []
     if not columns_list:
