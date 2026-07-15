@@ -811,9 +811,9 @@
                         class="flex items-center justify-between w-full px-2 py-1.5 text-xs hover:bg-slate-50 transition">
                   <span class="font-medium text-slate-700 truncate" x-text="filterLabels[col] || col"></span>
                   <div class="flex items-center gap-1 shrink-0">
-                    <span x-show="(chartFilters[col] || []).length > 0"
+                    <span x-show="filterBadgeCount(col) > 0"
                           class="text-[9px] font-bold bg-blue-100 text-blue-700 rounded-full px-1.5"
-                          x-text="(chartFilters[col] || []).length"></span>
+                          x-text="filterBadgeCount(col)"></span>
                     <svg class="w-3 h-3 text-slate-400 transition-transform"
                          :class="openFilter === col && 'rotate-180'"
                          fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -823,36 +823,63 @@
                 </button>
                 {# Filter dropdown body #}
                 <div x-show="openFilter === col" x-collapse class="border-t border-slate-100">
-                  <div class="px-2 py-1.5">
-                    <div class="flex gap-1 mb-1.5">
-                      <button type="button" @click="chartFilters[col] = [...(filterOptions[col] || [])]; chartFilters = {...chartFilters}; _refreshFilterOptions(); _schedulePreview();" class="text-[9px] font-bold text-blue-600 hover:text-blue-800 px-1 rounded hover:bg-blue-50">All</button>
-                      <button type="button" @click="delete chartFilters[col]; chartFilters = {...chartFilters}; _refreshFilterOptions(); _schedulePreview();" class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear</button>
+                  {# Date-range picker (date columns only) #}
+                  <template x-if="isDateColumn(col)">
+                    <div class="px-2 py-2 space-y-1.5">
+                      <label class="block text-[10px] text-slate-500">From
+                        <input type="date" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 mt-0.5"
+                               :min="(filterOptions[col] || [])[0] || ''"
+                               :max="(filterOptions[col] || []).slice(-1)[0] || ''"
+                               :value="chartFilters[col]?.gte || ''"
+                               @change="setDateRangeFilter(col, 'gte', $event.target.value)">
+                      </label>
+                      <label class="block text-[10px] text-slate-500">To
+                        <input type="date" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 mt-0.5"
+                               :min="(filterOptions[col] || [])[0] || ''"
+                               :max="(filterOptions[col] || []).slice(-1)[0] || ''"
+                               :value="chartFilters[col]?.lte || ''"
+                               @change="setDateRangeFilter(col, 'lte', $event.target.value)">
+                      </label>
+                      <button type="button" x-show="filterBadgeCount(col) > 0"
+                              @click="clearDateRangeFilter(col)"
+                              class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear range</button>
                     </div>
-                    <input type="text" :placeholder="'Search ' + (filterLabels[col] || col) + '…'" x-model="filterSearch[col]"
-                           class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-1 focus:ring-1 focus:ring-blue-200 bg-slate-50">
-                    <div class="max-h-32 overflow-y-auto space-y-0.5">
-                      <template x-for="val in filteredFilterValues(col)" :key="'fv_'+col+'_'+val">
-                        <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
-                          <input type="checkbox" :value="val"
-                                 :checked="(chartFilters[col] || []).includes(val)"
-                                 @change="toggleFilterValue(col, val)"
-                                 class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
-                          <span class="truncate" x-text="yearAliasLabels[val] || val || '(blank)'"></span>
-                        </label>
-                      </template>
-                      <p x-show="filteredFilterValues(col).length === 0" class="text-[10px] text-slate-400 py-1 px-1">No matches</p>
+                  </template>
+                  {# Checkbox multi-select (non-date columns) #}
+                  <template x-if="!isDateColumn(col)">
+                    <div>
+                      <div class="px-2 py-1.5">
+                        <div class="flex gap-1 mb-1.5">
+                          <button type="button" @click="chartFilters[col] = [...(filterOptions[col] || [])]; chartFilters = {...chartFilters}; _refreshFilterOptions(); _schedulePreview();" class="text-[9px] font-bold text-blue-600 hover:text-blue-800 px-1 rounded hover:bg-blue-50">All</button>
+                          <button type="button" @click="delete chartFilters[col]; chartFilters = {...chartFilters}; _refreshFilterOptions(); _schedulePreview();" class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear</button>
+                        </div>
+                        <input type="text" :placeholder="'Search ' + (filterLabels[col] || col) + '…'" x-model="filterSearch[col]"
+                               class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-1 focus:ring-1 focus:ring-blue-200 bg-slate-50">
+                        <div class="max-h-32 overflow-y-auto space-y-0.5">
+                          <template x-for="val in filteredFilterValues(col)" :key="'fv_'+col+'_'+val">
+                            <label class="flex items-center gap-1.5 text-[11px] px-1 py-0.5 rounded hover:bg-blue-50 cursor-pointer">
+                              <input type="checkbox" :value="val"
+                                     :checked="(chartFilters[col] || []).includes(val)"
+                                     @change="toggleFilterValue(col, val)"
+                                     class="rounded text-blue-600 w-3 h-3 border-slate-300 focus:ring-blue-200">
+                              <span class="truncate" x-text="yearAliasLabels[val] || val || '(blank)'"></span>
+                            </label>
+                          </template>
+                          <p x-show="filteredFilterValues(col).length === 0" class="text-[10px] text-slate-400 py-1 px-1">No matches</p>
+                        </div>
+                      </div>
+                      {# Selected filter chips #}
+                      <div x-show="(chartFilters[col] || []).length > 0"
+                           class="flex flex-wrap gap-1 px-2 pb-1.5 border-t border-slate-50 pt-1">
+                        <template x-for="sv in (chartFilters[col] || [])" :key="'sv_'+col+'_'+sv">
+                          <span class="inline-flex items-center gap-0.5 text-[9px] bg-blue-50 text-blue-700 rounded-full px-2 py-0.5">
+                            <span class="truncate max-w-[80px]" x-text="yearAliasLabels[sv] || sv"></span>
+                            <button @click="removeFilterValue(col, sv)" class="hover:text-red-500 font-bold">&times;</button>
+                          </span>
+                        </template>
+                      </div>
                     </div>
-                  </div>
-                  {# Selected filter chips #}
-                  <div x-show="(chartFilters[col] || []).length > 0"
-                       class="flex flex-wrap gap-1 px-2 pb-1.5 border-t border-slate-50 pt-1">
-                    <template x-for="sv in (chartFilters[col] || [])" :key="'sv_'+col+'_'+sv">
-                      <span class="inline-flex items-center gap-0.5 text-[9px] bg-blue-50 text-blue-700 rounded-full px-2 py-0.5">
-                        <span class="truncate max-w-[80px]" x-text="yearAliasLabels[sv] || sv"></span>
-                        <button @click="removeFilterValue(col, sv)" class="hover:text-red-500 font-bold">&times;</button>
-                      </span>
-                    </template>
-                  </div>
+                  </template>
                 </div>
               </div>
             </template>
@@ -1008,6 +1035,18 @@
               </select>
               <button @click="xCols = []; _syncXCols()" class="ml-1 text-slate-400 hover:text-red-500 text-lg leading-none">&times;</button>
             </div>
+          </div>
+          <div x-show="chartType === 'line' && xCols.some(isDateColumn)" x-transition class="mt-1.5">
+            <label class="text-[10px] font-semibold text-slate-500 mb-1 block">Group dates by</label>
+            <select x-model="xDateBucket" @change="_schedulePreview(true)"
+                    class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 bg-white">
+              <option value="">Exact date (no bucketing)</option>
+              <option value="day">Day</option>
+              <option value="week">Week</option>
+              <option value="month">Month</option>
+              <option value="quarter">Quarter</option>
+              <option value="year">Year</option>
+            </select>
           </div>
         </div>
 
@@ -2700,6 +2739,7 @@
     <input type="hidden" name="selected_columns" x-bind:value="JSON.stringify(explorerSelected)">
     <input type="hidden" name="chart_type"     x-bind:value="chartType">
     <input type="hidden" name="x_col"          x-bind:value="xCols.join(',')">
+    <input type="hidden" name="x_date_bucket"  x-bind:value="xDateBucket">
     <input type="hidden" name="y_col"          x-bind:value="yCol">
     <input type="hidden" name="series_col"     x-bind:value="seriesCols.join(',')">
     <input type="hidden" name="group_col"      x-bind:value="groupCol">
@@ -2971,6 +3011,7 @@ function chartBuilder() {
     lineFill:     existing ? !!existing.config?.line_fill : false,
     xCol:         existing?.config?.x_col ?? '',
     xCols:        (existing?.config?.x_col || '').split(',').map(s => s.trim()).filter(Boolean) || [],
+    xDateBucket:  existing?.config?.x_date_bucket ?? '',
     yCol:         existing?.config?.y_col ?? '',
     seriesCol:    existing?.config?.stack_col ?? existing?.config?.series_col ?? '',
     seriesCols:   ((existing?.config?.stack_col ?? existing?.config?.series_col) || '').split(',').map(s => s.trim()).filter(Boolean) || [],
@@ -3192,9 +3233,13 @@ function chartBuilder() {
       return this.yearContext === '' && (this.chartFilters._custom_years || []).length > 1;
     },
     get plCols()       { return this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_PL')); },
-    get filterCols()   { return Object.keys(this.filterOptions).filter(k => k !== 'tested_school').sort(); },
+    get filterCols() {
+      const base = Object.keys(this.filterOptions).filter(k => k !== 'tested_school');
+      const extra = this.activeCols.filter(c => this.isDateColumn(c) && !base.includes(c));
+      return [...base, ...extra].sort();
+    },
     get activeFilterCount() {
-      return Object.values(this.chartFilters).reduce((n, arr) => n + (arr?.length || 0), 0);
+      return Object.keys(this.chartFilters).reduce((n, col) => n + this.filterBadgeCount(col), 0);
     },
     get meta()         { return CHART_META[this.chartType] || _defaultMeta; },
     get drillColumns() { return this.drillSelected.join(', '); },

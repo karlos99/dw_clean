@@ -22,6 +22,21 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+# Dataviz compiles wide queries (many joined columns, large IN-lists from
+# multi-select filters) that can exceed ClickHouse's default max_query_size
+# (256KiB, the parser buffer — not a data/row limit) and fail as a confusing
+# "Syntax error" at the truncation point. Raised generously since it only
+# affects parse-buffer size, not query performance.
+_CH_QUERY_SETTINGS = {'max_query_size': 50_000_000}
+
+# Tables mirrored into ClickHouse by `sync_to_clickhouse` (see
+# clickhouse_utils/schema.py for the DDL). Keep in sync with both.
+CLICKHOUSE_SYNCED_TABLES = frozenset({
+    'current_student', 'student_enroll', 'results', 'tests',
+    'student_marks_list', 'nextyearlist_placement', 'school',
+    'schedule_list', 'relative_year', 'mathr_recommendation',
+})
+
 
 class QueryExecutor:
     """
@@ -30,8 +45,14 @@ class QueryExecutor:
     Falls back to PostgreSQL on:
       - ClickHouse unavailable
       - USE_CLICKHOUSE_ANALYTICS=False
-      - SQL translation failure
-      - ClickHouse execution error
+      - SQL translation failure (the query uses syntax with no ClickHouse
+        equivalent — a capability gap, not a data-consistency concern)
+
+    Does NOT fall back on a ClickHouse execution error (connection issue,
+    missing table, timeout, etc.) — those propagate as errors so callers
+    don't silently serve data from a different, possibly inconsistent
+    source. See the "truncate ClickHouse tables before syncing" fix for
+    the kind of divergence this is meant to prevent.
 
     All public methods return results in the same format as the existing
     PostgreSQL-based code for seamless drop-in compatibility.
@@ -65,13 +86,15 @@ class QueryExecutor:
             {'columns': [...], 'rows': [dict, ...], 'row_count': N, 'error': None|str}
         """
         if self.ch_client is not None:
+            from .translator import SQLTranslationError
             try:
                 return self._execute_clickhouse(sql, params)
-            except Exception as exc:
+            except SQLTranslationError as exc:
                 logger.warning(
-                    "ClickHouse query failed, falling back to PostgreSQL: %s",
-                    exc, exc_info=True,
+                    "SQL not translatable to ClickHouse dialect, falling back to PostgreSQL: %s",
+                    exc,
                 )
+                return self._execute_postgres(sql, params)
 
         return self._execute_postgres(sql, params)
 
@@ -81,6 +104,7 @@ class QueryExecutor:
         rows is a list of tuples (not dicts).
         """
         if self.ch_client is not None:
+            from .translator import SQLTranslationError
             try:
                 result = self._execute_clickhouse(sql, params)
                 if result['error']:
@@ -88,8 +112,9 @@ class QueryExecutor:
                 cols = result['columns']
                 rows = [tuple(r.get(c) for c in cols) for r in result['rows']]
                 return cols, rows
-            except Exception:
-                logger.warning("ClickHouse execute_fetchall failed, falling back", exc_info=True)
+            except SQLTranslationError:
+                logger.warning("SQL not translatable to ClickHouse dialect, falling back to PostgreSQL")
+                return self._execute_postgres_fetchall(sql, params)
 
         return self._execute_postgres_fetchall(sql, params)
 
@@ -105,7 +130,7 @@ class QueryExecutor:
             logger.debug("SQL translation not possible, will fall back to PG")
             raise
 
-        result = self.ch_client.query(ch_sql, parameters=ch_params)
+        result = self.ch_client.query(ch_sql, parameters=ch_params, settings=_CH_QUERY_SETTINGS)
         columns = result.column_names if result.column_names else []
         raw = result.result_set if result.result_set else []
 

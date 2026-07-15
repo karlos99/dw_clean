@@ -7,7 +7,7 @@ from .views import (
     dataset_index, dataset_builder,
     drill_table,
     # Chart API
-    chart_preview_api, chart_save_api, chart_detail_api, chart_duplicate_api, chart_move_api, chart_render_api, chart_list_partial,
+    chart_preview_api, chart_save_api, chart_detail_api, chart_duplicate_api, chart_move_api, chart_render_api, chart_batch_render_api, chart_list_partial,
     chart_save_and_attach_api, chart_recommend_api, chart_describe_api,
     # Query / SQL API
     query_run_api, query_columns_api, query_filter_options_api, query_preview_api, sql_lab_api, sql_schema_api,
@@ -57,6 +57,7 @@ urlpatterns = [
     path('api/charts/<int:chart_id>/duplicate/', chart_duplicate_api, name='chart_duplicate'),
     path('api/charts/<int:chart_id>/move/',      chart_move_api,      name='chart_move'),
     path('api/charts/<int:chart_id>/render/', chart_render_api,   name='chart_render'),
+    path('api/charts/batch-render/',     chart_batch_render_api, name='chart_batch_render'),
     path('api/charts/<int:chart_id>/',   chart_detail_api,   name='chart_detail'),
 
     # ── Color-mapping preset API ──────────────────────────────────────────

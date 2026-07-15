@@ -211,6 +211,7 @@ function chartBuilderPreviewMethods(urls) {
       return {
         chart_type: this.chartType,
         x_col: xColStr,
+        x_date_bucket: this.xDateBucket,
         y_col: this.yCol,
         series_col: seriesColStr,
         stack_col: seriesColStr,

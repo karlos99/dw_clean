@@ -5,6 +5,7 @@ import traceback
 
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
+from django.core.serializers.json import DjangoJSONEncoder
 from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.template.loader import render_to_string
@@ -232,6 +233,7 @@ def _cfg_from_post(post):
     return {
         'chart_type':        post.get('chart_type', 'bar'),
         'x_col':             post.get('x_col', ''),
+        'x_date_bucket':     post.get('x_date_bucket', ''),
         'y_col':             post.get('y_col', ''),
         'series_col':        post.get('series_col', ''),
         'stack_col':         post.get('series_col', ''),
@@ -719,40 +721,40 @@ def chart_duplicate_api(request, chart_id):
     return JsonResponse({'chart': chart.to_dict(), 'success': True})
 
 
-@login_required
-@require_GET
-def chart_render_api(request, chart_id):
-    """
-    Return a rendered chart partial for a saved chart_id.
-    Runs the underlying query and builds the ECharts option.
-    Used by page/dashboard view to lazy-load chart data.
+def _parse_pf_filters(get_params) -> dict:
+    """Extract {column: value_or_list} from a QueryDict's pf_* params."""
+    filters = {}
+    for key in get_params:
+        if key.startswith('pf_'):
+            vals = [v for v in get_params.getlist(key) if v]
+            if vals:
+                filters[key[3:]] = vals if len(vals) > 1 else vals[0]
+    return filters
 
-    Caching: rendered HTML is cached in Redis keyed by
-      chart_id + chart.updated_at + sorted pf_* filter params
-    so that repeat views (same filters, any user) return in <10 ms.
-    The cache automatically busts when the chart config is saved
-    (updated_at changes) or when the 5-minute TTL expires.
+
+def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_source_id='',
+                         drill_source_name='', is_embed=False, request=None, if_none_match=None):
+    """
+    Core chart-render pipeline: runs the chart's query (or reuses the 2-layer
+    Redis cache), builds the ECharts option, and renders the chart_preview
+    partial to HTML. Shared by the single-chart (chart_render_api) and
+    batch (chart_batch_render_api) endpoints so both stay in sync.
+
+    Safe to call concurrently for different chart_ids from multiple threads:
+    each chart's cache keys/queries are independent, Django's DB connections
+    and the ClickHouse client are thread-local, and django-redis's client is
+    thread-safe.
+
+    Returns one of:
+      {'not_modified': True, 'etag': str}
+      {'html': str, 'error': str|None, 'cache_status': 'HIT'|'MISS', 'etag': str}
     """
     from dataviz.utils.data_loader import run_saved_query, run_raw_sql, run_column_query
 
     chart = get_object_or_404(SavedChart, pk=chart_id)
 
     # ── Build cache key ────────────────────────────────────────────
-    # source/source_id/source_name are breadcrumb-only and do NOT affect
-    # query results. But embed mode (source=page/dashboard) changes the
-    # rendered HTML (no min-height on the chart container), so it must
-    # be included in the render cache key.
-    is_embed = request.GET.get('source') in ('page', 'dashboard')
-
-    # Only pf_* params affect query results — source/source_id/source_name
-    # are breadcrumb-only and must NOT be part of the key.
-    pf_params = sorted(
-        (k, v)
-        for k in request.GET
-        if k.startswith('pf_')
-        for v in request.GET.getlist(k)
-        if v
-    )
+    pf_params = sorted(pf_filters.items())
     pf_hash = hashlib.md5(str(pf_params).encode()).hexdigest()[:12]
     # updated_at as an int-second timestamp busts the key on every chart save
     updated_ts = int(chart.updated_at.timestamp())
@@ -762,18 +764,15 @@ def chart_render_api(request, chart_id):
     sel_cols_hash = ""
     if chart.source_type == SavedChart.SOURCE_COLUMNS:
         sel_cols_hash = hashlib.md5(json.dumps(chart.config.get('selected_columns', []), sort_keys=True).encode()).hexdigest()[:8]
-    
+
     source_part = f'{chart.source_type}:{chart.source_id or "_"}:{chart.source_sql or "_"}:{sel_cols_hash}:{pf_hash}:{updated_ts}'
     data_cache_key = f'chart_data:{source_part}'
     data_cached = cache.get(data_cache_key)
-    if data_cached is not None:
-        result = data_cached
-    else:
-        result = None
+    result = data_cached if data_cached is not None else None
 
     # Layer 2 – Render cache: rendered HTML keyed by chart config + data hash
     if result is not None:
-        data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True).encode()).hexdigest()[:12]
+        data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True, cls=DjangoJSONEncoder).encode()).hexdigest()[:12]
     else:
         data_hash = 'raw'
     config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
@@ -781,20 +780,12 @@ def chart_render_api(request, chart_id):
     render_cache_key = f'chart_render:{chart_id}:{updated_ts}:{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
     etag = f'W/"{render_cache_key[-16:]}"'
 
-    # Support conditional requests (If-None-Match)
-    if request.headers.get('If-None-Match') == etag:
-        resp = HttpResponse(status=304)
-        resp['ETag'] = etag
-        resp['Cache-Control'] = 'private, no-cache, no-store, must-revalidate, max-age=0'
-        return resp
+    if if_none_match == etag:
+        return {'not_modified': True, 'etag': etag}
 
     cached_html = cache.get(render_cache_key)
     if cached_html is not None:
-        resp = HttpResponse(cached_html, content_type='text/html')
-        resp['X-Chart-Cache'] = 'HIT'
-        resp['ETag'] = etag
-        resp['Cache-Control'] = 'private, no-cache, no-store, must-revalidate, max-age=0'
-        return resp
+        return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
 
     # ── Cache miss: run the full pipeline ─────────────────────────
     chart_cfg = chart.config  # may be overridden below for dataset source
@@ -807,11 +798,7 @@ def chart_render_api(request, chart_id):
         elif chart.source_type == SavedChart.SOURCE_COLUMNS:
             selected_columns = chart.config.get('selected_columns', [])
             merged_filters = dict(chart.source_filters or {})
-            for key in request.GET:
-                if key.startswith('pf_'):
-                    vals = [v for v in request.GET.getlist(key) if v]
-                    if vals:
-                        merged_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
+            merged_filters.update(pf_filters)
             result = run_column_query(selected_columns, merged_filters)
         elif chart.source_type == SavedChart.SOURCE_DATASET:
             from dataviz.models import Dataset
@@ -828,11 +815,7 @@ def chart_render_api(request, chart_id):
                 # so schema changes automatically bust stale cached rows.
                 col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
                 raw_filters = dict(chart.source_filters or {})
-                for key in request.GET:
-                    if key.startswith('pf_'):
-                        vals = [v for v in request.GET.getlist(key) if v]
-                        if vals:
-                            raw_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
+                raw_filters.update(pf_filters)
                 active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                 resolved_filters = resolve_dataset_filters(raw_filters, ds, active_tables)
                 limit_val = chart_cfg.get('limit')
@@ -861,9 +844,9 @@ def chart_render_api(request, chart_id):
                         if result.get('rows'):
                             cache.set(ds_cache_key, result, timeout=1800)
                     chart_cfg = _remap_config_cols(chart.config, col_mappings)
-                
+
                 # After data is retrieved (either from cache or fresh query), augment with assessment cols if needed.
-                # This must be done outside the dataset cache because different charts on the same dataset 
+                # This must be done outside the dataset cache because different charts on the same dataset
                 # might require different assessment columns.
                 if not result.get('error') and result.get('rows'):
                     aliased_rows = result['rows']
@@ -874,12 +857,9 @@ def chart_render_api(request, chart_id):
 
         else:
             merged_filters = dict(chart.source_filters or {})
-            for key in request.GET:
-                if key.startswith('pf_'):
-                    vals = [v for v in request.GET.getlist(key) if v]
-                    if vals:
-                        merged_filters[key[3:]] = vals if len(vals) > 1 else vals[0]
-            result = run_saved_query(chart.source_id, merged_filters, request.user, apply_user_filters=False)
+            merged_filters.update(pf_filters)
+            user = getattr(request, 'user', None)
+            result = run_saved_query(chart.source_id, merged_filters, user, apply_user_filters=False)
 
         if result.get('error'):
             option_json = '{}'
@@ -900,29 +880,128 @@ def chart_render_api(request, chart_id):
         'option_json':       option_json,
         'chart_id':          chart.pk,
         'drill_enabled':     '1',
-        'drill_source':      request.GET.get('source', ''),
-        'drill_source_id':   request.GET.get('source_id', ''),
-        'drill_source_name': request.GET.get('source_name', ''),
+        'drill_source':      drill_source,
+        'drill_source_id':   drill_source_id,
+        'drill_source_name': drill_source_name,
         'error':             error,
         'embed':             is_embed,
     }
     html = render_to_string('dataviz/partials/chart_preview.html', ctx, request=request)
 
-    # Cache only successful renders (no error); render cache = 1 hour
+    # Cache only successful renders (no error); render cache = 1 hour.
+    # Recompute the key from the data we actually just fetched: the
+    # lookup above used data_hash='raw' whenever the data cache was cold,
+    # but by now `result` holds real rows — a later call whose data cache
+    # *is* warm will compute the real data_hash on its lookup, so storing
+    # under that same real-data key (not 'raw') is what makes it a HIT.
     if not error:
-        if result is not None:
-            data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True).encode()).hexdigest()[:12]
-        else:
-            data_hash = 'raw'
+        data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True, cls=DjangoJSONEncoder).encode()).hexdigest()[:12]
         render_cache_key = f'chart_render:{chart_id}:{updated_ts}:{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
         etag = f'W/"{render_cache_key[-16:]}"'
         cache.set(render_cache_key, html, timeout=3600)
 
-    resp = HttpResponse(html, content_type='text/html')
-    resp['X-Chart-Cache'] = 'MISS'
-    resp['ETag'] = etag
+    return {'html': html, 'error': error, 'cache_status': 'MISS', 'etag': etag}
+
+
+@login_required
+@require_GET
+def chart_render_api(request, chart_id):
+    """
+    Return a rendered chart partial for a saved chart_id.
+    Runs the underlying query and builds the ECharts option.
+    Used by page/dashboard view to lazy-load chart data.
+
+    Caching: rendered HTML is cached in Redis keyed by
+      chart_id + chart.updated_at + sorted pf_* filter params
+    so that repeat views (same filters, any user) return in <10 ms.
+    The cache automatically busts when the chart config is saved
+    (updated_at changes) or when the 5-minute TTL expires.
+    """
+    # source/source_id/source_name are breadcrumb-only and do NOT affect
+    # query results. But embed mode (source=page/dashboard) changes the
+    # rendered HTML (no min-height on the chart container), so it must
+    # be included in the render cache key.
+    is_embed = request.GET.get('source') in ('page', 'dashboard')
+    pf_filters = _parse_pf_filters(request.GET)
+
+    result = _render_saved_chart(
+        chart_id, pf_filters,
+        drill_source=request.GET.get('source', ''),
+        drill_source_id=request.GET.get('source_id', ''),
+        drill_source_name=request.GET.get('source_name', ''),
+        is_embed=is_embed, request=request,
+        if_none_match=request.headers.get('If-None-Match'),
+    )
+
+    if result.get('not_modified'):
+        resp = HttpResponse(status=304)
+        resp['ETag'] = result['etag']
+        resp['Cache-Control'] = 'private, no-cache, no-store, must-revalidate, max-age=0'
+        return resp
+
+    resp = HttpResponse(result['html'], content_type='text/html')
+    resp['X-Chart-Cache'] = result['cache_status']
+    resp['ETag'] = result['etag']
     resp['Cache-Control'] = 'private, no-cache, no-store, must-revalidate, max-age=0'
     return resp
+
+
+@login_required
+@require_POST
+def chart_batch_render_api(request):
+    """
+    Render multiple saved charts concurrently in one request.
+
+    POST JSON: {"chart_ids": [1, 2, 3], "source": "page", "source_id": "...",
+                "source_name": "...", "filters": {"grade": ["K", "1"], ...}}
+    ``filters`` uses bare column names (no 'pf_' prefix), since this is a
+    JSON body rather than query-string params.
+
+    Returns {"charts": {"<chart_id>": {"html": ..., "error": ...}, ...}}.
+
+    Used by the page viewer to render the initial (above-the-fold) burst of
+    charts in parallel via the shared ClickHouse-bound thread pool, instead
+    of each chart firing its own sequential/connection-limited request.
+    Individual charts still go through chart_render_api's normal lazy-load
+    path afterward — this just warms/produces the same cache so those
+    requests come back fast.
+    """
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    chart_ids = body.get('chart_ids') or []
+    if not chart_ids:
+        return JsonResponse({'charts': {}})
+
+    source = body.get('source', '')
+    source_id = body.get('source_id', '')
+    source_name = body.get('source_name', '')
+    is_embed = source in ('page', 'dashboard')
+    pf_filters = body.get('filters') or {}
+
+    from clickhouse_utils.thread_pool import get_io_pool
+    pool = get_io_pool()
+
+    def _one(cid):
+        try:
+            res = _render_saved_chart(
+                cid, pf_filters,
+                drill_source=source, drill_source_id=source_id, drill_source_name=source_name,
+                is_embed=is_embed, request=request,
+            )
+            return cid, {'html': res.get('html', ''), 'error': res.get('error')}
+        except Exception as exc:
+            return cid, {'html': '', 'error': str(exc)}
+
+    futures = [pool.submit(_one, cid) for cid in chart_ids]
+    charts = {}
+    for f in futures:
+        cid, payload = f.result()
+        charts[str(cid)] = payload
+
+    return JsonResponse({'charts': charts})
 
 
 @login_required

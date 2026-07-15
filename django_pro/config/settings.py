@@ -48,6 +48,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.gzip.GZipMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -218,6 +219,13 @@ STATICFILES_DIRS = [
     BASE_DIR / "templates" / "static",
 ]
 STATIC_ROOT = '/app/django_pro/files/staticfiles'
+
+# Serving under gunicorn (no runserver auto-serving, no separate web server
+# in front) — whitenoise serves static files directly from the WSGI app.
+# USE_FINDERS serves straight from STATICFILES_DIRS/app static dirs, same as
+# runserver did, without depending on collectstatic having been run first.
+WHITENOISE_USE_FINDERS = DEBUG
+WHITENOISE_AUTOREFRESH = DEBUG
 
 # Media files
 MEDIA_URL = '/media/'

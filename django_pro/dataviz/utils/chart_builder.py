@@ -276,6 +276,28 @@ def _label(col: str, col_defs: dict) -> str:
     return str(raw).replace('\n', ' — ').replace('\r', '')
 
 
+def _bucket_date_column(series, bucket):
+    """Bucket a raw date/datetime column into a lexicographically-sortable label string."""
+    dt = pd.to_datetime(series, errors='coerce')
+
+    def _fmt(ts):
+        if pd.isna(ts):
+            return None
+        if bucket == 'day':
+            return ts.strftime('%Y-%m-%d')
+        if bucket == 'week':
+            return ts.strftime('%G-W%V')
+        if bucket == 'month':
+            return ts.strftime('%Y-%m')
+        if bucket == 'quarter':
+            return f'{ts.year}-Q{(ts.month - 1) // 3 + 1}'
+        if bucket == 'year':
+            return str(ts.year)
+        return ts.strftime('%Y-%m-%d')
+
+    return dt.map(_fmt)
+
+
 def _agg(df, x_col, y_col, agg, stack_col='', agg_decimals=None, cfg=None):
     if agg_decimals is None and cfg is not None:
         _raw = cfg.get('agg_decimals')
@@ -1338,6 +1360,9 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
 def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stacked, y_cols=None, col_defs=None, smooth=False):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
+    date_bucket = (cfg.get('x_date_bucket') or '').strip().lower()
+    if date_bucket and x_col in df.columns:
+        df = df.assign(**{x_col: _bucket_date_column(df[x_col], date_bucket)})
     option = _base_option(cfg)
     ax = _axis_style(cfg)
     x_lbl = _x_axis_label_style(cfg)

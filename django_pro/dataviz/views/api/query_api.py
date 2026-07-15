@@ -228,6 +228,37 @@ _ENROLL_JOIN = (
 )
 
 
+def _full_test_pl_label(info: dict) -> str:
+    """Build the complete test-name label for a test_*_PL column from its DB metadata.
+
+    Uses the raw test_name/subject/test_window fetched from the DB for *this*
+    request (via ``_build_test_columns_from_db``) rather than reconstructing a
+    name by parsing the sanitized column key, which can mangle multi-word test
+    names and skips the ``_get_display_name`` spelling/casing normalization.
+    """
+    from dataexploration.column_utils import _get_display_name
+    parts = [
+        _get_display_name((info.get('test_name') or '').strip()),
+        _get_display_name((info.get('subject') or '').strip()),
+    ]
+    if info.get('test_window'):
+        parts.append(info['test_window'])
+    return ' '.join(p for p in parts if p) + ' PL'
+
+
+def _full_mark_label(info: dict) -> str:
+    """Build the complete label for a mark_ column from its DB metadata."""
+    course = (info.get('course_name') or '').strip()
+    subject = (info.get('subject') or '').strip()
+    period = (info.get('mark_period') or '').strip()
+    label = course or 'Mark'
+    if subject:
+        label += f' ({subject})'
+    if period:
+        label += f' {period}'
+    return label
+
+
 def _inject_school_year_aliases(options: dict, labels: dict) -> None:
     """Prepend relative alias options to the school_year filter if present."""
     if 'school_year' not in options:
@@ -326,7 +357,7 @@ def query_filter_options_api(request, query_id):
 
     from dataexploration.models import SavedQuery
     from dataexploration.utils import can_user_view_query
-    from django.db import connection
+    from clickhouse_utils.executor import QueryExecutor
     from hashlib import md5
 
     try:
@@ -414,8 +445,10 @@ def query_filter_options_api(request, query_id):
 
     options: dict[str, list] = {}
     labels: dict[str, str] = {}
+    test_col_map: dict[str, dict] = {}
+    mark_col_map: dict[str, dict] = {}
     try:
-        with connection.cursor() as cursor:
+        with QueryExecutor().cursor() as cursor:
             # ── Base demographic columns from current_student ──
             if filter_cols:
                 union_parts = []
@@ -445,12 +478,12 @@ def query_filter_options_api(request, query_id):
             # ── Assessment PL columns (test_*_PL) ──
             if pl_cols:
                 from dataviz.utils.data_loader import _build_test_columns_from_db
-                _infos, col_map = _build_test_columns_from_db(cursor, pl_cols)
+                _infos, test_col_map = _build_test_columns_from_db(cursor, pl_cols)
 
                 # Collect tested school codes from results for all PL columns
                 tested_school_codes: dict[str, str] = {}  # code → display name
                 for col in pl_cols:
-                    info = col_map.get(col)
+                    info = test_col_map.get(col)
                     if not info or info.get('metric') != 'pl':
                         continue
                     win_clause = ''
@@ -547,9 +580,9 @@ def query_filter_options_api(request, query_id):
             # ── Mark columns (mark_*) ──
             if mark_cols:
                 from dataviz.utils.data_loader import _build_mark_columns_from_db
-                _infos, col_map = _build_mark_columns_from_db(cursor, mark_cols)
+                _infos, mark_col_map = _build_mark_columns_from_db(cursor, mark_cols)
                 for col in mark_cols:
-                    info = col_map.get(col)
+                    info = mark_col_map.get(col)
                     if not info:
                         continue
                     per_clause = ''
@@ -624,8 +657,6 @@ def query_filter_options_api(request, query_id):
         elif col in _FILTERABLE_COLUMNS:
             labels[col] = col.replace('_', ' ').title()
         elif col.startswith('test_') and col.endswith('_PL'):
-            # Build a readable label from the column key:
-            # test_2025_2026_Dibbles_Dibbles_BOY_PL → Dibbles Dibbles BOY PL
             key_for_parsing = col
             if '__sy_' in col:
                 try:
@@ -633,11 +664,17 @@ def query_filter_options_api(request, query_id):
                     key_for_parsing = resolve_relative_column_key(col)
                 except Exception:
                     pass
-            inner = key_for_parsing[5:-3]  # strip "test_" and "_PL"
-            parts = [p for p in inner.split('_') if p]
-            # Skip the year portion (first two parts like 2025_2026)
-            name_parts = parts[2:] if len(parts) > 2 else parts
-            labels[col] = ' '.join(name_parts) + ' PL'
+            info = test_col_map.get(key_for_parsing) or test_col_map.get(col)
+            if info:
+                labels[col] = _full_test_pl_label(info)
+            else:
+                # Fallback: reconstruct from the sanitized column key.
+                # test_2025_2026_Dibbles_Dibbles_BOY_PL → Dibbles Dibbles BOY PL
+                inner = key_for_parsing[5:-3]  # strip "test_" and "_PL"
+                parts = [p for p in inner.split('_') if p]
+                # Skip the year portion (first two parts like 2025_2026)
+                name_parts = parts[2:] if len(parts) > 2 else parts
+                labels[col] = ' '.join(name_parts) + ' PL'
         elif col.startswith('mark_'):
             key_for_parsing = col
             if '__sy_' in col:
@@ -646,10 +683,14 @@ def query_filter_options_api(request, query_id):
                     key_for_parsing = resolve_relative_column_key(col)
                 except Exception:
                     pass
-            inner = key_for_parsing[5:]  # strip "mark_"
-            parts = [p for p in inner.split('_') if p]
-            name_parts = parts[2:] if len(parts) > 2 else parts
-            labels[col] = ' '.join(name_parts)
+            info = mark_col_map.get(key_for_parsing) or mark_col_map.get(col)
+            if info:
+                labels[col] = _full_mark_label(info)
+            else:
+                inner = key_for_parsing[5:]  # strip "mark_"
+                parts = [p for p in inner.split('_') if p]
+                name_parts = parts[2:] if len(parts) > 2 else parts
+                labels[col] = ' '.join(name_parts)
         else:
             labels[col] = col.replace('_', ' ').title()
 
@@ -806,10 +847,12 @@ def column_filter_options_api(request):
     _CS_JOIN_MARK = ' INNER JOIN current_student cs ON cs.stu_annual_key = sm.stu_annual_key'
 
     options: dict[str, list] = {}
-    from django.db import connection
+    test_col_map: dict[str, dict] = {}
+    mark_col_map: dict[str, dict] = {}
+    from clickhouse_utils.executor import QueryExecutor
 
     try:
-        with connection.cursor() as cursor:
+        with QueryExecutor().cursor() as cursor:
             if filter_cols:
                 union_parts = []
                 union_params: list = []
@@ -834,10 +877,10 @@ def column_filter_options_api(request):
 
             if pl_cols:
                 from dataviz.utils.data_loader import _build_test_columns_from_db
-                _infos, col_map = _build_test_columns_from_db(cursor, pl_cols)
+                _infos, test_col_map = _build_test_columns_from_db(cursor, pl_cols)
                 tested_school_codes: dict[str, str] = {}
                 for col in pl_cols:
-                    info = col_map.get(col)
+                    info = test_col_map.get(col)
                     if not info or info.get('metric') != 'pl':
                         continue
                     win_clause, win_params = '', []
@@ -928,9 +971,9 @@ def column_filter_options_api(request):
 
             if mark_cols:
                 from dataviz.utils.data_loader import _build_mark_columns_from_db
-                _infos, col_map = _build_mark_columns_from_db(cursor, mark_cols)
+                _infos, mark_col_map = _build_mark_columns_from_db(cursor, mark_cols)
                 for col in mark_cols:
-                    info = col_map.get(col)
+                    info = mark_col_map.get(col)
                     if not info:
                         continue
                     per_clause, per_params = '', []
@@ -1004,10 +1047,14 @@ def column_filter_options_api(request):
                     key_for_parsing = resolve_relative_column_key(col)
                 except Exception:
                     pass
-            inner = key_for_parsing[5:-3]
-            parts = [p for p in inner.split('_') if p]
-            name_parts = parts[2:] if len(parts) > 2 else parts
-            labels[col] = ' '.join(name_parts) + ' PL'
+            info = test_col_map.get(key_for_parsing) or test_col_map.get(col)
+            if info:
+                labels[col] = _full_test_pl_label(info)
+            else:
+                inner = key_for_parsing[5:-3]
+                parts = [p for p in inner.split('_') if p]
+                name_parts = parts[2:] if len(parts) > 2 else parts
+                labels[col] = ' '.join(name_parts) + ' PL'
         elif col.startswith('mark_'):
             key_for_parsing = col
             if '__sy_' in col:
@@ -1016,10 +1063,14 @@ def column_filter_options_api(request):
                     key_for_parsing = resolve_relative_column_key(col)
                 except Exception:
                     pass
-            inner = key_for_parsing[5:]
-            parts = [p for p in inner.split('_') if p]
-            name_parts = parts[2:] if len(parts) > 2 else parts
-            labels[col] = ' '.join(name_parts)
+            info = mark_col_map.get(key_for_parsing) or mark_col_map.get(col)
+            if info:
+                labels[col] = _full_mark_label(info)
+            else:
+                inner = key_for_parsing[5:]
+                parts = [p for p in inner.split('_') if p]
+                name_parts = parts[2:] if len(parts) > 2 else parts
+                labels[col] = ' '.join(name_parts)
         else:
             labels[col] = col.replace('_', ' ').title()
 

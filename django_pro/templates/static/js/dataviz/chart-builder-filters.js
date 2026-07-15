@@ -5,6 +5,41 @@ function chartBuilderFilterMethods() {
     /* ─── Filter helpers ─────────────────────────────────── */
     toggleFilter(col) { this.openFilter = this.openFilter === col ? '' : col; },
 
+    isDateColumn(col) {
+      if (!col) return false;
+      const name = String(col).split('.').pop().toLowerCase();
+      if (name === 'school_year' || name === 'year') return false;
+      return name.endsWith('_date') || name.endsWith('_at') || name === 'date' || name.includes('date_of');
+    },
+
+    filterBadgeCount(col) {
+      const v = this.chartFilters[col];
+      if (Array.isArray(v)) return v.length;
+      if (v && typeof v === 'object') return (v.gte || v.lte) ? 1 : 0;
+      return 0;
+    },
+
+    setDateRangeFilter(col, which, val) {
+      const existing = this.chartFilters[col];
+      const cur = { ...(existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}) };
+      if (val) cur[which] = val; else delete cur[which];
+      if (!Object.keys(cur).length) {
+        const f = { ...this.chartFilters };
+        delete f[col];
+        this.chartFilters = f;
+      } else {
+        this.chartFilters = { ...this.chartFilters, [col]: cur };
+      }
+      this._schedulePreview(true);
+    },
+
+    clearDateRangeFilter(col) {
+      const f = { ...this.chartFilters };
+      delete f[col];
+      this.chartFilters = f;
+      this._schedulePreview(true);
+    },
+
     filteredFilterValues(col) {
       let vals = this.filterOptions[col] || [];
       if (col === 'school_year' && this.sourceType !== 'dataset') {

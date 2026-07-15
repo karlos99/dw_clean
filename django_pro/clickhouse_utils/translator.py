@@ -45,18 +45,25 @@ def translate_pg_to_clickhouse(sql, params):
 
     # ── ILIKE → lower(x) LIKE LOWER(y) ──────────────────────────────
     # Wrap both column and param in lower() since LIKE is case-sensitive in CH.
-    sql = re.sub(
-        r'(\S+(?:\s+(?:IS\s+NOT\s+NULL|IS\s+NULL))?)\s+ILIKE\s+(%s)',
-        r'lower(\1) LIKE LOWER(\2)', sql, flags=re.IGNORECASE,
-    )
-    # Also handle column ILIKE without %s (bare patterns)
-    def _replace_ilike(m):
-        expr = m.group(1)
-        return f'lower({expr}) LIKE'
-    sql = re.sub(r'(\S+(?:\s+(?:IS\s+NOT\s+NULL|IS\s+NULL))?)\s+ILIKE\b', _replace_ilike, sql, flags=re.IGNORECASE)
+    # Guarded by a cheap substring check: the (\S+...)  lookback is an
+    # unbounded greedy quantifier with no anchor other than the literal
+    # "ILIKE" — against a long run of non-whitespace text with no ILIKE in
+    # it at all (e.g. a large comma-separated "%s,%s,%s,..." IN-list), it
+    # backtracks catastrophically (seconds, growing with list size). Skip
+    # entirely when the query has no ILIKE to translate.
+    if 'ILIKE' in sql.upper():
+        sql = re.sub(
+            r'(\S+(?:\s+(?:IS\s+NOT\s+NULL|IS\s+NULL))?)\s+ILIKE\s+(%s)',
+            r'lower(\1) LIKE LOWER(\2)', sql, flags=re.IGNORECASE,
+        )
+        # Also handle column ILIKE without %s (bare patterns)
+        def _replace_ilike(m):
+            expr = m.group(1)
+            return f'lower({expr}) LIKE'
+        sql = re.sub(r'(\S+(?:\s+(?:IS\s+NOT\s+NULL|IS\s+NULL))?)\s+ILIKE\b', _replace_ilike, sql, flags=re.IGNORECASE)
 
-    # Handle any remaining bare ILIKE keywords
-    sql = re.sub(r'\bILIKE\b', 'LIKE', sql, flags=re.IGNORECASE)
+        # Handle any remaining bare ILIKE keywords
+        sql = re.sub(r'\bILIKE\b', 'LIKE', sql, flags=re.IGNORECASE)
 
     # ── JSON operators ─────────────────────────────────────────────────
     # col->>'key'  →  JSONExtractString(col, 'key')
@@ -238,11 +245,16 @@ def _translate_distinct_on(sql):
         )
 
     # Match subquery form: ( SELECT DISTINCT ON (cols) select FROM table WHERE? ORDER BY cols )
+    # The optional clause between FROM and ORDER BY is anchored to a literal
+    # WHERE so it can't silently swallow text past the subquery's own ORDER
+    # BY (e.g. an outer query's later "ORDER BY ... LIMIT n)") — a bare
+    # `(.*?)` there is unbounded and will happily match across clause/paren
+    # boundaries when this subquery is embedded in a larger statement.
     pattern = (
         r'\(\s*SELECT\s+DISTINCT\s+ON\s*\(([^)]+)\)\s+'
         r'(\*)\s+'
         r'FROM\s+(\S+)\s*'
-        r'(.*?)\s+'
+        r'(WHERE\s+.*?)?\s*'
         r'ORDER\s+BY\s+([^)]+?)\s*'
         r'\)'
     )
@@ -251,7 +263,7 @@ def _translate_distinct_on(sql):
     # If still contains DISTINCT ON after subquery handling, try top-level match
     if 'DISTINCT ON' in sql.upper():
         m = re.search(
-            r'SELECT\s+DISTINCT\s+ON\s*\(([^)]+)\)\s+(.+?)\s+FROM\s+(\S+)\s+(.*?)\s+ORDER\s+BY\s+(.+?)(?:\s+LIMIT\s+\d+)?$',
+            r'SELECT\s+DISTINCT\s+ON\s*\(([^)]+)\)\s+(.+?)\s+FROM\s+(\S+)\s+(WHERE\s+.*?)?\s*ORDER\s+BY\s+(.+?)(?:\s+LIMIT\s+\d+)?$',
             sql,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -259,7 +271,7 @@ def _translate_distinct_on(sql):
             partition_cols = m.group(1).strip()
             select_cols = m.group(2).strip()
             from_table = m.group(3).strip()
-            middle = m.group(4).strip()
+            middle = (m.group(4) or '').strip()
             order_by = m.group(5).strip()
 
             order_by_clean = re.sub(r'\bNULLS\s+(FIRST|LAST)\b', '', order_by, flags=re.IGNORECASE).strip()
