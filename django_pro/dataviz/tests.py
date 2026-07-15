@@ -1,10 +1,37 @@
+from types import SimpleNamespace
 from unittest.mock import patch
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.contrib.auth import get_user_model
 from dataviz.models import SavedChart, Dataset
+from dataviz.utils.compiler import compile_dataset_to_sql
 from dataviz.utils.drill_through import execute_drill_query
 
 User = get_user_model()
+
+class CompilerSqlTests(SimpleTestCase):
+    def test_compile_dataset_to_sql_uses_any_for_multi_value_filters(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade'],
+            updated_at=None,
+        )
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', return_value=('current_student', 'grade')), \
+             patch('dataviz.utils.compiler.format_column_expr', return_value='"current_student"."grade"'):
+            sql, params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={'current_student.grade': ['K', '1']},
+                user=None,
+            )
+
+        self.assertIn('"current_student"."grade" = ANY(%s)', sql)
+        self.assertEqual(params, [['K', '1']])
+
 
 class DatasetDrillThroughTests(TestCase):
     def setUp(self):

@@ -657,9 +657,8 @@ def compile_dataset_to_sql(dataset, user=None, limit=MAX_CHART_ROWS, interactive
                 others = [v for v in vals if v != '(Blank)']
                 parts_list = []
                 if others:
-                    ph = ', '.join(['%s'] * len(others))
-                    parts_list.append(f'{expr} IN ({ph})')
-                    params.extend(others)
+                    parts_list.append(f'{expr} = ANY(%s)')
+                    params.append(others)
                 if has_blank:
                     parts_list.append(f'({expr} IS NULL OR {expr} = \'\')')
                 if len(parts_list) > 1:
