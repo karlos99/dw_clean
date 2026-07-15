@@ -642,7 +642,14 @@ def compile_dataset_to_sql(dataset, user=None, limit=MAX_CHART_ROWS, interactive
             
             # Add filter condition
             expr = format_column_expr(ftbl, fname)
-            if isinstance(fval, list):
+            if isinstance(fval, dict):
+                if fval.get('gte'):
+                    where_parts.append(f'{expr} >= %s')
+                    params.append(fval['gte'])
+                if fval.get('lte'):
+                    where_parts.append(f'{expr} <= %s')
+                    params.append(fval['lte'])
+            elif isinstance(fval, list):
                 vals = [v for v in fval if v]
                 if not vals:
                     continue

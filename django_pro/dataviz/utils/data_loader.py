@@ -8,7 +8,6 @@ Supports:
 import hashlib
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
 
 from django.core.cache import cache
 from django.db import connections
@@ -704,6 +703,15 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
         if not value:
             return
 
+        if isinstance(value, dict):
+            if value.get('gte'):
+                where_parts.append(f'{expr} >= %s')
+                params.append(value['gte'])
+            if value.get('lte'):
+                where_parts.append(f'{expr} <= %s')
+                params.append(value['lte'])
+            return
+
         if isinstance(value, list):
             value = [v for v in value if v]
             if not value:
@@ -889,6 +897,7 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
 
                 # Run test and mark data fetches in parallel when both are needed
                 from clickhouse_utils.executor import QueryExecutor
+                from clickhouse_utils.thread_pool import get_io_pool
 
                 if need_test and need_mark:
                     def _fetch_tests():
@@ -900,10 +909,10 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                         cur = QueryExecutor().cursor()
                         _fetch_mark_data(cur, mark_infos, student_keys, rows)
 
-                    with ThreadPoolExecutor(max_workers=2) as executor:
-                        futures = [executor.submit(_fetch_tests), executor.submit(_fetch_marks)]
-                        for f in futures:
-                            f.result()  # wait for both, propagate exceptions
+                    pool = get_io_pool()
+                    futures = [pool.submit(_fetch_tests), pool.submit(_fetch_marks)]
+                    for f in futures:
+                        f.result()  # wait for both, propagate exceptions
                 elif need_test:
                     _fetch_test_data(QueryExecutor().cursor(), test_infos, student_ids, rows,
                                      tested_school_codes=tested_school_filter)

@@ -359,6 +359,81 @@
 
 <script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
 <script>
+(function() {
+  // Render the initial (likely above-the-fold) burst of charts concurrently
+  // via one batch request instead of each tile firing its own sequential /
+  // connection-limited fetch. Runs synchronously during page parse — before
+  // htmx's own DOMContentLoaded-based init reads hx-trigger — so we can
+  // safely neutralize the automatic "intersect once" fetch for slots this
+  // batch call is about to fill (keeping the "reload" trigger used
+  // elsewhere to force-refresh a section on filter change). Anything that
+  // fails, or isn't in the eager batch, falls back to the normal lazy path.
+  const EAGER_BATCH_LIMIT = 8;
+  const slots = Array.from(document.querySelectorAll('.page-chart-slot')).filter(el => el.dataset.chartBaseUrl);
+  if (!slots.length) return;
+  const eager = slots.slice(0, EAGER_BATCH_LIMIT);
+
+  const firstUrl = new URL(eager[0].dataset.chartBaseUrl, window.location.origin);
+  const source = firstUrl.searchParams.get('source') || '';
+  const sourceId = firstUrl.searchParams.get('source_id') || '';
+  const sourceName = firstUrl.searchParams.get('source_name') || '';
+  const filters = {};
+  for (const [key, val] of firstUrl.searchParams.entries()) {
+    if (key.startsWith('pf_') && val) {
+      const col = key.slice(3);
+      if (filters[col] === undefined) filters[col] = val;
+      else if (Array.isArray(filters[col])) filters[col].push(val);
+      else filters[col] = [filters[col], val];
+    }
+  }
+
+  const chartIds = [];
+  const slotByChartId = {};
+  eager.forEach(el => {
+    const m = el.dataset.chartBaseUrl.match(/\/charts\/(\d+)\/render\//);
+    if (!m) return;
+    const cid = m[1];
+    chartIds.push(cid);
+    slotByChartId[cid] = el;
+    el.setAttribute('hx-trigger', 'reload');
+  });
+  if (!chartIds.length) return;
+
+  function restore(el) {
+    // Batch call didn't fill this slot — fall back to the normal lazy-load
+    // path. htmx already processed the page with the neutralized attribute,
+    // so re-add "intersect once" and re-process the element.
+    el.setAttribute('hx-trigger', 'intersect once, reload');
+    if (window.htmx) window.htmx.process(el);
+  }
+
+  const csrf = "{{ csrf_token }}";
+  fetch('/dataviz/api/charts/batch-render/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+    body: JSON.stringify({ chart_ids: chartIds, source, source_id: sourceId, source_name: sourceName, filters }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      const charts = data.charts || {};
+      chartIds.forEach(cid => {
+        const slot = slotByChartId[cid];
+        const payload = charts[cid];
+        if (payload && payload.html) {
+          slot.innerHTML = payload.html;
+        } else {
+          restore(slot);
+        }
+      });
+      if (window.initAllCharts) window.initAllCharts();
+    })
+    .catch(e => {
+      console.error('Batch chart render failed, falling back to individual lazy loads:', e);
+      chartIds.forEach(cid => restore(slotByChartId[cid]));
+    });
+})();
+</script>
+<script>
   const _PAGE_SLUG = "{{ page.slug|escapejs }}";
   const _FILTER_OPTIONS_TPL = "/dataviz/api/pages/" + _PAGE_SLUG + "/filters/FILTERID/";
   const _STORAGE_KEY = 'pf_global';

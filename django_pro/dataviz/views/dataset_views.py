@@ -407,13 +407,19 @@ def api_column_unique_values(request):
 
         if values is None:
             sql = f'SELECT DISTINCT "{col_name}" FROM "{table_name}" WHERE "{col_name}" IS NOT NULL AND "{col_name}" != %s ORDER BY "{col_name}" LIMIT 500'
-            with connection.cursor() as cursor:
-                cursor.execute("BEGIN READ ONLY")
-                try:
+            from clickhouse_utils.executor import QueryExecutor, CLICKHOUSE_SYNCED_TABLES
+            if table_name in CLICKHOUSE_SYNCED_TABLES:
+                with QueryExecutor().cursor() as cursor:
                     cursor.execute(sql, [''])
                     rows = cursor.fetchall()
-                finally:
-                    cursor.execute("COMMIT")
+            else:
+                with connection.cursor() as cursor:
+                    cursor.execute("BEGIN READ ONLY")
+                    try:
+                        cursor.execute(sql, [''])
+                        rows = cursor.fetchall()
+                    finally:
+                        cursor.execute("COMMIT")
 
             values = [str(r[0]) for r in rows if r[0] is not None]
             try:
@@ -478,8 +484,15 @@ def dataset_filter_options_api(request, dataset_id):
         _SKIP = frozenset({'ssid', 'student_id', 'stu_annual_key', 'student_name'})
         _DISTINCT_LIMIT = 500  # max distinct values per filter column
 
+        # Use the ClickHouse-aware executor only when every table this dataset
+        # touches is actually mirrored into ClickHouse — otherwise the data
+        # simply isn't there and Postgres remains the correct source.
+        from clickhouse_utils.executor import QueryExecutor, CLICKHOUSE_SYNCED_TABLES
+        use_ch = active_tables <= CLICKHOUSE_SYNCED_TABLES
+        cursor_ctx = QueryExecutor().cursor() if use_ch else connection.cursor()
+
         filter_options = {}
-        with connection.cursor() as cur:
+        with cursor_ctx as cur:
             for sql_col, alias in col_mappings.items():
                 if alias in _SKIP:
                     continue

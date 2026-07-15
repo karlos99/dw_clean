@@ -232,6 +232,7 @@ def page_filter_options_api(request, slug, filter_id):
     """
     from django.db import connections
     from django.core.cache import cache
+    from clickhouse_utils.executor import QueryExecutor, CLICKHOUSE_SYNCED_TABLES
 
     page = get_object_or_404(DataVizPage, slug=slug)
 
@@ -251,7 +252,10 @@ def page_filter_options_api(request, slug, filter_id):
         values = cached
     else:
         try:
-            with connections['default'].cursor() as cursor:
+            # Only route through ClickHouse when this table is actually mirrored
+            # there — otherwise the data doesn't exist and Postgres is correct.
+            cursor_ctx = QueryExecutor().cursor() if table in CLICKHOUSE_SYNCED_TABLES else connections['default'].cursor()
+            with cursor_ctx as cursor:
                 cursor.execute(
                     f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}" LIMIT 500'
                 )
