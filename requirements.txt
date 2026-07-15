@@ -3,6 +3,7 @@ psycopg2-binary>=2.9.11
 psycopg>=3.3.2
 gunicorn==21.2.0
 python-dotenv>=1.0.0
+whitenoise>=6.7.0
 django-allauth>=65.3.0
 bokeh>=3.3.4
 httpx>=0.28.0
