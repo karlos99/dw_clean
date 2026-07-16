@@ -13,20 +13,21 @@
     display: grid;
     gap: 8px;
     grid-template-columns: repeat(12, 1fr);
+    grid-auto-rows: 80px;
   }
   .page-grid > div {
-    height: calc(var(--gs-h, 4) * 80px);
+    height: 100%;
     overflow: hidden;
   }
   /* HTML sections auto-grow to fit content */
   .page-grid > div.html-section {
     height: auto;
-    min-height: calc(var(--gs-h, 4) * 80px);
+    min-height: 100%;
     overflow-y: auto;
   }
   /* Chart sections: fixed grid height; chart fills via nested flex */
   .page-grid > div.chart-section {
-    height: calc(var(--gs-h, 4) * 80px);
+    height: 100%;
     overflow: hidden;
   }
   .page-grid > div.chart-section .page-chart-slot {

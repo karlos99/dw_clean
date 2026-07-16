@@ -176,14 +176,17 @@ def translate_pg_to_clickhouse(sql, params):
             
         if matched_str.startswith('='):
             # It's an '= ANY(%s)' placeholder
-            if isinstance(val, list):
-                ph_parts = []
-                for v in val:
-                    name = f'p{param_index}'
-                    param_index += 1
-                    ph_parts.append(f'%({name})s')
-                    ch_params[name] = v
-                new_sql_parts.append('IN (' + ', '.join(ph_parts) + ')')
+            if isinstance(val, (list, tuple, set)):
+                if not val:
+                    new_sql_parts.append('IN (NULL)')
+                else:
+                    ph_parts = []
+                    for v in val:
+                        name = f'p{param_index}'
+                        param_index += 1
+                        ph_parts.append(f'%({name})s')
+                        ch_params[name] = v
+                    new_sql_parts.append('IN (' + ', '.join(ph_parts) + ')')
             else:
                 name = f'p{param_index}'
                 param_index += 1
@@ -205,8 +208,10 @@ def translate_pg_to_clickhouse(sql, params):
     # Handle ILIKE params: if original SQL had ILIKE, the LIKE pattern needs lower()
     # We already transformed ILIKE → lower() LIKE; the param value needs to be lowered too
     # for patterns: %{search}% → lower value
-    for name, val in ch_params.items():
-        if isinstance(val, str) and '%' in val:
+    for name, val in list(ch_params.items()):
+        if isinstance(val, (tuple, set)):
+            ch_params[name] = list(val)
+        elif isinstance(val, str) and '%' in val:
             ch_params[name] = val.lower()
 
     return sql, ch_params

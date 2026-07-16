@@ -34,3 +34,35 @@ class SQLTranslatorTests(SimpleTestCase):
         self.assertEqual(ch_params['p3'], '2025-2026')
         self.assertEqual(ch_params['p4'], '%smarter balanced%')  # ILIKE is lowered if it contains '%'
         self.assertEqual(ch_params['p5'], 'Mathematics')       # ILIKE is not lowered by python if it doesn't contain '%'
+
+    def test_translate_any_with_empty_collections(self):
+        sql = "SELECT * FROM students WHERE ssid = ANY(%s)"
+        
+        # Test empty list
+        sql_list, params_list = translate_pg_to_clickhouse(sql, [[]])
+        self.assertIn('IN (NULL)', sql_list)
+        self.assertEqual(params_list, {})
+
+        # Test empty tuple
+        sql_tuple, params_tuple = translate_pg_to_clickhouse(sql, [()])
+        self.assertIn('IN (NULL)', sql_tuple)
+        self.assertEqual(params_tuple, {})
+
+        # Test empty set
+        sql_set, params_set = translate_pg_to_clickhouse(sql, [set()])
+        self.assertIn('IN (NULL)', sql_set)
+        self.assertEqual(params_set, {})
+
+    def test_translate_tuple_and_set_parameters_to_list(self):
+        sql = "SELECT * FROM students WHERE grade = %s AND school = %s"
+        params = [('04', '05'), {'school_a', 'school_b'}]
+        
+        translated_sql, ch_params = translate_pg_to_clickhouse(sql, params)
+        
+        # Assert type conversion
+        self.assertIsInstance(ch_params['p0'], list)
+        self.assertIsInstance(ch_params['p1'], list)
+        
+        # Verify values
+        self.assertEqual(ch_params['p0'], ['04', '05'])
+        self.assertEqual(sorted(ch_params['p1']), ['school_a', 'school_b'])
