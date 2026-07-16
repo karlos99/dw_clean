@@ -3753,7 +3753,7 @@ _register_rule(_has_time_dimension, 'line', 15, 'Time/grade dimension detected �
 # Categorical dimension + numeric value = Bar or Column
 def _has_categorical_and_numeric(columns, col_defs):
     has_cat = any(c in ('grade', 'school', 'gender', 'race', 'ell', 'status', 'sped') for c in columns)
-    has_num = any(c.endswith('_SS') for c in columns) or any(c in ('student_id',) for c in columns)
+    has_num = any(c.endswith('_SS') for c in columns) or any(c in ('student_id', 'atendace_rate', 'attendance_rate') for c in columns)
     return has_cat and has_num
 
 _register_rule(_has_categorical_and_numeric, 'bar', 18, 'Categorical dimension with numeric data — Bar chart is the clearest comparison')
@@ -3769,7 +3769,7 @@ _register_rule(_has_few_cat_columns, 'donut', 11, 'Categorical data — Donut ch
 
 # Two numeric columns → scatter
 def _has_two_numeric(columns, col_defs):
-    num_cols = [c for c in columns if c.endswith('_SS') or c in ('atendace_rate', 'suspension_indicator')]
+    num_cols = [c for c in columns if c.endswith('_SS') or c in ('atendace_rate', 'attendance_rate', 'suspension_indicator')]
     return len(num_cols) >= 2
 
 _register_rule(_has_two_numeric, 'scatter', 12, 'Two numeric columns — Scatter plot shows correlation')
@@ -3783,7 +3783,7 @@ _register_rule(_has_multiple_categories, 'heatmap', 8, 'Multiple categories — 
 
 # Single numeric column → histogram
 def _has_single_numeric(columns, col_defs):
-    num_cols = [c for c in columns if c.endswith('_SS')]
+    num_cols = [c for c in columns if c.endswith('_SS') or c in ('atendace_rate', 'attendance_rate')]
     return len(num_cols) == 1
 
 _register_rule(_has_single_numeric, 'histogram', 7, 'Single numeric column — Histogram shows distribution')

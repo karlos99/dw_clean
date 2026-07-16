@@ -840,13 +840,47 @@
                                :value="chartFilters[col]?.lte || ''"
                                @change="setDateRangeFilter(col, 'lte', $event.target.value)">
                       </label>
+                      <div class="flex items-center gap-1.5 mt-1.5">
+                        <input type="checkbox" :id="'exclude_' + col"
+                               :checked="!!chartFilters[col]?.exclude"
+                               @change="toggleRangeExclude(col)"
+                               class="rounded border-slate-300 text-red-600 focus:ring-red-400 w-3 h-3">
+                        <label :for="'exclude_' + col" class="text-[10px] text-slate-500 font-medium select-none cursor-pointer">Exclude range</label>
+                      </div>
                       <button type="button" x-show="filterBadgeCount(col) > 0"
                               @click="clearDateRangeFilter(col)"
                               class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear range</button>
                     </div>
                   </template>
-                  {# Checkbox multi-select (non-date columns) #}
-                  <template x-if="!isDateColumn(col)">
+                  {# Numeric range picker #}
+                  <template x-if="isNumericColumn(col)">
+                    <div class="px-2 py-2 space-y-1.5">
+                      <label class="block text-[10px] text-slate-500">Min value
+                        <input type="number" step="any" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 mt-0.5"
+                               placeholder="e.g. 0"
+                               :value="chartFilters[col]?.gte || ''"
+                               @input="setDateRangeFilter(col, 'gte', $event.target.value)">
+                      </label>
+                      <label class="block text-[10px] text-slate-500">Max value
+                        <input type="number" step="any" class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 mt-0.5"
+                               placeholder="e.g. 100"
+                               :value="chartFilters[col]?.lte || ''"
+                               @input="setDateRangeFilter(col, 'lte', $event.target.value)">
+                      </label>
+                      <div class="flex items-center gap-1.5 mt-1.5">
+                        <input type="checkbox" :id="'exclude_' + col"
+                               :checked="!!chartFilters[col]?.exclude"
+                               @change="toggleRangeExclude(col)"
+                               class="rounded border-slate-300 text-red-600 focus:ring-red-400 w-3 h-3">
+                        <label :for="'exclude_' + col" class="text-[10px] text-slate-500 font-medium select-none cursor-pointer">Exclude range</label>
+                      </div>
+                      <button type="button" x-show="filterBadgeCount(col) > 0"
+                              @click="clearDateRangeFilter(col)"
+                              class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear range</button>
+                    </div>
+                  </template>
+                  {# Checkbox multi-select (non-date, non-numeric columns) #}
+                  <template x-if="!isDateColumn(col) && !isNumericColumn(col)">
                     <div>
                       <div class="px-2 py-1.5">
                         <div class="flex gap-1 mb-1.5">
@@ -1036,7 +1070,7 @@
               <button @click="xCols = []; _syncXCols()" class="ml-1 text-slate-400 hover:text-red-500 text-lg leading-none">&times;</button>
             </div>
           </div>
-          <div x-show="chartType === 'line' && xCols.some(isDateColumn)" x-transition class="mt-1.5">
+          <div x-show="chartType === 'line' && xCols.some(c => isDateColumn(c))" x-transition class="mt-1.5">
             <label class="text-[10px] font-semibold text-slate-500 mb-1 block">Group dates by</label>
             <select x-model="xDateBucket" @change="_schedulePreview(true)"
                     class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 bg-white">
@@ -1820,7 +1854,7 @@
         </div>
         <div>
           <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Row Limit</label>
-          <input type="number" x-model.number="limit" min="1" max="100000"
+          <input type="number" x-model.number="limit" min="1"
                  placeholder="No limit"
                  class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
           <p class="text-[10px] text-slate-400 mt-1">Leave blank to load all rows</p>
@@ -3235,7 +3269,7 @@ function chartBuilder() {
     get plCols()       { return this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_PL')); },
     get filterCols() {
       const base = Object.keys(this.filterOptions).filter(k => k !== 'tested_school');
-      const extra = this.activeCols.filter(c => this.isDateColumn(c) && !base.includes(c));
+      const extra = this.activeCols.filter(c => (this.isDateColumn(c) || this.isNumericColumn(c)) && !base.includes(c));
       return [...base, ...extra].sort();
     },
     get activeFilterCount() {

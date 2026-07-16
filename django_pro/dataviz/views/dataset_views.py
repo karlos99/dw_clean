@@ -406,7 +406,7 @@ def api_column_unique_values(request):
             values = None
 
         if values is None:
-            sql = f'SELECT DISTINCT "{col_name}" FROM "{table_name}" WHERE "{col_name}" IS NOT NULL AND "{col_name}" != %s ORDER BY "{col_name}" LIMIT 500'
+            sql = f'SELECT DISTINCT "{col_name}" FROM "{table_name}" WHERE "{col_name}" IS NOT NULL AND "{col_name}" != %s ORDER BY "{col_name}"'
             from clickhouse_utils.executor import QueryExecutor, CLICKHOUSE_SYNCED_TABLES
             if table_name in CLICKHOUSE_SYNCED_TABLES:
                 with QueryExecutor().cursor() as cursor:
@@ -482,7 +482,6 @@ def dataset_filter_options_api(request, dataset_id):
     try:
         col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
         _SKIP = frozenset({'ssid', 'student_id', 'stu_annual_key', 'student_name'})
-        _DISTINCT_LIMIT = 500  # max distinct values per filter column
 
         # Use the ClickHouse-aware executor only when every table this dataset
         # touches is actually mirrored into ClickHouse — otherwise the data
@@ -508,19 +507,78 @@ def dataset_filter_options_api(request, dataset_id):
 
                 # Quote the sql_col for use as column reference in the outer SELECT
                 quoted = f'"{sql_col}"'
-                distinct_sql = (
-                    f'SELECT DISTINCT {quoted} AS val '
-                    f'FROM ({sql_base}) _q '
-                    f'WHERE {quoted} IS NOT NULL AND CAST({quoted} AS TEXT) != \'\' '
-                    f'ORDER BY 1 LIMIT {_DISTINCT_LIMIT}'
-                )
+                col_name = alias.split('.')[-1].lower()
+                is_date = col_name.endswith('_date') or col_name.endswith('_at') or col_name == 'date' or 'date' in col_name
+                is_numeric = col_name == 'atendace_rate' or col_name.endswith('_ss') or col_name.endswith('_rate')
+                if is_date or is_numeric:
+                    bounds_sql = (
+                        f'SELECT CAST(MIN({quoted}) AS TEXT) AS min_val, CAST(MAX({quoted}) AS TEXT) AS max_val '
+                        f'FROM ({sql_base}) _q '
+                        f'WHERE {quoted} IS NOT NULL'
+                    )
+                else:
+                    bounds_sql = None
+                    distinct_sql = (
+                        f'SELECT DISTINCT {quoted} AS val '
+                        f'FROM ({sql_base}) _q '
+                        f'WHERE {quoted} IS NOT NULL AND CAST({quoted} AS TEXT) != \'\' '
+                        f'ORDER BY 1'
+                    )
                 try:
-                    cur.execute(distinct_sql, params)
-                    vals = [str(row[0]) for row in cur.fetchall() if row[0] is not None]
+                    if bounds_sql:
+                        cur.execute(bounds_sql, params)
+                        row = cur.fetchone()
+                        vals = [str(v) for v in row if v is not None] if row else []
+                    else:
+                        cur.execute(distinct_sql, params)
+                        vals = [str(row[0]) for row in cur.fetchall() if row[0] is not None]
                     if vals:
                         filter_options[alias] = vals
                 except Exception:
                     pass  # skip columns that error (e.g. non-comparable types)
+
+            # Always expose standard demographic range filters for chart builder.
+            _STANDARD_RANGE_FILTERS = {
+                'fep_date': (
+                    " LEFT JOIN ("
+                    " SELECT DISTINCT ON (student_id, school_year) *"
+                    " FROM student_enroll"
+                    " ORDER BY student_id, school_year, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
+                    ") se ON se.student_id = cs.student_id AND se.school_year = cs.school_year",
+                    'se.fep_date',
+                ),
+                'birth_date': (
+                    " LEFT JOIN ("
+                    " SELECT DISTINCT ON (student_id, school_year) *"
+                    " FROM student_enroll"
+                    " ORDER BY student_id, school_year, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
+                    ") se ON se.student_id = cs.student_id AND se.school_year = cs.school_year",
+                    'se.birth_date',
+                ),
+                'us_enter_date': (
+                    " LEFT JOIN ("
+                    " SELECT DISTINCT ON (student_id, school_year) *"
+                    " FROM student_enroll"
+                    " ORDER BY student_id, school_year, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
+                    ") se ON se.student_id = cs.student_id AND se.school_year = cs.school_year",
+                    'se.us_enter_date',
+                ),
+                'atendace_rate': ('', 'cs.atendace_rate'),
+            }
+            for alias, (join_sql, expr) in _STANDARD_RANGE_FILTERS.items():
+                if alias in filter_options:
+                    continue
+                try:
+                    cur.execute(
+                        f'SELECT CAST(MIN({expr}) AS TEXT), CAST(MAX({expr}) AS TEXT) '
+                        f'FROM current_student cs{join_sql} WHERE {expr} IS NOT NULL'
+                    )
+                    row = cur.fetchone()
+                    vals = [str(v) for v in row if v is not None] if row else []
+                    if vals:
+                        filter_options[alias] = vals
+                except Exception:
+                    pass
 
         filter_labels = {k: k for k in filter_options}
         result = {'filter_options': filter_options, 'filter_labels': filter_labels}
@@ -593,7 +651,28 @@ def _dataset_filter_options_legacy(request, dataset_id):
                         continue
                     if ftbl not in TABLE_WHITELIST or fname not in COLUMN_WHITELIST.get(ftbl, set()):
                         continue
-                    if isinstance(fval, list):
+                    if isinstance(fval, dict):
+                        gte = fval.get('gte')
+                        lte = fval.get('lte')
+                        exclude = fval.get('exclude')
+                        if exclude:
+                            conds = []
+                            if gte:
+                                conds.append(f'"{ftbl}"."{fname}" < %s')
+                                where_params.append(gte)
+                            if lte:
+                                conds.append(f'"{ftbl}"."{fname}" > %s')
+                                where_params.append(lte)
+                            if conds:
+                                where_parts.append(f"({' OR '.join(conds)} OR \"{ftbl}\".\"{fname}\" IS NULL)")
+                        else:
+                            if gte:
+                                where_parts.append(f'"{ftbl}"."{fname}" >= %s')
+                                where_params.append(gte)
+                            if lte:
+                                where_parts.append(f'"{ftbl}"."{fname}" <= %s')
+                                where_params.append(lte)
+                    elif isinstance(fval, list):
                         vals = [v for v in fval if v]
                         if not vals:
                             continue
@@ -622,7 +701,7 @@ def _dataset_filter_options_legacy(request, dataset_id):
                 else:
                     where_sql = 'WHERE'
 
-                sql = f'SELECT DISTINCT "{col_name}" FROM "{table_name}" {where_sql} "{col_name}" IS NOT NULL AND "{col_name}" != %s ORDER BY "{col_name}" LIMIT 200'
+                sql = f'SELECT DISTINCT "{col_name}" FROM "{table_name}" {where_sql} "{col_name}" IS NOT NULL AND "{col_name}" != %s ORDER BY "{col_name}"'
                 all_params = where_params + ['']
                 with connection.cursor() as cursor:
                     cursor.execute("BEGIN READ ONLY")

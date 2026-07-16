@@ -12,6 +12,22 @@ function chartBuilderFilterMethods() {
       return name.endsWith('_date') || name.endsWith('_at') || name === 'date' || name.includes('date_of');
     },
 
+    isNumericColumn(col) {
+      if (!col) return false;
+      const name = String(col).split('.').pop().toLowerCase();
+      return name.endsWith('_ss') || name === 'atendace_rate' || name === 'attendance_rate' || name.includes('attendance') || name.includes('atendace') || name.endsWith('_rate');
+    },
+
+    toggleRangeExclude(col) {
+      const existing = this.chartFilters[col];
+      const cur = { ...(existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}) };
+      cur.exclude = !cur.exclude;
+      if (!cur.exclude) delete cur.exclude;
+      this.chartFilters = { ...this.chartFilters, [col]: cur };
+      this._refreshFilterOptions();
+      this._schedulePreview(true);
+    },
+
     filterBadgeCount(col) {
       const v = this.chartFilters[col];
       if (Array.isArray(v)) return v.length;
@@ -22,7 +38,15 @@ function chartBuilderFilterMethods() {
     setDateRangeFilter(col, which, val) {
       const existing = this.chartFilters[col];
       const cur = { ...(existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}) };
-      if (val) cur[which] = val; else delete cur[which];
+      if (val === '' || val == null) {
+        delete cur[which];
+      } else if (this.isNumericColumn(col)) {
+        const num = parseFloat(val);
+        if (Number.isNaN(num)) return;
+        cur[which] = num;
+      } else {
+        cur[which] = String(val).slice(0, 10);
+      }
       if (!Object.keys(cur).length) {
         const f = { ...this.chartFilters };
         delete f[col];
@@ -30,6 +54,7 @@ function chartBuilderFilterMethods() {
       } else {
         this.chartFilters = { ...this.chartFilters, [col]: cur };
       }
+      this._refreshFilterOptions();
       this._schedulePreview(true);
     },
 
@@ -37,7 +62,21 @@ function chartBuilderFilterMethods() {
       const f = { ...this.chartFilters };
       delete f[col];
       this.chartFilters = f;
+      this._refreshFilterOptions();
       this._schedulePreview(true);
+    },
+
+    normalizeRangeOptionBounds(col, vals) {
+      if (!Array.isArray(vals) || !vals.length) return vals || [];
+      const cleaned = vals.map(v => (v == null ? '' : String(v).trim())).filter(Boolean);
+      if (!cleaned.length) return [];
+      if (this.isDateColumn(col)) {
+        return cleaned.map(v => v.slice(0, 10)).sort();
+      }
+      if (this.isNumericColumn(col)) {
+        return cleaned.map(v => parseFloat(v)).filter(v => !Number.isNaN(v)).sort((a, b) => a - b).map(String);
+      }
+      return cleaned;
     },
 
     filteredFilterValues(col) {

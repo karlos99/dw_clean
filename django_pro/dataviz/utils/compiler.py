@@ -9,8 +9,6 @@ from dataexploration.utils import get_user_roles
 
 logger = logging.getLogger(__name__)
 
-MAX_CHART_ROWS = 150000
-
 
 def generate_column_aliases(columns: list, existing_mappings: dict | None = None) -> dict:
     """
@@ -375,7 +373,7 @@ def format_column_expr(tbl, col):
     return f'"{tbl}"."{col}"'
 
 
-def compile_dataset_to_sql(dataset, user=None, limit=MAX_CHART_ROWS, interactive_filters=None):
+def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=None):
     """
     Compiles a Dataset definition object into parameterized SQL.
     Returns (sql_query_string, parameters_list).
@@ -643,12 +641,26 @@ def compile_dataset_to_sql(dataset, user=None, limit=MAX_CHART_ROWS, interactive
             # Add filter condition
             expr = format_column_expr(ftbl, fname)
             if isinstance(fval, dict):
-                if fval.get('gte'):
-                    where_parts.append(f'{expr} >= %s')
-                    params.append(fval['gte'])
-                if fval.get('lte'):
-                    where_parts.append(f'{expr} <= %s')
-                    params.append(fval['lte'])
+                gte = fval.get('gte')
+                lte = fval.get('lte')
+                exclude = fval.get('exclude')
+                if exclude:
+                    conds = []
+                    if gte:
+                        conds.append(f'{expr} < %s')
+                        params.append(gte)
+                    if lte:
+                        conds.append(f'{expr} > %s')
+                        params.append(lte)
+                    if conds:
+                        where_parts.append(f"({' OR '.join(conds)} OR {expr} IS NULL)")
+                else:
+                    if gte:
+                        where_parts.append(f'{expr} >= %s')
+                        params.append(gte)
+                    if lte:
+                        where_parts.append(f'{expr} <= %s')
+                        params.append(lte)
             elif isinstance(fval, list):
                 vals = [v for v in fval if v]
                 if not vals:
@@ -686,7 +698,7 @@ def compile_dataset_to_sql(dataset, user=None, limit=MAX_CHART_ROWS, interactive
     return result
 
 
-def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation, series_col=None, user=None, limit=MAX_CHART_ROWS):
+def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation, series_col=None, user=None, limit=None):
     """
     Compiles a Dataset definition into aggregated SQL with GROUP BY.
 
@@ -851,7 +863,8 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
     sql += " GROUP BY " + ", ".join(group_clauses)
-    sql += f" LIMIT {limit}"
+    if limit is not None:
+        sql += f" LIMIT {limit}"
 
     return sql, params
 

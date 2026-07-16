@@ -32,6 +32,53 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertIn('"current_student"."grade" = ANY(%s)', sql)
         self.assertEqual(params, [['K', '1']])
 
+    def test_compile_dataset_to_sql_range_filters(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.atendace_rate'],
+            updated_at=None,
+        )
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'atendace_rate'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', return_value=('current_student', 'atendace_rate')), \
+             patch('dataviz.utils.compiler.format_column_expr', return_value='"current_student"."atendace_rate"'):
+            
+            # Test include range
+            sql, params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={'current_student.atendace_rate': {'gte': 90.0, 'lte': 95.0}},
+                user=None,
+            )
+            self.assertIn('"current_student"."atendace_rate" >= %s', sql)
+            self.assertIn('"current_student"."atendace_rate" <= %s', sql)
+            self.assertEqual(params, [90.0, 95.0])
+
+            # Test exclude range
+            sql, params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={'current_student.atendace_rate': {'gte': 90.0, 'lte': 95.0, 'exclude': True}},
+                user=None,
+            )
+            self.assertIn('("current_student"."atendace_rate" < %s OR "current_student"."atendace_rate" > %s OR "current_student"."atendace_rate" IS NULL)', sql)
+            self.assertEqual(params, [90.0, 95.0])
+
+    def test_build_where_clause_range_filters(self):
+        from dataviz.views.api.query_api import _build_where_clause
+
+        parts, params = _build_where_clause({
+            'fep_date': {'gte': '2024-01-01', 'lte': '2024-12-31'},
+            'atendace_rate': {'gte': 90, 'lte': 95, 'exclude': True},
+        })
+        self.assertIn('se.fep_date >= %s', parts)
+        self.assertIn('se.fep_date <= %s', parts)
+        self.assertTrue(any('cs.atendace_rate < %s' in p for p in parts))
+        self.assertTrue(any('cs.atendace_rate > %s' in p for p in parts))
+        self.assertEqual(params, ['2024-01-01', '2024-12-31', 90, 95])
+
 
 class DatasetDrillThroughTests(TestCase):
     def setUp(self):

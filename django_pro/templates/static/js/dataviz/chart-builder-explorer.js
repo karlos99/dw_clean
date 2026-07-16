@@ -238,6 +238,9 @@ function chartBuilderExplorerMethods() {
         this.testedSchoolNames = labels.__tested_school_labels__ || {};
         delete labels.__tested_school_labels__;
         this.filterLabels = labels;
+        Object.keys(this.filterOptions).forEach(col => {
+          this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
+        });
       } catch (e) {
         if (e.name !== 'AbortError') { console.error('Explorer filters:', e); this.filterOptions = {}; this.filterLabels = {}; }
       }

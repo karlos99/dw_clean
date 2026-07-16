@@ -71,6 +71,9 @@ function chartBuilderDataMethods() {
         const d = await r.json();
         this.filterOptions = d.filter_options || {};
         this.filterLabels = d.filter_labels || {};
+        Object.keys(this.filterOptions).forEach(col => {
+          this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
+        });
       } catch (e) { console.error('Dataset filter options:', e); this.filterOptions = {}; this.filterLabels = {}; }
       this.filtersLoading = false;
     },
@@ -94,6 +97,9 @@ function chartBuilderDataMethods() {
         this.testedSchoolNames = labels.__tested_school_labels__ || {};
         delete labels.__tested_school_labels__;
         this.filterLabels = labels;
+        Object.keys(this.filterOptions).forEach(col => {
+          this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
+        });
       } catch (e) { console.error('Filter options:', e); this.filterOptions = {}; this.filterLabels = {}; }
       this.filtersLoading = false;
       if (this.chartType === 'progress_growth' && this.pgBeforeCol && this.pgAfterCol) {
