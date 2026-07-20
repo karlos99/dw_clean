@@ -1908,7 +1908,10 @@ def _normalize_pl_val(v):
         pass
 
     val_str = str(v).strip()
-    if val_str == '' or val_str in {'nan', 'NaN', 'None', 'null', 'NULL', '<NA>', '<na>'}:
+    if val_str == '' or val_str in {
+        'nan', 'NaN', 'None', 'null', 'NULL', '<NA>', '<na>',
+        '-', '\u2014', '\u2013', '—', 'N/A', 'n/a',
+    }:
         return ''
     if val_str.endswith('.0'):
         try:
@@ -1933,6 +1936,158 @@ def _auto_detect_pl_scale(values) -> list:
             return [s for s in scale if s in val_set]
     # Final fallback: guaranteed string sort to avoid TypeError: '<' not supported between 'float' and 'str'
     return sorted(list(val_set))
+
+
+_BLANK_PL_VALS = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+
+
+def _resolve_row_column(row_keys, col):
+    """Map a config column name to the actual key present in row dicts."""
+    if not col or not row_keys:
+        return col
+    from dataexploration.school_year_utils import resolve_relative_column_key
+
+    def _norm_col(c):
+        return str(c).replace('-', '_').lower()
+
+    key_map = {_norm_col(k): k for k in row_keys}
+    norm = _norm_col(col)
+    if norm in key_map:
+        return key_map[norm]
+    resolved = resolve_relative_column_key(col)
+    norm_res = _norm_col(resolved)
+    if norm_res in key_map:
+        return key_map[norm_res]
+    clean = col.split('.')[-1]
+    norm_clean = _norm_col(clean)
+    if norm_clean in key_map:
+        return key_map[norm_clean]
+    return col
+
+
+def _find_student_id_key(row_keys):
+    for target in ('ssid', 'student_id', 'stu_annual_key'):
+        match = next(
+            (k for k in row_keys if k == target or k.split('.')[-1].lower() == target),
+            None,
+        )
+        if match:
+            return match
+    return None
+
+
+def _build_pg_rank(pl_scale, rows, before_col, after_col):
+    """Build PL rank dict from configured scale or auto-detect from row values."""
+    if pl_scale:
+        ordered = [_normalize_pl_val(v) for v in pl_scale if str(v).strip()]
+    else:
+        all_vals = set()
+        for r in rows:
+            for c in (before_col, after_col):
+                v = _normalize_pl_val(r.get(c))
+                if v and v not in _BLANK_PL_VALS:
+                    all_vals.add(v)
+        ordered = _auto_detect_pl_scale(list(all_vals))
+    if not ordered:
+        return {}
+    return {v: i for i, v in enumerate(ordered)}
+
+
+def _row_student_key(row: dict):
+    """Return the first non-empty student identifier on this row."""
+    if not row:
+        return None
+    keys = list(row.keys())
+    for target in ('ssid', 'student_id', 'stu_annual_key'):
+        col = next(
+            (k for k in keys if k == target or k.split('.')[-1].lower() == target),
+            None,
+        )
+        if not col:
+            continue
+        val = row.get(col)
+        if val is not None and str(val).strip() not in _BLANK_PL_VALS:
+            return str(val).strip()
+    return None
+
+
+def _dedupe_student_rows(rows: list) -> list:
+    """Keep one row per student — uses per-row best id, not a single column."""
+    seen = set()
+    deduped = []
+    for r in rows:
+        key = _row_student_key(r)
+        if key is None:
+            deduped.append(r)
+        elif key not in seen:
+            seen.add(key)
+            deduped.append(r)
+    return deduped
+
+
+def prepare_progress_growth_rows(rows, before_col, after_col, pl_scale=None):
+    """Filter to valid before/after PL pairs and dedupe by student (first kept).
+
+    Mirrors ``_progress_growth_option`` preprocessing so matrix cell counts and
+    drill-through student lists stay aligned.
+    """
+    if not rows or not before_col or not after_col:
+        return [], before_col, after_col, {}
+
+    row_keys = list(rows[0].keys())
+    before_col = _resolve_row_column(row_keys, before_col)
+    after_col = _resolve_row_column(row_keys, after_col)
+    rank = _build_pg_rank(pl_scale or [], rows, before_col, after_col)
+    if not rank:
+        return [], before_col, after_col, rank
+
+    prepared = []
+    for r in rows:
+        b = _normalize_pl_val(r.get(before_col))
+        a = _normalize_pl_val(r.get(after_col))
+        if b in rank and a in rank:
+            prepared.append(r)
+
+    prepared = _dedupe_student_rows(prepared)
+
+    return prepared, before_col, after_col, rank
+
+
+def filter_progress_growth_matrix_rows(rows, before_col, after_col, before_val, after_val):
+    """Return rows for one matrix cell, deduped by student.
+
+    Matches matrix chart counting: filter to the before→after transition first,
+    then keep one row per student (not a single global row per student).
+    """
+    if not rows or not before_col or not after_col:
+        return [], before_col, after_col
+
+    row_keys = list(rows[0].keys())
+    before_col = _resolve_row_column(row_keys, before_col)
+    after_col = _resolve_row_column(row_keys, after_col)
+    b_target = _normalize_pl_val(before_val)
+    a_target = _normalize_pl_val(after_val)
+
+    matched = [
+        r for r in rows
+        if _normalize_pl_val(r.get(before_col)) == b_target
+        and _normalize_pl_val(r.get(after_col)) == a_target
+    ]
+
+    return _dedupe_student_rows(matched), before_col, after_col
+
+
+def classify_progress_growth_row(row, before_col, after_col, rank):
+    """Return Growth / Sliders / Stickers for one prepared row, or None."""
+    b = rank.get(_normalize_pl_val(row.get(before_col)))
+    a = rank.get(_normalize_pl_val(row.get(after_col)))
+    if b is None or a is None:
+        return None
+    if a > b:
+        return 'Growth'
+    if a < b:
+        return 'Sliders'
+    return 'Stickers'
 
 
 def _summary_table_option(df, row_col, col_col, cfg, col_defs):
@@ -2772,7 +2927,7 @@ def _build_row_combos(val_lists, cols):
     return result
 
 
-def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels):
+def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels, raw_rows=None):
     """Progress Growth: classify students as Growth / Sliders / Stickers.
 
     Compares two PL columns per student using a user-defined (or auto-detected)
@@ -2792,13 +2947,6 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     if pg_before_col not in df.columns or pg_after_col not in df.columns:
         missing = [c for c in (pg_before_col, pg_after_col) if c not in df.columns]
         return _message_option(f'PL column(s) not found in data: {", ".join(missing)}', cfg, error=True)
-
-    # Deduplicate rows so each student is counted at most once.
-    # The underlying query may return a student on more than one row (e.g.
-    # when current_student has multiple enrolment entries for the same year).
-    _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
-    if _dup_key:
-        df = df.drop_duplicates(subset=_dup_key, keep='first')
 
     _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
 
@@ -2824,81 +2972,23 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     dfc = df.copy()
     dfc['_before'] = dfc[pg_before_col].astype(str).apply(_normalize_pl_val)
     dfc['_after']  = dfc[pg_after_col].astype(str).apply(_normalize_pl_val)
-    valid = dfc['_before'].isin(rank) & dfc['_after'].isin(rank)
-    dfc = dfc[valid].copy()
 
-    if dfc.empty:
-        return _message_option(
-            'No rows matched the PL scale. Check column names and scale values.', cfg, error=True)
-
-    before_rank = dfc['_before'].map(rank)
-    after_rank  = dfc['_after'].map(rank)
-    dfc['_pg'] = 'Stickers'
-    dfc.loc[after_rank > before_rank, '_pg'] = 'Growth'
-    dfc.loc[after_rank < before_rank, '_pg'] = 'Sliders'
-
-    ORDER = ['Growth', 'Sliders', 'Stickers']   # consistent display order
-    total = len(dfc)
-    counts = dfc['_pg'].value_counts()
-    opacity = float(cfg.get('opacity', 0.9) or 0.9)
-    border_radius = int(cfg.get('bar_border_radius', 0) or 0)
-    show_labels = bool(cfg.get('data_labels', False))
-    label_pos = cfg.get('label_position', 'top') or 'top'
-    show_percent = bool(cfg.get('show_percent', False))
-    percent_decimals = _percent_decimals(cfg)
-    percent_suffix = _percent_suffix(cfg)
+    _dup_key = _find_student_id_key(list(dfc.columns))
     t = _theme(cfg)
     ax = _axis_style(cfg)
 
-    # ── Donut / Pie ───────────────────────────────────────────────────────────
-    if pg_display in ('donut', 'pie'):
-        option = _base_option(cfg, axis_trigger=False)
-        data = [
-            {'name': cat, 'value': int(counts.get(cat, 0)),
-             'itemStyle': {'color': _PG_COLORS[cat]}}
-            for cat in ORDER if counts.get(cat, 0) > 0
-        ]
-        _sp = _tooltip_show_pct(cfg)
-        _zero = '0.' + '0' * percent_decimals if percent_decimals else '0'
-        if _sp:
-            tooltip_js = (
-                "function(params) {"
-                f"  var total = {total};"
-                f"  var pct = total > 0 ? (params.value / total * 100).toFixed({percent_decimals}) : '{_zero}';"
-                "  return params.marker + ' ' + params.name + ': <b>' + params.value"
-                f"       + '</b> (' + pct + '%)';"
-                "}"
-            )
-        else:
-            tooltip_js = (
-                "function(params) {"
-                "  return params.marker + ' ' + params.name + ': <b>' + params.value + '</b>';"
-                "}"
-            )
-        option['color'] = [_PG_COLORS[cat] for cat in ORDER]
-        option['series'] = [{
-            'name': 'Progress Growth',
-            'type': 'pie',
-            'radius': ['45%', '70%'] if pg_display == 'donut' else '70%',
-            'data': data,
-            'label': {'show': bool(cfg.get('data_labels', True)), 'formatter': '{b}: {c}', 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
-        }]
-        option['tooltip'] = {
-            'show': cfg.get('show_tooltip', True) is not False,
-            'trigger': 'item',
-            '__formatter_js__': tooltip_js,
-        }
-        return option
-
     # ── Transition Matrix ────────────────────────────────────────────────────
     if pg_display == 'matrix':
-        # Cross-tabulation: y-axis rows = Before PL, x-axis columns = After PL.
-        # ECharts category y-axis: index 0 at bottom, so ordered[0] (lowest)
-        # appears at the bottom and ordered[-1] (highest) at the top.
+        # Use the exact same row filter + dedupe as drill-through (dict rows,
+        # per-row student id) so cell counts always match the drill list.
+        source_rows = raw_rows if raw_rows is not None else df.to_dict('records')
         crossdata = []
         for i, before in enumerate(ordered):
             for j, after in enumerate(ordered):
-                count = int(((dfc['_before'] == before) & (dfc['_after'] == after)).sum())
+                matched, _, _ = filter_progress_growth_matrix_rows(
+                    source_rows, pg_before_col, pg_after_col, before, after,
+                )
+                count = len(matched)
                 if j > i:       # after rank > before rank → Growth
                     color = _PG_COLORS['Growth']
                     alpha = 0.85 if count > 0 else 0.10
@@ -2985,6 +3075,76 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
             'yLabels': ordered,   # Before PL — y-axis
         }
         return mat_opt
+
+    valid = dfc['_before'].isin(rank) & dfc['_after'].isin(rank)
+    dfc = dfc[valid].copy()
+
+    # Bar / donut / pie: one transition per student — dedupe after valid PL filter.
+    if _dup_key:
+        dfc = dfc.drop_duplicates(subset=_dup_key, keep='first')
+
+    if dfc.empty:
+        return _message_option(
+            'No rows matched the PL scale. Check column names and scale values.', cfg, error=True)
+
+    before_rank = dfc['_before'].map(rank)
+    after_rank  = dfc['_after'].map(rank)
+    dfc['_pg'] = 'Stickers'
+    dfc.loc[after_rank > before_rank, '_pg'] = 'Growth'
+    dfc.loc[after_rank < before_rank, '_pg'] = 'Sliders'
+
+    ORDER = ['Growth', 'Sliders', 'Stickers']   # consistent display order
+    total = len(dfc)
+    counts = dfc['_pg'].value_counts()
+    opacity = float(cfg.get('opacity', 0.9) or 0.9)
+    border_radius = int(cfg.get('bar_border_radius', 0) or 0)
+    show_labels = bool(cfg.get('data_labels', False))
+    label_pos = cfg.get('label_position', 'top') or 'top'
+    show_percent = bool(cfg.get('show_percent', False))
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
+    t = _theme(cfg)
+    ax = _axis_style(cfg)
+
+    # ── Donut / Pie ───────────────────────────────────────────────────────────
+    if pg_display in ('donut', 'pie'):
+        option = _base_option(cfg, axis_trigger=False)
+        data = [
+            {'name': cat, 'value': int(counts.get(cat, 0)),
+             'itemStyle': {'color': _PG_COLORS[cat]}}
+            for cat in ORDER if counts.get(cat, 0) > 0
+        ]
+        _sp = _tooltip_show_pct(cfg)
+        _zero = '0.' + '0' * percent_decimals if percent_decimals else '0'
+        if _sp:
+            tooltip_js = (
+                "function(params) {"
+                f"  var total = {total};"
+                f"  var pct = total > 0 ? (params.value / total * 100).toFixed({percent_decimals}) : '{_zero}';"
+                "  return params.marker + ' ' + params.name + ': <b>' + params.value"
+                f"       + '</b> (' + pct + '%)';"
+                "}"
+            )
+        else:
+            tooltip_js = (
+                "function(params) {"
+                "  return params.marker + ' ' + params.name + ': <b>' + params.value + '</b>';"
+                "}"
+            )
+        option['color'] = [_PG_COLORS[cat] for cat in ORDER]
+        option['series'] = [{
+            'name': 'Progress Growth',
+            'type': 'pie',
+            'radius': ['45%', '70%'] if pg_display == 'donut' else '70%',
+            'data': data,
+            'label': {'show': bool(cfg.get('data_labels', True)), 'formatter': '{b}: {c}', 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
+        }]
+        option['tooltip'] = {
+            'show': cfg.get('show_tooltip', True) is not False,
+            'trigger': 'item',
+            '__formatter_js__': tooltip_js,
+        }
+        return option
 
     # ── Stacked / Grouped Bar ─────────────────────────────────────────────────
     option = _base_option(cfg)
@@ -3412,6 +3572,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         return _message_option('No data loaded', cfg)
 
     chart_type   = cfg.get('chart_type', 'bar')
+    raw_rows = list(rows) if chart_type == 'progress_growth' else None
     legacy_bar_defaults = {
         'column': {'bar_layout': 'grouped', 'bar_orientation': 'vertical', 'bar_radial': False},
         'grouped_bar': {'bar_layout': 'grouped', 'bar_orientation': 'vertical', 'bar_radial': False},
@@ -3488,9 +3649,9 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
 
     df = pd.DataFrame(rows)
 
-    # Apply row limit before any processing (None = no limit)
+    # Progress growth always uses the full query — drill and matrix need every row.
     _row_limit = cfg.get('limit')
-    if _row_limit and _row_limit > 0:
+    if _row_limit and _row_limit > 0 and chart_type != 'progress_growth':
         df = df.head(_row_limit)
 
     def _norm_col_name(c):
@@ -3560,16 +3721,16 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         size_col    = size_col    if size_col    in df.columns else ''
         y_cols    = [c for c in y_cols if c in df.columns]
 
-    # Drop rows where key categorical columns contain placeholder / blank values
-    # (e.g. '—' assigned by data_loader for students with no test result)
-    _BLANK_VALUES = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL', 'nan', 'NAN', 'NaN'})
-    for _col in (stack_col, group_col, x_col):
-        if _col and _col in df.columns:
-            # Drop actual NaNs
-            df = df.dropna(subset=[_col])
-            # Drop blank-like strings
-            if not pd.api.types.is_numeric_dtype(df[_col]):
-                df = df[~df[_col].astype(str).str.strip().isin(_BLANK_VALUES)]
+    # Progress growth classifies from PL columns — never drop rows for blank x/stack.
+    if chart_type != 'progress_growth':
+        _BLANK_VALUES = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL', 'nan', 'NAN', 'NaN'})
+        for _col in (stack_col, group_col, x_col):
+            if _col and _col in df.columns:
+                # Drop actual NaNs
+                df = df.dropna(subset=[_col])
+                # Drop blank-like strings
+                if not pd.api.types.is_numeric_dtype(df[_col]):
+                    df = df[~df[_col].astype(str).str.strip().isin(_BLANK_VALUES)]
     if df.empty:
         return _message_option('All rows filtered out (no valid data)', cfg)
 
@@ -3608,7 +3769,10 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'radar':        lambda: _radar_option(df, x_col, y_col, agg, cfg),
         'gauge':        lambda: _gauge_option(df, y_col, agg, cfg, labels),
         'assessment_compare': lambda: _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs),
-        'progress_growth': lambda: _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels),
+        'progress_growth': lambda: _progress_growth_option(
+            df, x_col, pg_before_col, pg_after_col, pl_scale, pg_display, cfg, labels,
+            raw_rows=raw_rows,
+        ),
         'summary_table':   lambda: _summary_table_option(df, st_row_col, st_col_col, cfg, col_defs),
         'dynamic_summary_table': lambda: _dynamic_summary_table_option(df, st_row_cols, st_col_cols, st_agg_func, st_value_col, st_agg_decimals, cfg, col_defs),
     }

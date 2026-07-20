@@ -1012,6 +1012,119 @@ class RelativeYearFilterOptionsTests(TestCase):
             self.assertTrue(any(c.startswith('test_') and not c.startswith('test___sy_') for c in called_args))
 
 
+class ProgressGrowthMatrixTests(SimpleTestCase):
+    def test_matrix_counts_student_in_each_matching_cell(self):
+        from dataviz.utils.chart_builder import build_option
+
+        pl_scale = ['1', '2', '3', '4']
+        rows = [
+            {'ssid': '1', 'before_pl': '4', 'after_pl': '1'},
+            {'ssid': '1', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '3', 'before_pl': '1', 'after_pl': '3'},
+        ]
+        cfg = {
+            'chart_type': 'progress_growth',
+            'pg_before_col': 'before_pl',
+            'pg_after_col': 'after_pl',
+            'pl_scale': pl_scale,
+            'pg_display': 'matrix',
+        }
+        opt = build_option(rows, {}, cfg)
+        counts = {(d['value'][1], d['value'][0]): d['value'][2] for d in opt['series'][0]['data']}
+        # y=before idx, x=after idx in ordered ['1','2','3','4']
+        self.assertEqual(counts[(3, 0)], 1)   # 4→1: student 1
+        self.assertEqual(counts[(0, 2)], 3)   # 1→3: students 1, 2, 3
+
+    def test_matrix_ignores_blank_x_col_filter(self):
+        from dataviz.utils.chart_builder import build_option
+
+        pl_scale = ['1', '2', '3', '4']
+        rows = [
+            {'ssid': '1', 'before_pl': '1', 'after_pl': '3', 'grade': ''},
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '3', 'grade': '5'},
+        ]
+        cfg = {
+            'chart_type': 'progress_growth',
+            'pg_before_col': 'before_pl',
+            'pg_after_col': 'after_pl',
+            'pl_scale': pl_scale,
+            'pg_display': 'matrix',
+            'x_col': 'grade',
+        }
+        opt = build_option(rows, {}, cfg)
+        counts = {(d['value'][1], d['value'][0]): d['value'][2] for d in opt['series'][0]['data']}
+        self.assertEqual(counts[(0, 2)], 2)
+
+    def test_filter_progress_growth_matrix_rows_per_cell(self):
+        from dataviz.utils.chart_builder import filter_progress_growth_matrix_rows
+
+        rows = [
+            {'ssid': '1', 'before_pl': '4', 'after_pl': '1'},
+            {'ssid': '1', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '3'},
+        ]
+
+        matched, _, _ = filter_progress_growth_matrix_rows(
+            rows, 'before_pl', 'after_pl', '1', '3',
+        )
+        self.assertEqual(len(matched), 2)
+        self.assertEqual(sorted(r['ssid'] for r in matched), ['1', '2'])
+
+    def test_matrix_dedupes_by_any_student_id_column(self):
+        from dataviz.utils.chart_builder import filter_progress_growth_matrix_rows
+
+        rows = [
+            {'ssid': '', 'student_id': 'A', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '', 'student_id': 'B', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': 'C', 'student_id': 'C', 'before_pl': '1', 'after_pl': '3'},
+        ]
+        matched, _, _ = filter_progress_growth_matrix_rows(
+            rows, 'before_pl', 'after_pl', '1', '3',
+        )
+        self.assertEqual(len(matched), 3)
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_matrix_drill_count_matches_chart_cell(self, mock_run_sql):
+        from dataviz.utils.drill_through import execute_drill_query
+
+        pl_scale = ['1', '2', '3', '4']
+        rows = [
+            {'ssid': '1', 'before_pl': '4', 'after_pl': '1'},
+            {'ssid': '1', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '3', 'before_pl': '1', 'after_pl': '3'},
+        ]
+        mock_run_sql.return_value = {'columns': list(rows[0].keys()), 'rows': rows}
+
+        chart = SimpleNamespace(
+            pk=58,
+            updated_at=SimpleNamespace(timestamp=lambda: 0),
+            source_type='sql',
+            source_sql='SELECT 1',
+            source_id=None,
+            source_filters={},
+            chart_type='progress_growth',
+            config={
+                'pg_before_col': 'before_pl',
+                'pg_after_col': 'after_pl',
+                'pl_scale': pl_scale,
+                'pg_display': 'matrix',
+            },
+            drill_through_columns=['ssid'],
+            column_defs={},
+        )
+
+        result = execute_drill_query(
+            chart,
+            drill_filters={'pg_before_val': '1', 'pg_after_val': '3'},
+            columns=['ssid'],
+            user=SimpleNamespace(is_superuser=True, roles=SimpleNamespace(all=lambda: [])),
+        )
+
+        self.assertEqual(result['total_rows'], 3)
+
+
 class ChartRenderCacheTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testadmin', password='password', is_staff=True, is_superuser=True)

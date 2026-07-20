@@ -262,14 +262,16 @@
       // progress_growth matrix (heatmap): decode before/after PL from cell value indices.
       // params.value = [after_idx, before_idx, count].
       // Skip navigation for empty cells (count === 0).
+      let seriesValForUrl = seriesVal;
       if (meta && meta.pgDisplay === 'matrix') {
         if (!Array.isArray(params.value) || params.value[2] === 0) return;
         afterVal  = (meta.xLabels || [])[params.value[0]] || '';
         beforeVal = (meta.yLabels || [])[params.value[1]] || '';
         xVal = '';  // not used for matrix drill
+        seriesValForUrl = '';  // heatmap series name is not meaningful for drill
       }
 
-      let url = `/dataviz/drill/${chartId}/?x_val=${encodeURIComponent(xVal)}&series_val=${encodeURIComponent(seriesVal)}`;
+      let url = `/dataviz/drill/${chartId}/?x_val=${encodeURIComponent(xVal)}&series_val=${encodeURIComponent(seriesValForUrl)}`;
       if (drillCol)   url += `&drill_col=${encodeURIComponent(drillCol)}`;
       if (beforeVal)  url += `&before_val=${encodeURIComponent(beforeVal)}`;
       if (afterVal)   url += `&after_val=${encodeURIComponent(afterVal)}`;

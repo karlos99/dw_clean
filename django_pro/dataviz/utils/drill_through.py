@@ -38,6 +38,17 @@ def split_composite_value(val: str, expected_len: int) -> list:
     return [normalized]
 
 
+def _find_id_col(row_dict):
+    """Find student identifier column in row_dict, prioritizing ssid, then student_id, then stu_annual_key."""
+    if not row_dict:
+        return None
+    for target in ('ssid', 'student_id', 'stu_annual_key'):
+        match = next((k for k in row_dict if k == target or k.split('.')[-1].lower() == target), None)
+        if match:
+            return match
+    return None
+
+
 def build_drill_filter(chart, params: dict) -> dict:
     """
     Translate an ECharts click event params dict into dataexploration filter dict.
@@ -755,10 +766,7 @@ def execute_drill_query(
     # summary_table / dynamic_summary_table: deduplicate by student id AFTER
     # dynamic column filters so the row count matches the chart.
     if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
-        _id_col = next(
-            (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
-            None,
-        )
+        _id_col = _find_id_col(rows[0])
         if _id_col:
             _seen: set = set()
             _deduped: list = []
@@ -807,133 +815,45 @@ def execute_drill_query(
 
         rows = [r for r in rows if _has_calc_value(r.get(calc_target_col))]
 
-    # Post-fetch classification filter for progress_growth.
-    # pg_cat_filter is one of 'Growth', 'Sliders', 'Stickers'.
-    if pg_cat_filter and rows:
+    # progress_growth drill filtering — matrix uses per-cell dedupe (matches chart);
+    # bar/donut modes use one row per student globally.
+    if rows and chart.chart_type == 'progress_growth' and (pg_cat_filter or pg_before_val):
         cfg = chart.config
         before_col = cfg.get('pg_before_col', '')
         after_col  = cfg.get('pg_after_col', '')
         pl_scale   = cfg.get('pl_scale', [])
-        pg_display = cfg.get('pg_display', '')
-        x_col      = cfg.get('x_col', '') if pg_display in ('stacked_bar', 'grouped_bar') else ''
         if before_col and after_col:
-            row_keys = list(rows[0].keys()) if rows else []
-            from dataexploration.school_year_utils import resolve_relative_column_key
-            def _norm_col(c):
-                return str(c).replace('-', '_').lower()
-            key_map = {_norm_col(k): k for k in row_keys}
-            def resolve_col(col):
-                if not col:
-                    return col
-                norm = _norm_col(col)
-                if norm in key_map:
-                    return key_map[norm]
-                resolved = resolve_relative_column_key(col)
-                norm_res = _norm_col(resolved)
-                if norm_res in key_map:
-                    return key_map[norm_res]
-                clean = col.split('.')[-1]
-                norm_clean = _norm_col(clean)
-                if norm_clean in key_map:
-                    return key_map[norm_clean]
-                return col
-            before_col = resolve_col(before_col)
-            after_col  = resolve_col(after_col)
+            from dataviz.utils.chart_builder import (
+                _BLANK_PL_VALS,
+                _resolve_row_column,
+                classify_progress_growth_row,
+                filter_progress_growth_matrix_rows,
+                prepare_progress_growth_rows,
+            )
 
-            _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
+            if pg_before_val:
+                rows, before_col, after_col = filter_progress_growth_matrix_rows(
+                    rows, before_col, after_col, pg_before_val, pg_after_val,
+                )
+            else:
+                rows, before_col, after_col, rank = prepare_progress_growth_rows(
+                    rows, before_col, after_col, pl_scale=pl_scale or None,
+                )
+
+            pg_display = cfg.get('pg_display', '')
+            x_col = cfg.get('x_col', '') if pg_display in ('stacked_bar', 'grouped_bar') else ''
             if pg_x_blank_col:
-                rows = [r for r in rows if str(r.get(pg_x_blank_col) or '').strip() in _BLANK]
+                blank_col = _resolve_row_column(list(rows[0].keys()) if rows else [], pg_x_blank_col)
+                rows = [r for r in rows if str(r.get(blank_col) or '').strip() in _BLANK_PL_VALS]
             elif x_col and x_col not in drill_filters:
-                rows = [r for r in rows if str(r.get(x_col) or '').strip() not in _BLANK]
+                x_col = _resolve_row_column(list(rows[0].keys()) if rows else [], x_col)
+                rows = [r for r in rows if str(r.get(x_col) or '').strip() not in _BLANK_PL_VALS]
 
-            from dataviz.utils.chart_builder import _normalize_pl_val
-            if not pl_scale:
-                from dataviz.utils.chart_builder import _auto_detect_pl_scale
-                all_vals: set = set()
-                for r in rows:
-                    for c in (before_col, after_col):
-                        v = _normalize_pl_val(r.get(c))
-                        if v and v not in _BLANK:
-                            all_vals.add(v)
-                pl_scale = _auto_detect_pl_scale(list(all_vals))
-            rank = {v: i for i, v in enumerate([_normalize_pl_val(s) for s in pl_scale])}
-
-            def _pg_class(row):
-                b = rank.get(_normalize_pl_val(row.get(before_col)))
-                a = rank.get(_normalize_pl_val(row.get(after_col)))
-                if b is None or a is None:
-                    return None
-                if a > b:
-                    return 'Growth'
-                if a < b:
-                    return 'Sliders'
-                return 'Stickers'
-
-            rows = [r for r in rows if _pg_class(r) == pg_cat_filter]
-
-            _id_col = next(
-                (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
-                None,
-            ) if rows else None
-            if _id_col:
-                _seen: set = set()
-                _deduped: list = []
-                for _r in rows:
-                    _k = _r.get(_id_col)
-                    if _k not in _seen:
-                        _seen.add(_k)
-                        _deduped.append(_r)
-                rows = _deduped
-
-    # Matrix drill: filter to the exact Before PL → After PL cell clicked.
-    if pg_before_val and rows:
-        cfg = chart.config
-        before_col = cfg.get('pg_before_col', '')
-        after_col  = cfg.get('pg_after_col', '')
-        if before_col and after_col:
-            row_keys = list(rows[0].keys()) if rows else []
-            from dataexploration.school_year_utils import resolve_relative_column_key
-            def _norm_col(c):
-                return str(c).replace('-', '_').lower()
-            key_map = {_norm_col(k): k for k in row_keys}
-            def resolve_col(col):
-                if not col:
-                    return col
-                norm = _norm_col(col)
-                if norm in key_map:
-                    return key_map[norm]
-                resolved = resolve_relative_column_key(col)
-                norm_res = _norm_col(resolved)
-                if norm_res in key_map:
-                    return key_map[norm_res]
-                clean = col.split('.')[-1]
-                norm_clean = _norm_col(clean)
-                if norm_clean in key_map:
-                    return key_map[norm_clean]
-                return col
-            before_col = resolve_col(before_col)
-            after_col  = resolve_col(after_col)
-
-            from dataviz.utils.chart_builder import _normalize_pl_val
-            rows = [
-                r for r in rows
-                if _normalize_pl_val(r.get(before_col)) == _normalize_pl_val(pg_before_val)
-                and _normalize_pl_val(r.get(after_col)) == _normalize_pl_val(pg_after_val)
-            ]
-
-            _id_col = next(
-                (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
-                None,
-            ) if rows else None
-            if _id_col:
-                _seen: set = set()
-                _deduped: list = []
-                for _r in rows:
-                    _k = _r.get(_id_col)
-                    if _k not in _seen:
-                        _seen.add(_k)
-                        _deduped.append(_r)
-                rows = _deduped
+            if pg_cat_filter:
+                rows = [
+                    r for r in rows
+                    if classify_progress_growth_row(r, before_col, after_col, rank) == pg_cat_filter
+                ]
 
     # Keep a snapshot of all available columns before column restriction
     all_columns = list(cols)
