@@ -135,10 +135,9 @@ def _build_test_columns_from_db(cursor, selected_test_cols: list[str]) -> tuple[
     window_expr = "COALESCE(t.test_window, '')" if has_test_window else "''"
     cursor.execute(
         f"""
-        SELECT DISTINCT r.school_year, t.test_name, t.subject, {window_expr}
-        FROM results r
-        INNER JOIN tests t ON r.test_group_key = t.test_group_key
-        WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+        SELECT DISTINCT t.school_year, t.test_name, t.subject, {window_expr}
+        FROM tests t
+        WHERE t.school_year = ANY(%s) AND t.school_year IS NOT NULL AND t.test_name IS NOT NULL
         """,
         [years],
     )

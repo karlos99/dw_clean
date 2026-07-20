@@ -177,46 +177,45 @@ def get_column_statistics(request):
                     window_clause = "AND t.test_window ILIKE %s "
                     window_params = [test_info['test_window']]
 
-                exist_query_base = (
-                    "SELECT 1 FROM results r "
+                id_subquery_base = (
+                    "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.local_student_id = cs.student_id "
-                    "AND r.school_year = %s "
+                    "WHERE r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
-                exist_params_base = [test_info['year'], test_info['test_name'], test_info['subject'], *window_params]
+                base_params = [test_info['year'], test_info['test_name'], test_info['subject'], *window_params]
 
                 conditions = []
                 if real_values:
-                    val_clause = exist_query_base
+                    val_clause = id_subquery_base
                     if metric_col in {'ss', 'pl'}:
                         val_clause += f"AND r.{metric_col} = ANY(%s)"
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
-                    val_params = list(exist_params_base)
-                    if metric_col == 'oi' or metric_col == 'dfp':
-                        val_params.append(test_info['other_info_key'])
+                    val_params = list(base_params)
+                    if metric_col in {'oi', 'dfp'}:
+                        val_params.append(test_info.get('other_info_key', ''))
                     val_params.append(real_values)
-                    conditions.append(f"EXISTS ({val_clause})")
+                    conditions.append(f"cs.student_id IN ({val_clause})")
                     params.extend(val_params)
                 
                 if has_blank:
                     blank_subconditions = []
 
-                    blank_subconditions.append(f"NOT EXISTS ({exist_query_base})")
-                    params.extend(exist_params_base)
+                    blank_subconditions.append(f"cs.student_id NOT IN ({id_subquery_base})")
+                    params.extend(base_params)
 
-                    null_clause = exist_query_base
-                    null_params = list(exist_params_base)
+                    null_clause = id_subquery_base
+                    null_params = list(base_params)
                     if metric_col in {'ss', 'pl'}:
                         null_clause += f"AND r.{metric_col} IS NULL"
                     else:
                         null_clause += "AND (r.other_info ->> %s) IS NULL"
-                        null_params.append(test_info['other_info_key'])
+                        null_params.append(test_info.get('other_info_key', ''))
 
-                    blank_subconditions.append(f"EXISTS ({null_clause})")
+                    blank_subconditions.append(f"cs.student_id IN ({null_clause})")
                     params.extend(null_params)
 
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
@@ -372,13 +371,13 @@ def get_column_statistics(request):
                  has_window = cursor.fetchone() is not None
                  
                  sql = """
-                    SELECT DISTINCT r.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
-                    FROM results r JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.school_year = ANY(%s)
+                    SELECT DISTINCT t.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
+                    FROM tests t
+                    WHERE t.school_year = ANY(%s) AND t.test_name IS NOT NULL
                  """ if has_window else """
-                    SELECT DISTINCT r.school_year, t.test_name, t.subject, ''
-                    FROM results r JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.school_year = ANY(%s)
+                    SELECT DISTINCT t.school_year, t.test_name, t.subject, ''
+                    FROM tests t
+                    WHERE t.school_year = ANY(%s) AND t.test_name IS NOT NULL
                  """
                  cursor.execute(sql, [years])
                  rows = cursor.fetchall()

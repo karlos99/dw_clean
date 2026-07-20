@@ -106,8 +106,15 @@ def export_students_csv(request):
     db_columns = get_current_student_columns()
     enroll_columns = get_student_enroll_columns()
 
-    selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
-    selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
+    filter_keys = list(filters.keys()) if isinstance(filters, dict) else []
+    selected_test_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('test_')]
+    ))
+    selected_mark_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('mark_')]
+    ))
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str) and not c.startswith(('test_', 'mark_')) and c in COLUMN_DEFINITIONS

@@ -823,13 +823,21 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 limit_val = _parse_chart_row_limit(chart_cfg)
                 ds_updated = int(ds.updated_at.timestamp())
                 ds_filter_hash = hashlib.md5(json.dumps(resolved_filters, sort_keys=True).encode()).hexdigest()[:12]
-                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}'
+                user = getattr(request, 'user', None)
+                user_part = ""
+                if user and getattr(user, 'is_authenticated', False):
+                    user_role = getattr(user, 'active_role', None)
+                    role_name = user_role.name if user_role else 'None'
+                    active_school = getattr(user, 'active_school', None)
+                    school_id = active_school.state_id if active_school else 'All'
+                    user_part = f":u{user.pk}:r{role_name}:s{school_id}"
+                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}{user_part}'
                 ds_cached = cache.get(ds_cache_key)
                 if ds_cached is not None:
                     result = ds_cached
                     chart_cfg = _remap_config_cols(chart.config, col_mappings)
                 else:
-                    sql, params = compile_dataset_to_sql(ds, user=None, interactive_filters=resolved_filters, limit=limit_val)
+                    sql, params = compile_dataset_to_sql(ds, user=user, interactive_filters=resolved_filters, limit=limit_val)
                     res = execute_compiled_query_aliased(sql, params, col_mappings)
                     if res.get('error'):
                         result = {'error': res['error'], 'rows': [], 'columns': []}
