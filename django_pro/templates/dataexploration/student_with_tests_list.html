@@ -292,7 +292,7 @@
                     <!-- School Year -->
                     <div>
                         <label for="school_year" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">School Year</label>
-                        <select id="school_year" name="school_year" @change="window.loadData && window.loadData()"
+                        <select id="school_year" name="school_year"
                             class="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
                             {% for group_label, group_choices in school_year_choices %}
                             <optgroup label="{{ group_label }}" data-school-year-group="{% if 'References' in group_label %}relative{% else %}specific{% endif %}">
@@ -307,7 +307,7 @@
                     <!-- Status -->
                     <div>
                         <label for="status" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">Status</label>
-                        <select id="status" name="status" @change="window.loadData && window.loadData()"
+                        <select id="status" name="status"
                             class="w-full px-3 py-2 text-sm border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white transition-all">
                             <option value="Active" {% if selected_status == 'Active' %}selected{% endif %}>Active</option>
                             <option value="Inactive" {% if selected_status == 'Inactive' %}selected{% endif %}>Inactive

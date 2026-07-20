@@ -221,7 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (val.startsWith('__sy_')) {
             for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
                 if (alias === val) {
-                    return yearUs.replace('_', '-');
+                    return yearUs.replace(/_/g, '-');
                 }
             }
         }
@@ -774,7 +774,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusInput = document.getElementById('status');
 
         if (payload.search !== undefined && searchInput) searchInput.value = payload.search || '';
-        if (payload.school_year !== undefined && schoolYearSelect) schoolYearSelect.value = resolveRelativeSchoolYear(payload.school_year || '');
+        if (payload.school_year !== undefined && schoolYearSelect) {
+            const resolvedYear = resolveRelativeSchoolYear(payload.school_year || '');
+            if (resolvedYear && [...schoolYearSelect.options].some(o => o.value === resolvedYear)) {
+                schoolYearSelect.value = resolvedYear;
+            }
+        }
         if (payload.grade !== undefined && gradeSelect) gradeSelect.value = payload.grade || '';
         if (payload.status !== undefined && statusInput) statusInput.value = payload.status || '';
 
@@ -1111,7 +1116,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    let loadDataSeq = 0;
+
     const loadData = () => {
+        const requestSeq = ++loadDataSeq;
         showLoading('Loading student data...');
         clearStatsCache();
 
@@ -1164,13 +1172,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         fetch(url.toString(), { credentials: 'same-origin' })
-            .then((response) => response.json())
+            .then(async (response) => {
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+                }
+                return response.json();
+            })
             .then((payload) => {
+                if (requestSeq !== loadDataSeq) return;
                 renderTable(payload);
                 saveViewState();
                 hideLoading();
             })
             .catch((error) => {
+                if (requestSeq !== loadDataSeq) return;
                 console.error('Error loading data:', error);
                 hideLoading();
                 const targetEl = document.querySelector('#student-table');
