@@ -257,7 +257,7 @@ def page_filter_options_api(request, slug, filter_id):
             cursor_ctx = QueryExecutor().cursor() if table in CLICKHOUSE_SYNCED_TABLES else connections['default'].cursor()
             with cursor_ctx as cursor:
                 cursor.execute(
-                    f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}" LIMIT 500'
+                    f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}"'
                 )
                 values = [row[0] for row in cursor.fetchall()]
             cache.set(cache_key, values, 300)

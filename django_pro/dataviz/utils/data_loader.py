@@ -24,7 +24,6 @@ _SQL_DANGER_RE = re.compile(
     re.IGNORECASE,
 )
 MAX_SQL_ROWS       = 2000   # safety cap for run_raw_sql (SQL Lab)
-MAX_CHART_ROWS     = 150000  # higher cap for chart queries (aggregation needs all rows)
 
 
 def run_raw_sql(sql: str) -> dict:
@@ -704,12 +703,26 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             return
 
         if isinstance(value, dict):
-            if value.get('gte'):
-                where_parts.append(f'{expr} >= %s')
-                params.append(value['gte'])
-            if value.get('lte'):
-                where_parts.append(f'{expr} <= %s')
-                params.append(value['lte'])
+            gte = value.get('gte')
+            lte = value.get('lte')
+            exclude = value.get('exclude')
+            if exclude:
+                conds = []
+                if gte:
+                    conds.append(f'{expr} < %s')
+                    params.append(gte)
+                if lte:
+                    conds.append(f'{expr} > %s')
+                    params.append(lte)
+                if conds:
+                    where_parts.append(f"({' OR '.join(conds)} OR {expr} IS NULL)")
+            else:
+                if gte:
+                    where_parts.append(f'{expr} >= %s')
+                    params.append(gte)
+                if lte:
+                    where_parts.append(f'{expr} <= %s')
+                    params.append(lte)
             return
 
         if isinstance(value, list):
@@ -817,7 +830,7 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
 
     where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
     col_sql   = ', '.join(select_exprs)
-    sql       = f'SELECT {col_sql} FROM current_student cs{join_sql} {where_sql} LIMIT {MAX_CHART_ROWS}'
+    sql       = f'SELECT {col_sql} FROM current_student cs{join_sql} {where_sql}'
 
     try:
         from clickhouse_utils.executor import QueryExecutor
@@ -948,7 +961,7 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             'col_types': col_types,
             'rows':      rows,
             'row_count': len(rows),
-            'has_more':  len(raw) == MAX_CHART_ROWS,
+            'has_more':  False,
             'error':     None,
         }
         # Cache for 30 minutes (1800s) — confirmed acceptable staleness window

@@ -67,6 +67,17 @@ def _remap_config_cols(config: dict, column_mappings: dict | None) -> dict:
     return res
 
 
+def _parse_chart_row_limit(cfg: dict):
+    """Return an explicit row limit from chart config, or None for unlimited."""
+    limit_val = (cfg or {}).get('limit')
+    try:
+        if limit_val is not None and str(limit_val).strip() != '':
+            return int(limit_val)
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
 def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, user) -> list:
     """Fetch test_*/mark_* columns via the data explorer and merge into rows.
 
@@ -491,16 +502,7 @@ def chart_preview_api(request):
         col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
         resolved_filters = resolve_dataset_filters(source_filters or {}, ds, active_tables)
-        # Parse limit from config if present to avoid returning too many records from query
-        limit_val = cfg.get('limit')
-        is_table = cfg.get('chart_type') in ('summary_table', 'dynamic_summary_table')
-        try:
-            if limit_val is not None and str(limit_val).strip() != '':
-                limit_val = int(limit_val)
-            else:
-                limit_val = None if is_table else 150000
-        except (ValueError, TypeError):
-            limit_val = None if is_table else 150000
+        limit_val = _parse_chart_row_limit(cfg)
         sql, params = compile_dataset_to_sql(ds, user=None, interactive_filters=resolved_filters, limit=limit_val)
         res = execute_compiled_query_aliased(sql, params, col_mappings)
         if res.get('error'):
@@ -818,15 +820,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 raw_filters.update(pf_filters)
                 active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                 resolved_filters = resolve_dataset_filters(raw_filters, ds, active_tables)
-                limit_val = chart_cfg.get('limit')
-                is_table = chart.config.get('chart_type') in ('summary_table', 'dynamic_summary_table')
-                try:
-                    if limit_val is not None and str(limit_val).strip() != '':
-                        limit_val = int(limit_val)
-                    else:
-                        limit_val = None if is_table else 150000
-                except (ValueError, TypeError):
-                    limit_val = None if is_table else 150000
+                limit_val = _parse_chart_row_limit(chart_cfg)
                 ds_updated = int(ds.updated_at.timestamp())
                 ds_filter_hash = hashlib.md5(json.dumps(resolved_filters, sort_keys=True).encode()).hexdigest()[:12]
                 ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}'

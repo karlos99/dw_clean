@@ -211,13 +211,50 @@ def query_columns_api(request, query_id):
 _FILTERABLE_COLUMNS = frozenset([
     'school_year', 'grade', 'school', 'gender', 'race', 'ell', 'sed',
     'foster', 'homeless', 'sped', 'gate', 'in_504', 'dli', 'ltel',
-    'status', 'suspension_indicator',
+    'status', 'suspension_indicator', 'atendace_rate',
+    'birth_date', 'us_enter_date', 'fep_date',
 ])
 
 # Enroll-dependent fields need a LEFT JOIN to student_enroll.
 _ENROLL_FILTER_EXPRS = {
     'ell': 'COALESCE(cs.ell, se.ell_status)',
+    'birth_date': 'se.birth_date',
+    'us_enter_date': 'se.us_enter_date',
+    'fep_date': 'se.fep_date',
+    'migrant': 'se.migrant',
 }
+
+
+def _is_date_filter_col(col: str) -> bool:
+    return col.endswith('_date') or col.endswith('_at') or col == 'date' or 'date' in col
+
+
+def _is_numeric_filter_col(col: str) -> bool:
+    return col == 'atendace_rate' or col.endswith('_SS')
+
+
+def _append_range_filter(where_parts: list, params: list, expr: str, fval: dict) -> None:
+    """Append include/exclude range bounds to a WHERE clause."""
+    gte = fval.get('gte')
+    lte = fval.get('lte')
+    exclude = fval.get('exclude')
+    if exclude:
+        conds = []
+        if gte:
+            conds.append(f'{expr} < %s')
+            params.append(gte)
+        if lte:
+            conds.append(f'{expr} > %s')
+            params.append(lte)
+        if conds:
+            where_parts.append(f"({' OR '.join(conds)} OR {expr} IS NULL)")
+    else:
+        if gte:
+            where_parts.append(f'{expr} >= %s')
+            params.append(gte)
+        if lte:
+            where_parts.append(f'{expr} <= %s')
+            params.append(lte)
 
 _ENROLL_JOIN = (
     " LEFT JOIN ("
@@ -304,6 +341,10 @@ def _build_where_clause(filters_dict: dict, exclude_col: str = None) -> tuple[li
             continue
 
         if not fval:
+            continue
+
+        if isinstance(fval, dict):
+            _append_range_filter(where_parts, params, expr, fval)
             continue
 
         # Handle list/multi-select values
@@ -399,8 +440,8 @@ def query_filter_options_api(request, query_id):
         resolved_to_original = {c: c for c in columns}
 
     resolved_columns = list(resolved_to_original.keys())
-    # Separate columns into base demographic, test PL, and mark columns
-    filter_cols = [c for c in resolved_columns if c in _FILTERABLE_COLUMNS]
+    # Always include all demographic filter columns — same as explorer mode.
+    filter_cols = sorted(_FILTERABLE_COLUMNS)
     pl_cols     = [c for c in resolved_columns if c.startswith('test_') and c.endswith('_PL')]
     mark_cols   = [c for c in resolved_columns if c.startswith('mark_')]
 
@@ -458,17 +499,38 @@ def query_filter_options_api(request, query_id):
                     
                     # Build dynamic cascading WHERE clause excluding the current column itself
                     col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
-                    col_where_parts.append(f"{expr} IS NOT NULL AND {expr} != ''")
-                    col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts)
-                    
-                    union_parts.append(
-                        f"(SELECT DISTINCT {expr} AS val, %s AS col_name "
-                        f"FROM current_student cs{join_sql} "
-                        f"{col_where_sql} "
-                        f"ORDER BY val LIMIT 100)"
-                    )
-                    union_params.append(col)
-                    union_params.extend(col_params)
+                    is_numeric = _is_numeric_filter_col(col)
+                    is_date = _is_date_filter_col(col)
+                    col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts) if col_where_parts else ''
+                    if is_numeric or is_date:
+                        col_where_parts.append(f"{expr} IS NOT NULL")
+                        col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts)
+                        cast_expr = f'CAST({expr} AS VARCHAR)'
+                        union_parts.append(
+                            f"(SELECT CAST(MIN({expr}) AS VARCHAR) AS val, %s AS col_name "
+                            f"FROM current_student cs{join_sql} "
+                            f"{col_where_sql})"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
+                        union_parts.append(
+                            f"(SELECT CAST(MAX({expr}) AS VARCHAR) AS val, %s AS col_name "
+                            f"FROM current_student cs{join_sql} "
+                            f"{col_where_sql})"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
+                    else:
+                        col_where_parts.append(f"{expr} IS NOT NULL AND {expr} != ''")
+                        col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts)
+                        union_parts.append(
+                            f"(SELECT DISTINCT {expr} AS val, %s AS col_name "
+                            f"FROM current_student cs{join_sql} "
+                            f"{col_where_sql} "
+                            f"ORDER BY val)"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
                 union_sql = ' UNION ALL '.join(union_parts)
                 cursor.execute(union_sql, union_params)
                 for row in cursor.fetchall():
@@ -504,7 +566,7 @@ def query_filter_options_api(request, query_id):
                             f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                             f"{win_clause} "
                             f"AND r.pl IS NOT NULL AND r.pl != '' "
-                            f"ORDER BY val LIMIT 30"
+                            f"ORDER BY val"
                         )
                         pl_params = [*demo_params, info['year'],
                                      info['test_name'],
@@ -519,7 +581,7 @@ def query_filter_options_api(request, query_id):
                             f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                             f"{win_clause} "
                             f"AND r.pl IS NOT NULL AND r.pl != '' "
-                            f"ORDER BY val LIMIT 30"
+                            f"ORDER BY val"
                         )
                         pl_params = [info['year'],
                                      info['test_name'],
@@ -544,7 +606,7 @@ def query_filter_options_api(request, query_id):
                             "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                             f"{win_clause} "
                             "AND r.school_code IS NOT NULL AND r.school_code != '' "
-                            "ORDER BY school_label LIMIT 100"
+                            "ORDER BY school_label"
                         )
                         ts_params = [*demo_params, info['year'],
                                      info['test_name'],
@@ -561,7 +623,7 @@ def query_filter_options_api(request, query_id):
                             "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                             f"{win_clause} "
                             "AND r.school_code IS NOT NULL AND r.school_code != '' "
-                            "ORDER BY school_label LIMIT 100"
+                            "ORDER BY school_label"
                         )
                         ts_params = [info['year'],
                                      info['test_name'],
@@ -603,7 +665,7 @@ def query_filter_options_api(request, query_id):
                             f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
                             f"{per_clause} "
                             f"AND sm.mark IS NOT NULL AND sm.mark != '' "
-                            f"ORDER BY val LIMIT 30"
+                            f"ORDER BY val"
                         )
                         mark_params = [*demo_params, info['year'],
                                        f"%{info['subject']}%",
@@ -617,7 +679,7 @@ def query_filter_options_api(request, query_id):
                             f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
                             f"{per_clause} "
                             f"AND sm.mark IS NOT NULL AND sm.mark != '' "
-                            f"ORDER BY val LIMIT 30"
+                            f"ORDER BY val"
                         )
                         mark_params = [info['year'],
                                        f"%{info['subject']}%",
@@ -859,16 +921,36 @@ def column_filter_options_api(request):
                 for col in filter_cols:
                     expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
                     col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
-                    col_where_parts.append(f"{expr} IS NOT NULL AND {expr} != ''")
-                    col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts)
-                    union_parts.append(
-                        f"(SELECT DISTINCT {expr} AS val, %s AS col_name "
-                        f"FROM current_student cs{join_sql} "
-                        f"{col_where_sql} "
-                        f"ORDER BY val LIMIT 100)"
-                    )
-                    union_params.append(col)
-                    union_params.extend(col_params)
+                    is_numeric = _is_numeric_filter_col(col)
+                    is_date = _is_date_filter_col(col)
+                    if is_numeric or is_date:
+                        col_where_parts.append(f"{expr} IS NOT NULL")
+                        col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts)
+                        union_parts.append(
+                            f"(SELECT CAST(MIN({expr}) AS VARCHAR) AS val, %s AS col_name "
+                            f"FROM current_student cs{join_sql} "
+                            f"{col_where_sql})"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
+                        union_parts.append(
+                            f"(SELECT CAST(MAX({expr}) AS VARCHAR) AS val, %s AS col_name "
+                            f"FROM current_student cs{join_sql} "
+                            f"{col_where_sql})"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
+                    else:
+                        col_where_parts.append(f"{expr} IS NOT NULL AND {expr} != ''")
+                        col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts)
+                        union_parts.append(
+                            f"(SELECT DISTINCT {expr} AS val, %s AS col_name "
+                            f"FROM current_student cs{join_sql} "
+                            f"{col_where_sql} "
+                            f"ORDER BY val)"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
                 union_sql = ' UNION ALL '.join(union_parts)
                 cursor.execute(union_sql, union_params)
                 for row in cursor.fetchall():
@@ -899,7 +981,7 @@ def column_filter_options_api(request):
                             f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                             f"{win_clause} "
                             f"AND r.pl IS NOT NULL AND r.pl != '' "
-                            f"ORDER BY val LIMIT 30"
+                            f"ORDER BY val"
                         )
                         pl_params = [*demo_params, info['year'],
                                      info['test_name'],
@@ -914,7 +996,7 @@ def column_filter_options_api(request):
                             f"AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                             f"{win_clause} "
                             f"AND r.pl IS NOT NULL AND r.pl != '' "
-                            f"ORDER BY val LIMIT 30"
+                            f"ORDER BY val"
                         )
                         pl_params = [info['year'],
                                      info['test_name'],
@@ -938,7 +1020,7 @@ def column_filter_options_api(request):
                             "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                             f"{win_clause} "
                             "AND r.school_code IS NOT NULL AND r.school_code != '' "
-                            "ORDER BY school_label LIMIT 100"
+                            "ORDER BY school_label"
                         )
                         ts_params = [*demo_params, info['year'],
                                      info['test_name'],
@@ -955,7 +1037,7 @@ def column_filter_options_api(request):
                             "AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                             f"{win_clause} "
                             "AND r.school_code IS NOT NULL AND r.school_code != '' "
-                            "ORDER BY school_label LIMIT 100"
+                            "ORDER BY school_label"
                         )
                         ts_params = [info['year'],
                                      info['test_name'],
@@ -993,7 +1075,7 @@ def column_filter_options_api(request):
                             f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
                             f"{per_clause} "
                             f"AND sm.mark IS NOT NULL AND sm.mark != '' "
-                            f"ORDER BY val LIMIT 30"
+                            f"ORDER BY val"
                         )
                         mark_params = [*demo_params, info['year'],
                                        f"%{info['subject']}%",
@@ -1007,7 +1089,7 @@ def column_filter_options_api(request):
                             f"AND sm.subject ILIKE %s AND sm.course_name ILIKE %s "
                             f"{per_clause} "
                             f"AND sm.mark IS NOT NULL AND sm.mark != '' "
-                            f"ORDER BY val LIMIT 30"
+                            f"ORDER BY val"
                         )
                         mark_params = [info['year'],
                                        f"%{info['subject']}%",

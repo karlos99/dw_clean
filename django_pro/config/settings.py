@@ -260,4 +260,5 @@ if 'test' in sys.argv:
         def __getitem__(self, item):
             return None
     MIGRATION_MODULES = DisableMigrations()
+    SECURE_SSL_REDIRECT = False
 

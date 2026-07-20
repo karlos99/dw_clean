@@ -29,6 +29,29 @@ from .column_management import (
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
 from landing.utils import get_project_config
 
+def _append_school_year_filter(where_clauses: list, params: list, school_year) -> None:
+    """Append a school_year predicate; no-op when school_year is unset."""
+    if not school_year:
+        return
+    if isinstance(school_year, list):
+        if len(school_year) == 1:
+            where_clauses.append("cs.school_year = %s")
+            params.append(school_year[0])
+        elif len(school_year) > 1:
+            where_clauses.append("cs.school_year = ANY(%s)")
+            params.append(school_year)
+    else:
+        where_clauses.append("cs.school_year = %s")
+        params.append(school_year)
+
+
+def _serialize_context_filter(val):
+    """Normalize a filter value for JSON responses and UI sync."""
+    if isinstance(val, list):
+        return val[0] if len(val) == 1 else (val if val else '')
+    return val or ''
+
+
 class StudentWithTestsListView(LoginRequiredMixin, ListView):
     """Display list of students with their test results (one row per student)."""
     model = CurrentStudent
@@ -826,17 +849,7 @@ def load_students(request):
                 search_param = f'%{search}%'
                 base_params.extend([search_param, search_param, search_param])
         
-        if school_year:
-            if isinstance(school_year, list):
-                if len(school_year) == 1:
-                    base_where_clauses.append("cs.school_year = %s")
-                    base_params.append(school_year[0])
-                elif len(school_year) > 1:
-                    base_where_clauses.append("cs.school_year = ANY(%s)")
-                    base_params.append(school_year)
-            else:
-                base_where_clauses.append("cs.school_year = %s")
-                base_params.append(school_year)
+        _append_school_year_filter(base_where_clauses, base_params, school_year)
         
         if grade:
             if isinstance(grade, list):
@@ -1196,7 +1209,15 @@ def load_students(request):
                 from clickhouse_utils.executor import QueryExecutor
 
                 cached_exec = QueryExecutor()
-                cached_result = cached_exec.execute(f"SELECT {base_col_sql} FROM current_student cs {join_sql} WHERE cs.ssid = ANY(%s)", [cached_ssids])
+                sy_clauses = []
+                sy_params = []
+                _append_school_year_filter(sy_clauses, sy_params, school_year)
+                sy_sql = (' AND ' + ' AND '.join(sy_clauses)) if sy_clauses else ''
+                cached_result = cached_exec.execute(
+                    f"SELECT {base_col_sql} FROM current_student cs {join_sql} "
+                    f"WHERE cs.ssid = ANY(%s){sy_sql}",
+                    [cached_ssids, *sy_params],
+                )
                 cols = cached_result['columns']
                 unordered_students = {}
                 for row_dict in cached_result['rows']:
@@ -1716,9 +1737,9 @@ def load_students(request):
             'filter_options': filter_options,
             'filters': filters,
             'search': search or '',
-            'school_year': school_year or '',
-            'grade': grade or '',
-            'status': status or '',
+            'school_year': _serialize_context_filter(school_year),
+            'grade': _serialize_context_filter(grade),
+            'status': _serialize_context_filter(status),
             'sort_by': sort_by,
             'sort_dir': sort_dir,
             'survey_colors': survey_colors,

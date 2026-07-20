@@ -527,7 +527,7 @@ def execute_drill_query(
                     self.updated_at = getattr(original, 'updated_at', None)
             
             mock_ds = MockDataset(ds, dataset_columns)
-            sql, params = compile_dataset_to_sql(mock_ds, user=user, interactive_filters=dataset_filters, limit=150000)
+            sql, params = compile_dataset_to_sql(mock_ds, user=user, interactive_filters=dataset_filters, limit=None)
             # Use aliased executor so column_mappings are applied to result keys
             _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
             ds_result = execute_compiled_query_aliased(sql, params, _col_mappings)
