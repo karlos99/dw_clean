@@ -214,6 +214,7 @@ function chartBuilderExplorerMethods() {
     async _loadExplorerFilterOptions() {
       if (this.explorerSelected.length === 0) {
         this.filterOptions = {}; this.filterLabels = {};
+        this._recomputeFilterCols();
         return;
       }
       // Cancel any in-flight filter options request
@@ -241,8 +242,10 @@ function chartBuilderExplorerMethods() {
         Object.keys(this.filterOptions).forEach(col => {
           this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
         });
+        this._recomputeFilterCols();
       } catch (e) {
         if (e.name !== 'AbortError') { console.error('Explorer filters:', e); this.filterOptions = {}; this.filterLabels = {}; }
+        this._recomputeFilterCols();
       }
       this.filtersLoading = false;
     },

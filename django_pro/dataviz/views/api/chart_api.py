@@ -111,7 +111,7 @@ def _augment_chart_result_rows(chart_type: str, chart_cfg: dict, col_mappings: d
     return result
 
 
-def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset) -> list:
+def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset, source_filters=None) -> list:
     """Bulk-fetch missing test/mark columns for rows retrieved from a SavedQuery or
     dataset SQL (i.e. the dataset doesn't include the results/tests JOIN).  The
     data explorer already knows how to resolve these keys to pl/ss from results
@@ -134,6 +134,8 @@ def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset) -
         return rows
 
     explorer_filters: dict = {id_key: ids}
+    if source_filters and 'status' in source_filters:
+        explorer_filters['status'] = source_filters['status']
     # Extract years from both existing rows AND needed assessment column keys
     needed_years = []
     for k in needed_keys:
@@ -582,8 +584,9 @@ def chart_preview_api(request):
         from dataviz.models import Dataset
         from dataviz.utils.compiler import (
             compile_dataset_to_sql, execute_compiled_query_aliased,
-            resolve_dataset_filters, generate_column_aliases,
+            generate_column_aliases,
         )
+        from dataviz.utils.status_filter import prepare_interactive_filters
         try:
             ds = Dataset.objects.get(pk=source_id)
         except Dataset.DoesNotExist:
@@ -591,9 +594,12 @@ def chart_preview_api(request):
         # Fall back to auto-generated aliases when the dataset has no saved mappings.
         col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-        resolved_filters = resolve_dataset_filters(source_filters or {}, ds, active_tables)
+        resolved_filters, status_val = prepare_interactive_filters(source_filters or {}, ds, active_tables)
         limit_val = _parse_chart_row_limit(cfg)
-        sql, params = compile_dataset_to_sql(ds, user=None, interactive_filters=resolved_filters, limit=limit_val)
+        sql, params = compile_dataset_to_sql(
+            ds, user=None, interactive_filters=resolved_filters,
+            limit=limit_val, status_filter=status_val,
+        )
         res = execute_compiled_query_aliased(sql, params, col_mappings)
         if res.get('error'):
             return _error(res['error'])
@@ -602,7 +608,9 @@ def chart_preview_api(request):
         # returned by the dataset SQL (dataset without a results/tests JOIN).
         _missing_assessment = _get_missing_assessment_cols(cfg, col_mappings, aliased_rows)
         if _missing_assessment:
-            aliased_rows = _augment_rows_with_assessment_cols(aliased_rows, _missing_assessment, None)
+            aliased_rows = _augment_rows_with_assessment_cols(
+                aliased_rows, _missing_assessment, None, source_filters=source_filters,
+            )
         cfg = _remap_config_cols(cfg, col_mappings)
         result = {'rows': aliased_rows, 'columns': res.get('columns', []), 'row_count': res.get('row_count', 0)}
     else:
@@ -920,8 +928,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             from dataviz.models import Dataset
             from dataviz.utils.compiler import (
                 compile_dataset_to_sql, execute_compiled_query_aliased,
-                resolve_dataset_filters, generate_column_aliases,
+                generate_column_aliases,
             )
+            from dataviz.utils.status_filter import prepare_interactive_filters
             try:
                 ds = Dataset.objects.get(pk=chart.source_id)
             except Dataset.DoesNotExist:
@@ -933,10 +942,12 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 raw_filters = dict(chart.source_filters or {})
                 raw_filters.update(pf_filters)
                 active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-                resolved_filters = resolve_dataset_filters(raw_filters, ds, active_tables)
+                resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
                 limit_val = _parse_chart_row_limit(chart_cfg)
                 ds_updated = int(ds.updated_at.timestamp())
-                ds_filter_hash = hashlib.md5(json.dumps(resolved_filters, sort_keys=True).encode()).hexdigest()[:12]
+                ds_filter_hash = hashlib.md5(json.dumps(
+                    {**resolved_filters, '__status__': status_val}, sort_keys=True, default=str,
+                ).encode()).hexdigest()[:12]
                 user = getattr(request, 'user', None)
                 user_part = ""
                 if user and getattr(user, 'is_authenticated', False):
@@ -951,7 +962,10 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     result = ds_cached
                     chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
                 else:
-                    sql, params = compile_dataset_to_sql(ds, user=user, interactive_filters=resolved_filters, limit=limit_val)
+                    sql, params = compile_dataset_to_sql(
+                        ds, user=user, interactive_filters=resolved_filters,
+                        limit=limit_val, status_filter=status_val,
+                    )
                     res = execute_compiled_query_aliased(sql, params, col_mappings)
                     if res.get('error'):
                         result = {'error': res['error'], 'rows': [], 'columns': []}
@@ -968,7 +982,10 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     aliased_rows = result['rows']
                     _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
                     if _missing_assessment:
-                        aliased_rows = _augment_rows_with_assessment_cols(aliased_rows, _missing_assessment, None)
+                        aliased_rows = _augment_rows_with_assessment_cols(
+                            aliased_rows, _missing_assessment, None,
+                            source_filters=raw_filters,
+                        )
                         result['rows'] = aliased_rows
 
         else:

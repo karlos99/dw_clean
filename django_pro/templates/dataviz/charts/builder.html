@@ -108,11 +108,11 @@
           <path stroke-linecap="round" d="M15 19l-7-7 7-7"/>
         </svg>
       </button>
-      <aside class="border-r border-slate-200 bg-white flex flex-col flex-shrink-0 overflow-y-auto transition-all duration-200"
+      <aside class="border-r border-slate-200 bg-white flex flex-col flex-shrink-0 overflow-hidden transition-all duration-200"
              :class="colsOpen ? 'w-72' : 'w-0'"
              :style="colsOpen ? '' : 'border:none'"
-             x-show="colsOpen || true"
-             style="overflow-y:auto">
+             x-show="colsOpen || true">
+      <div class="flex-1 min-h-0 overflow-y-auto">
       {# ── Data Source (collapsible) ── #}
       <div x-data="{ srcOpen: true }" class="border-b border-slate-100 flex-shrink-0">
         <button type="button" @click="srcOpen = !srcOpen"
@@ -625,7 +625,7 @@
           <div x-show="explorerSelected.length > 0" class="mt-2 pt-2 border-t border-slate-100">
             <div class="flex items-center justify-between">
               <p class="text-[10px] text-slate-500"><span class="font-bold" x-text="explorerSelected.length"></span> columns selected</p>
-              <button @click="explorerSelected = []; explorerCols = []; filterOptions = {}; filterLabels = {}; chartFilters = {};"
+              <button @click="explorerSelected = []; explorerCols = []; filterOptions = {}; filterLabels = {}; chartFilters = {}; filterColsList = [];"
                       class="text-[9px] text-red-500 hover:text-red-700 font-semibold">Clear</button>
             </div>
           </div>
@@ -738,9 +738,12 @@
             </template>
           </div>
         </div>
+      </div>{# /column list #}
+      </div>{# /scrollable column panel #}
 
-        {# ── Data Filters ──────────────────────────────────────── #}
-        <div x-show="filterCols.length > 0 || filterOptions.tested_school" class="mt-4 pt-3 border-t border-slate-100">
+        {# ── Data Filters (pinned footer — always visible when options load) ── #}
+        <div x-show="filterColsList.length > 0 || (filterOptions.tested_school || []).length"
+             class="flex-shrink-0 border-t border-slate-200 bg-white px-3 py-3 max-h-[45vh] overflow-y-auto shadow-[0_-4px_12px_rgba(0,0,0,0.04)]">
           <div class="flex items-center justify-between mb-2">
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 flex items-center gap-1">
               <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
@@ -802,7 +805,7 @@
           </template>
 
           <div class="space-y-1">
-            <template x-for="col in filterCols" :key="'fc_'+col">
+            <template x-for="col in filterColsList" :key="'fc_'+col">
               {# Hide enrolled school filter when user switched to Tested School mode #}
               <div x-show="!(col === 'school' && filterOptions.tested_school && schoolFilterMode === 'tested')"
                    class="rounded-md border border-slate-200 bg-white overflow-hidden">
@@ -885,7 +888,7 @@
                       <div class="px-2 py-1.5">
                         <div class="flex gap-1 mb-1.5">
                           <button type="button" @click="chartFilters[col] = [...(filterOptions[col] || [])]; chartFilters = {...chartFilters}; _refreshFilterOptions(); _schedulePreview();" class="text-[9px] font-bold text-blue-600 hover:text-blue-800 px-1 rounded hover:bg-blue-50">All</button>
-                          <button type="button" @click="delete chartFilters[col]; chartFilters = {...chartFilters}; _refreshFilterOptions(); _schedulePreview();" class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear</button>
+                          <button type="button" @click="clearColumnFilter(col)" class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear</button>
                         </div>
                         <input type="text" :placeholder="'Search ' + (filterLabels[col] || col) + '…'" x-model="filterSearch[col]"
                                class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-1 focus:ring-1 focus:ring-blue-200 bg-slate-50">
@@ -919,7 +922,6 @@
             </template>
           </div>
         </div>
-      </div>
       </aside>
     </div>{# /colsOpen wrapper #}
 
@@ -3397,6 +3399,7 @@ function chartBuilder() {
     /* ─── Filter state ───────────────────────────────────── */
     filterOptions:  {},               // { grade: ['K','1',...], school: [...] }
     filterLabels:   {},               // { grade: 'Grade', test_..._PL: 'Dibbles BOY PL', ... }
+    filterColsList: [],               // reactive list of filterable column keys
     testedSchoolNames: {},            // { 'SCH001': 'Lincoln Elementary', ... } — from API
     schoolFilterMode: existing?.school_filter_mode || (existing?.source_filters?.tested_school?.length ? 'tested' : 'enrolled'),
     chartFilters:   existing?.source_filters ?? {},  // { grade: ['K','1'], school: ['Lincoln'] }
@@ -3458,11 +3461,6 @@ function chartBuilder() {
       return this.yearContext === '' && (this.chartFilters._custom_years || []).length > 1;
     },
     get plCols()       { return this.activeCols.filter(c => c.startsWith('test_') && c.endsWith('_PL')); },
-    get filterCols() {
-      const base = Object.keys(this.filterOptions).filter(k => k !== 'tested_school');
-      const extra = this.activeCols.filter(c => (this.isDateColumn(c) || this.isNumericColumn(c)) && !base.includes(c));
-      return [...base, ...extra].sort();
-    },
     get activeFilterCount() {
       return Object.keys(this.chartFilters).reduce((n, col) => n + this.filterBadgeCount(col), 0);
     },

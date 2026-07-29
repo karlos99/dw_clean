@@ -3,6 +3,19 @@
 function chartBuilderFilterMethods() {
   return {
     /* ─── Filter helpers ─────────────────────────────────── */
+    _recomputeFilterCols() {
+      const base = Object.keys(this.filterOptions || {}).filter(k => k !== 'tested_school');
+      const cols = this.sourceType === 'sql'
+        ? (this.rawSqlColumns || [])
+        : this.sourceType === 'columns'
+          ? (this.explorerCols || [])
+          : (this.columns || []);
+      const extra = cols.filter(c =>
+        (this.isDateColumn(c) || this.isNumericColumn(c)) && !base.includes(c)
+      );
+      this.filterColsList = [...base, ...extra].sort();
+    },
+
     toggleFilter(col) { this.openFilter = this.openFilter === col ? '' : col; },
 
     isDateColumn(col) {
@@ -99,16 +112,44 @@ function chartBuilderFilterMethods() {
       } else {
         this.chartFilters[col] = [...cur, val];
       }
-      if (this.chartFilters[col].length === 0) delete this.chartFilters[col];
-      this.chartFilters = { ...this.chartFilters };
+      if (this.chartFilters[col].length === 0) {
+        if (col === 'status') {
+          this.chartFilters = { ...this.chartFilters, status: [] };
+        } else {
+          delete this.chartFilters[col];
+          this.chartFilters = { ...this.chartFilters };
+        }
+      } else {
+        this.chartFilters = { ...this.chartFilters };
+      }
       this._refreshFilterOptions();
       this._schedulePreview(true);
     },
 
     removeFilterValue(col, val) {
       this.chartFilters[col] = (this.chartFilters[col] || []).filter(v => v !== val);
-      if (this.chartFilters[col].length === 0) delete this.chartFilters[col];
-      this.chartFilters = { ...this.chartFilters };
+      if (this.chartFilters[col].length === 0) {
+        if (col === 'status') {
+          this.chartFilters = { ...this.chartFilters, status: [] };
+        } else {
+          delete this.chartFilters[col];
+          this.chartFilters = { ...this.chartFilters };
+        }
+      } else {
+        this.chartFilters = { ...this.chartFilters };
+      }
+      this._refreshFilterOptions();
+      this._schedulePreview(true);
+    },
+
+    clearColumnFilter(col) {
+      if (col === 'status') {
+        this.chartFilters = { ...this.chartFilters, status: [] };
+      } else {
+        const f = { ...this.chartFilters };
+        delete f[col];
+        this.chartFilters = f;
+      }
       this._refreshFilterOptions();
       this._schedulePreview(true);
     },
@@ -148,6 +189,7 @@ function chartBuilderFilterMethods() {
         .then(d => {
           if (d.filter_options) {
             this.filterOptions = { ...this.filterOptions, ...d.filter_options };
+            this._recomputeFilterCols();
             this._pgAutoScale();
           }
         })

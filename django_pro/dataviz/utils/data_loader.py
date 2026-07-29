@@ -632,25 +632,8 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     dynamic_filters: dict[str, object] = {}
 
     # Status filter — mirror data exploration: default Active; explicit empty = all statuses.
-    if 'status' in filters:
-        status_val = filters.pop('status')
-        if status_val is None or status_val == '':
-            pass
-        elif isinstance(status_val, list):
-            cleaned = [s for s in status_val if s]
-            if not cleaned:
-                pass
-            elif len(cleaned) == 1:
-                where_parts.append('cs.status = %s')
-                params.append(cleaned[0])
-            else:
-                where_parts.append('cs.status = ANY(%s)')
-                params.append(cleaned)
-        else:
-            where_parts.append('cs.status = %s')
-            params.append(status_val)
-    else:
-        where_parts.append("cs.status = 'Active'")
+    from dataviz.utils.status_filter import apply_status_filter
+    apply_status_filter(where_parts, params, filters, alias='cs', pop=True)
 
     # ── Role-based access ──────────────────────────────────────────────
     if user:

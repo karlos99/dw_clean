@@ -149,6 +149,7 @@ function chartBuilderUIMethods() {
       this.sourceType = type;
       this.columns = []; this.rawSqlColumns = []; this.explorerCols = []; this.colSearch = '';
       this.filterOptions = {}; this.filterLabels = {}; this.openFilter = '';
+      this.filterColsList = [];
       this.stRowCols = []; this.stColCols = [];
       const yearCtx = this.yearContext;
       const schoolMode = this.schoolFilterMode;
@@ -252,6 +253,7 @@ function chartBuilderUIMethods() {
       if (this.savedQueryId) this.loadColumns();
       if (this.sourceType === 'dataset' && this.datasetSourceId) this.loadDatasetColumns();
       if (this.sourceType === 'columns') this.loadExplorerStructure();
+      this._recomputeFilterCols();
 
       const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','lineLayout','lineFill','xCols','xCol','yCol','seriesCols','seriesCol','groupCol','comparePlCols','aggFunc','aggDecimals',
                          'sortCol','sortDir','categoryOrder','limit','palette','showPercent','showPercentSymbol','percentDecimals','stackOrder',

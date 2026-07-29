@@ -74,7 +74,8 @@ function chartBuilderDataMethods() {
         Object.keys(this.filterOptions).forEach(col => {
           this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
         });
-      } catch (e) { console.error('Dataset filter options:', e); this.filterOptions = {}; this.filterLabels = {}; }
+        this._recomputeFilterCols();
+      } catch (e) { console.error('Dataset filter options:', e); this.filterOptions = {}; this.filterLabels = {}; this._recomputeFilterCols(); }
       this.filtersLoading = false;
     },
 
@@ -100,7 +101,8 @@ function chartBuilderDataMethods() {
         Object.keys(this.filterOptions).forEach(col => {
           this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
         });
-      } catch (e) { console.error('Filter options:', e); this.filterOptions = {}; this.filterLabels = {}; }
+        this._recomputeFilterCols();
+      } catch (e) { console.error('Filter options:', e); this.filterOptions = {}; this.filterLabels = {}; this._recomputeFilterCols(); }
       this.filtersLoading = false;
       if (this.chartType === 'progress_growth' && this.pgBeforeCol && this.pgAfterCol) {
         this._pgAutoScale();
