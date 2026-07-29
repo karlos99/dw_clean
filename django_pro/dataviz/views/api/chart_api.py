@@ -18,7 +18,7 @@ from dataviz.utils.chart_builder import build_option
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '4'
+_CHART_PIPELINE_VERSION = '8'
 
 
 def _effective_chart_cfg(chart) -> dict:
@@ -167,6 +167,8 @@ def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset) -
         if match_val:
             lookup_map.setdefault(match_val, []).append(r)
 
+    from dataviz.utils.chart_builder import _record_pg_val
+
     for row in rows:
         match = str(row.get(id_key) or '').strip()
         if match and match in lookup_map:
@@ -182,8 +184,25 @@ def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset) -
                     )
                     if val is not None and str(val).strip() not in ('', '\u2014', '-', 'None', 'null', 'NULL'):
                         row[k] = val
+                        resolved_k = k
+                        for exp_k in exp_row:
+                            if str(exp_k).replace('-', '_').lower() == k_norm:
+                                resolved_k = exp_k
+                                break
+                        _record_pg_val(row, resolved_k, val)
                     elif existing_blank and val is not None:
                         row[k] = val
+                for exp_k, exp_v in exp_row.items():
+                    if not str(exp_k).startswith('__pg_all__'):
+                        continue
+                    if isinstance(exp_v, list):
+                        for item in exp_v:
+                            _record_pg_val(row, exp_k[len('__pg_all__'):], item)
+                    elif isinstance(exp_v, (set, tuple)):
+                        for item in exp_v:
+                            _record_pg_val(row, exp_k[len('__pg_all__'):], item)
+                    else:
+                        _record_pg_val(row, exp_k[len('__pg_all__'):], exp_v)
     return rows
 
 
@@ -353,6 +372,10 @@ def _cfg_from_post(post):
         'dyn_col_mode':      post.get('dyn_col_mode', 'pivot'),
         'dyn_calculations':  _parse_json_list('dyn_calculations'),
         'dyn_display_type':  post.get('dyn_display_type', 'table'),
+        # Dates (date_series) fields
+        'ds_date_col':       post.get('ds_date_col', ''),
+        'ds_date_bucket':    post.get('ds_date_bucket', 'day'),
+        'ds_lines':          _parse_json_list('ds_lines'),
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
         'limit':             _parse_int(post.get('limit'), None),

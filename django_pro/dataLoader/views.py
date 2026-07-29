@@ -3,6 +3,9 @@ Views for the dataLoader app.
 Handles CSV upload, preview, and import for survey data.
 """
 import hashlib
+import json
+import os
+import tempfile
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.http import JsonResponse
@@ -10,9 +13,14 @@ from django.views.generic import ListView, DetailView, View
 from django.urls import reverse
 from django.utils import timezone
 from django.core.cache import cache
+from django.conf import settings
 
 from .access_control import project_admin_required, ProjectAdminRequiredMixin
-from .models import SurveyDefinition, SurveyQuestion, SurveyResponse, ImportLog, TestingWindow, ImportStatus, SurveyTopic
+from .models import (
+    SurveyDefinition, SurveyQuestion, SurveyResponse, ImportLog,
+    TestingWindow, ImportStatus, SurveyTopic,
+    APExamCode, APAwardType, APImportLog, APStudentAward, APExamResult, APImportStatus,
+)
 from .utils.column_analyzer import analyze_csv, AnalysisResult
 from .utils.response_loader import ResponseLoader, LoaderConfig
 
@@ -46,6 +54,10 @@ class DataLoaderDashboardView(ProjectAdminRequiredMixin, ListView):
         context['survey_definitions'] = SurveyDefinition.objects.filter(
             is_active=True
         ).order_by('-school_year')
+        context['ap_imports'] = APImportLog.objects.select_related(
+            'uploaded_by'
+        ).order_by('-uploaded_at')[:20]
+        context['ap_import_count'] = APImportLog.objects.count()
         return context
 
 
@@ -673,3 +685,335 @@ def assign_question_topic(request, pk, question_pk):
 
     question.save(update_fields=['topic'])
     return JsonResponse({'success': True})
+
+
+# ── AP Test Data Loader views ──
+
+class APUploadView(ProjectAdminRequiredMixin, View):
+    template_name = 'dataLoader/ap_upload.html'
+
+    def get(self, request):
+        context = {
+            'school_year_choices': get_school_year_choices(),
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        name = request.POST.get('name', '').strip()
+        school_year = request.POST.get('school_year', '')
+        csv_file = request.FILES.get('csv_file')
+
+        errors = []
+        if not name:
+            errors.append("Upload name is required")
+        if not school_year:
+            errors.append("School year is required")
+        if not csv_file:
+            errors.append("CSV file is required")
+
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+            return redirect('dataLoader:ap_upload')
+
+        try:
+            file_content = csv_file.read().decode('utf-8-sig')
+        except UnicodeDecodeError:
+            csv_file.seek(0)
+            try:
+                file_content = csv_file.read().decode('latin-1')
+            except Exception as e:
+                messages.error(request, f"Could not decode CSV file: {e}")
+                return redirect('dataLoader:ap_upload')
+
+        file_hash = hashlib.sha256(file_content.encode()).hexdigest()
+
+        tmp_dir = os.path.join(tempfile.gettempdir(), 'ap_uploads')
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_path = os.path.join(tmp_dir, f"{file_hash}.csv")
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(file_content)
+
+        from .utils.ap_column_analyzer import analyze_ap_csv
+
+        try:
+            analysis = analyze_ap_csv(file_content, csv_file.name)
+        except Exception as e:
+            messages.error(request, f"Could not analyze CSV: {e}")
+            return redirect('dataLoader:ap_upload')
+
+        request.session['ap_upload_data'] = {
+            'name': name,
+            'school_year': school_year,
+            'filename': csv_file.name,
+            'file_hash': file_hash,
+            'tmp_path': tmp_path,
+            'analysis': {
+                'student_columns': analysis.student_columns,
+                'active_exam_blocks': analysis.active_exam_blocks,
+                'active_award_blocks': analysis.active_award_blocks,
+                'total_students': analysis.total_students,
+                'total_exams': analysis.total_exams,
+                'total_awards': analysis.total_awards,
+                'header_row_index': analysis.header_row_index,
+                'total_columns': analysis.total_columns,
+                'warnings': analysis.warnings,
+                'unique_exam_codes': list(analysis.unique_exam_codes),
+                'sample_students': [
+                    {
+                        'ap_number': s.ap_number,
+                        'last_name': s.last_name,
+                        'first_name': s.first_name,
+                        'dob': s.dob,
+                        'grade_level': s.grade_level,
+                        'school_name': s.school_name,
+                        'gender': s.gender,
+                        'exam_count': s.exam_count,
+                        'award_count': s.award_count,
+                        'exam_names': s.exam_names,
+                    }
+                    for s in analysis.sample_students
+                ],
+            }
+        }
+
+        return redirect('dataLoader:ap_preview')
+
+
+class APPreviewView(ProjectAdminRequiredMixin, View):
+    template_name = 'dataLoader/ap_preview.html'
+
+    def get(self, request):
+        upload_data = request.session.get('ap_upload_data')
+        if not upload_data:
+            messages.warning(request, "No upload data found. Please upload a file first.")
+            return redirect('dataLoader:ap_upload')
+
+        from .utils.ap_student_matcher import APStudentMatcher
+        from .utils.ap_column_analyzer import parse_ap_csv_rows, EXAM_CODES, AWARD_TYPES, GRADE_LEVELS, GENDER_MAP
+
+        matcher = APStudentMatcher(upload_data['school_year'])
+        analysis = upload_data['analysis']
+        diagnostics = []
+
+        db_students = matcher.total_students_loaded
+        diagnostics.append(f"Database: {db_students} student records loaded for school year {upload_data['school_year']}")
+        if db_students == 0:
+            diagnostics.append(f"WARNING: No students found in StudentEnroll for school year '{upload_data['school_year']}'. Check that the school year matches the database.")
+
+        try:
+            tmp_path = upload_data.get('tmp_path', '')
+            if tmp_path and os.path.exists(tmp_path):
+                with open(tmp_path, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+            else:
+                file_content = upload_data.get('file_content', '')
+                if not file_content:
+                    diagnostics.append("WARNING: No file content found in session or on disk.")
+        except Exception as e:
+            diagnostics.append(f"ERROR reading file: {e}")
+            file_content = upload_data.get('file_content', '')
+
+        try:
+            rows = list(parse_ap_csv_rows(file_content, analysis['header_row_index']))
+        except Exception as e:
+            diagnostics.append(f"ERROR parsing CSV: {e}")
+            rows = []
+
+        diagnostics.append(f"CSV: {len(rows)} student rows parsed, {analysis.get('total_exams', 0)} exam results, {analysis.get('total_awards', 0)} awards")
+
+        matched_count = 0
+        unmatched_students = []
+
+        for row in rows:
+            ap_number = (row.get('AP Number / AP ID', '') or '').strip()
+            if not ap_number:
+                continue
+
+            last_name = (row.get('Last Name', '') or '').strip()
+            first_name = (row.get('First Name', '') or '').strip()
+            dob = (row.get('Date of Birth', '') or '').strip()
+            ap_school = (row.get('AI Institution Name', '') or '').strip()
+
+            result = matcher.match_student(
+                ap_number=ap_number,
+                first_name=first_name,
+                last_name=last_name,
+                dob=dob,
+                ap_school=ap_school,
+            )
+
+            if result.matched:
+                matched_count += 1
+            else:
+                unmatched_students.append({
+                    'ap_number': ap_number,
+                    'last_name': last_name,
+                    'first_name': first_name,
+                    'dob': dob,
+                    'school': ap_school,
+                    'reason': result.reason or 'No match found',
+                })
+
+        exam_code_names = {}
+        for code in analysis.get('unique_exam_codes', []):
+            exam_code_names[code] = EXAM_CODES.get(code, f"Unknown ({code})")
+
+        context = {
+            'upload_data': upload_data,
+            'analysis': analysis,
+            'matched_count': matched_count,
+            'unmatched_count': len(unmatched_students),
+            'unmatched_students': unmatched_students[:200],
+            'exam_code_names': exam_code_names,
+            'total_students': analysis.get('total_students', 0),
+            'total_exams': analysis.get('total_exams', 0),
+            'total_awards': analysis.get('total_awards', 0),
+            'total_sis_students': db_students,
+            'diagnostics': diagnostics,
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        upload_data = request.session.get('ap_upload_data')
+        if not upload_data:
+            messages.error(request, "Upload data expired. Please upload again.")
+            return redirect('dataLoader:ap_upload')
+
+        manual_overrides = {}
+        for key, value in request.POST.items():
+            if key.startswith('ssid_override_') and value.strip():
+                ap_number = key.replace('ssid_override_', '')
+                manual_overrides[ap_number] = value.strip()
+
+        ap_import_log = APImportLog.objects.create(
+            name=upload_data['name'],
+            school_year=upload_data['school_year'],
+            filename=upload_data['filename'],
+            file_hash=upload_data['file_hash'],
+            uploaded_by=request.user,
+            status=APImportStatus.PENDING,
+            manual_overrides=manual_overrides,
+        )
+
+        from .utils.ap_response_loader import run_ap_import_async
+
+        tmp_path = upload_data.get('tmp_path', '')
+        if tmp_path and os.path.exists(tmp_path):
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+        else:
+            file_content = upload_data.get('file_content', '')
+
+        run_ap_import_async(
+            import_log_id=ap_import_log.pk,
+            file_content=file_content,
+            analysis_data=upload_data['analysis'],
+            user_id=request.user.pk,
+        )
+
+        del request.session['ap_upload_data']
+
+        messages.info(request, "AP import started! Progress will update automatically.")
+        return redirect('dataLoader:ap_import_progress', pk=ap_import_log.pk)
+
+
+@project_admin_required
+def ap_student_search(request):
+    first_name = request.GET.get('first_name', '').strip()
+    last_name = request.GET.get('last_name', '').strip()
+    school_year = request.GET.get('school_year', '').strip()
+
+    if not school_year:
+        return JsonResponse({'error': 'School year is required'}, status=400)
+
+    from .utils.ap_student_matcher import APStudentMatcher
+    matcher = APStudentMatcher(school_year)
+    results = matcher.search_students(first_name=first_name, last_name=last_name)
+
+    return JsonResponse({'students': results})
+
+
+class APImportDetailView(ProjectAdminRequiredMixin, DetailView):
+    model = APImportLog
+    template_name = 'dataLoader/ap_import_detail.html'
+    context_object_name = 'import_log'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        import_log = self.object
+
+        context['exam_results'] = APExamResult.objects.filter(
+            import_log=import_log
+        ).select_related('exam')[:50]
+
+        context['awards'] = APStudentAward.objects.filter(
+            import_log=import_log
+        ).select_related('award_type')[:50]
+
+        match_rate = 0
+        total = import_log.students_matched + import_log.students_unmatched
+        if total > 0:
+            match_rate = round((import_log.students_matched / total) * 100)
+        context['match_rate'] = match_rate
+
+        return context
+
+
+class APImportProgressView(ProjectAdminRequiredMixin, DetailView):
+    model = APImportLog
+    template_name = 'dataLoader/ap_import_progress.html'
+    context_object_name = 'import_log'
+
+
+@project_admin_required
+def ap_import_status(request, pk):
+    import_log = get_object_or_404(APImportLog, pk=pk)
+
+    progress = 0
+    if import_log.total_students > 0:
+        progress = int((import_log.records_processed / import_log.total_students) * 100)
+
+    return JsonResponse({
+        'status': import_log.status,
+        'status_display': import_log.get_status_display(),
+        'records_processed': import_log.records_processed,
+        'total_students': import_log.total_students,
+        'exams_detected': import_log.exams_detected,
+        'exams_created': import_log.exams_created,
+        'exams_skipped': import_log.exams_skipped,
+        'awards_detected': import_log.awards_detected,
+        'awards_created': import_log.awards_created,
+        'awards_skipped': import_log.awards_skipped,
+        'students_matched': import_log.students_matched,
+        'students_unmatched': import_log.students_unmatched,
+        'error_count': import_log.error_count,
+        'progress': progress,
+        'is_complete': import_log.status in [APImportStatus.COMPLETED, APImportStatus.FAILED, APImportStatus.PARTIAL],
+    })
+
+
+@project_admin_required
+def ap_delete_import(request, pk):
+    ap_import_log = get_object_or_404(APImportLog, pk=pk)
+
+    if request.method == 'POST':
+        name = ap_import_log.name
+        exam_count = APExamResult.objects.filter(import_log=ap_import_log).count()
+        award_count = APStudentAward.objects.filter(import_log=ap_import_log).count()
+        ap_import_log.delete()
+
+        messages.success(
+            request,
+            f"Deleted AP import '{name}', {exam_count:,} exam results, and {award_count:,} awards."
+        )
+        return redirect('dataLoader:dashboard')
+
+    exam_count = APExamResult.objects.filter(import_log=ap_import_log).count()
+    award_count = APStudentAward.objects.filter(import_log=ap_import_log).count()
+
+    return render(request, 'dataLoader/ap_delete_confirm.html', {
+        'import_log': ap_import_log,
+        'exam_count': exam_count,
+        'award_count': award_count,
+    })

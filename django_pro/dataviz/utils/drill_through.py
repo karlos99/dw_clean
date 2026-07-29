@@ -186,6 +186,37 @@ def build_drill_filter(chart, params: dict) -> dict:
             filters['pg_cat'] = x_val
         return filters
 
+    # date_series (Dates chart): x_val is a bucketed date label (e.g. a whole
+    # week/month), not a literal value in the date column, so it can't be a
+    # SQL equality filter — store it as a sentinel for post-fetch bucketing.
+    # series_val is the clicked line's label; carry over that line's own
+    # value column / filters so the drill matches exactly what the line
+    # counted. Calc lines (derived by +/- of two other lines) have no rows
+    # of their own, so only the date sentinel is set for those.
+    if chart.chart_type == 'date_series':
+        x_val = params.get('x_val', '')
+        series_val = params.get('series_val', '')
+        if x_val:
+            filters['ds_date_val'] = x_val
+        ds_lines = chart.config.get('ds_lines', [])
+        line = next((l for l in ds_lines if (l.get('label') or l.get('id')) == series_val), None)
+        line_type = line.get('line_type', 'base') if line else None
+        if line and line_type == 'active_range':
+            # No single column to require non-blank — the drill instead needs
+            # to re-run the enter/leave overlap test against the bucket's
+            # date range, done post-fetch in execute_drill_query.
+            filters['ds_active_line_id'] = line.get('id') or line.get('label')
+        elif line and line_type != 'calc':
+            value_col = line.get('value_col', '')
+            if value_col:
+                filters['ds_value_col_required'] = value_col
+            line_filters = line.get('filters') or {}
+            if isinstance(line_filters, dict):
+                for fcol, fval in line_filters.items():
+                    if fcol:
+                        filters[fcol] = fval
+        return filters
+
     # ── Handle multiple X-axis composite columns ──
     x_col_raw = fmap.get('x_col') or chart.config.get('x_col') or chart.config.get('x_cols') or ''
     x_cols_list = []
@@ -427,6 +458,34 @@ def execute_drill_query(
         extra_columns = list(extra_columns or [])
         if dyn_calc_value_col not in extra_columns:
             extra_columns.append(dyn_calc_value_col)
+
+    # date_series (Dates chart): extract the bucketed-date + value-col /
+    # active-range sentinels before they leak into SQL filters, and ensure
+    # the columns they need are fetched for the post-fetch filtering below.
+    ds_date_val = None
+    ds_value_col_required = None
+    ds_active_enter_col = None
+    ds_active_leave_col = None
+    if chart.chart_type == 'date_series' and (
+        'ds_date_val' in drill_filters or 'ds_value_col_required' in drill_filters or 'ds_active_line_id' in drill_filters
+    ):
+        drill_filters = dict(drill_filters)
+        ds_date_val = drill_filters.pop('ds_date_val', None)
+        ds_value_col_required = drill_filters.pop('ds_value_col_required', None)
+        ds_active_line_id = drill_filters.pop('ds_active_line_id', None)
+        cfg = chart.config
+        extra_columns = list(extra_columns or [])
+        if ds_active_line_id:
+            _line = next(
+                (l for l in cfg.get('ds_lines', []) if (l.get('id') or l.get('label')) == ds_active_line_id),
+                None,
+            )
+            if _line:
+                ds_active_enter_col = _line.get('enter_col', '')
+                ds_active_leave_col = _line.get('leave_col', '')
+        for fk in (cfg.get('ds_date_col', ''), ds_value_col_required or '', ds_active_enter_col or '', ds_active_leave_col or ''):
+            if fk and fk not in extra_columns:
+                extra_columns.append(fk)
 
     # progress_growth: extract the pg_cat sentinel before it leaks into SQL
     # filters, and ensure the before/after PL columns are fetched.
@@ -814,6 +873,89 @@ def execute_drill_query(
             return True
 
         rows = [r for r in rows if _has_calc_value(r.get(calc_target_col))]
+
+    # date_series (Dates chart): bucket the date column the same way the
+    # chart did and keep only rows in the clicked bucket, then (for a
+    # specific line) require its value column to be non-blank — mirroring
+    # _date_series_option's per-line aggregation so the drill list matches
+    # exactly what that line counted for that date.
+    if rows and chart.chart_type == 'date_series' and (ds_date_val or ds_value_col_required or ds_active_enter_col):
+        row_keys = list(rows[0].keys())
+        from dataexploration.school_year_utils import resolve_relative_column_key
+
+        def _norm_ds_col(c):
+            return str(c).replace('-', '_').lower()
+
+        _ds_key_map = {_norm_ds_col(k): k for k in row_keys}
+
+        def _resolve_ds_col(col):
+            if not col:
+                return col
+            norm = _norm_ds_col(col)
+            if norm in _ds_key_map:
+                return _ds_key_map[norm]
+            resolved = resolve_relative_column_key(col)
+            norm_res = _norm_ds_col(resolved)
+            if norm_res in _ds_key_map:
+                return _ds_key_map[norm_res]
+            clean = col.split('.')[-1]
+            norm_clean = _norm_ds_col(clean)
+            if norm_clean in _ds_key_map:
+                return _ds_key_map[norm_clean]
+            return col
+
+        if ds_active_enter_col:
+            # Active-Range line: re-run the same enter/leave overlap test the
+            # chart used, against the clicked bucket's calendar [start, end]
+            # range, then dedupe to one row per active student.
+            import pandas as pd
+            from dataviz.utils.chart_builder import _ds_bucket_label_range
+            date_bucket = (chart.config.get('ds_date_bucket') or 'day').strip().lower()
+            start, end = _ds_bucket_label_range(ds_date_val, date_bucket) if ds_date_val else (None, None)
+            enter_col = _resolve_ds_col(ds_active_enter_col)
+            leave_col = _resolve_ds_col(ds_active_leave_col) if ds_active_leave_col else None
+            if start is not None and enter_col:
+                enter_dt = pd.Series([r.get(enter_col) for r in rows])
+                enter_dt = pd.to_datetime(enter_dt, errors='coerce')
+                if leave_col:
+                    leave_dt = pd.to_datetime(pd.Series([r.get(leave_col) for r in rows]), errors='coerce')
+                else:
+                    leave_dt = pd.Series(pd.NaT, index=enter_dt.index)
+                mask = enter_dt.notna() & (enter_dt <= end) & (leave_dt.isna() | (leave_dt >= start))
+                rows = [r for r, keep in zip(rows, mask.tolist()) if keep]
+
+            _id_col = _find_id_col(rows[0]) if rows else None
+            if _id_col:
+                _seen: set = set()
+                _deduped: list = []
+                for _r in rows:
+                    _k = _r.get(_id_col)
+                    if _k not in _seen:
+                        _seen.add(_k)
+                        _deduped.append(_r)
+                rows = _deduped
+
+        if ds_date_val and not ds_active_enter_col:
+            date_col = _resolve_ds_col(chart.config.get('ds_date_col', ''))
+            if date_col:
+                import pandas as pd
+                from dataviz.utils.chart_builder import _bucket_date_column
+                date_bucket = (chart.config.get('ds_date_bucket') or 'day').strip().lower()
+                bucketed = _bucket_date_column(pd.Series([r.get(date_col) for r in rows]), date_bucket)
+                rows = [r for r, b in zip(rows, bucketed) if b == ds_date_val]
+
+        if ds_value_col_required and rows:
+            value_col = _resolve_ds_col(ds_value_col_required)
+
+            def _has_ds_value(v):
+                if v is None:
+                    return False
+                s = str(v).strip()
+                if not s or s in {'-', '—', '–', 'N/A', 'n/a', 'None', 'null', 'NULL'}:
+                    return False
+                return True
+
+            rows = [r for r in rows if _has_ds_value(r.get(value_col))]
 
     # progress_growth drill filtering — matrix uses per-cell dedupe (matches chart);
     # bar/donut modes use one row per student globally.

@@ -1,6 +1,10 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import SurveyDefinition, SurveyQuestion, SurveyResponse, ImportLog, ResponseScaleLabel, SurveyTopic
+from .models import (
+    SurveyDefinition, SurveyQuestion, SurveyResponse, ImportLog,
+    ResponseScaleLabel, SurveyTopic, APExamCode, APAwardType,
+    APImportLog, APStudentAward, APExamResult,
+)
 
 
 @admin.register(SurveyTopic)
@@ -146,3 +150,86 @@ class ResponseScaleLabelAdmin(admin.ModelAdmin):
     list_filter = ['question__survey_definition', 'value']
     search_fields = ['question__question_text', 'label']
     ordering = ['question', 'value']
+
+
+@admin.register(APExamCode)
+class APExamCodeAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name']
+    search_fields = ['code', 'name']
+    ordering = ['code']
+
+
+@admin.register(APAwardType)
+class APAwardTypeAdmin(admin.ModelAdmin):
+    list_display = ['code', 'description']
+    search_fields = ['code', 'description']
+    ordering = ['code']
+
+
+@admin.register(APImportLog)
+class APImportLogAdmin(admin.ModelAdmin):
+    list_display = ['name', 'school_year', 'status_badge', 'students_matched',
+                    'exams_created', 'exams_skipped', 'uploaded_by', 'uploaded_at']
+    list_filter = ['status', 'school_year', 'uploaded_at']
+    search_fields = ['name', 'filename', 'uploaded_by__username']
+    readonly_fields = ['uploaded_at', 'completed_at', 'file_hash',
+                       'total_students', 'exams_detected', 'exams_created',
+                       'exams_skipped', 'awards_detected', 'awards_created',
+                       'awards_skipped', 'students_matched', 'students_unmatched',
+                       'records_processed', 'error_count']
+    ordering = ['-uploaded_at']
+
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'filename', 'school_year')
+        }),
+        ('Upload Info', {
+            'fields': ('uploaded_by', 'uploaded_at', 'completed_at', 'status', 'file_hash')
+        }),
+        ('Statistics', {
+            'fields': ('total_students', 'students_matched', 'students_unmatched',
+                       'exams_detected', 'exams_created', 'exams_skipped',
+                       'awards_detected', 'awards_created', 'awards_skipped')
+        }),
+        ('Manual Overrides', {
+            'fields': ('manual_overrides',),
+            'classes': ('collapse',)
+        }),
+        ('Errors', {
+            'fields': ('error_count', 'error_log', 'warnings'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def status_badge(self, obj):
+        colors = {
+            'PENDING': 'orange',
+            'PROCESSING': 'blue',
+            'COMPLETED': 'green',
+            'FAILED': 'red',
+            'PARTIAL': 'yellow',
+        }
+        color = colors.get(obj.status, 'gray')
+        return format_html(
+            '<span style="background-color: {}; padding: 3px 8px; border-radius: 3px; color: white;">{}</span>',
+            color, obj.get_status_display()
+        )
+    status_badge.short_description = 'Status'
+
+
+@admin.register(APStudentAward)
+class APStudentAwardAdmin(admin.ModelAdmin):
+    list_display = ['ap_number', 'ssid', 'award_type', 'award_year', 'import_log']
+    list_filter = ['award_year', 'award_type', 'import_log__school_year']
+    search_fields = ['ap_number', 'ssid']
+    raw_id_fields = ['import_log', 'award_type']
+    ordering = ['-award_year', 'ap_number']
+
+
+@admin.register(APExamResult)
+class APExamResultAdmin(admin.ModelAdmin):
+    list_display = ['ap_number', 'ssid', 'exam', 'admin_year', 'exam_grade', 'import_log']
+    list_filter = ['admin_year', 'exam', 'exam_grade', 'import_log__school_year']
+    search_fields = ['ap_number', 'ssid', 'ai_institution_name']
+    raw_id_fields = ['import_log', 'exam']
+    ordering = ['-admin_year', 'ap_number']

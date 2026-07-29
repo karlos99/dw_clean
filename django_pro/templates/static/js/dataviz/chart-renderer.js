@@ -249,6 +249,13 @@
 
       // assessment_compare stores _drillMeta on the chart instance
       const meta = chart._drillMeta;
+
+      // date_series: calculation lines are derived (line A +/- line B) and
+      // have no rows of their own to drill into — skip navigation.
+      if (meta && meta.dsLines && meta.dsLines[seriesVal] && meta.dsLines[seriesVal].lineType === 'calc') {
+        return;
+      }
+
       if (meta && params.dataIndex != null) {
         if (meta.catForPos) {
           const realCat = meta.catForPos[params.dataIndex];

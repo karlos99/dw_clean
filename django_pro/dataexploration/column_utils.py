@@ -20,6 +20,23 @@ def _get_display_name(name):
     return name
 
 
+def test_metadata_matches(info: dict, row_test_name, row_subject, row_window=None) -> bool:
+    """Return True when a results row belongs to the given test column metadata.
+
+    Uses exact case-insensitive equality — never substring checks — so similarly
+    named assessments (e.g. CAA vs CAASPP) are never mixed.
+    """
+    if (info.get('test_name') or '').strip().lower() != (row_test_name or '').strip().lower():
+        return False
+    if (info.get('subject') or '').strip().lower() != (row_subject or '').strip().lower():
+        return False
+    expected_window = (info.get('test_window') or '').strip()
+    actual_window = (row_window or '').strip()
+    if not expected_window and not actual_window:
+        return True
+    return expected_window.lower() == actual_window.lower()
+
+
 def _generate_cache_key(prefix, filters, extra_hash_str=""):
     """Generate a consistent cache key from filters and extra conditions."""
     if filters:

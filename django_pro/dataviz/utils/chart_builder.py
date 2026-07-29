@@ -1454,6 +1454,256 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
     return option
 
 
+_DS_AGG_FUNCS = frozenset({'count', 'sum', 'avg', 'min', 'max', 'median'})
+
+
+def _ds_bucket_label_range(label, bucket):
+    """Inverse of _bucket_date_column: the calendar [start, end] Timestamps
+    a bucket label covers (e.g. '2025-09' -> (Sep 1, Sep 30))."""
+    try:
+        if bucket == 'week':
+            year_s, week_s = str(label).split('-W')
+            import datetime as _dt
+            start = pd.Timestamp(_dt.date.fromisocalendar(int(year_s), int(week_s), 1))
+            end = pd.Timestamp(_dt.date.fromisocalendar(int(year_s), int(week_s), 7))
+            return start, end
+        if bucket == 'month':
+            start = pd.Timestamp(str(label) + '-01')
+            return start, start + pd.offsets.MonthEnd(0)
+        if bucket == 'quarter':
+            year_s, q_s = str(label).split('-Q')
+            start_month = (int(q_s) - 1) * 3 + 1
+            start = pd.Timestamp(year=int(year_s), month=start_month, day=1)
+            end = pd.Timestamp(year=int(year_s), month=start_month + 2, day=1) + pd.offsets.MonthEnd(0)
+            return start, end
+        if bucket == 'year':
+            y = int(label)
+            return pd.Timestamp(year=y, month=1, day=1), pd.Timestamp(year=y, month=12, day=31)
+        # 'day' (and fallback)
+        d = pd.Timestamp(label)
+        return d, d
+    except (ValueError, TypeError):
+        return None, None
+
+
+def _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs):
+    """Dates chart: one or more lines plotted against a continuous, bucketed
+    date axis (every day/week/month/... between the earliest and latest
+    relevant date — gaps are zero-filled, not skipped).
+
+    Each entry in ``ds_lines`` is one of:
+      base line — {id, label, line_type:'base', agg_func, value_col, filters}
+        ``agg_func`` aggregates ``value_col`` per date bucket (count/sum/avg/min/max/median).
+      active_range line — {id, label, line_type:'active_range', enter_col, leave_col}
+        Counts distinct students whose [enter_col, leave_col] interval
+        overlaps the bucket at all (leave_col blank/missing = still active).
+        Point-in-time census columns like enrollment dates naturally have no
+        row for days in between enter and leave — this line type is what
+        makes a continuous "how many were active on this date" line possible.
+      calc line — {id, label, line_type:'calc', op:'add'|'subtract', line_a, line_b}
+        Combines two other lines (by id) point-by-point.
+
+    If a line's source column(s) aren't in the loaded data (e.g. a table
+    that doesn't exist yet), the line still renders — as a flat zero —
+    so wiring up the calculation now doesn't break the chart, and it starts
+    showing real numbers automatically once the column/table is added.
+    """
+    if not ds_date_col:
+        return _message_option('Select a Date column', cfg, error=True)
+    if not ds_lines:
+        return _message_option('Add at least one line', cfg, error=True)
+    if ds_date_col not in df.columns:
+        return _message_option(f'Date column not found in data: {ds_date_col}', cfg, error=True)
+
+    date_bucket = (cfg.get('ds_date_bucket') or 'day').strip().lower()
+
+    # Union every date column referenced by any line (the primary date
+    # column plus any Active-Range enter/leave columns) to find the overall
+    # span, then generate a continuous calendar axis over it.
+    date_parts = [pd.to_datetime(df[ds_date_col], errors='coerce')]
+    for line in ds_lines:
+        if line.get('line_type') == 'active_range':
+            for col_key in ('enter_col', 'leave_col'):
+                col = line.get(col_key, '')
+                if col and col in df.columns:
+                    date_parts.append(pd.to_datetime(df[col], errors='coerce'))
+    all_valid_dates = pd.concat(date_parts, ignore_index=True).dropna()
+    if all_valid_dates.empty:
+        return _message_option('No valid dates in data', cfg, error=True)
+
+    overall_min = all_valid_dates.min().normalize()
+    overall_max = all_valid_dates.max().normalize()
+    full_days = pd.Series(pd.date_range(overall_min, overall_max, freq='D'))
+    all_dates = sorted(set(_bucket_date_column(full_days, date_bucket).tolist()))
+    bucket_ranges = {lbl: _ds_bucket_label_range(lbl, date_bucket) for lbl in all_dates}
+
+    base = df.assign(**{ds_date_col: _bucket_date_column(df[ds_date_col], date_bucket)})
+    _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
+
+    line_series: dict[str, dict[str, float]] = {}
+    line_meta: dict[str, dict] = {}
+
+    for line in ds_lines:
+        lid = line.get('id') or line.get('label')
+        if not lid:
+            continue
+        ltype = line.get('line_type', 'base')
+        label = (line.get('label') or '').strip() or lid
+        line_meta[lid] = {'label': label, 'line_type': ltype}
+        if ltype == 'calc':
+            continue  # resolved in a second pass, after all other lines are ready
+
+        if ltype == 'active_range':
+            enter_col = line.get('enter_col', '')
+            leave_col = line.get('leave_col', '')
+            if not enter_col or enter_col not in df.columns:
+                # Enrollment table not loaded yet — plot as 0, not an error.
+                line_series[lid] = {d: 0.0 for d in all_dates}
+                continue
+            enter_dt = pd.to_datetime(df[enter_col], errors='coerce')
+            leave_dt = (pd.to_datetime(df[leave_col], errors='coerce')
+                        if leave_col and leave_col in df.columns
+                        else pd.Series(pd.NaT, index=df.index))
+            valid = enter_dt.notna()
+            counts = {}
+            for lbl, (start, end) in bucket_ranges.items():
+                if start is None:
+                    counts[lbl] = 0.0
+                    continue
+                mask = valid & (enter_dt <= end) & (leave_dt.isna() | (leave_dt >= start))
+                counts[lbl] = float(df.loc[mask, _dup_key].nunique()) if _dup_key else float(mask.sum())
+            line_series[lid] = counts
+            continue
+
+        value_col = line.get('value_col', '')
+        agg_func = line.get('agg_func', 'count')
+        if agg_func not in _DS_AGG_FUNCS:
+            agg_func = 'count'
+
+        if not value_col or value_col not in base.columns:
+            # Column not loaded yet (e.g. future absence table) — plot as 0
+            # rather than erroring, so the chart is ready before the data is.
+            line_series[lid] = {d: 0.0 for d in all_dates}
+            continue
+
+        sub = base
+        line_filters = line.get('filters') or {}
+        if isinstance(line_filters, dict):
+            for fcol, fvals in line_filters.items():
+                if fcol not in sub.columns or not fvals:
+                    continue
+                allowed = {str(v) for v in fvals} if isinstance(fvals, list) else {str(fvals)}
+                sub = sub[sub[fcol].astype(str).isin(allowed)]
+
+        adf = _agg(sub, ds_date_col, value_col, agg_func, cfg=cfg)
+        vm = dict(zip(adf[ds_date_col].astype(str), adf['_value'])) if not adf.empty else {}
+        line_series[lid] = {d: float(vm.get(d, 0) or 0) for d in all_dates}
+
+    # Calc lines can reference other calc lines (e.g. an attendance-rate line
+    # dividing a "Present" calc line by a "Total" line), so resolution must
+    # not assume ds_lines is already in dependency order — resolve whatever
+    # has its inputs ready, repeat until nothing more can progress. Anything
+    # left over (dangling reference or a cycle) renders as a flat zero,
+    # consistent with every other "reference doesn't resolve" case here.
+    _DS_CALC_OPS = {
+        'add':      lambda a, b: a + b,
+        'subtract': lambda a, b: a - b,
+        'multiply': lambda a, b: a * b,
+        'divide':   lambda a, b: (a / b) if b else 0.0,
+    }
+    pending_calcs = {
+        (line.get('id') or line.get('label')): line
+        for line in ds_lines
+        if line.get('line_type') == 'calc' and (line.get('id') or line.get('label'))
+    }
+    for _ in range(len(pending_calcs) + 1):
+        if not pending_calcs:
+            break
+        progressed = False
+        for lid, line in list(pending_calcs.items()):
+            a_id = line.get('line_a', '')
+            b_id = line.get('line_b', '')
+            if a_id in line_series and b_id in line_series:
+                fn = _DS_CALC_OPS.get(line.get('op', 'subtract'), _DS_CALC_OPS['subtract'])
+                a_vals, b_vals = line_series[a_id], line_series[b_id]
+                result = {d: fn(a_vals.get(d, 0.0), b_vals.get(d, 0.0)) for d in all_dates}
+                if line.get('as_percent'):
+                    result = {d: v * 100 for d, v in result.items()}
+                line_series[lid] = result
+                del pending_calcs[lid]
+                progressed = True
+        if not progressed:
+            break
+    for lid in pending_calcs:
+        line_series[lid] = {d: 0.0 for d in all_dates}
+
+    option = _base_option(cfg)
+    ax = _axis_style(cfg)
+    x_lbl = _x_axis_label_style(cfg)
+    smooth = bool(cfg.get('smooth', False))
+    show_pts = bool(cfg.get('show_points', False))
+    opacity = float(cfg.get('opacity', 0.9) or 0.9)
+    show_labels = bool(cfg.get('data_labels', False))
+
+    series = []
+    line_labels_ordered = []
+    percent_names = []
+    for line in ds_lines:
+        lid = line.get('id') or line.get('label')
+        if lid not in line_series:
+            continue
+        meta = line_meta[lid]
+        data = [line_series[lid].get(d, 0.0) for d in all_dates]
+        line_labels_ordered.append(meta['label'])
+        is_pct = bool(line.get('as_percent'))
+        if is_pct:
+            percent_names.append(meta['label'])
+        label_cfg = {'show': show_labels, 'position': cfg.get('label_position', 'top') or 'top',
+                     'fontSize': int(cfg.get('label_font_size', 10) or 10)}
+        if is_pct:
+            label_cfg['__formatter_js__'] = "function(p){var v=Number(p.value||0);return v.toFixed(1)+'%';}"
+        series.append({
+            'name': meta['label'],
+            'type': 'line',
+            'smooth': smooth,
+            'showSymbol': show_pts, 'symbolSize': 6 if show_pts else 0,
+            'lineStyle': {'opacity': opacity}, 'itemStyle': {'opacity': opacity},
+            'label': label_cfg,
+            'data': data,
+        })
+
+    if not series:
+        return _message_option('No lines configured', cfg, error=True)
+
+    _update_chart_axes(option, all_dates, series, labels.get('y', '') or 'Count', labels, cfg, ax, x_lbl)
+    tooltip_js = (
+        "function(params) {"
+        "  if (!Array.isArray(params)) params = [params];"
+        f"  var pctNames = {json.dumps(percent_names)};"
+        "  var html = '<b>' + ((params[0] && params[0].axisValueLabel) || (params[0] && params[0].axisValue) || '') + '</b>';"
+        "  for (var i = 0; i < params.length; i++) {"
+        "    var p = params[i];"
+        "    var v = Number(p.value);"
+        "    var isPct = pctNames.indexOf(p.seriesName) !== -1;"
+        "    var vDisp = isPct ? v.toFixed(1) + '%' : (Number.isInteger(v) ? v : v.toFixed(1));"
+        "    html += '<br/>' + p.marker + ' ' + p.seriesName + ': <b>' + vDisp + '</b>';"
+        "  }"
+        "  return html;"
+        "}"
+    )
+    option['tooltip'] = {'show': cfg.get('show_tooltip', True) is not False,
+                         'trigger': 'axis', 'axisPointer': {'type': 'line'},
+                         '__formatter_js__': tooltip_js}
+    option['__category_names__'] = all_dates
+    option['_drillMeta'] = {
+        'dsDateCol': ds_date_col,
+        'dsDateBucket': date_bucket,
+        'dsLines': {m['label']: {'id': lid, 'lineType': m['line_type']} for lid, m in line_meta.items()},
+    }
+    _add_zoom(option, cfg)
+    return option
+
+
 def _pie_option(df, x_col, y_col, agg, cfg, donut=False):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
@@ -1940,6 +2190,44 @@ def _auto_detect_pl_scale(values) -> list:
 
 _BLANK_PL_VALS = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
 
+_PG_ALL_PREFIX = '__pg_all__'
+
+
+def pg_all_key(col: str) -> str:
+    """Side-channel key storing every PL value seen for a test column (matrix matching)."""
+    return f'{_PG_ALL_PREFIX}{col}'
+
+
+def _cell_pl_values(row: dict, col: str) -> set:
+    """All normalized PL values for *col* on this row (matches exploration EXISTS filters)."""
+    vals: set = set()
+    if not row or not col:
+        return vals
+    stored = row.get(pg_all_key(col))
+    if stored:
+        for v in (stored if isinstance(stored, (list, set, tuple)) else [stored]):
+            n = _normalize_pl_val(v)
+            if n:
+                vals.add(n)
+    n = _normalize_pl_val(row.get(col))
+    if n:
+        vals.add(n)
+    return vals
+
+
+def _record_pg_val(row: dict, col: str, val) -> None:
+    """Track every PL value seen for a column (exploration uses EXISTS, not last row)."""
+    norm_val = _normalize_pl_val(val)
+    if not norm_val:
+        return
+    key = pg_all_key(col)
+    existing = row.get(key)
+    if not isinstance(existing, list):
+        existing = list(existing) if existing else []
+    if norm_val not in existing:
+        existing.append(norm_val)
+    row[key] = existing
+
 
 def _resolve_row_column(row_keys, col):
     """Map a config column name to the actual key present in row dicts."""
@@ -2025,6 +2313,48 @@ def _dedupe_student_rows(rows: list) -> list:
     return deduped
 
 
+def consolidate_progress_growth_rows(rows, before_col, after_col):
+    """Merge enrollment rows per student so before/after PL coexist on one row.
+
+    Cross-year PL columns (e.g. two ELPAC summative years) often land on different
+    enrollment rows. Data exploration attaches each year's PL via separate subqueries
+    onto one student; this mirrors that before matrix counting.
+    """
+    if not rows or not before_col or not after_col:
+        return rows
+
+    row_keys = list(rows[0].keys())
+    before_col = _resolve_row_column(row_keys, before_col)
+    after_col = _resolve_row_column(row_keys, after_col)
+
+    groups: dict = {}
+    unkeyed = []
+    for r in rows:
+        key = _row_student_key(r)
+        if key is None:
+            unkeyed.append(r)
+        else:
+            groups.setdefault(key, []).append(r)
+
+    consolidated = []
+    for group in groups.values():
+        base = dict(group[0])
+        before_vals: set = set()
+        after_vals: set = set()
+        for r in group:
+            before_vals |= _cell_pl_values(r, before_col)
+            after_vals |= _cell_pl_values(r, after_col)
+        if before_vals:
+            base[before_col] = sorted(before_vals, key=lambda v: (len(v), v))[0]
+            base[pg_all_key(before_col)] = sorted(before_vals, key=lambda v: (len(v), v))
+        if after_vals:
+            base[after_col] = sorted(after_vals, key=lambda v: (len(v), v))[0]
+            base[pg_all_key(after_col)] = sorted(after_vals, key=lambda v: (len(v), v))
+        consolidated.append(base)
+
+    return consolidated + unkeyed
+
+
 def prepare_progress_growth_rows(rows, before_col, after_col, pl_scale=None):
     """Filter to valid before/after PL pairs and dedupe by student (first kept).
 
@@ -2033,6 +2363,8 @@ def prepare_progress_growth_rows(rows, before_col, after_col, pl_scale=None):
     """
     if not rows or not before_col or not after_col:
         return [], before_col, after_col, {}
+
+    rows = consolidate_progress_growth_rows(rows, before_col, after_col)
 
     row_keys = list(rows[0].keys())
     before_col = _resolve_row_column(row_keys, before_col)
@@ -2056,8 +2388,9 @@ def prepare_progress_growth_rows(rows, before_col, after_col, pl_scale=None):
 def filter_progress_growth_matrix_rows(rows, before_col, after_col, before_val, after_val):
     """Return rows for one matrix cell, deduped by student.
 
-    Matches matrix chart counting: filter to the before→after transition first,
-    then keep one row per student (not a single global row per student).
+    Uses the same semantics as data exploration column filters: a student matches
+    when ANY fetched result PL equals the before value AND ANY equals the after
+    value (across enrollment rows), not only when both appear on one row.
     """
     if not rows or not before_col or not after_col:
         return [], before_col, after_col
@@ -2068,13 +2401,41 @@ def filter_progress_growth_matrix_rows(rows, before_col, after_col, before_val, 
     b_target = _normalize_pl_val(before_val)
     a_target = _normalize_pl_val(after_val)
 
-    matched = [
-        r for r in rows
-        if _normalize_pl_val(r.get(before_col)) == b_target
-        and _normalize_pl_val(r.get(after_col)) == a_target
-    ]
+    groups: dict = {}
+    unkeyed = []
+    for r in rows:
+        key = _row_student_key(r)
+        if key is None:
+            unkeyed.append(r)
+        else:
+            groups.setdefault(key, []).append(r)
 
-    return _dedupe_student_rows(matched), before_col, after_col
+    matched = []
+    for group in groups.values():
+        before_vals: set = set()
+        after_vals: set = set()
+        for r in group:
+            before_vals |= _cell_pl_values(r, before_col)
+            after_vals |= _cell_pl_values(r, after_col)
+        if b_target not in before_vals or a_target not in after_vals:
+            continue
+        rep = next(
+            (
+                r for r in group
+                if b_target in _cell_pl_values(r, before_col)
+                and a_target in _cell_pl_values(r, after_col)
+            ),
+            next((r for r in group if b_target in _cell_pl_values(r, before_col)), group[0]),
+        )
+        matched.append(rep)
+
+    for r in unkeyed:
+        before_vals = _cell_pl_values(r, before_col)
+        after_vals = _cell_pl_values(r, after_col)
+        if b_target in before_vals and a_target in after_vals:
+            matched.append(r)
+
+    return matched, before_col, after_col
 
 
 def classify_progress_growth_row(row, before_col, after_col, rank):
@@ -2948,6 +3309,11 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
         missing = [c for c in (pg_before_col, pg_after_col) if c not in df.columns]
         return _message_option(f'PL column(s) not found in data: {", ".join(missing)}', cfg, error=True)
 
+    # One row per student with both PL columns coalesced (matches data exploration).
+    source_rows = raw_rows if raw_rows is not None else df.to_dict('records')
+    source_rows = consolidate_progress_growth_rows(source_rows, pg_before_col, pg_after_col)
+    df = pd.DataFrame(source_rows)
+
     _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
 
     # Collect valid PL values
@@ -2981,7 +3347,6 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     if pg_display == 'matrix':
         # Use the exact same row filter + dedupe as drill-through (dict rows,
         # per-row student id) so cell counts always match the drill list.
-        source_rows = raw_rows if raw_rows is not None else df.to_dict('records')
         crossdata = []
         for i, before in enumerate(ordered):
             for j, after in enumerate(ordered):
@@ -3606,6 +3971,10 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         agg = 'count'
     _raw_decimals = cfg.get('agg_decimals')
     agg_decimals  = int(_raw_decimals) if _raw_decimals is not None else None
+    # Dates (date_series) extra fields
+    ds_date_col = cfg.get('ds_date_col', '')
+    ds_lines_raw = cfg.get('ds_lines', [])
+    ds_lines = ds_lines_raw if isinstance(ds_lines_raw, list) else []
     # Progress Growth extra fields
     pg_before_col = cfg.get('pg_before_col', '')
     pg_after_col  = cfg.get('pg_after_col', '')
@@ -3679,6 +4048,16 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     size_col = _resolve_cfg_col(size_col)
     pg_before_col = _resolve_cfg_col(pg_before_col)
     pg_after_col = _resolve_cfg_col(pg_after_col)
+    ds_date_col = _resolve_cfg_col(ds_date_col)
+    _resolved_ds_lines = []
+    for _ds_line in ds_lines:
+        _l = dict(_ds_line) if isinstance(_ds_line, dict) else {}
+        if _l.get('value_col'):
+            _l['value_col'] = _resolve_cfg_col(_l['value_col'])
+        if isinstance(_l.get('filters'), dict):
+            _l['filters'] = {_resolve_cfg_col(k): v for k, v in _l['filters'].items()}
+        _resolved_ds_lines.append(_l)
+    ds_lines = _resolved_ds_lines
     st_row_col = _resolve_cfg_col(st_row_col)
     st_col_col = _resolve_cfg_col(st_col_col)
     st_row_cols = [_resolve_cfg_col(c) for c in st_row_cols] if isinstance(st_row_cols, list) else []
@@ -3751,6 +4130,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         'stacked_bar':  lambda: _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, True,  col_defs, group_col),
         'waterfall':    lambda: _waterfall_option(df, x_col, y_col, agg, cfg, labels),
         'line':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, bool(cfg.get('line_fill', False)), (cfg.get('line_layout') == 'stacked'), y_cols, col_defs, bool(cfg.get('smooth', False))),
+        'date_series':  lambda: _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs),
         'spline':       lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
         'parliament':   lambda: _parliament_option(df, x_col, y_col, agg, cfg, col_defs),
         'area':         lambda: _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, True,  False, y_cols, col_defs),
@@ -3862,6 +4242,7 @@ CHART_TYPES = [
     ('dynamic_summary_table', 'Dynamic Summary Table', 'chart-dyntable', 'Comparison'),
     ('waterfall',    'Waterfall',     'chart-waterfall',     'Comparison'),
     ('line',         'Line',          'chart-line',          'Trend'),
+    ('date_series',  'Dates',         'chart-dates',          'Trend'),
     ('parliament',   'Parliament',    'chart-parliament',    'Proportion'),
     ('spline',       'Parliament',    'chart-parliament',    'Proportion'),   # backward compat alias
     ('pie',          'Pie',           'chart-pie',           'Proportion'),

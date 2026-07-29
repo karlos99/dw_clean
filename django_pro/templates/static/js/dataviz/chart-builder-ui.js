@@ -80,6 +80,40 @@ function chartBuilderUIMethods() {
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
     },
+    addDsLine(lineType) {
+      this._dsLineSeq = (this._dsLineSeq || 0) + 1;
+      const id = 'l' + this._dsLineSeq;
+      if (lineType === 'calc') {
+        const baseLines = this.dsLines.filter(l => l.line_type !== 'calc');
+        this.dsLines.push({
+          id, line_type: 'calc', label: '',
+          op: 'subtract', as_percent: false,
+          line_a: baseLines[0]?.id || '',
+          line_b: baseLines[1]?.id || '',
+        });
+      } else if (lineType === 'active_range') {
+        this.dsLines.push({ id, line_type: 'active_range', label: '', enter_col: '', leave_col: '' });
+      } else {
+        this.dsLines.push({ id, line_type: 'base', label: '', agg_func: 'count', value_col: '' });
+      }
+      this.dsLines = [...this.dsLines];
+      this._schedulePreview(true);
+    },
+    removeDsLine(idx) {
+      const removedId = this.dsLines[idx]?.id;
+      this.dsLines.splice(idx, 1);
+      // Drop calc lines that referenced the removed line — a dangling
+      // reference would silently resolve to a zero-value line, which is
+      // more confusing than just clearing the calc so the user re-picks.
+      this.dsLines.forEach(l => {
+        if (l.line_type === 'calc') {
+          if (l.line_a === removedId) l.line_a = '';
+          if (l.line_b === removedId) l.line_b = '';
+        }
+      });
+      this.dsLines = [...this.dsLines];
+      this._schedulePreview(true);
+    },
     plColLabel(col) {
       return this.colLabel(col);
     },

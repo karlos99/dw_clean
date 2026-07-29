@@ -125,15 +125,18 @@ def export_students_csv(request):
                 window_clause = ""
                 window_params = []
                 if test_info.get('test_window'):
-                    window_clause = "AND t.test_window ILIKE %s "
+                    window_clause = "AND LOWER(t.test_window) = LOWER(%s) "
                     window_params = [test_info['test_window']]
+                else:
+                    window_clause = "AND (t.test_window IS NULL OR t.test_window = '') "
+                    window_params = []
 
                 id_subquery_base = (
                     "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.school_year = %s "
-                    "AND t.test_name ILIKE %s "
-                    "AND t.subject ILIKE %s "
+                    "AND LOWER(t.test_name) = LOWER(%s) "
+                    "AND LOWER(t.subject) = LOWER(%s) "
                     f"{window_clause}"
                 )
                 base_params = [
@@ -627,31 +630,51 @@ def export_students_csv(request):
                     
                     # Fetch Test Data
                     if test_cols_info and student_ids:
+                        student_ssids = [s.get('ssid') for s in chunk_students if s.get('ssid')]
                         for test_info in test_cols_info:
                             metric_col = test_info['metric']
-                            window_clause = "AND t.test_window ILIKE %s" if test_info.get('test_window') else ""
-                            window_params = [test_info['test_window']] if test_info.get('test_window') else []
-                            
+                            if test_info.get('test_window'):
+                                window_clause = "AND LOWER(t.test_window) = LOWER(%s)"
+                                window_params = [test_info['test_window']]
+                            else:
+                                window_clause = "AND (t.test_window IS NULL OR t.test_window = '')"
+                                window_params = []
+
                             select_expr = f"r.{metric_col}" if metric_col in {'ss', 'pl'} else "(r.other_info ->> %s)"
                             extra_params = [] if metric_col in {'ss', 'pl'} else [test_info.get('other_info_key', '')]
-                            
+
                             tquery = f"""
-                                SELECT r.local_student_id, {select_expr}
+                                SELECT r.local_student_id, r.ssid, {select_expr}
                                 FROM results r
                                 INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                                WHERE r.local_student_id = ANY(%s)
+                                WHERE (r.local_student_id = ANY(%s)
+                                       OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
                                 AND r.school_year = %s
-                                AND t.test_name ILIKE %s
-                                AND t.subject ILIKE %s
+                                AND LOWER(t.test_name) = LOWER(%s)
+                                AND LOWER(t.subject) = LOWER(%s)
                                 {window_clause}
                             """
                             cursor.execute(tquery, [
-                                *extra_params, student_ids, test_info['year'], 
-                                test_info['test_name'], test_info['subject'], *window_params
+                                *extra_params, student_ids, student_ssids, test_info['year'],
+                                test_info['test_name'], test_info['subject'], *window_params,
                             ])
-                            tdata = {row[0]: row[1] for row in cursor.fetchall()}
+                            test_data_by_id = {}
+                            test_data_by_ssid = {}
+                            for row in cursor.fetchall():
+                                local_id, ssid, val = row[0], row[1], row[2]
+                                if local_id:
+                                    test_data_by_id[local_id] = val
+                                if ssid:
+                                    test_data_by_ssid[ssid] = val
                             for student in chunk_students:
-                                student[test_info['col_name']] = tdata.get(student.get('student_id'), '')
+                                val = '—'
+                                sid = student.get('student_id')
+                                ssid = student.get('ssid')
+                                if sid in test_data_by_id:
+                                    val = test_data_by_id[sid]
+                                elif ssid in test_data_by_ssid:
+                                    val = test_data_by_ssid[ssid]
+                                student[test_info['col_name']] = val
                     
                     # Fetch marks data for this chunk
                     student_keys = [s.get('stu_annual_key') for s in chunk_students if s.get('stu_annual_key')]
