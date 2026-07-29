@@ -11,7 +11,8 @@ from PostgreSQL into ClickHouse in a single efficient operation per table.
 
 Tables synced (all analytics-relevant tables):
     current_student, student_enroll, results, tests,
-    student_marks_list, nextyearlist_placement, mathr_recommendation
+    student_marks_list, nextyearlist_placement, mathr_recommendation,
+    student_attendance, student_incidents
 """
 
 import os
@@ -35,6 +36,9 @@ ALL_TABLES = [
     'schedule_list',
     'relative_year',
     'mathr_recommendation',
+    'student_attendance',
+    'student_incidents',
+
 ]
 
 

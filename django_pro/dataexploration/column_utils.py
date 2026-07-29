@@ -20,6 +20,23 @@ def _get_display_name(name):
     return name
 
 
+def test_metadata_matches(info: dict, row_test_name, row_subject, row_window=None) -> bool:
+    """Return True when a results row belongs to the given test column metadata.
+
+    Uses exact case-insensitive equality — never substring checks — so similarly
+    named assessments (e.g. CAA vs CAASPP) are never mixed.
+    """
+    if (info.get('test_name') or '').strip().lower() != (row_test_name or '').strip().lower():
+        return False
+    if (info.get('subject') or '').strip().lower() != (row_subject or '').strip().lower():
+        return False
+    expected_window = (info.get('test_window') or '').strip()
+    actual_window = (row_window or '').strip()
+    if not expected_window and not actual_window:
+        return True
+    return expected_window.lower() == actual_window.lower()
+
+
 def _generate_cache_key(prefix, filters, extra_hash_str=""):
     """Generate a consistent cache key from filters and extra conditions."""
     if filters:
@@ -71,14 +88,27 @@ def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses
 
         # Add column-specific filters from base student data
         if column_filters:
-            for col, value in column_filters.items():
-                if isinstance(value, (list, tuple, set)):
-                    value = next((v for v in value if v), '')
-                if value and value != 'All' and col in COLUMN_DEFINITIONS:
-                    # Only apply filters for non-test columns
-                    if not col.startswith('test_'):
-                        where_clauses.append(f"cs.{col} ILIKE %s")
-                        params.append(f'%{value}%')
+            for col, raw_val in column_filters.items():
+                if isinstance(raw_val, (list, tuple, set)):
+                    vals = [str(v).strip() for v in raw_val if v is not None and str(v).strip()]
+                elif raw_val and str(raw_val).strip() and str(raw_val).strip() != 'All':
+                    vals = [str(raw_val).strip()]
+                else:
+                    vals = []
+
+                if not vals:
+                    continue
+
+                if col == 'search':
+                    search_param = f"%{vals[0]}%"
+                    where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
+                    params.extend([search_param, search_param, search_param])
+                elif col in {'school_year', 'grade', 'status', 'school_state_id'}:
+                    where_clauses.append(f"cs.{col} = ANY(%s)")
+                    params.append(vals)
+                elif col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_')):
+                    where_clauses.append(f"cs.{col} = ANY(%s)")
+                    params.append(vals)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -388,20 +418,27 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
 
         # Apply base column filters from current_student
         if column_filters:
-            for col, value in column_filters.items():
-                if isinstance(value, (list, tuple, set)):
-                    value = next((v for v in value if v), '')
-                if col == 'search' and value:
-                    where_clauses.append(
-                        "(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)"
-                    )
-                    search_param = f"%{value}%"
-                    params.extend([search_param, search_param, search_param])
+            for col, raw_val in column_filters.items():
+                if isinstance(raw_val, (list, tuple, set)):
+                    vals = [str(v).strip() for v in raw_val if v is not None and str(v).strip()]
+                elif raw_val and str(raw_val).strip() and str(raw_val).strip() != 'All':
+                    vals = [str(raw_val).strip()]
+                else:
+                    vals = []
+
+                if not vals:
                     continue
-                if value and value != 'All' and col in COLUMN_DEFINITIONS:
-                    if not col.startswith(('test_', 'mark_')):
-                        where_clauses.append(f"cs.{col} ILIKE %s")
-                        params.append(f"%{value}%")
+
+                if col == 'search':
+                    search_param = f"%{vals[0]}%"
+                    where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
+                    params.extend([search_param, search_param, search_param])
+                elif col in {'school_year', 'grade', 'status', 'school_state_id'}:
+                    where_clauses.append(f"cs.{col} = ANY(%s)")
+                    params.append(vals)
+                elif col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_')):
+                    where_clauses.append(f"cs.{col} = ANY(%s)")
+                    params.append(vals)
 
         where_sql = " AND ".join(where_clauses)
 

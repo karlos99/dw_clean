@@ -19,6 +19,7 @@ For cursor-compatible usage (matching Django's cursor.execute + fetchall):
 import logging
 from decimal import Decimal
 from django.conf import settings
+from clickhouse_connect.driver.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,12 @@ class QueryExecutor:
                     exc,
                 )
                 return self._execute_postgres(sql, params)
+            except Exception as exc:
+                logger.warning(
+                    "ClickHouse execution failed, falling back to PostgreSQL: %s",
+                    exc,
+                )
+                return self._execute_postgres(sql, params)
 
         return self._execute_postgres(sql, params)
 
@@ -114,6 +121,9 @@ class QueryExecutor:
                 return cols, rows
             except SQLTranslationError:
                 logger.warning("SQL not translatable to ClickHouse dialect, falling back to PostgreSQL")
+                return self._execute_postgres_fetchall(sql, params)
+            except Exception as exc:
+                logger.warning("ClickHouse execution failed during fetchall, falling back to PostgreSQL: %s", exc)
                 return self._execute_postgres_fetchall(sql, params)
 
         return self._execute_postgres_fetchall(sql, params)

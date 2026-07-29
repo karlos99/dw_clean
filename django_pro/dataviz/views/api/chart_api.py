@@ -17,6 +17,16 @@ from dataviz.utils.chart_builder import build_option
 
 from ..mixins import is_project_admin, FORBIDDEN
 
+# Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
+_CHART_PIPELINE_VERSION = '8'
+
+
+def _effective_chart_cfg(chart) -> dict:
+    """Merge model-level chart fields into config (older saves omit chart_type)."""
+    cfg = dict(chart.config or {})
+    cfg['chart_type'] = chart.chart_type or cfg.get('chart_type', 'bar')
+    return cfg
+
 
 _CONFIG_COL_KEYS = frozenset({
     'x_col', 'y_col', 'stack_col', 'series_col', 'group_col',
@@ -78,21 +88,43 @@ def _parse_chart_row_limit(cfg: dict):
     return None
 
 
-def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, user) -> list:
-    """Fetch test_*/mark_* columns via the data explorer and merge into rows.
+def _progress_growth_query_columns(chart_type: str, chart_cfg: dict) -> list:
+    """PL columns the chart query must fetch — same extras drill-through adds."""
+    if chart_type != 'progress_growth':
+        return []
+    cols = []
+    for key in ('pg_before_col', 'pg_after_col'):
+        col = (chart_cfg or {}).get(key, '')
+        if col and col not in cols:
+            cols.append(col)
+    return cols
 
-    Used when a dataset chart references assessment columns not returned by the
+
+def _augment_chart_result_rows(chart_type: str, chart_cfg: dict, col_mappings: dict, result: dict) -> dict:
+    """Ensure test/mark PL columns are present on chart rows (mirrors drill fetch)."""
+    if result.get('error') or not result.get('rows'):
+        return result
+    missing = _get_missing_assessment_cols(chart_cfg, col_mappings or {}, result['rows'])
+    if missing:
+        result = dict(result)
+        result['rows'] = _augment_rows_with_assessment_cols(result['rows'], missing, None)
+    return result
+
+
+def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset) -> list:
+    """Bulk-fetch missing test/mark columns for rows retrieved from a SavedQuery or
     dataset SQL (i.e. the dataset doesn't include the results/tests JOIN).  The
     data explorer already knows how to resolve these keys to pl/ss from results
     and test metadata from tests — this reuses that exact mechanism.
     """
     if not rows or not needed_keys:
         return rows
-    from dataviz.utils.data_loader import run_column_query
+    from dataviz.utils.data_loader import run_column_query, _parse_year
+    from dataexploration.school_year_utils import resolve_relative_column_key
 
     id_key = None
     ids = []
-    for candidate in ('stu_annual_key', 'ssid', 'student_id'):
+    for candidate in ('student_id', 'ssid', 'stu_annual_key'):
         ids = [str(r.get(candidate) or '').strip() for r in rows if r.get(candidate)]
         if ids:
             id_key = candidate
@@ -102,7 +134,14 @@ def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, user) -> l
         return rows
 
     explorer_filters: dict = {id_key: ids}
-    # Extract years robustly
+    # Extract years from both existing rows AND needed assessment column keys
+    needed_years = []
+    for k in needed_keys:
+        res_k = resolve_relative_column_key(k)
+        yr = _parse_year(res_k)
+        if yr:
+            needed_years.append(yr)
+
     raw_years = []
     for r in rows:
         sy = r.get('school_year')
@@ -113,23 +152,57 @@ def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, user) -> l
                     break
         if sy:
             raw_years.append(str(sy).strip())
-    years = list(set(raw_years))
-    if years:
-        explorer_filters['school_year'] = years
+    all_years = list(set(raw_years + needed_years))
+    if all_years:
+        explorer_filters['school_year'] = all_years
 
     fetch_cols = ['stu_annual_key', 'ssid', 'student_id', 'school_year'] + needed_keys
     exp_result = run_column_query(fetch_cols, explorer_filters, user=None)
-    lookup = {str(r.get(id_key) or '').strip(): r for r in exp_result.get('rows', []) if r.get(id_key)}
+
+    # Merge fetched assessment columns into student dicts by student_id or candidate id_key
+    exp_rows = exp_result.get('rows', [])
+    lookup_map = {}
+    for r in exp_rows:
+        match_val = str(r.get(id_key) or '').strip()
+        if match_val:
+            lookup_map.setdefault(match_val, []).append(r)
+
+    from dataviz.utils.chart_builder import _record_pg_val
 
     for row in rows:
         match = str(row.get(id_key) or '').strip()
-        if match and match in lookup:
-            exp_row = lookup[match]
-            norm_exp_row = {str(col).replace('-', '_').lower(): val for col, val in exp_row.items()}
-            for k in needed_keys:
-                if k not in row or row[k] is None:
+        if match and match in lookup_map:
+            for exp_row in lookup_map[match]:
+                norm_exp_row = {str(col).replace('-', '_').lower(): val for col, val in exp_row.items()}
+                for k in needed_keys:
                     k_norm = str(k).replace('-', '_').lower()
-                    row[k] = norm_exp_row.get(k_norm)
+                    val = norm_exp_row.get(k_norm)
+                    existing = row.get(k)
+                    existing_blank = (
+                        existing is None
+                        or str(existing).strip() in ('', '\u2014', '-', 'None', 'null', 'NULL', 'nan', 'NaN')
+                    )
+                    if val is not None and str(val).strip() not in ('', '\u2014', '-', 'None', 'null', 'NULL'):
+                        row[k] = val
+                        resolved_k = k
+                        for exp_k in exp_row:
+                            if str(exp_k).replace('-', '_').lower() == k_norm:
+                                resolved_k = exp_k
+                                break
+                        _record_pg_val(row, resolved_k, val)
+                    elif existing_blank and val is not None:
+                        row[k] = val
+                for exp_k, exp_v in exp_row.items():
+                    if not str(exp_k).startswith('__pg_all__'):
+                        continue
+                    if isinstance(exp_v, list):
+                        for item in exp_v:
+                            _record_pg_val(row, exp_k[len('__pg_all__'):], item)
+                    elif isinstance(exp_v, (set, tuple)):
+                        for item in exp_v:
+                            _record_pg_val(row, exp_k[len('__pg_all__'):], item)
+                    else:
+                        _record_pg_val(row, exp_k[len('__pg_all__'):], exp_v)
     return rows
 
 
@@ -149,20 +222,33 @@ def _get_missing_assessment_cols(cfg: dict, col_mappings: dict, aliased_rows: li
 
     seen = set()
     missing = []
+    blank_vals = {'', '\u2014', '-', 'none', 'null', 'nan', 'n/a'}
+
+    def _norm(c):
+        return str(c).replace('-', '_').lower()
+
+    def _col_has_data(c_norm: str) -> bool:
+        for r in aliased_rows:
+            for k, v in r.items():
+                if _norm(k) == c_norm:
+                    if v is not None and str(v).strip().lower() not in blank_vals:
+                        return True
+        return False
+
     existing_cols = set()
     if aliased_rows:
-        def _norm(c):
-            return str(c).replace('-', '_').lower()
         existing_cols = {_norm(c) for c in aliased_rows[0].keys()}
 
     for c in cols:
         if not c:
             continue
-        c_norm = str(c).replace('-', '_').lower()
+        c_norm = _norm(c)
         if c_norm in seen:
             continue
         seen.add(c_norm)
-        if (c.startswith('test_') or c.startswith('mark_')) and c_norm not in existing_cols:
+        if not (c.startswith('test_') or c.startswith('mark_')):
+            continue
+        if c_norm not in existing_cols or not _col_has_data(c_norm):
             missing.append(c)
     return missing
 
@@ -286,6 +372,10 @@ def _cfg_from_post(post):
         'dyn_col_mode':      post.get('dyn_col_mode', 'pivot'),
         'dyn_calculations':  _parse_json_list('dyn_calculations'),
         'dyn_display_type':  post.get('dyn_display_type', 'table'),
+        # Dates (date_series) fields
+        'ds_date_col':       post.get('ds_date_col', ''),
+        'ds_date_bucket':    post.get('ds_date_bucket', 'day'),
+        'ds_lines':          _parse_json_list('ds_lines'),
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
         'limit':             _parse_int(post.get('limit'), None),
@@ -518,7 +608,13 @@ def chart_preview_api(request):
     else:
         if not source_id:
             return _error('Select a data source first')
-        result = run_saved_query(source_id, source_filters, request.user, apply_user_filters=False)
+        pg_extra = _progress_growth_query_columns(cfg.get('chart_type', ''), cfg)
+        result = run_saved_query(
+            source_id, source_filters, request.user,
+            extra_columns=pg_extra or None,
+            apply_user_filters=False,
+        )
+        result = _augment_chart_result_rows(cfg.get('chart_type', ''), cfg, {}, result)
 
     # Cache preview data for 2 min so rapid config iteration reuses the query
     if preview_cached is None and not result.get('error') and result.get('rows'):
@@ -767,7 +863,16 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     if chart.source_type == SavedChart.SOURCE_COLUMNS:
         sel_cols_hash = hashlib.md5(json.dumps(chart.config.get('selected_columns', []), sort_keys=True).encode()).hexdigest()[:8]
 
-    source_part = f'{chart.source_type}:{chart.source_id or "_"}:{chart.source_sql or "_"}:{sel_cols_hash}:{pf_hash}:{updated_ts}'
+    pg_extra_hash = ''
+    if chart.chart_type == 'progress_growth':
+        pg_extra_hash = hashlib.md5(
+            json.dumps(_progress_growth_query_columns(chart.chart_type, chart.config), sort_keys=True).encode()
+        ).hexdigest()[:8]
+
+    source_part = (
+        f'{_CHART_PIPELINE_VERSION}:{chart.source_type}:{chart.source_id or "_"}:'
+        f'{chart.source_sql or "_"}:{sel_cols_hash}:{pg_extra_hash}:{pf_hash}:{updated_ts}'
+    )
     data_cache_key = f'chart_data:{source_part}'
     data_cached = cache.get(data_cache_key)
     result = data_cached if data_cached is not None else None
@@ -779,7 +884,10 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
         data_hash = 'raw'
     config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
     embed_suffix = 'e' if is_embed else 's'
-    render_cache_key = f'chart_render:{chart_id}:{updated_ts}:{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
+    render_cache_key = (
+        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
+        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
+    )
     etag = f'W/"{render_cache_key[-16:]}"'
 
     if if_none_match == etag:
@@ -790,7 +898,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
         return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
 
     # ── Cache miss: run the full pipeline ─────────────────────────
-    chart_cfg = chart.config  # may be overridden below for dataset source
+    chart_cfg = _effective_chart_cfg(chart)
     try:
         if result is not None:
             # Data cache hit — skip SQL, jump to rendering
@@ -798,10 +906,16 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
         elif chart.source_type == SavedChart.SOURCE_SQL:
             result = run_raw_sql(chart.source_sql)
         elif chart.source_type == SavedChart.SOURCE_COLUMNS:
-            selected_columns = chart.config.get('selected_columns', [])
+            selected_columns = list(chart.config.get('selected_columns', []))
+            for c in _progress_growth_query_columns(chart.chart_type, chart.config):
+                if c not in selected_columns:
+                    selected_columns.append(c)
             merged_filters = dict(chart.source_filters or {})
             merged_filters.update(pf_filters)
             result = run_column_query(selected_columns, merged_filters)
+            result = _augment_chart_result_rows(
+                chart.chart_type, chart_cfg, {}, result,
+            )
         elif chart.source_type == SavedChart.SOURCE_DATASET:
             from dataviz.models import Dataset
             from dataviz.utils.compiler import (
@@ -823,13 +937,21 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 limit_val = _parse_chart_row_limit(chart_cfg)
                 ds_updated = int(ds.updated_at.timestamp())
                 ds_filter_hash = hashlib.md5(json.dumps(resolved_filters, sort_keys=True).encode()).hexdigest()[:12]
-                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}'
+                user = getattr(request, 'user', None)
+                user_part = ""
+                if user and getattr(user, 'is_authenticated', False):
+                    user_role = getattr(user, 'active_role', None)
+                    role_name = user_role.name if user_role else 'None'
+                    active_school = getattr(user, 'active_school', None)
+                    school_id = active_school.state_id if active_school else 'All'
+                    user_part = f":u{user.pk}:r{role_name}:s{school_id}"
+                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}{user_part}'
                 ds_cached = cache.get(ds_cache_key)
                 if ds_cached is not None:
                     result = ds_cached
-                    chart_cfg = _remap_config_cols(chart.config, col_mappings)
+                    chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
                 else:
-                    sql, params = compile_dataset_to_sql(ds, user=None, interactive_filters=resolved_filters, limit=limit_val)
+                    sql, params = compile_dataset_to_sql(ds, user=user, interactive_filters=resolved_filters, limit=limit_val)
                     res = execute_compiled_query_aliased(sql, params, col_mappings)
                     if res.get('error'):
                         result = {'error': res['error'], 'rows': [], 'columns': []}
@@ -837,7 +959,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                         result = {'rows': res.get('rows', []), 'columns': res.get('columns', []), 'row_count': res.get('row_count', 0)}
                         if result.get('rows'):
                             cache.set(ds_cache_key, result, timeout=1800)
-                    chart_cfg = _remap_config_cols(chart.config, col_mappings)
+                    chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
 
                 # After data is retrieved (either from cache or fresh query), augment with assessment cols if needed.
                 # This must be done outside the dataset cache because different charts on the same dataset
@@ -853,7 +975,15 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             merged_filters = dict(chart.source_filters or {})
             merged_filters.update(pf_filters)
             user = getattr(request, 'user', None)
-            result = run_saved_query(chart.source_id, merged_filters, user, apply_user_filters=False)
+            pg_extra = _progress_growth_query_columns(chart.chart_type, chart_cfg)
+            result = run_saved_query(
+                chart.source_id, merged_filters, user,
+                extra_columns=pg_extra or None,
+                apply_user_filters=True,
+            )
+            result = _augment_chart_result_rows(
+                chart.chart_type, chart_cfg, {}, result,
+            )
 
         if result.get('error'):
             option_json = '{}'
@@ -890,7 +1020,10 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # under that same real-data key (not 'raw') is what makes it a HIT.
     if not error:
         data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True, cls=DjangoJSONEncoder).encode()).hexdigest()[:12]
-        render_cache_key = f'chart_render:{chart_id}:{updated_ts}:{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
+        render_cache_key = (
+        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
+        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
+    )
         etag = f'W/"{render_cache_key[-16:]}"'
         cache.set(render_cache_key, html, timeout=3600)
 

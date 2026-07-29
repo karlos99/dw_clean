@@ -64,6 +64,27 @@ class StudentListFilterScriptTests(SimpleTestCase):
 
 from unittest.mock import patch
 from dataexploration.school_year_utils import resolve_relative_column_key
+from dataexploration.column_utils import test_metadata_matches
+
+
+class TestMetadataMatchesTests(SimpleTestCase):
+	def test_caa_does_not_match_caaspp(self):
+		info = {'test_name': 'CAA', 'subject': 'ELA', 'test_window': None}
+		self.assertFalse(test_metadata_matches(info, 'CAASPP', 'ELA', ''))
+
+	def test_caaspp_matches_caaspp(self):
+		info = {'test_name': 'CAASPP', 'subject': 'ELA', 'test_window': None}
+		self.assertTrue(test_metadata_matches(info, 'CAASPP', 'ELA', ''))
+
+	def test_window_must_match_when_specified(self):
+		info = {'test_name': 'CAASPP', 'subject': 'ELA', 'test_window': 'Fall'}
+		self.assertTrue(test_metadata_matches(info, 'CAASPP', 'ELA', 'Fall'))
+		self.assertFalse(test_metadata_matches(info, 'CAASPP', 'ELA', 'Spring'))
+
+	def test_both_empty_windows_match(self):
+		info = {'test_name': 'CAA', 'subject': 'Math', 'test_window': ''}
+		self.assertTrue(test_metadata_matches(info, 'CAA', 'Math', None))
+
 
 class SchoolYearUtilsTests(SimpleTestCase):
 	@patch("dataexploration.school_year_utils.resolve_school_year")

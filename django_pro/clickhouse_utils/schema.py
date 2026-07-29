@@ -18,6 +18,8 @@ def get_all_ddl():
         CREATE_SCHEDULE_LIST,
         CREATE_RELATIVE_YEAR,
         CREATE_MATHR_RECOMMENDATION,
+        CREATE_STUDENT_ATTENDANCE,
+        CREATE_STUDENT_INCIDENTS,
     ]
 
 
@@ -227,5 +229,40 @@ CREATE TABLE IF NOT EXISTS mathr_recommendation (
 )
 ENGINE = MergeTree
 ORDER BY (ssid, school_year)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_STUDENT_ATTENDANCE = """
+CREATE TABLE IF NOT EXISTS student_attendance (
+    stu_annual_key String,
+    ssid String,
+    student_id Nullable(String),
+    last_name Nullable(String),
+    first_name Nullable(String),
+    school_short_name Nullable(String),
+    school_year String,
+    student_status Nullable(String),
+    absent_fte Nullable(Float64),
+    tardy_count Nullable(Int32),
+    days_enrolled Nullable(Int32),
+    attendance_percent Nullable(Float64),
+    absence_dates Nullable(String),
+    updated_at Nullable(DateTime64)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, stu_annual_key)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_STUDENT_INCIDENTS = """
+CREATE TABLE IF NOT EXISTS student_incidents (
+    stu_annual_key String,
+    ssid String,
+    student_id Nullable(Int64),
+    incidents_data Nullable(String),
+    updated_at Nullable(DateTime64)
+)
+ENGINE = MergeTree
+ORDER BY (ssid, stu_annual_key)
 SETTINGS index_granularity = 8192
 """

@@ -125,19 +125,21 @@ def export_students_csv(request):
                 window_clause = ""
                 window_params = []
                 if test_info.get('test_window'):
-                    window_clause = "AND t.test_window ILIKE %s "
+                    window_clause = "AND LOWER(t.test_window) = LOWER(%s) "
                     window_params = [test_info['test_window']]
+                else:
+                    window_clause = "AND (t.test_window IS NULL OR t.test_window = '') "
+                    window_params = []
 
-                exist_query_base = (
-                    "SELECT 1 FROM results r "
+                id_subquery_base = (
+                    "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.local_student_id = cs.student_id "
-                    "AND r.school_year = %s "
-                    "AND t.test_name ILIKE %s "
-                    "AND t.subject ILIKE %s "
+                    "WHERE r.school_year = %s "
+                    "AND LOWER(t.test_name) = LOWER(%s) "
+                    "AND LOWER(t.subject) = LOWER(%s) "
                     f"{window_clause}"
                 )
-                exist_params_base = [
+                base_params = [
                     test_info['year'], test_info['test_name'], test_info['subject'],
                     *window_params,
                 ]
@@ -145,38 +147,38 @@ def export_students_csv(request):
                 conditions = []
 
                 if real_values:
-                    val_clause = exist_query_base
+                    val_clause = id_subquery_base
                     if metric_col in {'ss', 'pl'}:
                         val_clause += f"AND r.{metric_col} = ANY(%s)"
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     
-                    val_params = list(exist_params_base)
-                    if metric_col == 'oi' or metric_col == 'dfp':
-                         val_params.append(test_info['other_info_key'])
+                    val_params = list(base_params)
+                    if metric_col in {'oi', 'dfp'}:
+                         val_params.append(test_info.get('other_info_key', ''))
                     val_params.append(real_values)
                     
-                    conditions.append(f"EXISTS ({val_clause})")
+                    conditions.append(f"cs.student_id IN ({val_clause})")
                     params.extend(val_params)
 
                 if has_blank:
                     blank_subconditions = []
                     
                     # 1. No record exists
-                    blank_subconditions.append(f"NOT EXISTS ({exist_query_base})")
-                    params.extend(exist_params_base)
+                    blank_subconditions.append(f"cs.student_id NOT IN ({id_subquery_base})")
+                    params.extend(base_params)
 
                     # 2. Record exists but value is NULL
-                    null_clause = exist_query_base
-                    null_params = list(exist_params_base)
+                    null_clause = id_subquery_base
+                    null_params = list(base_params)
                     
                     if metric_col in {'ss', 'pl'}:
                         null_clause += f"AND r.{metric_col} IS NULL"
                     else:
                         null_clause += "AND (r.other_info ->> %s) IS NULL"
-                        null_params.append(test_info['other_info_key'])
+                        null_params.append(test_info.get('other_info_key', ''))
                     
-                    blank_subconditions.append(f"EXISTS ({null_clause})")
+                    blank_subconditions.append(f"cs.student_id IN ({null_clause})")
                     params.extend(null_params)
                     
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
@@ -205,8 +207,15 @@ def export_students_csv(request):
     enroll_columns = get_student_enroll_columns()
     
     # Pre-calculate test column metadata
-    selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
-    selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
+    filter_keys = list(filters.keys()) if isinstance(filters, dict) else []
+    selected_test_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('test_')]
+    ))
+    selected_mark_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('mark_')]
+    ))
     base_cols = [c for c in selected_columns if isinstance(c, str) and (not c.startswith(('test_', 'mark_'))) and c in COLUMN_DEFINITIONS]
 
     enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
@@ -286,13 +295,13 @@ def export_students_csv(request):
                         has_test_window = cursor.fetchone() is not None
                         
                         sql = """
-                            SELECT DISTINCT r.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
-                            FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                            WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+                            SELECT DISTINCT t.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
+                            FROM tests t
+                            WHERE t.school_year = ANY(%s) AND t.school_year IS NOT NULL AND t.test_name IS NOT NULL
                         """ if has_test_window else """
-                            SELECT DISTINCT r.school_year, t.test_name, t.subject, ''
-                            FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                            WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+                            SELECT DISTINCT t.school_year, t.test_name, t.subject, ''
+                            FROM tests t
+                            WHERE t.school_year = ANY(%s) AND t.school_year IS NOT NULL AND t.test_name IS NOT NULL
                         """
                         cursor.execute(sql, [years])
                         
@@ -621,31 +630,51 @@ def export_students_csv(request):
                     
                     # Fetch Test Data
                     if test_cols_info and student_ids:
+                        student_ssids = [s.get('ssid') for s in chunk_students if s.get('ssid')]
                         for test_info in test_cols_info:
                             metric_col = test_info['metric']
-                            window_clause = "AND t.test_window ILIKE %s" if test_info.get('test_window') else ""
-                            window_params = [test_info['test_window']] if test_info.get('test_window') else []
-                            
+                            if test_info.get('test_window'):
+                                window_clause = "AND LOWER(t.test_window) = LOWER(%s)"
+                                window_params = [test_info['test_window']]
+                            else:
+                                window_clause = "AND (t.test_window IS NULL OR t.test_window = '')"
+                                window_params = []
+
                             select_expr = f"r.{metric_col}" if metric_col in {'ss', 'pl'} else "(r.other_info ->> %s)"
                             extra_params = [] if metric_col in {'ss', 'pl'} else [test_info.get('other_info_key', '')]
-                            
+
                             tquery = f"""
-                                SELECT r.local_student_id, {select_expr}
+                                SELECT r.local_student_id, r.ssid, {select_expr}
                                 FROM results r
                                 INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                                WHERE r.local_student_id = ANY(%s)
+                                WHERE (r.local_student_id = ANY(%s)
+                                       OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
                                 AND r.school_year = %s
-                                AND t.test_name ILIKE %s
-                                AND t.subject ILIKE %s
+                                AND LOWER(t.test_name) = LOWER(%s)
+                                AND LOWER(t.subject) = LOWER(%s)
                                 {window_clause}
                             """
                             cursor.execute(tquery, [
-                                *extra_params, student_ids, test_info['year'], 
-                                test_info['test_name'], test_info['subject'], *window_params
+                                *extra_params, student_ids, student_ssids, test_info['year'],
+                                test_info['test_name'], test_info['subject'], *window_params,
                             ])
-                            tdata = {row[0]: row[1] for row in cursor.fetchall()}
+                            test_data_by_id = {}
+                            test_data_by_ssid = {}
+                            for row in cursor.fetchall():
+                                local_id, ssid, val = row[0], row[1], row[2]
+                                if local_id:
+                                    test_data_by_id[local_id] = val
+                                if ssid:
+                                    test_data_by_ssid[ssid] = val
                             for student in chunk_students:
-                                student[test_info['col_name']] = tdata.get(student.get('student_id'), '')
+                                val = '—'
+                                sid = student.get('student_id')
+                                ssid = student.get('ssid')
+                                if sid in test_data_by_id:
+                                    val = test_data_by_id[sid]
+                                elif ssid in test_data_by_ssid:
+                                    val = test_data_by_ssid[ssid]
+                                student[test_info['col_name']] = val
                     
                     # Fetch marks data for this chunk
                     student_keys = [s.get('stu_annual_key') for s in chunk_students if s.get('stu_annual_key')]

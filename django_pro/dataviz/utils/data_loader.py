@@ -86,6 +86,17 @@ _CS_COLUMNS = frozenset([
     'ltel', 'status', 'school_year',
 ])
 
+# Column-Picker fields that live in student_enroll, not current_student.
+# 'ell'/'grade' exist in both tables (see the COALESCE handling below); the
+# rest are enrollment-only, so selecting them requires the se. join alias —
+# there is no matching cs.{col} to fall back to.
+_ENROLL_FIELDS = {
+    'ell': 'se.ell_status', 'birth_date': 'se.birth_date',
+    'us_enter_date': 'se.us_enter_date', 'fep_date': 'se.fep_date',
+    'migrant': 'se.migrant', 'grade': 'se.grade',
+    'enter_date': 'se.enter_date', 'leave_date': 'se.leave_date',
+}
+
 # ── Helpers for identifying & resolving mark / test columns ───────────────────
 
 _SAFE_IDENT_RE = re.compile(r'^[a-zA-Z0-9_]+$')
@@ -135,10 +146,9 @@ def _build_test_columns_from_db(cursor, selected_test_cols: list[str]) -> tuple[
     window_expr = "COALESCE(t.test_window, '')" if has_test_window else "''"
     cursor.execute(
         f"""
-        SELECT DISTINCT r.school_year, t.test_name, t.subject, {window_expr}
-        FROM results r
-        INNER JOIN tests t ON r.test_group_key = t.test_group_key
-        WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+        SELECT DISTINCT t.school_year, t.test_name, t.subject, {window_expr}
+        FROM tests t
+        WHERE t.school_year = ANY(%s) AND t.school_year IS NOT NULL AND t.test_name IS NOT NULL
         """,
         [years],
     )
@@ -286,6 +296,9 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     if not test_cols_info or not student_ids:
         return
 
+    from dataexploration.column_utils import test_metadata_matches
+    from dataviz.utils.chart_builder import _record_pg_val
+
     # Compound key: (student_id, school_year) — a student may appear in
     # multiple rows when multi-year enrollment is queried. Each key maps to a
     # LIST so that all enrollment rows for the same (student, year) get data.
@@ -302,10 +315,13 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     where_parts = []
     params = []
     for info in test_cols_info:
-        part = "(r.school_year = %s AND t.test_name ILIKE %s AND t.subject ILIKE %s"
+        part = (
+            "(r.school_year = %s AND LOWER(t.test_name) = LOWER(%s)"
+            " AND LOWER(t.subject) = LOWER(%s)"
+        )
         part_params = [info['year'], info['test_name'], info['subject']]
         if info.get('test_window'):
-            part += " AND t.test_window ILIKE %s"
+            part += " AND LOWER(t.test_window) = LOWER(%s)"
             part_params.append(info['test_window'])
         else:
             part += " AND (t.test_window IS NULL OR t.test_window = '')"
@@ -351,14 +367,7 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
         if not s_objs:
             continue
         for info in infos_by_year.get(ry, ()):
-            if (info['test_name'].lower() in rt.lower() and
-                info['subject'].lower() in rs.lower()):
-                # Window match
-                iw = info.get('test_window')
-                if not iw and not rw: pass
-                elif iw and rw and iw.lower() == rw.lower(): pass
-                else: continue
-
+            if test_metadata_matches(info, rt, rs, rw):
                 metric = info['metric']
                 col_name = info['col_name']
                 if metric == 'ss':
@@ -382,9 +391,9 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                         val = '\u2014'
                 else:
                     continue
-                # Write to ALL enrollment rows for this (student, year) pair
                 for s_obj in s_objs:
                     s_obj[col_name] = val
+                    _record_pg_val(s_obj, col_name, val)
 
 
 def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str], students: list[dict]):
@@ -580,14 +589,15 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             pass
 
     # Partition requested columns into base / test / mark buckets.
-    # Base columns go directly into SQL (cs.{col}) so must be safe identifiers.
+    # Base columns go directly into SQL (cs.{col} or se.{col} — see
+    # _ENROLL_FIELDS below) so must be safe identifiers.
     # Mark/test columns are only used as Python dict keys — the actual SQL uses
     # parameterised metadata values — so they can contain / and other chars.
     base_cols:  list[str] = []
     test_cols:  list[str] = []
     mark_cols:  list[str] = []
     for c in requested:
-        if c in _CS_COLUMNS and _SAFE_IDENT_RE.match(c):
+        if (c in _CS_COLUMNS or c in _ENROLL_FIELDS) and _SAFE_IDENT_RE.match(c):
             base_cols.append(c)
         elif c.startswith('test_'):
             test_cols.append(c)
@@ -621,8 +631,25 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     params: list = []
     dynamic_filters: dict[str, object] = {}
 
-    # Always exclude Inactive/Deleted students unless the caller explicitly filters on status
-    if 'status' not in filters:
+    # Status filter — mirror data exploration: default Active; explicit empty = all statuses.
+    if 'status' in filters:
+        status_val = filters.pop('status')
+        if status_val is None or status_val == '':
+            pass
+        elif isinstance(status_val, list):
+            cleaned = [s for s in status_val if s]
+            if not cleaned:
+                pass
+            elif len(cleaned) == 1:
+                where_parts.append('cs.status = %s')
+                params.append(cleaned[0])
+            else:
+                where_parts.append('cs.status = ANY(%s)')
+                params.append(cleaned)
+        else:
+            where_parts.append('cs.status = %s')
+            params.append(status_val)
+    else:
         where_parts.append("cs.status = 'Active'")
 
     # ── Role-based access ──────────────────────────────────────────────
@@ -673,10 +700,6 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             else:
                 where_parts.append("1=0")  # Deny access if no schools assigned
 
-    # Fields that live in student_enroll (not current_student)
-    _ENROLL_FIELDS = {'ell': 'se.ell_status', 'birth_date': 'se.birth_date',
-                      'us_enter_date': 'se.us_enter_date', 'fep_date': 'se.fep_date',
-                      'migrant': 'se.migrant', 'grade': 'se.grade'}
     needs_enroll = False
 
     # When a school_year filter is present (especially multi-year or past),
@@ -818,13 +841,20 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             " ) se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
         )
 
-    # Build SELECT expressions — use enrollment values when join is active
+    # Build SELECT expressions — use enrollment values when join is active.
+    # 'ell'/'grade' exist in both current_student and student_enroll (COALESCE
+    # prefers the more current enrollment-record value); the rest of
+    # _ENROLL_FIELDS (birth_date, enter_date, leave_date, ...) live ONLY in
+    # student_enroll, so they must be selected via the se. join, not cs. —
+    # current_student has no such column.
     select_exprs = []
     for c in base_cols:
         if c == 'ell' and needs_enroll:
             select_exprs.append('COALESCE(cs.ell, se.ell_status) AS ell')
         elif c == 'grade' and needs_enroll:
             select_exprs.append('COALESCE(se.grade, cs.grade) AS grade')
+        elif c in _ENROLL_FIELDS and needs_enroll:
+            select_exprs.append(f'{_ENROLL_FIELDS[c]} AS {c}')
         else:
             select_exprs.append(f'cs.{c}')
 

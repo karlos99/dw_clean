@@ -1769,6 +1769,189 @@
           </div>
         </div>
 
+        {# ── Dates config — visible only for date_series type ── #}
+        <div x-show="chartType==='date_series'" x-transition class="space-y-4">
+          <p class="text-[10px] text-slate-500 leading-snug">
+            Pick a Date column, then add lines: a <b>Line</b> counts/sums a column per date; an <b>Active Range</b> line counts students whose Enter→Leave dates span each date (a fluctuating enrollment count); a <b>Calculation</b> combines two other lines with +/−/×/÷.
+            Calculations can reference other Calculations, so a rate like Attendance % takes two steps: first <i>Present = Total − Absent</i>, then <i>Rate = Present ÷ Total</i> (check "Display as %").
+          </p>
+
+          {# Date column + bucket #}
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs font-semibold text-slate-700 flex items-center gap-1.5 mb-1">
+                Date Column <span class="text-red-400 text-[9px] font-bold">*</span>
+              </label>
+              <select x-model="dsDateCol" @change="_schedulePreview()"
+                      class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">— choose column —</option>
+                <template x-for="c in activeCols" :key="'dsdc_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-700 mb-1 block">Bucket By</label>
+              <select x-model="dsDateBucket" @change="_schedulePreview()"
+                      class="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="day">Day</option>
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+                <option value="quarter">Quarter</option>
+                <option value="year">Year</option>
+              </select>
+            </div>
+          </div>
+
+          {# Lines editor #}
+          <div class="pt-2 border-t border-slate-100 space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-semibold text-slate-700">Lines <span class="text-red-400 text-[9px] font-bold">*</span></label>
+              <div class="flex gap-1">
+                <button type="button" @click="addDsLine('base')"
+                        class="text-[10px] bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 font-semibold transition-colors">
+                  + Add Line
+                </button>
+                <button type="button" @click="addDsLine('active_range')"
+                        class="text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white rounded px-2 py-1 font-semibold transition-colors"
+                        title="Count of students whose enter/leave date range overlaps each date">
+                  + Add Active Range
+                </button>
+                <button type="button" @click="addDsLine('calc')" :disabled="dsLines.filter(l => l.line_type !== 'calc').length < 2"
+                        :class="dsLines.filter(l => l.line_type !== 'calc').length < 2 ? 'opacity-40 cursor-not-allowed' : ''"
+                        class="text-[10px] bg-violet-600 hover:bg-violet-700 text-white rounded px-2 py-1 font-semibold transition-colors"
+                        title="Needs at least 2 non-calculation lines">
+                  + Add Calculation
+                </button>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <template x-for="(line, idx) in dsLines" :key="line.id">
+                <div class="border rounded-lg p-2.5 space-y-2 relative"
+                     :class="line.line_type === 'calc' ? 'bg-violet-50/50 border-violet-200' : (line.line_type === 'active_range' ? 'bg-emerald-50/50 border-emerald-200' : 'bg-slate-50/50 border-slate-200')">
+                  <button type="button" @click="removeDsLine(idx)"
+                          class="absolute top-2 right-2 text-slate-400 hover:text-red-500 font-bold text-lg leading-none"
+                          title="Remove line">&times;</button>
+
+                  <div class="flex items-center gap-1.5 pr-4">
+                    <span class="text-[9px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5"
+                          :class="line.line_type === 'calc' ? 'bg-violet-200 text-violet-800' : (line.line_type === 'active_range' ? 'bg-emerald-200 text-emerald-800' : 'bg-slate-200 text-slate-700')"
+                          x-text="line.line_type === 'calc' ? 'Calc' : (line.line_type === 'active_range' ? 'Active' : 'Line')"></span>
+                    <input type="text" x-model="line.label" @input="_schedulePreview()" placeholder="Label (e.g. Enrolled)"
+                           class="flex-1 text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  </div>
+
+                  {# Base line: aggregation + value column #}
+                  <template x-if="line.line_type === 'base'">
+                    <div class="grid grid-cols-2 gap-2">
+                      <div>
+                        <label class="text-[10px] font-semibold text-slate-500">Function</label>
+                        <select x-model="line.agg_func" @change="_schedulePreview()"
+                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                          <option value="count">Count</option>
+                          <option value="sum">Sum</option>
+                          <option value="avg">Average</option>
+                          <option value="min">Min</option>
+                          <option value="max">Max</option>
+                          <option value="median">Median</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="text-[10px] font-semibold text-slate-500">Column</label>
+                        <select x-model="line.value_col" @change="_schedulePreview()"
+                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                          <option value="">— choose —</option>
+                          <template x-for="c in activeCols" :key="'dslv_'+line.id+'_'+c">
+                            <option :value="c" x-text="colLabel(c)"></option>
+                          </template>
+                        </select>
+                        <p x-show="line.value_col && !activeCols.includes(line.value_col)"
+                           class="text-[9px] text-amber-600 mt-0.5">Not in the current data yet — line will show 0 until it exists.</p>
+                      </div>
+                    </div>
+                  </template>
+
+                  {# Active Range line: enter + leave columns #}
+                  <template x-if="line.line_type === 'active_range'">
+                    <div class="space-y-2">
+                      <div class="grid grid-cols-2 gap-2">
+                        <div>
+                          <label class="text-[10px] font-semibold text-slate-500">Enter Date Column</label>
+                          <select x-model="line.enter_col" @change="_schedulePreview()"
+                                  class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+                            <option value="">— choose —</option>
+                            <template x-for="c in activeCols" :key="'dsec_'+line.id+'_'+c">
+                              <option :value="c" x-text="colLabel(c)"></option>
+                            </template>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="text-[10px] font-semibold text-slate-500">Leave Date Column</label>
+                          <select x-model="line.leave_col" @change="_schedulePreview()"
+                                  class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+                            <option value="">— none (still active) —</option>
+                            <template x-for="c in activeCols" :key="'dslc_'+line.id+'_'+c">
+                              <option :value="c" x-text="colLabel(c)"></option>
+                            </template>
+                          </select>
+                        </div>
+                      </div>
+                      <p class="text-[9px] text-slate-400">Counts distinct students whose enter→leave range overlaps each date. Blank leave date = still active.</p>
+                      <p x-show="line.enter_col && !activeCols.includes(line.enter_col)"
+                         class="text-[9px] text-amber-600">Enter column not in the current data yet — line will show 0 until it exists.</p>
+                    </div>
+                  </template>
+
+                  {# Calc line: op + two line refs #}
+                  <template x-if="line.line_type === 'calc'">
+                    <div class="grid grid-cols-3 gap-2 items-end">
+                      <div>
+                        <label class="text-[10px] font-semibold text-slate-500">Line A</label>
+                        <select x-model="line.line_a" @change="_schedulePreview()"
+                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                          <option value="">— choose —</option>
+                          <template x-for="l2 in dsLines.filter(l => l.id !== line.id)" :key="'dsa_'+line.id+'_'+l2.id">
+                            <option :value="l2.id" x-text="l2.label || '(unlabeled)'"></option>
+                          </template>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="text-[10px] font-semibold text-slate-500">Operator</label>
+                        <select x-model="line.op" @change="_schedulePreview()"
+                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                          <option value="subtract">− Subtract</option>
+                          <option value="add">+ Add</option>
+                          <option value="divide">÷ Divide</option>
+                          <option value="multiply">× Multiply</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="text-[10px] font-semibold text-slate-500">Line B</label>
+                        <select x-model="line.line_b" @change="_schedulePreview()"
+                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                          <option value="">— choose —</option>
+                          <template x-for="l2 in dsLines.filter(l => l.id !== line.id)" :key="'dsb_'+line.id+'_'+l2.id">
+                            <option :value="l2.id" x-text="l2.label || '(unlabeled)'"></option>
+                          </template>
+                        </select>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="line.line_type === 'calc' && line.op === 'divide'">
+                    <label class="flex items-center gap-1.5 text-[10px] text-slate-600 cursor-pointer">
+                      <input type="checkbox" x-model="line.as_percent" @change="_schedulePreview()"
+                             class="rounded text-violet-600 w-3 h-3 border-slate-300 focus:ring-violet-200">
+                      Display as % (e.g. an attendance rate: Present ÷ Total)
+                    </label>
+                  </template>
+                </div>
+              </template>
+              <p x-show="!dsLines.length" class="text-[10px] text-slate-400 py-3 text-center border border-dashed border-slate-200 rounded-lg bg-white">
+                No lines yet. Click "+ Add Line" to plot a count/sum per date.
+              </p>
+            </div>
+          </div>
+        </div>
+
         </div>{# /map cols collapse #}
       </section>
 
@@ -2872,6 +3055,9 @@
     <input type="hidden" name="dyn_col_mode"    x-bind:value="dynColMode">
     <input type="hidden" name="dyn_calculations" x-bind:value="JSON.stringify(dynCalculations)">
     <input type="hidden" name="dyn_display_type" x-bind:value="dynDisplayType">
+    <input type="hidden" name="ds_date_col"     x-bind:value="dsDateCol">
+    <input type="hidden" name="ds_date_bucket"  x-bind:value="dsDateBucket">
+    <input type="hidden" name="ds_lines"        x-bind:value="JSON.stringify(dsLines)">
     <input type="hidden" name="stack_order"     x-bind:value="JSON.stringify(stackOrder)">
     <input type="hidden" name="drill_through_columns_str" x-bind:value="drillColumns">
     <input type="hidden" name="source_filters" x-bind:value="JSON.stringify(cleanSourceFilters())">
@@ -3012,6 +3198,7 @@ function chartBuilder() {
     dynamic_summary_table: { x:{hide:1}, y:{hide:1}, s:{hide:1}, hint:'Multi-dimension cross-tab — pick multiple Row columns and Column columns for a nested pivot table with drill-through.' },
     waterfall:    { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{hide:1},                          hint:'Cumulative value changes per category' },
     line:         { x:{req:1,lbl:'X-Axis / Category'},  y:{req:0,lbl:'Y-Axis / Value'},     s:{req:0,lbl:'Series / Group-by'},  hint:'Line / Area trend over categories with optional stacking' },
+    date_series:  { x:{hide:1}, y:{hide:1}, s:{hide:1}, hint:'Pick a Date column and add one or more lines (counts/sums per date). Calculation lines combine two other lines with +/-, and render as 0 until their source column exists.' },
     pie:          { x:{req:1,lbl:'Category / Slices'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Proportions of a whole (top 30)' },
     donut:        { x:{req:1,lbl:'Category / Slices'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Ring chart showing proportions' },
     funnel:       { x:{req:1,lbl:'Category / Stages'},   y:{req:0,lbl:'Value / Size'},       s:{hide:1},                          hint:'Progressive stages, descending' },
@@ -3085,6 +3272,10 @@ function chartBuilder() {
     dynCalculations:  existing?.config?.dyn_calculations ?? [],
     dynDisplayType:   existing?.config?.dyn_display_type ?? 'table',
     stRowCols:        existing?.config?.st_row_cols ?? [],
+    /* Dates (date_series) */
+    dsDateCol:        existing?.config?.ds_date_col ?? '',
+    dsDateBucket:     existing?.config?.ds_date_bucket ?? 'day',
+    dsLines:          existing?.config?.ds_lines ?? [],
     aggFunc:      existing?.config?.agg ?? existing?.config?.agg_func ?? 'count',
     aggDecimals:  existing?.config?.agg_decimals ?? null,
     sortCol:      existing?.config?.sort_col ?? '',
@@ -3280,6 +3471,14 @@ function chartBuilder() {
     get pgScaleParsed() {
       return this.pgScaleText.split(',').map(v => v.trim()).filter(Boolean);
     },
+    get _dsLinesValid() {
+      if (!this.dsDateCol || !this.dsLines.length) return false;
+      return this.dsLines.every(l => {
+        if (l.line_type === 'calc') return !!l.op && !!l.line_a && !!l.line_b;
+        if (l.line_type === 'active_range') return !!l.enter_col;
+        return !!l.agg_func && !!l.value_col;
+      });
+    },
     get canPreview() {
       if (!this.hasData || !this.chartType) return false;
       if (this.chartType === 'assessment_compare' && this.comparePlCols.length < 2) return false;
@@ -3303,6 +3502,7 @@ function chartBuilder() {
           return hasAxes && (!needsVal || !!this.dynValueCol);
         }
       }
+      if (this.chartType === 'date_series') return this._dsLinesValid;
       const m = this.meta;
       if (m.x?.req && this.xCols.length === 0) return false;
       if (m.y?.req && !this.yCol) return false;
@@ -3330,6 +3530,8 @@ function chartBuilder() {
           const needsVal = !['count'].includes(this.dynAggFunc);
           colsDone = hasAxes && (!needsVal || !!this.dynValueCol);
         }
+      } else if (this.chartType === 'date_series') {
+        colsDone = this._dsLinesValid;
       } else {
         colsDone = (!m.x?.req || this.xCols.length > 0) && (!m.y?.req || !!this.yCol) && !!(this.xCols.length > 0 || this.yCol);
       }

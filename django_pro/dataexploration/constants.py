@@ -19,6 +19,8 @@ COLUMN_DEFINITIONS = {
     "status": "Status",
     "birth_date": "Birth Date",
     "us_enter_date": "US Enter Date",
+    "enter_date": "Enrollment Enter Date",
+    "leave_date": "Enrollment Leave Date",
     
     # Programs & Services
     "sped": "Special Education",
@@ -49,7 +51,7 @@ COLUMN_CATEGORIES = {
     },
     "dates": {
         "title": "Dates",
-        "columns": ["birth_date", "us_enter_date", "fep_date"]
+        "columns": ["birth_date", "us_enter_date", "fep_date", "enter_date", "leave_date"]
     },
     "programs": {
         "title": "Programs & Services",

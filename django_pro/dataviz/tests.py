@@ -1012,6 +1012,636 @@ class RelativeYearFilterOptionsTests(TestCase):
             self.assertTrue(any(c.startswith('test_') and not c.startswith('test___sy_') for c in called_args))
 
 
+class ProgressGrowthMatrixTests(SimpleTestCase):
+    def test_matrix_consolidates_split_pl_across_enrollment_rows(self):
+        from dataviz.utils.chart_builder import build_option
+
+        pl_scale = ['1', '2', '3', '4']
+        rows = [
+            {'ssid': '1', 'before_pl': '2', 'after_pl': ''},
+            {'ssid': '1', 'before_pl': '', 'after_pl': '3'},
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '3'},
+        ]
+        cfg = {
+            'chart_type': 'progress_growth',
+            'pg_before_col': 'before_pl',
+            'pg_after_col': 'after_pl',
+            'pl_scale': pl_scale,
+            'pg_display': 'matrix',
+        }
+        opt = build_option(rows, {}, cfg)
+        counts = {(d['value'][1], d['value'][0]): d['value'][2] for d in opt['series'][0]['data']}
+        # y=before idx, x=after idx in ordered ['1','2','3','4']
+        self.assertEqual(counts[(1, 2)], 1)   # 2→3: student 1 (PL split across rows)
+        self.assertEqual(counts[(0, 2)], 1)   # 1→3: student 2
+
+    def test_matrix_matches_duplicate_result_pl_like_exploration(self):
+        from dataviz.utils.chart_builder import (
+            build_option, filter_progress_growth_matrix_rows, pg_all_key,
+        )
+
+        pl_scale = ['1', '2', '3', '4']
+        # Display column shows last-fetched PL=2, but a duplicate result had PL=1.
+        rows = [
+            {
+                'ssid': '1',
+                'before_pl': '2',
+                'after_pl': '2',
+                pg_all_key('before_pl'): ['1', '2'],
+                pg_all_key('after_pl'): ['2'],
+            },
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '2'},
+        ]
+        matched, _, _ = filter_progress_growth_matrix_rows(
+            rows, 'before_pl', 'after_pl', '1', '2',
+        )
+        self.assertEqual(len(matched), 2)
+
+        cfg = {
+            'chart_type': 'progress_growth',
+            'pg_before_col': 'before_pl',
+            'pg_after_col': 'after_pl',
+            'pl_scale': pl_scale,
+            'pg_display': 'matrix',
+        }
+        opt = build_option(rows, {}, cfg)
+        counts = {(d['value'][1], d['value'][0]): d['value'][2] for d in opt['series'][0]['data']}
+        self.assertEqual(counts[(0, 1)], 2)   # 1→2
+
+    def test_matrix_ignores_blank_x_col_filter(self):
+        from dataviz.utils.chart_builder import build_option
+
+        pl_scale = ['1', '2', '3', '4']
+        rows = [
+            {'ssid': '1', 'before_pl': '1', 'after_pl': '3', 'grade': ''},
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '3', 'grade': '5'},
+        ]
+        cfg = {
+            'chart_type': 'progress_growth',
+            'pg_before_col': 'before_pl',
+            'pg_after_col': 'after_pl',
+            'pl_scale': pl_scale,
+            'pg_display': 'matrix',
+            'x_col': 'grade',
+        }
+        opt = build_option(rows, {}, cfg)
+        counts = {(d['value'][1], d['value'][0]): d['value'][2] for d in opt['series'][0]['data']}
+        self.assertEqual(counts[(0, 2)], 2)
+
+    def test_filter_progress_growth_matrix_rows_per_cell(self):
+        from dataviz.utils.chart_builder import filter_progress_growth_matrix_rows
+
+        rows = [
+            {'ssid': '1', 'before_pl': '4', 'after_pl': '1'},
+            {'ssid': '1', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '3'},
+        ]
+
+        matched, _, _ = filter_progress_growth_matrix_rows(
+            rows, 'before_pl', 'after_pl', '1', '3',
+        )
+        self.assertEqual(len(matched), 2)
+        self.assertEqual(sorted(r['ssid'] for r in matched), ['1', '2'])
+
+    def test_matrix_dedupes_by_any_student_id_column(self):
+        from dataviz.utils.chart_builder import filter_progress_growth_matrix_rows
+
+        rows = [
+            {'ssid': '', 'student_id': 'A', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '', 'student_id': 'B', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': 'C', 'student_id': 'C', 'before_pl': '1', 'after_pl': '3'},
+        ]
+        matched, _, _ = filter_progress_growth_matrix_rows(
+            rows, 'before_pl', 'after_pl', '1', '3',
+        )
+        self.assertEqual(len(matched), 3)
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_matrix_drill_count_matches_chart_cell(self, mock_run_sql):
+        from dataviz.utils.drill_through import execute_drill_query
+
+        pl_scale = ['1', '2', '3', '4']
+        rows = [
+            {'ssid': '1', 'before_pl': '4', 'after_pl': '1'},
+            {'ssid': '1', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '2', 'before_pl': '1', 'after_pl': '3'},
+            {'ssid': '3', 'before_pl': '1', 'after_pl': '3'},
+        ]
+        mock_run_sql.return_value = {'columns': list(rows[0].keys()), 'rows': rows}
+
+        chart = SimpleNamespace(
+            pk=58,
+            updated_at=SimpleNamespace(timestamp=lambda: 0),
+            source_type='sql',
+            source_sql='SELECT 1',
+            source_id=None,
+            source_filters={},
+            chart_type='progress_growth',
+            config={
+                'pg_before_col': 'before_pl',
+                'pg_after_col': 'after_pl',
+                'pl_scale': pl_scale,
+                'pg_display': 'matrix',
+            },
+            drill_through_columns=['ssid'],
+            column_defs={},
+        )
+
+        result = execute_drill_query(
+            chart,
+            drill_filters={'pg_before_val': '1', 'pg_after_val': '3'},
+            columns=['ssid'],
+            user=SimpleNamespace(is_superuser=True, roles=SimpleNamespace(all=lambda: [])),
+        )
+
+        self.assertEqual(result['total_rows'], 3)
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_matrix_drill_consolidates_split_pl_rows(self, mock_run_sql):
+        from dataviz.utils.drill_through import execute_drill_query
+
+        pl_scale = ['1', '2', '3', '4']
+        rows = [
+            {'ssid': '1', 'before_pl': '2', 'after_pl': ''},
+            {'ssid': '1', 'before_pl': '', 'after_pl': '3'},
+        ]
+        mock_run_sql.return_value = {'columns': list(rows[0].keys()), 'rows': rows}
+
+        chart = SimpleNamespace(
+            pk=58,
+            updated_at=SimpleNamespace(timestamp=lambda: 0),
+            source_type='sql',
+            source_sql='SELECT 1',
+            source_id=None,
+            source_filters={},
+            chart_type='progress_growth',
+            config={
+                'pg_before_col': 'before_pl',
+                'pg_after_col': 'after_pl',
+                'pl_scale': pl_scale,
+                'pg_display': 'matrix',
+            },
+            drill_through_columns=['ssid'],
+            column_defs={},
+        )
+
+        result = execute_drill_query(
+            chart,
+            drill_filters={'pg_before_val': '2', 'pg_after_val': '3'},
+            columns=['ssid'],
+            user=SimpleNamespace(is_superuser=True, roles=SimpleNamespace(all=lambda: [])),
+        )
+
+        self.assertEqual(result['total_rows'], 1)
+
+
+class DateSeriesOptionTests(SimpleTestCase):
+    def test_basic_count_line_per_date(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'attendance_date': '2025-09-01'},
+            {'ssid': '2', 'attendance_date': '2025-09-01'},
+            {'ssid': '3', 'attendance_date': '2025-09-02'},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'attendance_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'l1', 'line_type': 'base', 'label': 'Enrolled', 'agg_func': 'count', 'value_col': 'ssid'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        series = opt['series'][0]
+        self.assertEqual(series['name'], 'Enrolled')
+        dates = opt['__category_names__']
+        self.assertEqual(dates, ['2025-09-01', '2025-09-02'])
+        self.assertEqual(series['data'], [2.0, 1.0])
+
+    def test_calc_line_subtracts_two_lines(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'attendance_date': '2025-09-01', 'absent_flag': '1'},
+            {'ssid': '2', 'attendance_date': '2025-09-01'},
+            {'ssid': '3', 'attendance_date': '2025-09-01'},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'attendance_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'enrolled', 'line_type': 'base', 'label': 'Enrolled', 'agg_func': 'count', 'value_col': 'ssid'},
+                {'id': 'absent', 'line_type': 'base', 'label': 'Absent', 'agg_func': 'count', 'value_col': 'absent_flag'},
+                {'id': 'present', 'line_type': 'calc', 'label': 'Present', 'op': 'subtract', 'line_a': 'enrolled', 'line_b': 'absent'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        by_name = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(by_name['Enrolled'], [3.0])
+        self.assertEqual(by_name['Absent'], [1.0])
+        self.assertEqual(by_name['Present'], [2.0])
+
+    def test_missing_future_column_renders_as_zero_not_error(self):
+        """A calc line referencing a column/table that doesn't exist yet must
+        not break the chart — it should plot as 0 until the data shows up."""
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'attendance_date': '2025-09-01'},
+            {'ssid': '2', 'attendance_date': '2025-09-01'},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'attendance_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'enrolled', 'line_type': 'base', 'label': 'Enrolled', 'agg_func': 'count', 'value_col': 'ssid'},
+                # 'absence_status' doesn't exist in the loaded data — table not built yet
+                {'id': 'absent', 'line_type': 'base', 'label': 'Absent', 'agg_func': 'count', 'value_col': 'absence_status'},
+                {'id': 'present', 'line_type': 'calc', 'label': 'Present', 'op': 'subtract', 'line_a': 'enrolled', 'line_b': 'absent'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertFalse(opt.get('__is_error__'))
+        by_name = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(by_name['Absent'], [0.0])
+        self.assertEqual(by_name['Present'], [2.0])  # same as Enrolled since Absent is 0
+
+    def test_date_bucketing_by_week(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'attendance_date': '2025-09-01'},  # Monday, ISO week 36
+            {'ssid': '2', 'attendance_date': '2025-09-03'},  # same ISO week
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'attendance_date',
+            'ds_date_bucket': 'week',
+            'ds_lines': [
+                {'id': 'l1', 'line_type': 'base', 'label': 'Enrolled', 'agg_func': 'count', 'value_col': 'ssid'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertEqual(len(opt['__category_names__']), 1)
+        self.assertEqual(opt['series'][0]['data'], [2.0])
+
+    def test_missing_lines_or_date_col_returns_message_not_crash(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'ssid': '1', 'attendance_date': '2025-09-01'}]
+        opt = build_option(rows, {}, {'chart_type': 'date_series', 'ds_date_col': '', 'ds_lines': []})
+        self.assertTrue(opt.get('__is_error__'))
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_drill_count_matches_chart_line_for_date(self, mock_run_sql):
+        from dataviz.utils.drill_through import execute_drill_query, build_drill_filter
+
+        rows = [
+            {'ssid': '1', 'attendance_date': '2025-09-01'},
+            {'ssid': '2', 'attendance_date': '2025-09-01'},
+            {'ssid': '3', 'attendance_date': '2025-09-02'},
+        ]
+        mock_run_sql.return_value = {'columns': list(rows[0].keys()), 'rows': rows}
+
+        chart = SimpleNamespace(
+            pk=99,
+            updated_at=SimpleNamespace(timestamp=lambda: 0),
+            source_type='sql',
+            source_sql='SELECT 1',
+            source_id=None,
+            source_filters={},
+            chart_type='date_series',
+            chart_id=99,
+            config={
+                'ds_date_col': 'attendance_date',
+                'ds_date_bucket': 'day',
+                'ds_lines': [
+                    {'id': 'l1', 'line_type': 'base', 'label': 'Enrolled', 'agg_func': 'count', 'value_col': 'ssid'},
+                ],
+            },
+            drill_through_columns=['ssid'],
+            drill_through_filter_map={},
+            column_defs={},
+        )
+
+        drill_filters = build_drill_filter(chart, {'x_val': '2025-09-01', 'series_val': 'Enrolled'})
+        self.assertEqual(drill_filters.get('ds_date_val'), '2025-09-01')
+        self.assertEqual(drill_filters.get('ds_value_col_required'), 'ssid')
+
+        result = execute_drill_query(
+            chart, drill_filters, columns=['ssid'],
+            user=SimpleNamespace(pk=1, is_superuser=True, roles=SimpleNamespace(all=lambda: [])),
+        )
+        self.assertEqual(result['total_rows'], 2)
+
+    def test_calc_line_click_is_not_filterable_by_column(self):
+        from dataviz.utils.drill_through import build_drill_filter
+
+        chart = SimpleNamespace(
+            chart_type='date_series',
+            config={
+                'ds_date_col': 'attendance_date',
+                'ds_lines': [
+                    {'id': 'enrolled', 'line_type': 'base', 'label': 'Enrolled', 'agg_func': 'count', 'value_col': 'ssid'},
+                    {'id': 'absent', 'line_type': 'base', 'label': 'Absent', 'agg_func': 'count', 'value_col': 'absence_status'},
+                    {'id': 'present', 'line_type': 'calc', 'label': 'Present', 'op': 'subtract', 'line_a': 'enrolled', 'line_b': 'absent'},
+                ],
+            },
+            drill_through_filter_map={},
+        )
+        filters = build_drill_filter(chart, {'x_val': '2025-09-01', 'series_val': 'Present'})
+        self.assertEqual(filters.get('ds_date_val'), '2025-09-01')
+        self.assertNotIn('ds_value_col_required', filters)
+
+
+class DateSeriesActiveRangeTests(SimpleTestCase):
+    def test_active_range_overlap_counts_by_day(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'enter_date': '2025-09-01', 'leave_date': '2025-09-10'},
+            {'ssid': '2', 'enter_date': '2025-09-03', 'leave_date': None},
+            {'ssid': '3', 'enter_date': '2025-09-08', 'leave_date': '2025-09-20'},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enter_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'active', 'line_type': 'active_range', 'label': 'Active',
+                 'enter_col': 'enter_date', 'leave_col': 'leave_date'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertFalse(opt.get('__is_error__'))
+        by_date = dict(zip(opt['__category_names__'], opt['series'][0]['data']))
+        self.assertEqual(by_date['2025-09-01'], 1.0)   # only student 1
+        self.assertEqual(by_date['2025-09-08'], 3.0)   # all three overlap
+        self.assertEqual(by_date['2025-09-11'], 2.0)   # student 1 left (leave=10)
+        self.assertEqual(by_date['2025-09-20'], 2.0)   # student 3's leave day still counts
+
+    def test_axis_is_continuous_no_gaps_skipped(self):
+        """Only two rows exist (Sep 1 and Sep 5) but every day in between
+        must still appear on the axis, zero-filled for event-count lines."""
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'attendance_date': '2025-09-01'},
+            {'ssid': '2', 'attendance_date': '2025-09-05'},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'attendance_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'l1', 'line_type': 'base', 'label': 'Enrolled', 'agg_func': 'count', 'value_col': 'ssid'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        dates = opt['__category_names__']
+        self.assertEqual(dates, ['2025-09-01', '2025-09-02', '2025-09-03', '2025-09-04', '2025-09-05'])
+        by_date = dict(zip(dates, opt['series'][0]['data']))
+        self.assertEqual(by_date['2025-09-02'], 0.0)
+        self.assertEqual(by_date['2025-09-03'], 0.0)
+
+    def test_active_range_month_bucket_overlap_semantics(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            # Overlaps September only briefly (Sep 25-Oct 5) — still counts for Sep under overlap semantics.
+            {'ssid': '1', 'enroll_date': '2025-09-25', 'enter_date': '2025-09-25', 'leave_date': '2025-10-05'},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enroll_date',
+            'ds_date_bucket': 'month',
+            'ds_lines': [
+                {'id': 'active', 'line_type': 'active_range', 'label': 'Active',
+                 'enter_col': 'enter_date', 'leave_col': 'leave_date'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        by_date = dict(zip(opt['__category_names__'], opt['series'][0]['data']))
+        self.assertEqual(by_date['2025-09'], 1.0)
+        self.assertEqual(by_date['2025-10'], 1.0)
+
+    def test_missing_enroll_table_column_renders_as_zero(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'ssid': '1', 'attendance_date': '2025-09-01'}]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'attendance_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'active', 'line_type': 'active_range', 'label': 'Active',
+                 'enter_col': 'enroll_enter_date', 'leave_col': 'enroll_leave_date'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertFalse(opt.get('__is_error__'))
+        self.assertEqual(opt['series'][0]['data'], [0.0])
+
+    def test_active_range_no_leave_col_means_never_leaves(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'ssid': '1', 'enter_date': '2025-09-01'}]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enter_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'active', 'line_type': 'active_range', 'label': 'Active',
+                 'enter_col': 'enter_date', 'leave_col': ''},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertTrue(all(v == 1.0 for v in opt['series'][0]['data']))
+
+    def test_calc_line_can_combine_active_range_and_base(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'enroll_date': '2025-09-01', 'enter_date': '2025-09-01', 'leave_date': None, 'absent_flag': '1'},
+            {'ssid': '2', 'enroll_date': '2025-09-01', 'enter_date': '2025-09-01', 'leave_date': None, 'absent_flag': None},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enroll_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'active', 'line_type': 'active_range', 'label': 'Active',
+                 'enter_col': 'enter_date', 'leave_col': 'leave_date'},
+                {'id': 'absent', 'line_type': 'base', 'label': 'Absent', 'agg_func': 'count', 'value_col': 'absent_flag'},
+                {'id': 'present', 'line_type': 'calc', 'label': 'Present', 'op': 'subtract', 'line_a': 'active', 'line_b': 'absent'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        by_name = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(by_name['Active'], [2.0])
+        self.assertEqual(by_name['Absent'], [1.0])
+        self.assertEqual(by_name['Present'], [1.0])
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_active_range_drill_matches_chart_count(self, mock_run_sql):
+        from dataviz.utils.drill_through import execute_drill_query, build_drill_filter
+
+        rows = [
+            {'ssid': '1', 'enter_date': '2025-09-01', 'leave_date': '2025-09-10'},
+            {'ssid': '2', 'enter_date': '2025-09-03', 'leave_date': None},
+            {'ssid': '3', 'enter_date': '2025-09-15', 'leave_date': '2025-09-20'},
+        ]
+        mock_run_sql.return_value = {'columns': list(rows[0].keys()), 'rows': rows}
+
+        chart = SimpleNamespace(
+            pk=101,
+            updated_at=SimpleNamespace(timestamp=lambda: 0),
+            source_type='sql',
+            source_sql='SELECT 1',
+            source_id=None,
+            source_filters={},
+            chart_type='date_series',
+            config={
+                'ds_date_col': 'enter_date',
+                'ds_date_bucket': 'day',
+                'ds_lines': [
+                    {'id': 'active', 'line_type': 'active_range', 'label': 'Active',
+                     'enter_col': 'enter_date', 'leave_col': 'leave_date'},
+                ],
+            },
+            drill_through_columns=['ssid'],
+            drill_through_filter_map={},
+            column_defs={},
+        )
+
+        drill_filters = build_drill_filter(chart, {'x_val': '2025-09-08', 'series_val': 'Active'})
+        self.assertEqual(drill_filters.get('ds_active_line_id'), 'active')
+
+        result = execute_drill_query(
+            chart, drill_filters, columns=['ssid'],
+            user=SimpleNamespace(pk=1, is_superuser=True, roles=SimpleNamespace(all=lambda: [])),
+        )
+        # Active on Sep 8: student 1 (1-10) and student 2 (3-open) = 2; student 3 (15-20) not yet entered.
+        self.assertEqual(result['total_rows'], 2)
+        returned_ssids = sorted(r['ssid'] for r in result['rows'])
+        self.assertEqual(returned_ssids, ['1', '2'])
+
+
+class DateSeriesCalcOperatorTests(SimpleTestCase):
+    def test_divide_computes_rate(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'enter_date': '2025-09-01', 'absent_date': '2025-09-01'},
+            {'ssid': '2', 'enter_date': '2025-09-01', 'absent_date': None},
+            {'ssid': '3', 'enter_date': '2025-09-01', 'absent_date': None},
+            {'ssid': '4', 'enter_date': '2025-09-01', 'absent_date': None},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enter_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'total', 'line_type': 'base', 'label': 'Total', 'agg_func': 'count', 'value_col': 'ssid'},
+                {'id': 'absent', 'line_type': 'base', 'label': 'Absent', 'agg_func': 'count', 'value_col': 'absent_date'},
+                {'id': 'present', 'line_type': 'calc', 'label': 'Present', 'op': 'subtract', 'line_a': 'total', 'line_b': 'absent'},
+                {'id': 'rate', 'line_type': 'calc', 'label': 'Attendance Rate', 'op': 'divide',
+                 'line_a': 'present', 'line_b': 'total', 'as_percent': True},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        by_name = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(by_name['Total'], [4.0])
+        self.assertEqual(by_name['Absent'], [1.0])
+        self.assertEqual(by_name['Present'], [3.0])
+        self.assertEqual(by_name['Attendance Rate'], [75.0])  # 3/4 = 75%
+
+    def test_divide_by_zero_is_zero_not_crash(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'ssid': '1', 'enter_date': '2025-09-01'}]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enter_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                # 'missing_col' doesn't exist -> Total is always 0 -> divide by zero
+                {'id': 'total', 'line_type': 'base', 'label': 'Total', 'agg_func': 'count', 'value_col': 'missing_col'},
+                {'id': 'absent', 'line_type': 'base', 'label': 'Absent', 'agg_func': 'count', 'value_col': 'missing_col2'},
+                {'id': 'rate', 'line_type': 'calc', 'label': 'Rate', 'op': 'divide', 'line_a': 'absent', 'line_b': 'total'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertFalse(opt.get('__is_error__'))
+        by_name = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(by_name['Rate'], [0.0])
+
+    def test_calc_chain_resolves_regardless_of_list_order(self):
+        """rate references present, present references total/absent — but
+        the list is written in reverse dependency order on purpose."""
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'ssid': '1', 'enter_date': '2025-09-01', 'absent_date': '2025-09-01'},
+            {'ssid': '2', 'enter_date': '2025-09-01', 'absent_date': None},
+        ]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enter_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'rate', 'line_type': 'calc', 'label': 'Rate', 'op': 'divide',
+                 'line_a': 'present', 'line_b': 'total', 'as_percent': True},
+                {'id': 'present', 'line_type': 'calc', 'label': 'Present', 'op': 'subtract',
+                 'line_a': 'total', 'line_b': 'absent'},
+                {'id': 'total', 'line_type': 'base', 'label': 'Total', 'agg_func': 'count', 'value_col': 'ssid'},
+                {'id': 'absent', 'line_type': 'base', 'label': 'Absent', 'agg_func': 'count', 'value_col': 'absent_date'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        by_name = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(by_name['Present'], [1.0])
+        self.assertEqual(by_name['Rate'], [50.0])
+
+    def test_dangling_calc_reference_renders_as_zero_not_crash(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'ssid': '1', 'enter_date': '2025-09-01'}]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enter_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'rate', 'line_type': 'calc', 'label': 'Rate', 'op': 'divide',
+                 'line_a': 'does_not_exist', 'line_b': 'also_missing'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertFalse(opt.get('__is_error__'))
+        self.assertEqual(opt['series'][0]['data'], [0.0])
+
+    def test_multiply_operator(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [{'ssid': '1', 'enter_date': '2025-09-01', 'weight': '2'}]
+        cfg = {
+            'chart_type': 'date_series',
+            'ds_date_col': 'enter_date',
+            'ds_date_bucket': 'day',
+            'ds_lines': [
+                {'id': 'a', 'line_type': 'base', 'label': 'A', 'agg_func': 'sum', 'value_col': 'weight'},
+                {'id': 'b', 'line_type': 'base', 'label': 'B', 'agg_func': 'count', 'value_col': 'ssid'},
+                {'id': 'c', 'line_type': 'calc', 'label': 'C', 'op': 'multiply', 'line_a': 'a', 'line_b': 'b'},
+            ],
+        }
+        opt = build_option(rows, {}, cfg)
+        by_name = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(by_name['C'], [2.0])  # 2 * 1
+
+
 class ChartRenderCacheTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testadmin', password='password', is_staff=True, is_superuser=True)

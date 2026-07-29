@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Preview AP Data - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li><a href="{% url 'dataLoader:ap_upload' %}" class="text-slate-500 hover:text-slate-700">AP Upload</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">Preview</li>
+            </ol>
+        </nav>
+        <div class="flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Preview AP Import</h1>
+                <p class="mt-2 text-slate-600">{{ upload_data.name }} — {{ upload_data.school_year }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Diagnostics -->
+    {% if diagnostics %}
+    <div class="bg-slate-50 border border-slate-200 rounded-md p-3 mb-6">
+        <details class="text-sm text-slate-600">
+            <summary class="cursor-pointer font-medium text-slate-700">Diagnostics</summary>
+            <ul class="mt-2 list-disc pl-5 space-y-0.5 text-xs">
+                {% for d in diagnostics %}
+                <li class="{% if 'WARNING' in d %}text-amber-700{% elif 'ERROR' in d %}text-red-700{% else %}text-slate-600{% endif %}">{{ d }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+    </div>
+    {% endif %}
+
+    <!-- Matching Data Source Info -->
+    <div class="bg-indigo-50 border border-indigo-200 rounded-md p-3 mb-6 flex items-center">
+        <svg class="h-5 w-5 text-indigo-500 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div class="text-sm text-indigo-800">
+            Matching against <strong>StudentEnroll database</strong> — {{ total_sis_students|default:"0" }} student records loaded
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Total Students</p>
+            <p class="text-2xl font-bold text-slate-900">{{ total_students }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Exam Results</p>
+            <p class="text-2xl font-bold text-purple-600">{{ total_exams }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Awards</p>
+            <p class="text-2xl font-bold text-amber-600">{{ total_awards }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Match Rate</p>
+            <p class="text-2xl font-bold {% if unmatched_count == 0 %}text-green-600{% elif unmatched_count < total_students %}text-amber-600{% else %}text-red-600{% endif %}">
+                {% if total_students > 0 %}
+                    {{ matched_count }} / {{ total_students }}
+                {% else %}
+                    —
+                {% endif %}
+            </p>
+        </div>
+    </div>
+
+    <!-- Exam Codes Found -->
+    {% if exam_code_names %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+        <h2 class="text-lg font-semibold text-slate-900 mb-4">Exams Detected ({{ analysis.unique_exam_codes|length }})</h2>
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            {% for code, name in exam_code_names.items %}
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                {{ code }}: {{ name }}
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Unmatched Students -->
+    {% if unmatched_students %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">
+                Unmatched Students ({{ unmatched_count }})
+                <span class="text-sm font-normal text-slate-500 ml-2">Enter SSIDs manually for students that could not be auto-matched</span>
+            </h2>
+        </div>
+        <form method="post" id="preview-form">
+            {% csrf_token %}
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200">
+                    <thead class="bg-slate-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">AP Number</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Last Name</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">First Name</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">DOB</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">School</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Reason</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">SSID (Manual)</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase w-24">Search</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-slate-200">
+                        {% for student in unmatched_students %}
+                        <tr class="hover:bg-slate-50" x-data="{ searching: false, results: [], ssid: '{{ student.ap_number }}' }">
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-900">{{ student.ap_number }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ student.last_name }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ student.first_name }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ student.dob }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ student.school }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-amber-600">{{ student.reason }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                <input type="text"
+                                       name="ssid_override_{{ student.ap_number }}"
+                                       id="ssid_{{ student.ap_number }}"
+                                       placeholder="Enter SSID"
+                                       class="w-32 px-2 py-1.5 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap text-center">
+                                <button type="button"
+                                        @click="searching = !searching; if(searching) { fetch('{% url 'dataLoader:ap_student_search' %}?first_name={{ student.first_name|urlencode }}&last_name={{ student.last_name|urlencode }}&school_year={{ upload_data.school_year|urlencode }}').then(r => r.json()).then(data => { results = data.students }) }"
+                                        class="px-3 py-1 text-xs font-medium text-purple-700 bg-purple-100 rounded-md hover:bg-purple-200 transition">
+                                    Find
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </form>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+        <div class="flex items-center">
+            <svg class="h-8 w-8 text-green-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <div>
+                <h3 class="text-lg font-medium text-green-800">All students matched successfully</h3>
+                <p class="text-sm text-green-600">{{ matched_count }} out of {{ total_students }} students were matched to district records.</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Warnings -->
+    {% if analysis.warnings %}
+    <div class="bg-amber-50 border border-amber-200 rounded-md p-4 mb-8">
+        <h3 class="text-sm font-medium text-amber-800">Warnings</h3>
+        <ul class="mt-2 list-disc pl-5 text-sm text-amber-700">
+            {% for warning in analysis.warnings %}
+            <li>{{ warning }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Confirm Button -->
+    <div class="flex justify-end space-x-3">
+        <a href="{% url 'dataLoader:ap_upload' %}"
+           class="px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition duration-200">
+            Back
+        </a>
+        <button type="button"
+                onclick="document.getElementById('preview-form').submit();"
+                class="px-6 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition duration-200">
+            Confirm &amp; Start Import
+        </button>
+    </div>
+</div>
+{% endblock %}

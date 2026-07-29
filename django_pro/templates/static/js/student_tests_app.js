@@ -103,9 +103,17 @@ document.addEventListener('DOMContentLoaded', () => {
         el.setAttribute('aria-hidden', 'true');
     };
 
+    let loadingStartedAt = 0;
+    let loadingHideTimer = null;
+
     const showLoading = (message = 'Loading data...') => {
         const loadingBar = document.getElementById('loading-bar');
         const loadingBarProgress = document.getElementById('loading-bar-progress');
+        loadingStartedAt = Date.now();
+        if (loadingHideTimer) {
+            clearTimeout(loadingHideTimer);
+            loadingHideTimer = null;
+        }
         if (loadingBar) {
             loadingBar.classList.remove('hidden');
             loadingBar.setAttribute('aria-hidden', 'false');
@@ -132,8 +140,12 @@ document.addEventListener('DOMContentLoaded', () => {
             // Complete the progress bar to 100%
             loadingBarProgress.style.width = '100%';
         }
-        // Hide after a brief moment to show completion
-        setTimeout(() => {
+        const elapsed = Date.now() - loadingStartedAt;
+        const hideDelay = Math.max(0, 180 - elapsed);
+        if (loadingHideTimer) {
+            clearTimeout(loadingHideTimer);
+        }
+        loadingHideTimer = setTimeout(() => {
             if (loadingBar) {
                 loadingBar.classList.add('hidden');
                 loadingBar.setAttribute('aria-hidden', 'true');
@@ -141,7 +153,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (loadingBarProgress) {
                 loadingBarProgress.style.width = '0%';
             }
-        }, 200);
+            loadingHideTimer = null;
+        }, hideDelay);
     };
 
     const loadOverlayHtml = async (url, targetEl) => {
@@ -1198,6 +1211,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.loadData = loadData;
 
+    const triggerLoadData = () => {
+        if (typeof window.loadData === 'function') {
+            window.loadData();
+        } else {
+            loadData();
+        }
+    };
+
     const updateColumnSelection = (col) => {
         const key = storageKey(col);
         // Check against all forms of the key
@@ -1212,7 +1233,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         page = 1;
         renderSelectedColumns();
-        loadData();
+        triggerLoadData();
     };
 
     document.addEventListener('change', (event) => {
@@ -1239,7 +1260,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             page = 1;
             renderSelectedColumns();
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1330,7 +1351,7 @@ document.addEventListener('DOMContentLoaded', () => {
             lastPayload.selected_columns = selectedColumns;
             renderTable(lastPayload);
         } else {
-            loadData();
+            triggerLoadData();
         }
     });
 
@@ -1424,13 +1445,13 @@ document.addEventListener('DOMContentLoaded', () => {
             searchInput.placeholder = 'Clear list to search by name';
             updateIdListBadge();
             page = 1;
-            loadData();
+            triggerLoadData();
         });
 
         searchInput.addEventListener('input', debounce(() => {
             if (pastedIdList) clearIdList();
             page = 1;
-            loadData();
+            triggerLoadData();
         }, 400));
     }
 
@@ -1442,7 +1463,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 searchInput.placeholder = 'Name, SSID, ID — or paste a list';
             }
             page = 1;
-            loadData();
+            triggerLoadData();
         });
     }
 
@@ -1450,7 +1471,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (schoolYearSelect) {
         schoolYearSelect.addEventListener('change', () => {
             page = 1;
-            loadData();
+            triggerLoadData();
         });
     }
 
@@ -1458,7 +1479,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (statusSelect) {
         statusSelect.addEventListener('change', () => {
             page = 1;
-            loadData();
+            triggerLoadData();
         });
     }
 
@@ -1490,7 +1511,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 sortBy = col;
                 sortDir = 'asc';
             }
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1506,7 +1527,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (clearFilterBtn) {
             const col = clearFilterBtn.dataset.column;
             delete filters[col];
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1520,7 +1541,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 delete filters[col];
             }
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1546,7 +1567,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 delete filters[col];
             }
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1557,7 +1578,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (val) {
                 filters[col] = [val];
             }
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1593,7 +1614,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const nextPage = parseInt(pageBtn.dataset.page, 10);
             if (!Number.isNaN(nextPage)) {
                 page = nextPage;
-                loadData();
+                triggerLoadData();
             }
             return;
         }

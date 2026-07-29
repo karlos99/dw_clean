@@ -38,6 +38,17 @@ def split_composite_value(val: str, expected_len: int) -> list:
     return [normalized]
 
 
+def _find_id_col(row_dict):
+    """Find student identifier column in row_dict, prioritizing ssid, then student_id, then stu_annual_key."""
+    if not row_dict:
+        return None
+    for target in ('ssid', 'student_id', 'stu_annual_key'):
+        match = next((k for k in row_dict if k == target or k.split('.')[-1].lower() == target), None)
+        if match:
+            return match
+    return None
+
+
 def build_drill_filter(chart, params: dict) -> dict:
     """
     Translate an ECharts click event params dict into dataexploration filter dict.
@@ -59,12 +70,24 @@ def build_drill_filter(chart, params: dict) -> dict:
     if chart.chart_type == 'summary_table':
         row_col = chart.config.get('st_row_col', '')
         col_col = chart.config.get('st_col_col', '')
-        row_val = params.get('st_row_val', '')
-        col_val = params.get('st_col_val', '')
+        row_val = params.get('st_row_val', '') or params.get('x_val', '')
+        col_val = params.get('st_col_val', '') or params.get('series_val', '')
         if row_col and row_val:
             filters[row_col] = row_val
         if col_col and col_val:
-            filters[col_col] = col_val
+            if chart.config.get('st_col_mode') == 'columns':
+                st_col_cols = chart.config.get('st_col_cols', [])
+                col_defs = chart.column_defs or {}
+                matched_col = None
+                for cc in st_col_cols:
+                    lbl = col_defs.get(cc, cc) if col_defs else cc
+                    if cc == col_val or lbl == col_val:
+                        matched_col = cc
+                        break
+                if matched_col:
+                    filters['dyn_calc_value_col'] = matched_col
+            else:
+                filters[col_col] = col_val
         return filters
 
     # dynamic_summary_table: multi-dimension drill — each row/col dimension
@@ -80,6 +103,34 @@ def build_drill_filter(chart, params: dict) -> dict:
             col_cols = chart.config.get('st_col_cols', [])
         row_val = params.get('st_row_val', '') or params.get('x_val', '')
         col_val = params.get('st_col_val', '') or params.get('series_val', '')
+
+        # Calculations mode: the clicked column is a user-defined aggregate
+        # (e.g. "Average of Reading Score"), not a real data column, so there
+        # is no column value to filter by.  Map the cell's label back to its
+        # calculation definition and, for non-count aggregates, restrict the
+        # drill to students who actually contributed a value — otherwise the
+        # drill list shows every student in the row group instead of just
+        # the ones the calculation was computed over.
+        if chart.config.get('dyn_col_mode') == 'calculations' and col_val:
+            col_defs = chart.column_defs or {}
+            for calc in chart.config.get('dyn_calculations', []):
+                fn = calc.get('agg_func', 'count')
+                vc = calc.get('value_col', '')
+                lbl = (calc.get('label') or '').strip()
+                if not lbl:
+                    vc_lbl = col_defs.get(vc, vc) if vc else vc
+                    lbl = f"{fn.capitalize()} of {vc_lbl}" if vc else fn.capitalize()
+                if lbl == col_val:
+                    if vc:
+                        filters['dyn_calc_value_col'] = vc
+                    break
+            if row_val and row_cols:
+                parts = row_val.split(_SEP)
+                for i, col in enumerate(row_cols):
+                    if i < len(parts):
+                        filters[col] = parts[i]
+            return filters
+
         # Multi-column mode: st_col_val encodes "col_name ▸ cell_value"
         if col_val and _SEP in col_val and len(col_cols) > 1:
             parts = col_val.split(_SEP, 1)
@@ -110,18 +161,60 @@ def build_drill_filter(chart, params: dict) -> dict:
             filters['pg_after_val']  = after_val
             return filters
 
-        x_col = fmap.get('x_col', chart.config.get('x_col', ''))
+        pg_display = chart.config.get('pg_display', '')
+        # x_col only groups rows in the bar display modes — donut/pie
+        # classify across the whole dataset, so an x_col left over from a
+        # previous edit must not be applied as a filter here.
+        x_col = fmap.get('x_col', chart.config.get('x_col', '')) if pg_display in ('stacked_bar', 'grouped_bar') else ''
         series_val = params.get('series_val', '')
         x_val = params.get('x_val', '')
         _PG_CATS = frozenset({'Growth', 'Sliders', 'Stickers'})
         if series_val in _PG_CATS:
-            # Stacked/grouped bar with x grouping — x_val is the group category
-            if x_col and x_val:
+            # Stacked/grouped bar with x grouping — x_val is the group category.
+            # "(Blank)" is a synthetic bucket the chart uses for rows with no
+            # x_col value — it is not a literal database value, so sending it
+            # as a SQL equality filter would match zero rows.  Leave x_col
+            # unfiltered and let execute_drill_query's post-fetch pg_cat
+            # classifier select the blank-x_col rows instead.
+            if x_col and x_val and x_val != '(Blank)':
                 filters[x_col] = x_val
+            elif x_col and x_val == '(Blank)':
+                filters['pg_x_blank'] = x_col
             filters['pg_cat'] = series_val
         elif x_val in _PG_CATS:
             # Donut/pie or overall bar — x_val IS the pg category
             filters['pg_cat'] = x_val
+        return filters
+
+    # date_series (Dates chart): x_val is a bucketed date label (e.g. a whole
+    # week/month), not a literal value in the date column, so it can't be a
+    # SQL equality filter — store it as a sentinel for post-fetch bucketing.
+    # series_val is the clicked line's label; carry over that line's own
+    # value column / filters so the drill matches exactly what the line
+    # counted. Calc lines (derived by +/- of two other lines) have no rows
+    # of their own, so only the date sentinel is set for those.
+    if chart.chart_type == 'date_series':
+        x_val = params.get('x_val', '')
+        series_val = params.get('series_val', '')
+        if x_val:
+            filters['ds_date_val'] = x_val
+        ds_lines = chart.config.get('ds_lines', [])
+        line = next((l for l in ds_lines if (l.get('label') or l.get('id')) == series_val), None)
+        line_type = line.get('line_type', 'base') if line else None
+        if line and line_type == 'active_range':
+            # No single column to require non-blank — the drill instead needs
+            # to re-run the enter/leave overlap test against the bucket's
+            # date range, done post-fetch in execute_drill_query.
+            filters['ds_active_line_id'] = line.get('id') or line.get('label')
+        elif line and line_type != 'calc':
+            value_col = line.get('value_col', '')
+            if value_col:
+                filters['ds_value_col_required'] = value_col
+            line_filters = line.get('filters') or {}
+            if isinstance(line_filters, dict):
+                for fcol, fval in line_filters.items():
+                    if fcol:
+                        filters[fcol] = fval
         return filters
 
     # ── Handle multiple X-axis composite columns ──
@@ -354,15 +447,57 @@ def execute_drill_query(
     Returns {'rows', 'columns', 'all_columns', 'total_rows', 'page',
              'per_page', 'error'}.
     """
+    # dynamic_summary_table (calculations mode): extract the value-col
+    # sentinel before it leaks into SQL filters, and ensure that column is
+    # fetched so we can restrict the drill to students who actually
+    # contributed a value to the aggregate.
+    dyn_calc_value_col = None
+    if 'dyn_calc_value_col' in drill_filters and chart.chart_type == 'dynamic_summary_table':
+        drill_filters = dict(drill_filters)
+        dyn_calc_value_col = drill_filters.pop('dyn_calc_value_col')
+        extra_columns = list(extra_columns or [])
+        if dyn_calc_value_col not in extra_columns:
+            extra_columns.append(dyn_calc_value_col)
+
+    # date_series (Dates chart): extract the bucketed-date + value-col /
+    # active-range sentinels before they leak into SQL filters, and ensure
+    # the columns they need are fetched for the post-fetch filtering below.
+    ds_date_val = None
+    ds_value_col_required = None
+    ds_active_enter_col = None
+    ds_active_leave_col = None
+    if chart.chart_type == 'date_series' and (
+        'ds_date_val' in drill_filters or 'ds_value_col_required' in drill_filters or 'ds_active_line_id' in drill_filters
+    ):
+        drill_filters = dict(drill_filters)
+        ds_date_val = drill_filters.pop('ds_date_val', None)
+        ds_value_col_required = drill_filters.pop('ds_value_col_required', None)
+        ds_active_line_id = drill_filters.pop('ds_active_line_id', None)
+        cfg = chart.config
+        extra_columns = list(extra_columns or [])
+        if ds_active_line_id:
+            _line = next(
+                (l for l in cfg.get('ds_lines', []) if (l.get('id') or l.get('label')) == ds_active_line_id),
+                None,
+            )
+            if _line:
+                ds_active_enter_col = _line.get('enter_col', '')
+                ds_active_leave_col = _line.get('leave_col', '')
+        for fk in (cfg.get('ds_date_col', ''), ds_value_col_required or '', ds_active_enter_col or '', ds_active_leave_col or ''):
+            if fk and fk not in extra_columns:
+                extra_columns.append(fk)
+
     # progress_growth: extract the pg_cat sentinel before it leaks into SQL
     # filters, and ensure the before/after PL columns are fetched.
     pg_cat_filter = None
+    pg_x_blank_col = None
     if 'pg_cat' in drill_filters and chart.chart_type == 'progress_growth':
         drill_filters = dict(drill_filters)          # don't mutate caller's dict
         pg_cat_filter = drill_filters.pop('pg_cat')
+        pg_x_blank_col = drill_filters.pop('pg_x_blank', None)
         cfg = chart.config
         extra_columns = list(extra_columns or [])
-        for fk in (cfg.get('pg_before_col', ''), cfg.get('pg_after_col', '')):
+        for fk in (cfg.get('pg_before_col', ''), cfg.get('pg_after_col', ''), pg_x_blank_col or ''):
             if fk and fk not in extra_columns:
                 extra_columns.append(fk)
 
@@ -690,10 +825,7 @@ def execute_drill_query(
     # summary_table / dynamic_summary_table: deduplicate by student id AFTER
     # dynamic column filters so the row count matches the chart.
     if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
-        _id_col = next(
-            (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
-            None,
-        )
+        _id_col = _find_id_col(rows[0])
         if _id_col:
             _seen: set = set()
             _deduped: list = []
@@ -704,131 +836,166 @@ def execute_drill_query(
                     _deduped.append(_r)
             rows = _deduped
 
-    # Post-fetch classification filter for progress_growth.
-    # pg_cat_filter is one of 'Growth', 'Sliders', 'Stickers'.
-    if pg_cat_filter and rows:
-        # Deduplicate by student identifier before classification so the drill
-        # list and count match the chart (which also deduplicates its input).
-        _id_col = next(
-            (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
-            None,
-        )
-        if _id_col:
-            _seen: set = set()
-            _deduped: list = []
-            for _r in rows:
-                _k = _r.get(_id_col)
-                if _k not in _seen:
-                    _seen.add(_k)
-                    _deduped.append(_r)
-            rows = _deduped
+    # Calculations mode: restrict to students with a valid numeric value in
+    # the aggregated column — mirrors _dynamic_summary_table_option's
+    # pd.to_numeric(...).dropna() so the drill list matches who the
+    # sum/avg/min/max/median was actually computed over.
+    if dyn_calc_value_col and rows:
+        row_keys = list(rows[0].keys())
+        from dataexploration.school_year_utils import resolve_relative_column_key
+        def _norm_col(c):
+            return str(c).replace('-', '_').lower()
+        key_map = {_norm_col(k): k for k in row_keys}
+        def _resolve_calc_col(col):
+            if not col:
+                return col
+            norm = _norm_col(col)
+            if norm in key_map:
+                return key_map[norm]
+            resolved = resolve_relative_column_key(col)
+            norm_res = _norm_col(resolved)
+            if norm_res in key_map:
+                return key_map[norm_res]
+            clean = col.split('.')[-1]
+            norm_clean = _norm_col(clean)
+            if norm_clean in key_map:
+                return key_map[norm_clean]
+            return col
 
+        calc_target_col = _resolve_calc_col(dyn_calc_value_col)
+
+        def _has_calc_value(v):
+            if v is None:
+                return False
+            s = str(v).strip()
+            if not s or s in {'-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'}:
+                return False
+            return True
+
+        rows = [r for r in rows if _has_calc_value(r.get(calc_target_col))]
+
+    # date_series (Dates chart): bucket the date column the same way the
+    # chart did and keep only rows in the clicked bucket, then (for a
+    # specific line) require its value column to be non-blank — mirroring
+    # _date_series_option's per-line aggregation so the drill list matches
+    # exactly what that line counted for that date.
+    if rows and chart.chart_type == 'date_series' and (ds_date_val or ds_value_col_required or ds_active_enter_col):
+        row_keys = list(rows[0].keys())
+        from dataexploration.school_year_utils import resolve_relative_column_key
+
+        def _norm_ds_col(c):
+            return str(c).replace('-', '_').lower()
+
+        _ds_key_map = {_norm_ds_col(k): k for k in row_keys}
+
+        def _resolve_ds_col(col):
+            if not col:
+                return col
+            norm = _norm_ds_col(col)
+            if norm in _ds_key_map:
+                return _ds_key_map[norm]
+            resolved = resolve_relative_column_key(col)
+            norm_res = _norm_ds_col(resolved)
+            if norm_res in _ds_key_map:
+                return _ds_key_map[norm_res]
+            clean = col.split('.')[-1]
+            norm_clean = _norm_ds_col(clean)
+            if norm_clean in _ds_key_map:
+                return _ds_key_map[norm_clean]
+            return col
+
+        if ds_active_enter_col:
+            # Active-Range line: re-run the same enter/leave overlap test the
+            # chart used, against the clicked bucket's calendar [start, end]
+            # range, then dedupe to one row per active student.
+            import pandas as pd
+            from dataviz.utils.chart_builder import _ds_bucket_label_range
+            date_bucket = (chart.config.get('ds_date_bucket') or 'day').strip().lower()
+            start, end = _ds_bucket_label_range(ds_date_val, date_bucket) if ds_date_val else (None, None)
+            enter_col = _resolve_ds_col(ds_active_enter_col)
+            leave_col = _resolve_ds_col(ds_active_leave_col) if ds_active_leave_col else None
+            if start is not None and enter_col:
+                enter_dt = pd.Series([r.get(enter_col) for r in rows])
+                enter_dt = pd.to_datetime(enter_dt, errors='coerce')
+                if leave_col:
+                    leave_dt = pd.to_datetime(pd.Series([r.get(leave_col) for r in rows]), errors='coerce')
+                else:
+                    leave_dt = pd.Series(pd.NaT, index=enter_dt.index)
+                mask = enter_dt.notna() & (enter_dt <= end) & (leave_dt.isna() | (leave_dt >= start))
+                rows = [r for r, keep in zip(rows, mask.tolist()) if keep]
+
+            _id_col = _find_id_col(rows[0]) if rows else None
+            if _id_col:
+                _seen: set = set()
+                _deduped: list = []
+                for _r in rows:
+                    _k = _r.get(_id_col)
+                    if _k not in _seen:
+                        _seen.add(_k)
+                        _deduped.append(_r)
+                rows = _deduped
+
+        if ds_date_val and not ds_active_enter_col:
+            date_col = _resolve_ds_col(chart.config.get('ds_date_col', ''))
+            if date_col:
+                import pandas as pd
+                from dataviz.utils.chart_builder import _bucket_date_column
+                date_bucket = (chart.config.get('ds_date_bucket') or 'day').strip().lower()
+                bucketed = _bucket_date_column(pd.Series([r.get(date_col) for r in rows]), date_bucket)
+                rows = [r for r, b in zip(rows, bucketed) if b == ds_date_val]
+
+        if ds_value_col_required and rows:
+            value_col = _resolve_ds_col(ds_value_col_required)
+
+            def _has_ds_value(v):
+                if v is None:
+                    return False
+                s = str(v).strip()
+                if not s or s in {'-', '—', '–', 'N/A', 'n/a', 'None', 'null', 'NULL'}:
+                    return False
+                return True
+
+            rows = [r for r in rows if _has_ds_value(r.get(value_col))]
+
+    # progress_growth drill filtering — matrix uses per-cell dedupe (matches chart);
+    # bar/donut modes use one row per student globally.
+    if rows and chart.chart_type == 'progress_growth' and (pg_cat_filter or pg_before_val):
         cfg = chart.config
         before_col = cfg.get('pg_before_col', '')
         after_col  = cfg.get('pg_after_col', '')
         pl_scale   = cfg.get('pl_scale', [])
-        x_col      = cfg.get('x_col', '')
         if before_col and after_col:
-            # Resolve before_col and after_col against the row keys
-            row_keys = list(rows[0].keys()) if rows else []
-            from dataexploration.school_year_utils import resolve_relative_column_key
-            def _norm_col(c):
-                return str(c).replace('-', '_').lower()
-            key_map = {_norm_col(k): k for k in row_keys}
-            def resolve_col(col):
-                if not col:
-                    return col
-                norm = _norm_col(col)
-                if norm in key_map:
-                    return key_map[norm]
-                resolved = resolve_relative_column_key(col)
-                norm_res = _norm_col(resolved)
-                if norm_res in key_map:
-                    return key_map[norm_res]
-                return col
-            before_col = resolve_col(before_col)
-            after_col  = resolve_col(after_col)
+            from dataviz.utils.chart_builder import (
+                _BLANK_PL_VALS,
+                _resolve_row_column,
+                classify_progress_growth_row,
+                filter_progress_growth_matrix_rows,
+                prepare_progress_growth_rows,
+            )
 
-            # Replicate build_option's _BLANK_VALUES filter for x_col.
-            # The chart drops rows with blank x_col before counting; the drill
-            # must do the same so totals match when no x_col SQL filter was added
-            # (e.g. the user clicked a donut/pie slice with no group filter).
-            _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
-            if x_col and x_col not in drill_filters:
-                # x_col is not already being filtered by SQL — drop blank x_col rows
-                rows = [r for r in rows if str(r.get(x_col) or '').strip() not in _BLANK]
+            if pg_before_val:
+                rows, before_col, after_col = filter_progress_growth_matrix_rows(
+                    rows, before_col, after_col, pg_before_val, pg_after_val,
+                )
+            else:
+                rows, before_col, after_col, rank = prepare_progress_growth_rows(
+                    rows, before_col, after_col, pl_scale=pl_scale or None,
+                )
 
-            from dataviz.utils.chart_builder import _normalize_pl_val
-            if not pl_scale:
-                from dataviz.utils.chart_builder import _auto_detect_pl_scale
-                all_vals: set = set()
-                for r in rows:
-                    for c in (before_col, after_col):
-                        v = _normalize_pl_val(r.get(c))
-                        if v and v not in _BLANK:
-                            all_vals.add(v)
-                pl_scale = _auto_detect_pl_scale(list(all_vals))
-            rank = {v: i for i, v in enumerate([_normalize_pl_val(s) for s in pl_scale])}
+            pg_display = cfg.get('pg_display', '')
+            x_col = cfg.get('x_col', '') if pg_display in ('stacked_bar', 'grouped_bar') else ''
+            if pg_x_blank_col:
+                blank_col = _resolve_row_column(list(rows[0].keys()) if rows else [], pg_x_blank_col)
+                rows = [r for r in rows if str(r.get(blank_col) or '').strip() in _BLANK_PL_VALS]
+            elif x_col and x_col not in drill_filters:
+                x_col = _resolve_row_column(list(rows[0].keys()) if rows else [], x_col)
+                rows = [r for r in rows if str(r.get(x_col) or '').strip() not in _BLANK_PL_VALS]
 
-            def _pg_class(row):
-                b = rank.get(_normalize_pl_val(row.get(before_col)))
-                a = rank.get(_normalize_pl_val(row.get(after_col)))
-                if b is None or a is None:
-                    return None
-                if a > b:
-                    return 'Growth'
-                if a < b:
-                    return 'Sliders'
-                return 'Stickers'
-
-            rows = [r for r in rows if _pg_class(r) == pg_cat_filter]
-
-    # Matrix drill: filter to the exact Before PL → After PL cell clicked.
-    if pg_before_val and rows:
-        _id_col = next(
-            (c for c in ('ssid', 'student_id', 'stu_annual_key') if c in rows[0]),
-            None,
-        )
-        if _id_col:
-            _seen: set = set()
-            _deduped: list = []
-            for _r in rows:
-                _k = _r.get(_id_col)
-                if _k not in _seen:
-                    _seen.add(_k)
-                    _deduped.append(_r)
-            rows = _deduped
-
-        cfg = chart.config
-        before_col = cfg.get('pg_before_col', '')
-        after_col  = cfg.get('pg_after_col', '')
-        if before_col and after_col:
-            # Resolve before_col and after_col against the row keys
-            row_keys = list(rows[0].keys()) if rows else []
-            from dataexploration.school_year_utils import resolve_relative_column_key
-            def _norm_col(c):
-                return str(c).replace('-', '_').lower()
-            key_map = {_norm_col(k): k for k in row_keys}
-            def resolve_col(col):
-                if not col:
-                    return col
-                norm = _norm_col(col)
-                if norm in key_map:
-                    return key_map[norm]
-                resolved = resolve_relative_column_key(col)
-                norm_res = _norm_col(resolved)
-                if norm_res in key_map:
-                    return key_map[norm_res]
-                return col
-            before_col = resolve_col(before_col)
-            after_col  = resolve_col(after_col)
-
-            from dataviz.utils.chart_builder import _normalize_pl_val
-            rows = [
-                r for r in rows
-                if _normalize_pl_val(r.get(before_col)) == _normalize_pl_val(pg_before_val)
-                and _normalize_pl_val(r.get(after_col)) == _normalize_pl_val(pg_after_val)
-            ]
+            if pg_cat_filter:
+                rows = [
+                    r for r in rows
+                    if classify_progress_growth_row(r, before_col, after_col, rank) == pg_cat_filter
+                ]
 
     # Keep a snapshot of all available columns before column restriction
     all_columns = list(cols)
