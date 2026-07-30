@@ -30,6 +30,11 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
     if col == 'math_selection':
         return 'mr.math_selection', 'math_selection'
 
+    # ltel is a direct column on current_student in this schema; use cs.ltel
+    # to avoid requiring the students table join, which is not available in NYL queries.
+    if col == 'ltel' and db_columns and 'ltel' in db_columns:
+        return 'cs.ltel', 'ltel'
+
     # Delegate to dataexploration for all other columns
     from dataexploration.view_modules.column_management import get_column_expression as _base
     return _base(col, db_columns, enroll_columns, use_enroll, use_students, use_eht)

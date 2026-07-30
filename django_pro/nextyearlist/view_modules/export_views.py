@@ -119,11 +119,9 @@ def export_students_csv(request):
         or (isinstance(filters, dict) and any(k in enroll_fields for k in filters))
         or sort_by in enroll_fields
     )
-    needs_students = (
-        any(c in {'ltel'} for c in selected_columns)
-        or (isinstance(filters, dict) and 'ltel' in filters)
-        or sort_by == 'ltel'
-    )
+    # ltel resolves to cs.ltel in the NYL column management (direct column on current_student);
+    # the students table join is not needed here.
+    needs_students = False
     needs_eht = (
         'elem_teacher_name' in selected_columns
         or (isinstance(filters, dict) and 'elem_teacher_name' in filters)
@@ -204,6 +202,15 @@ def export_students_csv(request):
             " LEFT JOIN (SELECT DISTINCT ON (student_id, school_year) * FROM student_enroll"
             " ORDER BY student_id, school_year, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
             ") se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
+        )
+    if needs_students:
+        join_sql += " LEFT JOIN students s ON s.student_annual_key = cs.stu_annual_key"
+        join_sql += (
+            " LEFT JOIN ("
+            " SELECT DISTINCT ON (state_student_number) *"
+            " FROM students"
+            " ORDER BY state_student_number, school_year DESC NULLS LAST, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
+            " ) sssid ON sssid.state_student_number = cs.ssid"
         )
     if needs_eht:
         join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
@@ -586,6 +593,7 @@ def export_students_csv(request):
                     f" WHERE {final_where_sql}"
                     f" ORDER BY {order_by_expr} {sort_dir_sql} NULLS LAST"
                 )
+                logger.info("NYL CSV Export: SQL=%s", query[:2000])
                 cursor.execute(query, select_params + local_params)
 
                 db_col_names = [d[0] for d in cursor.description]

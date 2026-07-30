@@ -324,7 +324,9 @@ def _user_has_disallowed_placement_grades(user, school: School | None) -> bool:
         latest_year = latest_year_for_queryset(teacher_scope)
         if latest_year:
             teacher_scope = teacher_scope.filter(school_year=latest_year)
-        return teacher_scope.filter(grade__in=DISALLOWED_PLACEMENT_GRADES).exists()
+        # Only block access when the teacher has no allowed-grade students at all.
+        # A teacher with both 4th and 5th grade students should still see the 4th graders.
+        return not teacher_scope.exclude(grade__in=DISALLOWED_PLACEMENT_GRADES).exists()
 
     if school is not None:
         school_scope = CurrentStudent.objects.filter(school_state_id=school.state_id)

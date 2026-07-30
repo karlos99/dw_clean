@@ -220,6 +220,19 @@ def load_students(request):
                 pass
         return val_str if val_str else fallback
 
+    # Pasted ID list search (overrides regular search when present)
+    search_ids = None
+    search_ids_param = request.GET.get('search_ids', '')
+    if search_ids_param:
+        try:
+            parsed_ids = json.loads(search_ids_param)
+            if isinstance(parsed_ids, list):
+                search_ids = [str(s).strip() for s in parsed_ids if str(s).strip()]
+                if not search_ids:
+                    search_ids = None
+        except Exception:
+            pass
+
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
     school_year = _parse_multi(request.GET.get('school_year', ''), _parse_multi(saved_filters.get('school_year', ''), _parse_multi(saved_config.get('school_year', ''), '')))
     grade = _parse_multi(request.GET.get('grade', ''), _parse_multi(saved_filters.get('grade', ''), _parse_multi(saved_config.get('grade', ''), '')))
@@ -506,7 +519,11 @@ def load_students(request):
                     status = None
                     filters = {}
 
-        if search:
+        if search_ids:
+            # Exact ID list match against ssid or student_id
+            base_where_clauses.append("(cs.ssid = ANY(%s) OR cs.student_id = ANY(%s))")
+            base_params.extend([search_ids, search_ids])
+        elif search:
             if isinstance(search, list):
                 search = search[0] if search else ''
             if search:
