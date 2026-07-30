@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% load dataviz_tags %}
 {% block title %}Charts – DataViz{% endblock %}
 
 {% block content %}
+{% include "dataviz/submenu.html" %}
 <div class="min-h-screen bg-slate-50">
 
   <!-- Top bar -->
@@ -35,66 +37,209 @@
     </div>
   </div>
 
-  <!-- Content -->
-  <div class="max-w-7xl mx-auto px-6 py-6">
-    {% if charts %}
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      {% for chart in charts %}
-      <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md hover:border-slate-300 transition-all flex flex-col">
-        <div class="flex items-start justify-between mb-3">
-          <div class="flex-1 min-w-0">
-            <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-900 truncate">{{ chart.name }}</h2>
-            <p class="text-xs text-slate-400 mt-0.5 font-mono">{{ chart.chart_type }}</p>
-          </div>
-          <span class="ml-2 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex-shrink-0">{{ chart.chart_type }}</span>
-        </div>
-        <p class="text-xs text-slate-500 flex-1 line-clamp-2 leading-relaxed">{{ chart.description|default:'No description' }}</p>
-        <div class="mt-4 flex items-center gap-1.5 border-t border-slate-100 pt-3">
-          <a href="{% url 'dataviz:chart_view' chart.id %}"
-             class="flex-1 text-center inline-flex items-center justify-center gap-1 text-xs font-semibold uppercase tracking-wider px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100 transition-all">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-            </svg>
-            View
-          </a>
-          <a href="{% url 'dataviz:chart_edit' chart.id %}"
-             class="flex-1 text-center inline-flex items-center justify-center gap-1 text-xs font-semibold uppercase tracking-wider px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded shadow-sm hover:bg-slate-50 transition-all">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-            </svg>
-            Edit
-          </a>
-          <button hx-delete="{% url 'dataviz:chart_detail' chart.id %}"
-                  hx-confirm="Delete '{{ chart.name }}'?"
-                  hx-target="closest div.bg-white"
-                  hx-swap="outerHTML swap:300ms"
-                  class="inline-flex items-center justify-center gap-1 text-xs font-semibold uppercase tracking-wider px-3 py-1.5 bg-white text-red-600 border border-red-200 rounded shadow-sm hover:bg-red-50 transition-all">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-            </svg>
-            Delete
-          </button>
-        </div>
-      </div>
+  <!-- Breadcrumbs & Navigation -->
+  <div class="bg-white border-b border-slate-200 px-6 py-2 shadow-sm">
+    <div class="max-w-7xl mx-auto flex items-center gap-2 text-xs">
+      <a href="{% url 'dataviz:index' %}" class="flex items-center gap-1.5 text-slate-500 hover:text-blue-600 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+        Root
+      </a>
+      {% for crumb in breadcrumbs %}
+      <svg class="w-3 h-3 text-slate-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+      <a href="?folder={{ crumb.path|urlencode }}" class="text-slate-500 hover:text-blue-600 transition">
+        {{ crumb.name }}
+      </a>
       {% endfor %}
     </div>
-    {% else %}
-    <div class="text-center py-24 bg-white border border-dashed border-slate-300 rounded-xl">
-      <svg class="w-14 h-14 mx-auto text-slate-300 mb-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-        <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-      </svg>
-      <p class="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-1">No charts yet</p>
-      <p class="text-xs text-slate-400 mb-6">Create your first chart to start visualizing data</p>
-      <a href="{% url 'dataviz:chart_new' %}"
-         class="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-white bg-slate-900 border border-slate-800 rounded shadow-sm hover:bg-slate-800 transition-all">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path d="M12 4v16m8-8H4"/>
-        </svg>
-        Create your first chart
-      </a>
-    </div>
-    {% endif %}
   </div>
 
+  <!-- Content -->
+  <div class="max-w-7xl mx-auto px-6 py-8">
+    
+    <!-- Folders Grid -->
+    {% if subfolders %}
+    <div class="mb-8">
+      <h2 class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-4 px-1">Folders</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
+        {% for folder in subfolders %}
+        <a href="?folder={% if current_path %}{{ current_path }}/{% endif %}{{ folder|urlencode }}" 
+           class="group flex flex-col items-center p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all">
+          <svg class="w-10 h-10 text-blue-400 group-hover:text-blue-500 transition-colors" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M20 18H4V8h16v10zm0-12h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
+          </svg>
+          <span class="mt-2 text-xs font-semibold text-slate-700 text-center truncate w-full px-1">{{ folder }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Charts Grid -->
+    <div>
+      <h2 class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-4 px-1">Charts</h2>
+      {% if charts %}
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for chart in charts %}
+        <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md hover:border-slate-300 transition-all flex flex-col group/card">
+          <div class="flex items-start justify-between mb-3">
+            <div class="flex-1 min-w-0">
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-900 truncate">{{ chart.display_name }}</h3>
+              <p class="text-[10px] text-slate-400 mt-0.5 font-mono">{{ chart.chart_type }}</p>
+            </div>
+            <span class="ml-2 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex-shrink-0 group-hover/card:bg-blue-100 group-hover/card:text-blue-700 transition-colors">{{ chart.chart_type }}</span>
+          </div>
+          {# Inline-editable description #}
+          <div class="text-xs text-slate-500 flex-1 leading-relaxed relative group/desc">
+            <p class="cursor-text hover:bg-slate-50 rounded px-1 py-0.5 -mx-1 -my-0.5 transition-colors line-clamp-2"
+               title="Click to edit description"
+               onclick="editDescription(this, {{ chart.id }})">{{ chart.description|default:'No description — click to add one' }}</p>
+          </div>
+
+          {# Page usage badges #}
+          {% with pages=page_usage|get_item:chart.id %}
+          {% if pages %}
+          <div class="mt-2 flex flex-wrap gap-1">
+            <span class="text-[9px] font-bold uppercase tracking-wider text-slate-400">Pages:</span>
+            {% for p in pages|slice:":4" %}
+            {% if p.slug %}
+            <a href="{% url 'dataviz:page_view' p.slug %}" title="{{ p.title }}"
+               class="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 transition-colors truncate max-w-[140px]">{{ p.title }}</a>
+            {% else %}
+            <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100 truncate max-w-[140px]">{{ p.title }}</span>
+            {% endif %}
+            {% endfor %}
+            {% if pages|length > 4 %}
+            <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100">+{{ pages|length|add:"-4" }} more</span>
+            {% endif %}
+          </div>
+          {% endif %}
+          {% endwith %}
+          
+          <div class="mt-4 flex items-center gap-1.5 border-t border-slate-100 pt-3">
+            <a href="{% url 'dataviz:chart_view' chart.id %}"
+               class="flex-1 text-center inline-flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100 transition-all">
+              View
+            </a>
+            <a href="{% url 'dataviz:chart_edit' chart.id %}"
+               class="flex-1 text-center inline-flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded shadow-sm hover:bg-slate-50 transition-all">
+              Edit
+            </a>
+            <button hx-post="{% url 'dataviz:chart_duplicate' chart.id %}"
+                    hx-on::after-request="if(event.detail.successful) window.location.reload()"
+                    class="flex-1 text-center inline-flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-blue-600 border border-blue-200 rounded shadow-sm hover:bg-blue-50 transition-all">
+              Copy
+            </button>
+            <button onclick="moveChart({{ chart.id }}, '{{ chart.name|escapejs }}')"
+                    class="flex-1 text-center inline-flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded shadow-sm hover:bg-slate-50 transition-all">
+              Move
+            </button>
+            <button hx-delete="{% url 'dataviz:chart_detail' chart.id %}"
+                    hx-confirm="Delete '{{ chart.name }}'?"
+                    hx-target="closest div.bg-white"
+                    hx-swap="outerHTML swap:300ms"
+                    class="inline-flex items-center justify-center gap-1 p-1.5 text-red-600 hover:bg-red-50 rounded transition-all"
+                    title="Delete">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% elif not subfolders %}
+      <div class="text-center py-20 bg-white border border-dashed border-slate-300 rounded-2xl">
+        <svg class="w-12 h-12 text-slate-200 mx-auto mb-4" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24">
+          <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+        </svg>
+        <h3 class="text-sm font-semibold text-slate-900 mb-1">No charts in this folder</h3>
+        <p class="text-xs text-slate-400 mb-6">Create a chart or move one here using the naming convention.</p>
+        <a href="{% url 'dataviz:chart_new' %}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-blue-700 shadow-md shadow-blue-200 transition-all">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+          Create New Chart
+        </a>
+      </div>
+      {% endif %}
+    </div>
+
+  </div>
 </div>
+
+<script>
+  async function moveChart(chartId, currentFullName) {
+    const lastSlashIndex = currentFullName.lastIndexOf(' / ');
+    const currentFolder = lastSlashIndex !== -1 ? currentFullName.substring(0, lastSlashIndex) : "";
+    const newFolder = prompt("Enter new folder path (e.g. 'Academics / Math'):", currentFolder);
+
+    if (newFolder === null) return; // Cancelled
+
+    try {
+      const response = await fetch(`/dataviz/api/charts/${chartId}/move/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ folder: newFolder })
+      });
+
+      if (response.ok) {
+        window.location.reload();
+      } else {
+        alert("Failed to move chart.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("An error occurred.");
+    }
+  }
+
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  async function editDescription(el, chartId) {
+    const current = el.textContent.trim();
+    const isPlaceholder = current === 'No description — click to add one';
+    const input = document.createElement('textarea');
+    input.value = isPlaceholder ? '' : current;
+    input.rows = 3;
+    input.className = 'w-full text-xs border border-blue-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none';
+    input.placeholder = 'Add a description…';
+    el.replaceWith(input);
+    input.focus();
+    const finish = async () => {
+      const desc = input.value.trim();
+      input.replaceWith(el);
+      try {
+        const resp = await fetch(`/dataviz/api/charts/${chartId}/`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+          body: JSON.stringify({ description: desc }),
+        });
+        if (resp.ok) {
+          el.textContent = desc || 'No description — click to add one';
+        }
+      } catch (e) {
+        el.textContent = current;
+      }
+    };
+    input.addEventListener('blur', finish);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = isPlaceholder ? '' : current; input.blur(); }
+    });
+  }
+</script>
 {% endblock %}

@@ -1,10 +1,27 @@
 {% load dataexploration_tags %}
 
 <div class="space-y-3">
+    <!-- Assessment Year Mode Toggle -->
+    <div class="flex items-center justify-between px-2 py-1.5 mb-3 bg-slate-50 rounded border border-slate-200">
+        <span class="text-[11px] text-slate-500 font-medium uppercase tracking-wide">Year mode:</span>
+        <div class="flex rounded overflow-hidden border border-slate-200 text-[11px]">
+            <button type="button" data-year-mode-btn="specific"
+                class="px-2.5 py-0.5 transition-colors">Specific</button>
+            <button type="button" data-year-mode-btn="relative"
+                class="px-2.5 py-0.5 transition-colors">Relative</button>
+        </div>
+    </div>
+
     {% for year, assessments in test_structure.items %}
-    <details class="group bg-white border border-slate-200 rounded-lg">
+    {% with alias=year_to_alias|get_item:year|default:'' %}
+    <details class="group bg-white border border-slate-200 rounded-lg" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
         <summary class="list-none cursor-pointer select-none flex items-center justify-between p-3 hover:bg-slate-50">
-            <span class="text-sm font-semibold text-slate-800">{{ year }}</span>
+            <span class="text-sm font-semibold text-slate-800"
+                  data-year-header-label="{{ year }}"
+                  data-specific-label="{{ year }}"
+                  data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                {{ year_labels|get_item:year|default:year }}
+            </span>
             <span class="text-xs text-slate-500 group-open:hidden">▶</span>
             <span class="text-xs text-slate-500 hidden group-open:inline">▼</span>
         </summary>
@@ -33,19 +50,22 @@
                             <div class="space-y-2">
                                 {% if metrics.SS %}
                                 <label class="flex items-center space-x-2">
-                                    <input type="checkbox" name="columns" value="{{ metrics.SS }}" {% if metrics.SS in
-                                        selected_columns %}checked{% endif %}
-                                        class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                                    <input type="checkbox" name="columns" value="{{ metrics.SS }}" {% if metrics.SS in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
                                     <span class="text-xs text-slate-700">SS</span>
                                 </label>
                                 {% endif %}
 
                                 {% if metrics.PL %}
                                 <label class="flex items-center space-x-2">
-                                    <input type="checkbox" name="columns" value="{{ metrics.PL }}" {% if metrics.PL in
-                                        selected_columns %}checked{% endif %}
-                                        class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                                    <input type="checkbox" name="columns" value="{{ metrics.PL }}" {% if metrics.PL in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
                                     <span class="text-xs text-slate-700">PL</span>
+                                </label>
+                                {% endif %}
+
+                                {% if metrics.DFP %}
+                                <label class="flex items-center space-x-2">
+                                    <input type="checkbox" name="columns" value="{{ metrics.DFP }}" {% if metrics.DFP in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                                    <span class="text-xs text-slate-700">DFP</span>
                                 </label>
                                 {% endif %}
 
@@ -66,9 +86,7 @@
                                         <div class="ml-3 mt-2 space-y-2">
                                             {% for item in items %}
                                             <label class="flex items-center space-x-2">
-                                                <input type="checkbox" name="columns" value="{{ item.key }}" {% if
-                                                    item.key in selected_columns %}checked{% endif %}
-                                                    class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                                                <input type="checkbox" name="columns" value="{{ item.key }}" {% if item.key in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
                                                 <span class="text-xs text-slate-700">{{ item.label }}</span>
                                             </label>
                                             {% endfor %}
@@ -90,6 +108,7 @@
             {% endfor %}
         </div>
     </details>
+    {% endwith %}
     {% empty %}
     <div class="text-sm text-slate-500">No assessment columns available.</div>
     {% endfor %}

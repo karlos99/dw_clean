@@ -29,6 +29,13 @@ services:
       - .env
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings
+      - CLICKHOUSE_HOST=10.130.3.106
+      - CLICKHOUSE_DB=fastapi_clickhouse_db
+      - CLICKHOUSE_USER=clickhouse_user
+      - CLICKHOUSE_PASSWORD=a@B-UC:!=0hkRq6GX4^0
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_NATIVE_PORT=9000
+      - USE_CLICKHOUSE_ANALYTICS=True
     volumes:
       - ./django_pro:/app/django_pro
       - ./django_pro/files/staticfiles:/app/django_pro/files/staticfiles
@@ -80,6 +87,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  clickhouse_data:
     driver: local
   
 networks:

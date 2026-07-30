@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+
+{% block title %}{% if is_edit %}Edit{% else %}Create{% endif %} Assessment - DESI - DS Data{% endblock %}
+
+{% block content %}
+<script id="student-options-data" type="application/json">
+    {{ student_field_options_json|safe }}
+</script>
+
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" 
+     x-data="{
+        criteria: [
+            {% if is_edit %}
+                {% for c in criteria %}
+                { field: '{{ c.field_name }}', operator: '{{ c.operator }}', value: '{{ c.value|escapejs }}' }{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            {% endif %}
+        ],
+        availableOptions: JSON.parse(document.getElementById('student-options-data').textContent),
+        addCriterion() {
+            this.criteria.push({ field: 'grade', operator: 'is', value: '' });
+        },
+        removeCriterion(index) {
+            this.criteria.splice(index, 1);
+        }
+     }">
+
+    <!-- Back Button -->
+    <div class="mb-6">
+        <a href="{% url 'desi:admin_dashboard' %}" class="text-sm font-semibold text-slate-500 hover:text-blue-600 transition flex items-center gap-1">
+            &larr; Back to configurations
+        </a>
+    </div>
+
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900">
+            {% if is_edit %}Edit Assessment: {{ assessment.name }}{% else %}Create New Assessment{% endif %}
+        </h1>
+        <p class="mt-2 text-sm text-slate-600">Configure core assessment details, eligibility criteria, and screening questions.</p>
+    </div>
+
+    <form method="POST" class="space-y-8">
+        {% csrf_token %}
+
+        <!-- SECTION 1: CORE ASSESSMENT DETAILS -->
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-6">
+            <h2 class="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">1. Core Information</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Name -->
+                <div class="col-span-2">
+                    <label for="name" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Assessment Name</label>
+                    <input type="text" name="name" id="name" required value="{% if is_edit %}{{ assessment.name }}{% endif %}" 
+                           placeholder="e.g. Smarter Balanced Math"
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+
+                <!-- Subject -->
+                <div>
+                    <label for="subject" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Subject</label>
+                    <input type="text" name="subject" id="subject" value="{% if is_edit %}{{ assessment.subject }}{% endif %}" 
+                           placeholder="e.g. Math, ELA"
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+
+                <!-- School Year -->
+                <div>
+                    <label for="school_year" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">School Year</label>
+                    <input type="text" name="school_year" id="school_year" required 
+                           value="{% if is_edit %}{{ assessment.school_year }}{% else %}{{ default_year }}{% endif %}" 
+                           placeholder="e.g. 2025-2026"
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+
+                <!-- Description -->
+                <div class="col-span-2">
+                    <label for="description" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Description</label>
+                    <textarea name="description" id="description" rows="3" placeholder="Brief explanation of this assessment..."
+                              class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">{% if is_edit %}{{ assessment.description }}{% endif %}</textarea>
+                </div>
+
+                <!-- Status Checkbox -->
+                <div class="col-span-2 flex items-center">
+                    <input type="checkbox" name="is_active" id="is_active" 
+                           {% if not is_edit or assessment.is_active %}checked{% endif %}
+                           class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                    <label for="is_active" class="ml-2 block text-sm font-semibold text-slate-900">
+                        Mark Assessment as Active
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 2: ELIGIBILITY CRITERIA -->
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-6">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-2">
+                <h2 class="text-lg font-bold text-slate-900">2. Dynamic Eligibility Criteria</h2>
+                <button type="button" @click="addCriterion" 
+                        class="inline-flex items-center px-3 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm">
+                    ➕ Add Condition
+                </button>
+            </div>
+            
+            <p class="text-xs text-slate-500 mt-1">Define conditions based on student demographic fields that students must satisfy to be eligible for this assessment.</p>
+
+            <div class="space-y-4">
+                <!-- Alpine Row Loop -->
+                <template x-for="(critRow, index) in criteria" :key="index">
+                    <div class="flex flex-col md:flex-row items-center gap-4 bg-slate-50 border border-slate-200 rounded p-4 relative">
+                        <!-- Field select -->
+                        <div class="w-full md:w-1/3">
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Student Attribute</label>
+                            <select name="crit_field[]" x-model="critRow.field" 
+                                    class="block w-full rounded border-slate-300 text-sm py-1.5 px-2 focus:border-blue-500 focus:ring-blue-500">
+                                {% for val, label in field_choices %}
+                                <option value="{{ val }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <!-- Operator select -->
+                        <div class="w-full md:w-1/4">
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Operator</label>
+                            <select name="crit_operator[]" x-model="critRow.operator" 
+                                    class="block w-full rounded border-slate-300 text-sm py-1.5 px-2 focus:border-blue-500 focus:ring-blue-500">
+                                {% for val, label in operator_choices %}
+                                <option value="{{ val }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <!-- Value -->
+                        <div class="w-full md:flex-1">
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Value</label>
+                            
+                            <template x-if="availableOptions[critRow.field] && availableOptions[critRow.field].length > 0">
+                                <div>
+                                    <!-- Single Option Dropdown -->
+                                    <template x-if="critRow.operator === 'is' || critRow.operator === 'is_not'">
+                                        <select name="crit_value[]" x-model="critRow.value" required
+                                                class="block w-full rounded border-slate-300 text-sm py-1.5 px-2 focus:border-blue-500 focus:ring-blue-500 bg-white">
+                                            <option value="" disabled>-- Choose Value --</option>
+                                            <template x-for="val in availableOptions[critRow.field]" :key="val">
+                                                <option :value="val" :selected="critRow.value === val" x-text="val"></option>
+                                            </template>
+                                        </select>
+                                    </template>
+
+                                    <!-- Multi-Option Checkboxes for Lists -->
+                                    <template x-if="critRow.operator === 'in' || critRow.operator === 'not_in'">
+                                        <div class="bg-white border border-slate-300 rounded p-2 max-h-32 overflow-y-auto space-y-1">
+                                            <template x-for="val in availableOptions[critRow.field]" :key="val">
+                                                <label class="inline-flex items-center text-xs font-semibold text-slate-700 mr-4 cursor-pointer">
+                                                    <input type="checkbox" 
+                                                           :value="val"
+                                                           :checked="critRow.value.split(',').map(s => s.trim()).includes(val)"
+                                                           @change="
+                                                             let arr = critRow.value ? critRow.value.split(',').map(s => s.trim()).filter(Boolean) : [];
+                                                             if ($event.target.checked) {
+                                                                 if (!arr.includes(val)) arr.push(val);
+                                                             } else {
+                                                                 arr = arr.filter(v => v !== val);
+                                                             }
+                                                             critRow.value = arr.join(',');
+                                                           "
+                                                           class="h-3 w-3 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-1.5">
+                                                    <span x-text="val"></span>
+                                                </label>
+                                            </template>
+                                            <input type="hidden" name="crit_value[]" :value="critRow.value">
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+
+                            <!-- Fallback input if no distinct options pulled from student data -->
+                            <template x-if="!(availableOptions[critRow.field] && availableOptions[critRow.field].length > 0)">
+                                <input type="text" name="crit_value[]" x-model="critRow.value" required
+                                       placeholder="Value..." 
+                                       class="block w-full rounded border-slate-300 text-sm py-1.5 px-3 focus:border-blue-500 focus:ring-blue-500">
+                            </template>
+                        </div>
+
+                        <!-- Remove Button -->
+                        <div class="shrink-0 pt-4 md:pt-2">
+                            <button type="button" @click="removeCriterion(index)" 
+                                    class="text-red-600 hover:text-red-800 text-sm font-semibold uppercase tracking-wider transition">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </template>
+                
+                <div x-show="criteria.length === 0" class="text-center py-6 text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-200 rounded-lg">
+                    No criteria defined. (This assessment will be accessible to all students by default)
+                </div>
+            </div>
+        </div>
+
+        <!-- FORM ACTIONS -->
+        <div class="flex justify-end gap-3 pt-4 border-t border-slate-200">
+            <a href="{% url 'desi:admin_dashboard' %}" class="inline-flex justify-center items-center px-4 py-2.5 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                Cancel
+            </a>
+            <button type="submit" class="inline-flex justify-center items-center px-8 py-2.5 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                Save Assessment Configuration
+            </button>
+        </div>
+
+    </form>
+
+</div>
+{% endblock %}

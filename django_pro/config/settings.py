@@ -34,8 +34,10 @@ INSTALLED_APPS = [
     'placementcards',
     'mathr.apps.MathrConfig',
     'assesments',
+    'desi.apps.DesiConfig',
     'dataviz.apps.DatavizConfig',
     'dataLoader.apps.DataloaderConfig',
+    'clickhouse_utils',
     # Allauth
     'allauth',
     'allauth.account',
@@ -44,7 +46,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'django.middleware.gzip.GZipMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -127,8 +131,29 @@ DATABASES = {
         'PASSWORD': os.getenv('POSTGRES_PASSWORD'),
         'HOST': os.getenv('POSTGRES_HOST'),
         'PORT': os.getenv('POSTGRES_PORT'),
-    }
+    },
+    'clickhouse': {
+        'ENGINE': 'django.db.backends.dummy',
+        'NAME': os.getenv('CLICKHOUSE_DB', 'fastapi_clickhouse_db'),
+        'USER': os.getenv('CLICKHOUSE_USER', 'clickhouse_user'),
+        'PASSWORD': os.getenv('CLICKHOUSE_PASSWORD', ''),
+        'HOST': os.getenv('CLICKHOUSE_HOST', 'clickhouse'),
+        'PORT': os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'),
+    },
 }
+
+# ClickHouse Analytics Configuration
+USE_CLICKHOUSE_ANALYTICS = os.getenv('USE_CLICKHOUSE_ANALYTICS', 'True').lower() == 'true'
+CLICKHOUSE_HOST = os.getenv('CLICKHOUSE_HOST', 'clickhouse')
+CLICKHOUSE_DB = os.getenv('CLICKHOUSE_DB', 'fastapi_clickhouse_db')
+CLICKHOUSE_USER = os.getenv('CLICKHOUSE_USER', 'clickhouse_user')
+CLICKHOUSE_PASSWORD = os.getenv('CLICKHOUSE_PASSWORD', '')
+CLICKHOUSE_PORT = int(os.getenv('CLICKHOUSE_PORT', '8123'))
+CLICKHOUSE_NATIVE_PORT = int(os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'))
+
+# Database router: ClickHouse is read-only for analytics queries only.
+# All migrations and writes stay on PostgreSQL.
+DATABASE_ROUTERS = ['clickhouse_utils.router.AnalyticsRouter']
 
 
 # Password validation
@@ -176,6 +201,7 @@ CSRF_COOKIE_SECURE = True
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'SAMEORIGIN'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 # HSTS Settings
 SECURE_HSTS_SECONDS = 31536000
@@ -194,6 +220,13 @@ STATICFILES_DIRS = [
 ]
 STATIC_ROOT = '/app/django_pro/files/staticfiles'
 
+# Serving under gunicorn (no runserver auto-serving, no separate web server
+# in front) — whitenoise serves static files directly from the WSGI app.
+# USE_FINDERS serves straight from STATICFILES_DIRS/app static dirs, same as
+# runserver did, without depending on collectstatic having been run first.
+WHITENOISE_USE_FINDERS = DEBUG
+WHITENOISE_AUTOREFRESH = DEBUG
+
 # Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = '/app/django_pro/files/mediafiles'
@@ -203,7 +236,7 @@ AUTH_USER_MODEL = 'users.User'
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://redis:6379/0',
+        'LOCATION': os.getenv('REDIS_URL', 'redis://redis:6379/0'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         },
@@ -217,3 +250,15 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Allow larger POST bodies for chart rendering (rows payload)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50 MB
+
+# Disable migrations during unit testing to avoid raw SQL dependencies
+import sys
+if 'test' in sys.argv:
+    class DisableMigrations:
+        def __contains__(self, item):
+            return True
+        def __getitem__(self, item):
+            return None
+    MIGRATION_MODULES = DisableMigrations()
+    SECURE_SSL_REDIRECT = False
+

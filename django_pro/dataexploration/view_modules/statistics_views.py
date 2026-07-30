@@ -75,7 +75,30 @@ def get_column_statistics(request):
     saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
     
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
-    school_year = request.GET.get('school_year', '') or saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+    
+    _project_default_year = ''
+    try:
+        from landing.utils import get_project_config
+        _cfg = get_project_config()
+        _project_default_year = _cfg.default_school_year or ''
+    except Exception:
+        pass
+
+    _sy_in_stats_url = 'school_year' in request.GET
+    if _sy_in_stats_url:
+        school_year = request.GET.get('school_year', '')
+    elif _project_default_year:
+        school_year = _project_default_year
+    else:
+        school_year = saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+
+    # Resolve school-year aliases (e.g. '__sy_this__') to concrete year strings
+    try:
+        from dataexploration.school_year_utils import resolve_school_year
+        if school_year:
+            school_year = resolve_school_year(school_year)
+    except Exception:
+        pass
     grade = request.GET.get('grade', '') or saved_filters.get('grade', '') or saved_config.get('grade', '')
     
     status_param = request.GET.get('status')
@@ -154,46 +177,45 @@ def get_column_statistics(request):
                     window_clause = "AND t.test_window ILIKE %s "
                     window_params = [test_info['test_window']]
 
-                exist_query_base = (
-                    "SELECT 1 FROM results r "
+                id_subquery_base = (
+                    "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.local_student_id = cs.student_id "
-                    "AND r.school_year = %s "
+                    "WHERE r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
-                exist_params_base = [test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%", *window_params]
+                base_params = [test_info['year'], test_info['test_name'], test_info['subject'], *window_params]
 
                 conditions = []
                 if real_values:
-                    val_clause = exist_query_base
+                    val_clause = id_subquery_base
                     if metric_col in {'ss', 'pl'}:
                         val_clause += f"AND r.{metric_col} = ANY(%s)"
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
-                    val_params = list(exist_params_base)
-                    if metric_col == 'oi':
-                        val_params.append(test_info['other_info_key'])
+                    val_params = list(base_params)
+                    if metric_col in {'oi', 'dfp'}:
+                        val_params.append(test_info.get('other_info_key', ''))
                     val_params.append(real_values)
-                    conditions.append(f"EXISTS ({val_clause})")
+                    conditions.append(f"cs.student_id IN ({val_clause})")
                     params.extend(val_params)
                 
                 if has_blank:
                     blank_subconditions = []
 
-                    blank_subconditions.append(f"NOT EXISTS ({exist_query_base})")
-                    params.extend(exist_params_base)
+                    blank_subconditions.append(f"cs.student_id NOT IN ({id_subquery_base})")
+                    params.extend(base_params)
 
-                    null_clause = exist_query_base
-                    null_params = list(exist_params_base)
+                    null_clause = id_subquery_base
+                    null_params = list(base_params)
                     if metric_col in {'ss', 'pl'}:
                         null_clause += f"AND r.{metric_col} IS NULL"
                     else:
                         null_clause += "AND (r.other_info ->> %s) IS NULL"
-                        null_params.append(test_info['other_info_key'])
+                        null_params.append(test_info.get('other_info_key', ''))
 
-                    blank_subconditions.append(f"EXISTS ({null_clause})")
+                    blank_subconditions.append(f"cs.student_id IN ({null_clause})")
                     params.extend(null_params)
 
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
@@ -327,7 +349,8 @@ def get_column_statistics(request):
 
     results_data = {}
 
-    with connections['default'].cursor() as cursor:
+    from clickhouse_utils.executor import QueryExecutor
+    with QueryExecutor().cursor() as cursor:
         # Build test map
         test_col_map = {}
         if all_related_test_cols:
@@ -348,13 +371,13 @@ def get_column_statistics(request):
                  has_window = cursor.fetchone() is not None
                  
                  sql = """
-                    SELECT DISTINCT r.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
-                    FROM results r JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.school_year = ANY(%s)
+                    SELECT DISTINCT t.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
+                    FROM tests t
+                    WHERE t.school_year = ANY(%s) AND t.test_name IS NOT NULL
                  """ if has_window else """
-                    SELECT DISTINCT r.school_year, t.test_name, t.subject, ''
-                    FROM results r JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.school_year = ANY(%s)
+                    SELECT DISTINCT t.school_year, t.test_name, t.subject, ''
+                    FROM tests t
+                    WHERE t.school_year = ANY(%s) AND t.test_name IS NOT NULL
                  """
                  cursor.execute(sql, [years])
                  rows = cursor.fetchall()
@@ -603,7 +626,7 @@ def get_column_statistics(request):
                     GROUP BY val
                     ORDER BY val
                 """
-                q_params = base_params + [info['year'], f"%{info['test_name']}%", f"%{info['subject']}%"] + win_params
+                q_params = base_params + [info['year'], info['test_name'], info['subject']] + win_params
 
             # --- Mark Columns ---
             elif col.startswith('mark_'):

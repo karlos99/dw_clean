@@ -19,6 +19,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let selectedColumns = [];
     let columnDefinitions = {};
+    let yearAliasMap = {}; // {'2024_2025': '__sy_this__', ...} — underscore-format keys
+    let yearMode = localStorage.getItem('dwYearMode') || 'specific';
     let page = 1;
     let sortBy = '';
     let sortDir = 'asc';
@@ -101,9 +103,17 @@ document.addEventListener('DOMContentLoaded', () => {
         el.setAttribute('aria-hidden', 'true');
     };
 
+    let loadingStartedAt = 0;
+    let loadingHideTimer = null;
+
     const showLoading = (message = 'Loading data...') => {
         const loadingBar = document.getElementById('loading-bar');
         const loadingBarProgress = document.getElementById('loading-bar-progress');
+        loadingStartedAt = Date.now();
+        if (loadingHideTimer) {
+            clearTimeout(loadingHideTimer);
+            loadingHideTimer = null;
+        }
         if (loadingBar) {
             loadingBar.classList.remove('hidden');
             loadingBar.setAttribute('aria-hidden', 'false');
@@ -130,8 +140,12 @@ document.addEventListener('DOMContentLoaded', () => {
             // Complete the progress bar to 100%
             loadingBarProgress.style.width = '100%';
         }
-        // Hide after a brief moment to show completion
-        setTimeout(() => {
+        const elapsed = Date.now() - loadingStartedAt;
+        const hideDelay = Math.max(0, 180 - elapsed);
+        if (loadingHideTimer) {
+            clearTimeout(loadingHideTimer);
+        }
+        loadingHideTimer = setTimeout(() => {
             if (loadingBar) {
                 loadingBar.classList.add('hidden');
                 loadingBar.setAttribute('aria-hidden', 'true');
@@ -139,7 +153,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (loadingBarProgress) {
                 loadingBarProgress.style.width = '0%';
             }
-        }, 200);
+            loadingHideTimer = null;
+        }, hideDelay);
     };
 
     const loadOverlayHtml = async (url, targetEl) => {
@@ -169,6 +184,141 @@ document.addEventListener('DOMContentLoaded', () => {
         columnDefinitions = {};
     }
 
+    try {
+        yearAliasMap = JSON.parse(appDataEl.dataset.yearAliasMap || '{}');
+    } catch (e) {
+        yearAliasMap = {};
+    }
+
+    // --- Year Mode Helpers ---
+    const aliasLabelMap = {
+        '__sy_this__': 'This School Year',
+        '__sy_prev1__': 'Last School Year',
+        '__sy_prev2__': 'Two Years Prior'
+    };
+
+    /** Convert a column key with a real year segment to its relative alias equivalent. */
+    function toRelativeKey(col) {
+        for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
+            if (col.includes(yearUs)) {
+                return col.replace(yearUs, alias);
+            }
+        }
+        return col;
+    }
+
+    /** Convert a column key with a relative alias segment to its real year equivalent. */
+    function toSpecificKey(col) {
+        for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
+            if (col.includes(alias)) {
+                return col.replace(alias, yearUs);
+            }
+        }
+        return col;
+    }
+
+    /** Normalise a column key to always be in specific-year form. */
+    function normaliseKey(col) {
+        return toSpecificKey(col);
+    }
+
+    /** Get the column key that should be stored given the current yearMode. */
+    function storageKey(col) {
+        const spec = normaliseKey(col);
+        return yearMode === 'relative' ? toRelativeKey(spec) : spec;
+    }
+
+    /** Resolve relative school year alias to its specific concrete year. */
+    function resolveRelativeSchoolYear(val) {
+        if (!val) return '';
+        if (val.startsWith('__sy_')) {
+            for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
+                if (alias === val) {
+                    return yearUs.replace(/_/g, '-');
+                }
+            }
+        }
+        return val;
+    }
+
+    /** Get the display label for a column, dynamically translating to relative if active. */
+    function getColumnLabel(col) {
+        if (!col) return '';
+        let label = columnDefinitions[col] || columnDefinitions[normaliseKey(col)] || col;
+        if (yearMode === 'relative') {
+            for (const [yearUs, alias] of Object.entries(yearAliasMap)) {
+                const hyphenatedYear = yearUs.replace('_', '-');
+                const relLabel = aliasLabelMap[alias];
+                if (relLabel) {
+                    if (label.includes(`(${hyphenatedYear})`)) {
+                        label = label.replace(`(${hyphenatedYear})`, `(${relLabel})`);
+                    } else if (label.includes(hyphenatedYear)) {
+                        label = label.replace(hyphenatedYear, relLabel);
+                    }
+                }
+            }
+        }
+        return label;
+    }
+
+    function updateYearModeButtons() {
+        document.querySelectorAll('[data-year-mode-btn]').forEach(btn => {
+            const isActive = btn.dataset.yearModeBtn === yearMode;
+            btn.classList.toggle('bg-blue-500', isActive);
+            btn.classList.toggle('text-white', isActive);
+            btn.classList.toggle('font-medium', isActive);
+            btn.classList.toggle('bg-white', !isActive);
+            btn.classList.toggle('text-slate-500', !isActive);
+        });
+        // Show/hide year group rows: in relative mode hide years without an alias
+        document.querySelectorAll('[data-year-group]').forEach(el => {
+            const alias = el.dataset.yearAlias || '';
+            if (yearMode === 'relative') {
+                el.style.display = alias ? '' : 'none';
+            } else {
+                el.style.display = '';
+            }
+        });
+        // Update year header label texts
+        document.querySelectorAll('[data-year-header-label]').forEach(el => {
+            const specific = el.dataset.specificLabel || '';
+            const relative = el.dataset.relativeLabel || '';
+            el.textContent = yearMode === 'relative' ? relative : specific;
+        });
+
+        // Filter the school_year dropdown's optgroups to always show the specific school year instead of relative names
+        const schoolYearSelect = document.getElementById('school_year');
+        if (schoolYearSelect) {
+            const optGroups = schoolYearSelect.querySelectorAll('optgroup[data-school-year-group]');
+            optGroups.forEach(group => {
+                const groupMode = group.dataset.schoolYearGroup;
+                if (groupMode === 'specific') {
+                    group.style.display = '';
+                    group.disabled = false;
+                } else {
+                    group.style.display = 'none';
+                    group.disabled = true;
+                }
+            });
+        }
+    }
+
+    function setYearMode(mode) {
+        yearMode = mode;
+        localStorage.setItem('dwYearMode', mode);
+        // Convert selectedColumns to new mode
+        selectedColumns = selectedColumns.map(col => storageKey(col));
+        updateYearModeButtons();
+        syncCheckboxes();
+    }
+
+    // Wire toggle buttons (may not be in DOM yet when column sidebar loads via HTMX)
+    document.addEventListener('click', e => {
+        const btn = e.target.closest('[data-year-mode-btn]');
+        if (btn) {
+            setYearMode(btn.dataset.yearModeBtn);
+        }
+    });
     const selectedCountEl = document.getElementById('selected-count');
     const selectedCountToolbarEl = document.getElementById('selected-count-toolbar');
     const sidebarEl = document.getElementById('column-selector');
@@ -254,7 +404,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusInput = document.getElementById('status');
 
             if (searchInput && stored.search !== undefined) searchInput.value = stored.search || '';
-            if (schoolYearSelect && stored.school_year !== undefined) schoolYearSelect.value = stored.school_year || '';
+            if (schoolYearSelect && stored.school_year !== undefined) schoolYearSelect.value = resolveRelativeSchoolYear(stored.school_year || '');
             if (gradeSelect && stored.grade !== undefined) gradeSelect.value = stored.grade || '';
             if (statusInput && stored.status !== undefined) statusInput.value = stored.status || '';
         } catch (e) {
@@ -345,6 +495,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
             renderSelectedColumns();
+            updateYearModeButtons();
         } catch (e) {
             // best-effort
         }
@@ -374,7 +525,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const syncCheckboxes = () => {
         document.querySelectorAll('input[data-column]').forEach((checkbox) => {
-            checkbox.checked = selectedColumns.includes(checkbox.dataset.column);
+            const col = checkbox.dataset.column;
+            // Match regardless of whether stored as specific or relative key
+            const matches = selectedColumns.includes(col)
+                || selectedColumns.includes(normaliseKey(col))
+                || selectedColumns.includes(toRelativeKey(normaliseKey(col)));
+            checkbox.checked = matches;
         });
         document.querySelectorAll('input[data-action="select-topic"]').forEach((topicCb) => {
             const targetCategory = topicCb.dataset.targetCategory;
@@ -394,7 +550,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = String(selectedColumns.length);
         const selectedLabels = selectedColumns
             .map((col) => {
-                const label = columnDefinitions[col] || col;
+                const label = getColumnLabel(col);
                 return label.includes('\n') ? label.split('\n')[0] : label;
             })
             .join(', ');
@@ -631,7 +787,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusInput = document.getElementById('status');
 
         if (payload.search !== undefined && searchInput) searchInput.value = payload.search || '';
-        if (payload.school_year !== undefined && schoolYearSelect) schoolYearSelect.value = payload.school_year || '';
+        if (payload.school_year !== undefined && schoolYearSelect) {
+            const resolvedYear = resolveRelativeSchoolYear(payload.school_year || '');
+            if (resolvedYear && [...schoolYearSelect.options].some(o => o.value === resolvedYear)) {
+                schoolYearSelect.value = resolvedYear;
+            }
+        }
         if (payload.grade !== undefined && gradeSelect) gradeSelect.value = payload.grade || '';
         if (payload.status !== undefined && statusInput) statusInput.value = payload.status || '';
 
@@ -659,8 +820,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const vals = filters[col];
                 if (Array.isArray(vals) && vals.length > 0) {
                     hasActiveFilters = true;
-                    // Get first line of label for brevity
-                    let colLabel = columnDefinitions[col] || col;
+                    let colLabel = getColumnLabel(col);
                     if (colLabel.includes('\n')) colLabel = colLabel.split('\n')[0];
 
                     const chip = document.createElement('span');
@@ -700,7 +860,7 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '</th>';
 
         columns.forEach((col, index) => {
-            const label = columnDefinitions[col] || col;
+            const label = getColumnLabel(col);
             const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
             const hasActiveFilter = Array.isArray(filters[col]) && filters[col].length > 0;
             const hasFilter = optionsForCol.length > 0 || hasActiveFilter;
@@ -969,7 +1129,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    let loadDataSeq = 0;
+
     const loadData = () => {
+        const requestSeq = ++loadDataSeq;
         showLoading('Loading student data...');
         clearStatsCache();
 
@@ -1016,19 +1179,27 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (searchInput && searchInput.value) {
                 url.searchParams.set('search', searchInput.value);
             }
-            if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
+            if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
             if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
             if (statusInput) url.searchParams.set('status', statusInput.value);
         }
 
         fetch(url.toString(), { credentials: 'same-origin' })
-            .then((response) => response.json())
+            .then(async (response) => {
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+                }
+                return response.json();
+            })
             .then((payload) => {
+                if (requestSeq !== loadDataSeq) return;
                 renderTable(payload);
                 saveViewState();
                 hideLoading();
             })
             .catch((error) => {
+                if (requestSeq !== loadDataSeq) return;
                 console.error('Error loading data:', error);
                 hideLoading();
                 const targetEl = document.querySelector('#student-table');
@@ -1038,19 +1209,31 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     };
 
-    const updateColumnSelection = (col) => {
-        if (selectedColumns.includes(col)) {
-            if (selectedColumns.length <= 1) return;
-            selectedColumns = selectedColumns.filter((c) => c !== col);
-            if (filters[col]) {
-                delete filters[col];
-            }
+    window.loadData = loadData;
+
+    const triggerLoadData = () => {
+        if (typeof window.loadData === 'function') {
+            window.loadData();
         } else {
-            selectedColumns.push(col);
+            loadData();
+        }
+    };
+
+    const updateColumnSelection = (col) => {
+        const key = storageKey(col);
+        // Check against all forms of the key
+        const isSelected = selectedColumns.some(c => normaliseKey(c) === normaliseKey(key));
+        if (isSelected) {
+            if (selectedColumns.length <= 1) return;
+            const normKey = normaliseKey(key);
+            selectedColumns = selectedColumns.filter(c => normaliseKey(c) !== normKey);
+            if (filters[key]) delete filters[key];
+        } else {
+            selectedColumns.push(key);
         }
         page = 1;
         renderSelectedColumns();
-        loadData();
+        triggerLoadData();
     };
 
     document.addEventListener('change', (event) => {
@@ -1060,21 +1243,24 @@ document.addEventListener('DOMContentLoaded', () => {
             const container = document.querySelector(`[data-category="${targetCategory}"]`);
             if (!container) return;
             const cols = Array.from(container.querySelectorAll('input[data-column]'))
-                .map(cb => cb.dataset.column).filter(Boolean);
-            const allSelected = cols.length > 0 && cols.every(c => selectedColumns.includes(c));
+                .map(cb => storageKey(cb.dataset.column)).filter(Boolean);
+            const allSelected = cols.length > 0 && cols.every(c => selectedColumns.some(sc => normaliseKey(sc) === normaliseKey(c)));
             if (allSelected) {
-                // Deselect all — but never remove the last column
                 cols.forEach(c => {
                     if (selectedColumns.length > 1) {
-                        selectedColumns = selectedColumns.filter(sc => sc !== c);
+                        const normC = normaliseKey(c);
+                        selectedColumns = selectedColumns.filter(sc => normaliseKey(sc) !== normC);
                     }
                 });
             } else {
-                cols.forEach(c => { if (!selectedColumns.includes(c)) selectedColumns.push(c); });
+                cols.forEach(c => {
+                    const normC = normaliseKey(c);
+                    if (!selectedColumns.some(sc => normaliseKey(sc) === normC)) selectedColumns.push(c);
+                });
             }
             page = 1;
             renderSelectedColumns();
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1165,7 +1351,7 @@ document.addEventListener('DOMContentLoaded', () => {
             lastPayload.selected_columns = selectedColumns;
             renderTable(lastPayload);
         } else {
-            loadData();
+            triggerLoadData();
         }
     });
 
@@ -1259,13 +1445,13 @@ document.addEventListener('DOMContentLoaded', () => {
             searchInput.placeholder = 'Clear list to search by name';
             updateIdListBadge();
             page = 1;
-            loadData();
+            triggerLoadData();
         });
 
         searchInput.addEventListener('input', debounce(() => {
             if (pastedIdList) clearIdList();
             page = 1;
-            loadData();
+            triggerLoadData();
         }, 400));
     }
 
@@ -1277,7 +1463,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 searchInput.placeholder = 'Name, SSID, ID — or paste a list';
             }
             page = 1;
-            loadData();
+            triggerLoadData();
         });
     }
 
@@ -1285,7 +1471,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (schoolYearSelect) {
         schoolYearSelect.addEventListener('change', () => {
             page = 1;
-            loadData();
+            triggerLoadData();
         });
     }
 
@@ -1293,7 +1479,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (statusSelect) {
         statusSelect.addEventListener('change', () => {
             page = 1;
-            loadData();
+            triggerLoadData();
         });
     }
 
@@ -1325,7 +1511,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 sortBy = col;
                 sortDir = 'asc';
             }
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1341,7 +1527,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (clearFilterBtn) {
             const col = clearFilterBtn.dataset.column;
             delete filters[col];
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1355,7 +1541,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 delete filters[col];
             }
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1381,7 +1567,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 delete filters[col];
             }
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1392,7 +1578,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (val) {
                 filters[col] = [val];
             }
-            loadData();
+            triggerLoadData();
             return;
         }
 
@@ -1428,7 +1614,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const nextPage = parseInt(pageBtn.dataset.page, 10);
             if (!Number.isNaN(nextPage)) {
                 page = nextPage;
-                loadData();
+                triggerLoadData();
             }
             return;
         }
@@ -1516,7 +1702,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (searchInput && searchInput.value) {
                 url.searchParams.set('search', searchInput.value);
             }
-            if (schoolYearSelect && schoolYearSelect.value) url.searchParams.set('school_year', schoolYearSelect.value);
+            if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
             if (statusInput) url.searchParams.set('status', statusInput.value);
 
             window.location.href = url.toString();
@@ -1827,69 +2013,78 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    let _scrollSyncResizeObserver = null;
+    let _scrollSyncInitialized = false;
+    let _scrollSyncTopScrolling = false;
+    let _scrollSyncMainScrolling = false;
+
+    const updateTopScrollWidth = () => {
+        const topScrollContent = document.getElementById('h-scroll-content-top');
+        const table = document.querySelector('#student-table table');
+        if (topScrollContent && table) {
+            topScrollContent.style.width = `${table.offsetWidth}px`;
+        }
+    };
+
+    const updateScrollIndicators = () => {
+        const mainContainer = document.getElementById('table-scroll-container');
+        const leftShadow = document.getElementById('scroll-shadow-left');
+        const rightShadow = document.getElementById('scroll-shadow-right');
+        if (!mainContainer || !leftShadow || !rightShadow) return;
+        const scrollLeft = mainContainer.scrollLeft;
+        const maxScroll = mainContainer.scrollWidth - mainContainer.clientWidth;
+        leftShadow.style.opacity = scrollLeft > 10 ? '1' : '0';
+        rightShadow.style.opacity = scrollLeft < maxScroll - 10 ? '1' : '0';
+    };
+
     const initializeScrollSync = () => {
         const mainContainer = document.getElementById('table-scroll-container');
         const topScrollBar = document.getElementById('h-scroll-top');
         const topScrollContent = document.getElementById('h-scroll-content-top');
-        const table = document.querySelector('#student-table table');
-        
-        if (!mainContainer || !topScrollBar || !topScrollContent || !table) return;
-        
-        // Set the width of the top scroll content to match table width
-        const updateTopScrollWidth = () => {
-            const tableWidth = table.offsetWidth;
-            topScrollContent.style.width = `${tableWidth}px`;
-        };
-        
-        updateTopScrollWidth();
-        
-        // Sync scroll positions
-        let isTopScrolling = false;
-        let isMainScrolling = false;
-        
-        topScrollBar.addEventListener('scroll', () => {
-            if (isMainScrolling) return;
-            isTopScrolling = true;
-            mainContainer.scrollLeft = topScrollBar.scrollLeft;
-            updateScrollIndicators();
-            setTimeout(() => { isTopScrolling = false; }, 50);
+        if (!mainContainer || !topScrollBar || !topScrollContent) return;
+
+        // Disconnect old resize observer before creating a new one
+        if (_scrollSyncResizeObserver) {
+            _scrollSyncResizeObserver.disconnect();
+            _scrollSyncResizeObserver = null;
+        }
+
+        // Only attach scroll listeners once
+        if (!_scrollSyncInitialized) {
+            _scrollSyncInitialized = true;
+
+            topScrollBar.addEventListener('scroll', () => {
+                if (_scrollSyncMainScrolling) return;
+                _scrollSyncTopScrolling = true;
+                mainContainer.scrollLeft = topScrollBar.scrollLeft;
+                updateScrollIndicators();
+                setTimeout(() => { _scrollSyncTopScrolling = false; }, 50);
+            });
+
+            mainContainer.addEventListener('scroll', () => {
+                if (_scrollSyncTopScrolling) return;
+                _scrollSyncMainScrolling = true;
+                topScrollBar.scrollLeft = mainContainer.scrollLeft;
+                updateScrollIndicators();
+                setTimeout(() => { _scrollSyncMainScrolling = false; }, 50);
+            });
+        }
+
+        // Wait for layout, then set width and observe the table
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                updateTopScrollWidth();
+                updateScrollIndicators();
+                const table = document.querySelector('#student-table table');
+                if (table) {
+                    _scrollSyncResizeObserver = new ResizeObserver(() => {
+                        updateTopScrollWidth();
+                        updateScrollIndicators();
+                    });
+                    _scrollSyncResizeObserver.observe(table);
+                }
+            });
         });
-        
-        mainContainer.addEventListener('scroll', () => {
-            if (isTopScrolling) return;
-            isMainScrolling = true;
-            topScrollBar.scrollLeft = mainContainer.scrollLeft;
-            updateScrollIndicators();
-            setTimeout(() => { isMainScrolling = false; }, 50);
-        });
-        
-        // Update scroll indicators
-        const updateScrollIndicators = () => {
-            const leftShadow = document.getElementById('scroll-shadow-left');
-            const rightShadow = document.getElementById('scroll-shadow-right');
-            
-            if (!leftShadow || !rightShadow) return;
-            
-            const scrollLeft = mainContainer.scrollLeft;
-            const maxScroll = mainContainer.scrollWidth - mainContainer.clientWidth;
-            
-            // Show left shadow if scrolled right
-            leftShadow.style.opacity = scrollLeft > 10 ? '1' : '0';
-            
-            // Show right shadow if can scroll more right
-            rightShadow.style.opacity = scrollLeft < maxScroll - 10 ? '1' : '0';
-        };
-        
-        // Initial check
-        updateScrollIndicators();
-        
-        // Update on window resize
-        const resizeObserver = new ResizeObserver(() => {
-            updateTopScrollWidth();
-            updateScrollIndicators();
-        });
-        
-        resizeObserver.observe(table);
     };
 
     renderSelectedColumns();
@@ -1903,6 +2098,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
         // ignore
     }
+    updateYearModeButtons();
     loadData();
 
     // --- Folder browser helpers (the folder browser HTML is loaded via HTMX;

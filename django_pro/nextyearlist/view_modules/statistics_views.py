@@ -152,7 +152,14 @@ def get_column_statistics(request):
                 if not yr:
                     continue
                 norm_col = col.replace('-', '_')
-                metric = 'ss' if norm_col.upper().endswith('_SS') else ('pl' if norm_col.upper().endswith('_PL') else 'oi')
+                if norm_col.upper().endswith('_DFP'):
+                    metric = 'dfp'
+                elif norm_col.upper().endswith('_SS'):
+                    metric = 'ss'
+                elif norm_col.upper().endswith('_PL'):
+                    metric = 'pl'
+                else:
+                    metric = 'oi'
 
                 cursor.execute(
                     'SELECT 1 FROM information_schema.columns'
@@ -188,6 +195,8 @@ def get_column_statistics(request):
                             'test_window': (test_window or '').strip() or None,
                             'metric': metric,
                         }
+                        if metric == 'dfp':
+                            test_info['other_info_key'] = 'dfp'
                         break
 
                 if not test_info:
@@ -209,7 +218,7 @@ def get_column_statistics(request):
                     f' GROUP BY val ORDER BY val LIMIT 50'
                 )
                 q_params = list(base_params) + [
-                    test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%"
+                    test_info['year'], test_info['test_name'], test_info['subject']
                 ] + win_p
                 is_string = (metric == 'pl')
 

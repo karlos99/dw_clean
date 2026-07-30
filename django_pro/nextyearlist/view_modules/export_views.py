@@ -106,8 +106,15 @@ def export_students_csv(request):
     db_columns = get_current_student_columns()
     enroll_columns = get_student_enroll_columns()
 
-    selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
-    selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
+    filter_keys = list(filters.keys()) if isinstance(filters, dict) else []
+    selected_test_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('test_')]
+    ))
+    selected_mark_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('mark_')]
+    ))
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str) and not c.startswith(('test_', 'mark_')) and c in COLUMN_DEFINITIONS
@@ -119,9 +126,11 @@ def export_students_csv(request):
         or (isinstance(filters, dict) and any(k in enroll_fields for k in filters))
         or sort_by in enroll_fields
     )
-    # ltel resolves to cs.ltel in the NYL column management (direct column on current_student);
-    # the students table join is not needed here.
-    needs_students = False
+    needs_students = (
+        any(c in {'ltel'} for c in selected_columns)
+        or (isinstance(filters, dict) and 'ltel' in filters)
+        or sort_by == 'ltel'
+    )
     needs_eht = (
         'elem_teacher_name' in selected_columns
         or (isinstance(filters, dict) and 'elem_teacher_name' in filters)
@@ -203,15 +212,6 @@ def export_students_csv(request):
             " ORDER BY student_id, school_year, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
             ") se ON se.student_id = cs.student_id AND se.school_year = cs.school_year"
         )
-    if needs_students:
-        join_sql += " LEFT JOIN students s ON s.student_annual_key = cs.stu_annual_key"
-        join_sql += (
-            " LEFT JOIN ("
-            " SELECT DISTINCT ON (state_student_number) *"
-            " FROM students"
-            " ORDER BY state_student_number, school_year DESC NULLS LAST, enter_date DESC NULLS LAST, leave_date DESC NULLS LAST"
-            " ) sssid ON sssid.state_student_number = cs.ssid"
-        )
     if needs_eht:
         join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
 
@@ -282,14 +282,14 @@ def export_students_csv(request):
                 exist_query_base = (
                     "SELECT 1 FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.local_student_id = cs.student_id "
+                    "WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) "
                     "AND r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
                 exist_params_base = [
-                    test_info['year'], f"%{test_info['test_name']}%", f"%{test_info['subject']}%",
+                    test_info['year'], test_info['test_name'], test_info['subject'],
                     *window_params,
                 ]
 
@@ -301,7 +301,7 @@ def export_students_csv(request):
                     else:
                         val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
                     val_params = list(exist_params_base)
-                    if metric_col == 'oi':
+                    if metric_col == 'oi' or metric_col == 'dfp':
                         val_params.append(test_info['other_info_key'])
                     val_params.append(real_values)
                     conditions.append(f"EXISTS ({val_clause})")
@@ -432,7 +432,7 @@ def export_students_csv(request):
                                 f"{_np(yr)}_{_np(test_name)}_{_np(subject)}"
                             )
                             win_value = (test_window or '').strip() or None
-                            for metric, suffix in (('ss', 'SS'), ('pl', 'PL')):
+                            for metric, suffix in (('ss', 'SS'), ('pl', 'PL'), ('dfp', 'DFP')):
                                 ok = n2o.get(f"test_{key_base}_{suffix}")
                                 if not ok:
                                     continue
@@ -443,6 +443,8 @@ def export_students_csv(request):
                                     'test_window': win_value,
                                     'metric': metric,
                                 }
+                                if metric == 'dfp':
+                                    info['other_info_key'] = 'dfp'
                                 test_cols_info.append(info)
                                 test_col_map[ok] = info
                                 test_col_map[ok.replace('-', '_')] = info
@@ -519,7 +521,7 @@ def export_students_csv(request):
                 # --- Dynamic headers ---
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
                 for info in test_cols_info:
-                    metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
+                    metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
                     label = (
                         f"{_get_display_name(info['test_name'])} {_get_display_name(info['subject'])}"
                         f" ({info['year']}) {metric_map.get(info['metric'], info['metric'])}"
@@ -554,11 +556,11 @@ def export_students_csv(request):
                     test_selects.append(
                         f"(SELECT {val_expr} FROM results r"
                         f" INNER JOIN tests t ON r.test_group_key = t.test_group_key"
-                        f" WHERE r.local_student_id = cs.student_id AND r.school_year = %s"
+                        f" WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) AND r.school_year = %s"
                         f" AND t.test_name ILIKE %s AND t.subject ILIKE %s {wc}LIMIT 1)"
                         f' AS "{ti["col_name"]}"'
                     )
-                    select_params += [ti['year'], f"%{ti['test_name']}%", f"%{ti['subject']}%"]
+                    select_params += [ti['year'], ti['test_name'], ti['subject']]
                     if ti.get('test_window'):
                         select_params.append(ti['test_window'])
 
@@ -593,7 +595,6 @@ def export_students_csv(request):
                     f" WHERE {final_where_sql}"
                     f" ORDER BY {order_by_expr} {sort_dir_sql} NULLS LAST"
                 )
-                logger.info("NYL CSV Export: SQL=%s", query[:2000])
                 cursor.execute(query, select_params + local_params)
 
                 db_col_names = [d[0] for d in cursor.description]

@@ -32,7 +32,7 @@ def page_save_api(request):
     slug = body.get('slug', '').strip() or None
     page_id = body.get('id')
     if page_id:
-        page = get_object_or_404(DataVizPage, pk=page_id, owner=request.user)
+        page = get_object_or_404(DataVizPage, pk=page_id)
     else:
         page = DataVizPage(owner=request.user)
 
@@ -67,7 +67,7 @@ def page_delete_api(request, slug):
     if request.method not in ('POST', 'DELETE'):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
-    page = get_object_or_404(DataVizPage, slug=slug, owner=request.user)
+    page = get_object_or_404(DataVizPage, slug=slug)
     unpublish_page(page)
     page.delete()
     return JsonResponse({'success': True})
@@ -88,7 +88,7 @@ def page_sections_api(request, slug):
     if not is_project_admin(request.user):
         return FORBIDDEN
 
-    page = get_object_or_404(DataVizPage, slug=slug, owner=request.user)
+    page = get_object_or_404(DataVizPage, slug=slug)
 
     if request.method == 'GET':
         rows = page.rows.prefetch_related('sections__chart', 'sections__dashboard').all()
@@ -121,7 +121,7 @@ def page_sections_api(request, slug):
     if action == 'add_chart':
         row_id = body.get('row_id')
         row = get_object_or_404(DataVizPageRow, pk=row_id, page=page)
-        chart = get_object_or_404(SavedChart, pk=body.get('chart_id'), owner=request.user)
+        chart = get_object_or_404(SavedChart, pk=body.get('chart_id'))
         pos = row.sections.count()
         s = DataVizPageSection.objects.create(
             page=page, row=row,
@@ -179,7 +179,7 @@ def section_detail_api(request, section_id):
 
     section = get_object_or_404(
         DataVizPageSection.objects.select_related('page'),
-        pk=section_id, page__owner=request.user,
+        pk=section_id,
     )
 
     if request.method == 'DELETE':
@@ -196,6 +196,20 @@ def section_detail_api(request, section_id):
             section.html_content = body['html_content']
         if 'show_title' in body:
             section.show_title = bool(body['show_title'])
+        if 'chart_name' in body and section.chart:
+            section.chart.name = body['chart_name'].strip()
+            section.chart.save()
+        # Per-chart container sizing (persisted to chart config)
+        if section.chart and ('container_width' in body or 'container_height' in body):
+            cfg = section.chart.config or {}
+            if 'container_width' in body:
+                val = body['container_width']
+                cfg['container_width'] = int(val) if val not in (None, '', 'null') else None
+            if 'container_height' in body:
+                val = body['container_height']
+                cfg['container_height'] = int(val) if val not in (None, '', 'null') else None
+            section.chart.config = cfg
+            section.chart.save()
         if 'position' in body:
             section.position = int(body['position'])
         if 'slot_filters' in body:
@@ -214,8 +228,11 @@ def page_filter_options_api(request, slug, filter_id):
     """
     Return distinct values for a page filter's source column.
     Used by HTMX to populate <select> widgets on page view.
+    Results are cached for 5 minutes per (slug, filter_id) pair.
     """
     from django.db import connections
+    from django.core.cache import cache
+    from clickhouse_utils.executor import QueryExecutor, CLICKHOUSE_SYNCED_TABLES
 
     page = get_object_or_404(DataVizPage, slug=slug)
 
@@ -229,14 +246,23 @@ def page_filter_options_api(request, slug, filter_id):
     if not col:
         return JsonResponse({'values': []})
 
-    try:
-        with connections['default'].cursor() as cursor:
-            cursor.execute(
-                f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}" LIMIT 500'
-            )
-            values = [row[0] for row in cursor.fetchall()]
-    except Exception as exc:
-        return JsonResponse({'error': str(exc)}, status=500)
+    cache_key = f"dv_page_filter:{slug}:{filter_id}:{table}:{col}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        values = cached
+    else:
+        try:
+            # Only route through ClickHouse when this table is actually mirrored
+            # there — otherwise the data doesn't exist and Postgres is correct.
+            cursor_ctx = QueryExecutor().cursor() if table in CLICKHOUSE_SYNCED_TABLES else connections['default'].cursor()
+            with cursor_ctx as cursor:
+                cursor.execute(
+                    f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}"'
+                )
+                values = [row[0] for row in cursor.fetchall()]
+            cache.set(cache_key, values, 300)
+        except Exception as exc:
+            return JsonResponse({'error': str(exc)}, status=500)
 
     if request.headers.get('HX-Request'):
         return render(request, 'dataviz/partials/page_filter_options.html', {
@@ -273,7 +299,7 @@ def row_detail_api(request, row_id):
 
     row = get_object_or_404(
         DataVizPageRow.objects.select_related('page'),
-        pk=row_id, page__owner=request.user,
+        pk=row_id,
     )
 
     if request.method == 'DELETE':
@@ -294,7 +320,31 @@ def row_detail_api(request, row_id):
             row.bg_color = body['bg_color']
         if 'collapsed' in body:
             row.collapsed = bool(body['collapsed'])
+        if 'col_guide' in body:
+            row.col_guide = int(body['col_guide'])
         row.save()
         return JsonResponse({'row': row.to_dict(), 'success': True})
+
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+@require_GET
+def clear_cache_api(request):
+    """Clear all dataviz-related Redis caches. Returns JSON so the
+    frontend can call it and then reload the page."""
+    from django.core.cache import cache
+
+    patterns = ['chart_*', 'dv:*', 'drill_*', 'dataexp:*', 'nextyear:*']
+    deleted = 0
+    try:
+        for pattern in patterns:
+            keys = cache.keys(pattern)
+            if keys:
+                cache.delete_many(keys)
+                deleted += len(keys)
+    except Exception:
+        pass
+
+    return JsonResponse({'success': True, 'cleared': deleted})
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)

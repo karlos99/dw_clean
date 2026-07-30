@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import SavedChart, Dashboard, DashboardChart, DataVizPage, DataVizPageSection
+from .models import SavedChart, Dashboard, DashboardChart, DataVizPage, DataVizPageSection, ColorMapPreset
 
 
 @admin.register(SavedChart)
@@ -37,3 +37,10 @@ class DataVizPageAdmin(admin.ModelAdmin):
 class DataVizPageSectionAdmin(admin.ModelAdmin):
     list_display = ('page', 'element_type', 'position')
     list_filter  = ('element_type',)
+
+
+@admin.register(ColorMapPreset)
+class ColorMapPresetAdmin(admin.ModelAdmin):
+    list_display  = ('name', 'owner', 'updated_at')
+    search_fields = ('name', 'owner__username')
+    readonly_fields = ('created_at', 'updated_at')

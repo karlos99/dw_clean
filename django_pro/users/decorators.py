@@ -18,7 +18,7 @@ def page_access_required(page_slug):
                 
                 if not user_can_access_page(request.user, page):
                     messages.error(request, f'You do not have permission to access {page.name}.')
-                    return redirect('index')
+                    return redirect('landing:index')
                 
                 return view_func(request, *args, **kwargs)
             except Page.DoesNotExist:

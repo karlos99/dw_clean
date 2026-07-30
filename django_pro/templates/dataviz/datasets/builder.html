@@ -1,0 +1,1733 @@
+{% extends 'base.html' %}
+{% block title %}{% if dataset %}Edit Dataset - {{ dataset.name }}{% else %}New Dataset{% endif %} - DS Data{% endblock %}
+
+{% block extra_head %}
+<style>
+    .canvas-grid {
+        background-color: #fafbfd;
+        background-image: radial-gradient(#cbd5e1 1.2px, transparent 1.2px);
+        background-size: 20px 20px;
+    }
+    @keyframes flow-dash {
+        to { stroke-dashoffset: -20; }
+    }
+    .flow-connector {
+        stroke-dasharray: 6 4;
+        animation: flow-dash 1.2s linear infinite;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+{% include "dataviz/submenu.html" %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" x-data="datasetBuilder()">
+    <!-- Header -->
+    <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-6">
+        <div>
+            <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">
+                {% if dataset %}Edit Dataset: {{ dataset.name }}{% else %}Visual Dataset Designer{% endif %}
+            </h1>
+        
+        </div>
+        <div class="mt-4 sm:mt-0 flex space-x-3">
+            <a href="{% url 'dataviz:dataset_index' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition">
+                Cancel
+            </a>
+            <button @click="aliasPanelOpen = true"
+                    :disabled="columns.length === 0"
+                    class="inline-flex items-center px-4 py-2 border border-slate-400 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 focus:outline-none transition disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg class="h-4 w-4 mr-1.5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+                Column Aliases
+                <template x-if="mappedCount > 0">
+                    <span class="ml-1.5 bg-indigo-100 text-indigo-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full" x-text="mappedCount"></span>
+                </template>
+            </button>
+            <button @click="saveDataset()" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none transition">
+                Save Dataset
+            </button>
+        </div>
+    </div>
+
+    <!-- Error Alert -->
+    <div class="mb-6 bg-red-50 border-l-4 border-red-400 p-4" x-show="errorMessage" style="display: none;" x-transition>
+        <div class="flex">
+            <div class="ml-3">
+                <p class="text-sm font-semibold text-red-700" x-text="errorMessage"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Real-Time Query Configuration Warnings -->
+    <div class="mb-6 bg-amber-50 border-l-4 border-amber-450 p-4" x-show="validationErrors.length > 0" style="display: none;" x-transition>
+        <div class="flex">
+            <div class="ml-3">
+                <p class="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2">Query Configuration Warnings</p>
+                <ul class="list-disc list-inside text-xs text-amber-700 space-y-1">
+                    <template x-for="err in validationErrors" :key="err">
+                        <li x-text="err"></li>
+                    </template>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Basic Info Form -->
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8">
+        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Dataset Info</h3>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Dataset Name</label>
+                <input type="text" x-model="name" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm py-2 px-3 border" placeholder="E.g., Student Test Score Summary">
+            </div>
+            <div class="md:col-span-2">
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Description</label>
+                <input type="text" x-model="description" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm py-2 px-3 border" placeholder="E.g., Combines student profile data with matching scale scores from test results.">
+            </div>
+            <div class="flex items-center pt-5">
+                <label class="inline-flex items-center cursor-pointer select-none">
+                    <input type="checkbox" x-model="distinct" class="text-blue-600 focus:ring-blue-500 border-slate-300 rounded-none h-4.5 w-4.5">
+                    <span class="ml-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Distinct Records Only</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Visual Canvas Workspace -->
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8 mb-8">
+        <!-- Sidebar Table Toolbox -->
+        <div class="lg:col-span-1 space-y-6">
+            <div class="bg-white border border-slate-200 shadow p-6 rounded-none sticky top-6">
+                <h3 class="text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Table Toolbox</h3>
+                <p class="text-xs text-slate-400 mb-4 leading-relaxed">Drag tables from this list onto the canvas on the right to start building your query.</p>
+                
+                <div class="space-y-2">
+                    <template x-for="tbl in tablesList" :key="tbl">
+                        <div class="p-3 border border-slate-200 bg-slate-50 hover:bg-slate-100 cursor-grab active:cursor-grabbing select-none flex items-center justify-between transition"
+                             draggable="true"
+                             @dragstart="onDragStart($event, tbl)">
+                            <div class="flex items-center space-x-2">
+                                <svg class="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
+                                <span class="text-xs font-bold text-slate-700 font-mono" x-text="tbl"></span>
+                            </div>
+                            <span class="text-[10px] text-slate-400 font-sans border border-slate-200 px-1 py-0.5 bg-white uppercase">Table</span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Designer Sandbox Canvas -->
+        <div class="lg:col-span-3">
+            <div class="bg-white border border-slate-200 shadow p-6 rounded-none relative">
+                <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+                    <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Join Relationship Canvas</h3>
+                    <div class="flex space-x-4 items-center">
+                        <template x-if="nodes.length > 0">
+                            <span class="text-xs text-slate-500 font-sans" x-text="nodes[0].table + ' is active Base Table'"></span>
+                        </template>
+                        <!-- Canvas Navigation Controls -->
+                        <div class="flex items-center bg-slate-100 border border-slate-200 p-0.5 space-x-0.5" x-show="nodes.length > 0">
+                            <button @click="zoom = Math.min(2, zoom + 0.1)" type="button" class="px-2 py-1 text-slate-700 hover:bg-slate-200 text-xs font-bold transition focus:outline-none" title="Zoom In">
+                                ＋
+                            </button>
+                            <button @click="zoom = Math.max(0.5, zoom - 0.1)" type="button" class="px-2 py-1 text-slate-700 hover:bg-slate-200 text-xs font-bold transition focus:outline-none" title="Zoom Out">
+                                －
+                            </button>
+                            <button @click="pan = {x: 0, y: 0}; zoom = 1;" type="button" class="px-2 py-1 text-slate-700 hover:bg-slate-200 text-[10px] font-bold uppercase transition focus:outline-none" title="Reset View">
+                                Reset
+                            </button>
+                            <button @click="autoArrange()" type="button" class="px-2 py-1 text-slate-700 hover:bg-slate-200 text-[10px] font-bold uppercase transition border-l border-slate-200 focus:outline-none" title="Auto-Arrange Layout">
+                                Arrange
+                            </button>
+                        </div>
+                        <button @click="clearCanvas()" class="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider">Clear Canvas</button>
+                    </div>
+                </div>
+
+                <!-- Canvas Grid Sandbox -->
+                <div class="canvas-grid w-full h-[550px] border border-slate-200 relative overflow-hidden select-none"
+                     :class="isPanning ? 'cursor-grabbing' : 'cursor-grab'"
+                     @dragover.prevent=""
+                     @drop="onDrop($event)"
+                     @mousedown="startPan($event)"
+                     @mousemove="onMouseMove($event)"
+                     @mouseup="onMouseUp()"
+                     @mouseleave="onMouseLeave()"
+                     @wheel.prevent="onWheel($event)">
+                     
+                     <!-- Panning and Zooming Wrapper -->
+                     <div class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
+                          :style="'transform: translate(' + pan.x + 'px, ' + pan.y + 'px) scale(' + zoom + '); transform-origin: 0 0;'">
+                          
+                          <!-- SVG Overlay Connections Layer (One per Join to avoid Template parsing issues) -->
+                          <template x-for="(join, index) in joins" :key="index">
+                              <svg class="absolute inset-0 pointer-events-none w-full h-full z-10 overflow-visible">
+                                  <!-- Line Path -->
+                                  <path :d="getConnectionPath(join)" 
+                                        stroke="#4f46e5" 
+                                        stroke-width="3" 
+                                        fill="none" 
+                                        class="cursor-pointer pointer-events-auto flow-connector" 
+                                        @click="editJoinConfig(index)" />
+                                        
+                                  <!-- Label badge on line -->
+                                  <foreignObject :x="getConnectionMidpoint(join).x - 45" 
+                                                 :y="getConnectionMidpoint(join).y - 12" 
+                                                 width="90" 
+                                                 height="24"
+                                                 class="pointer-events-auto">
+                                      <div class="flex items-center shadow-md border border-indigo-750 select-none">
+                                          <!-- Edit button (badge label) -->
+                                          <div class="bg-indigo-600 hover:bg-indigo-800 text-white text-[9px] font-bold uppercase tracking-wider py-1 px-1.5 text-center cursor-pointer flex-1 truncate transition"
+                                               @click="editJoinConfig(index)"
+                                               :title="'Edit ' + join.join_type + ' join'"
+                                               x-text="join.join_type">
+                                          </div>
+                                          <!-- Delete button (x) -->
+                                          <div class="bg-red-650 hover:bg-red-800 text-white text-[9px] font-extrabold py-1 px-2 text-center cursor-pointer border-l border-indigo-750 transition"
+                                               @click="deleteJoinConfig(index)"
+                                               title="Delete join relationship">
+                                              ✕
+                                          </div>
+                                      </div>
+                                  </foreignObject>
+                              </svg>
+                          </template>
+    
+                          <!-- Active Table Node Cards -->
+                          <template x-for="(node, index) in nodes" :key="node.id">
+                              <div class="absolute bg-white border-2 shadow-lg rounded-none w-56 flex flex-col z-20 transition-shadow hover:shadow-xl canvas-card pointer-events-auto cursor-auto"
+                                   :class="node.isBase ? 'border-blue-500' : 'border-slate-300'"
+                                   :style="'left: ' + node.x + 'px; top: ' + node.y + 'px;'"
+                                   @mousedown="startDragNode($event, node)"
+                                   @dragover.prevent=""
+                                   @drop="onNodeDrop($event, node)">
+                                   
+                                  <!-- Card Header -->
+                                  <div class="px-3 py-2 border-b flex items-center justify-between cursor-move shrink-0"
+                                       :class="node.isBase ? 'bg-blue-50' : 'bg-slate-50'">
+                                      <div class="flex items-center space-x-1 min-w-0">
+                                          <span class="text-[10px] font-bold uppercase tracking-wider font-mono text-slate-800 truncate" x-text="node.table"></span>
+                                          <template x-if="node.isBase">
+                                              <span class="bg-blue-600 text-white text-[8px] font-bold uppercase py-0.5 px-1 tracking-wider">Base</span>
+                                          </template>
+                                      </div>
+                                      
+                                      <div class="flex space-x-2 shrink-0">
+                                          <!-- Join Trigger Link -->
+                                          <button @click.stop="triggerJoinLink(node)" 
+                                                  class="text-slate-400 hover:text-indigo-600" 
+                                                  title="Join to another table"
+                                                  x-show="canJoinFrom(node)">
+                                              <svg class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                                          </button>
+                                          
+                                          <!-- Delete node button -->
+                                          <button @click.stop="removeNode(node.id)" class="text-slate-400 hover:text-red-500" title="Remove Table">
+                                              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                          </button>
+                                      </div>
+                                  </div>
+                                  
+                                  <!-- Columns selection list -->
+                                  <div class="max-h-40 overflow-y-auto p-2 space-y-1 select-none pointer-events-auto">
+                                      <template x-for="col in getSortedColumns(node.table)" :key="col">
+                                          <label class="flex items-center text-[10px] text-slate-600 cursor-grab active:cursor-grabbing py-0.5 hover:bg-slate-100 transition border border-transparent hover:border-slate-200 px-1"
+                                                 draggable="true"
+                                                 @dragstart.stop="onColumnDragStart($event, node.table, col)"
+                                                 @dragover.prevent=""
+                                                 @drop.stop="onColumnDrop($event, node.table, col)">
+                                              <input type="checkbox" 
+                                                     :value="node.table + '.' + col" 
+                                                     x-model="columns" 
+                                                     @change="onColumnsChange()"
+                                                     class="text-blue-600 focus:ring-blue-500 border-slate-300 mr-2 rounded-none h-3.5 w-3.5 shrink-0 pointer-events-auto">
+                                              
+                                              <!-- Key Icon if key field -->
+                                              <template x-if="isKeyField(col)">
+                                                  <span class="mr-1 text-slate-400 text-[9px] shrink-0" title="Possible Key Field">🔑</span>
+                                              </template>
+                                              
+                                              <span class="font-mono truncate" :class="isKeyField(col) ? 'font-bold text-slate-950' : 'text-slate-700'" x-text="col"></span>
+                                          </label>
+                                      </template>
+                                  </div>
+                              </div>
+                          </template>
+                     </div>
+                    
+                    <!-- Sandbox empty canvas tip -->
+                    <div x-show="nodes.length === 0" class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 text-slate-400 pointer-events-none">
+                        <svg class="h-16 w-16 text-slate-300 mb-2 animate-bounce" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <p class="text-sm font-bold">Canvas is Empty</p>
+                        <p class="text-xs mt-1">Drag a table from the Toolbox and drop it here to set your Query Base Table.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Joins Section -->
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="joins.length > 0">
+        <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Active Join Relationships</h3>
+            <span class="text-xs text-slate-400 font-sans" x-text="joins.length + ' join(s) established'"></span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200 text-xs">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-2 text-left font-bold text-slate-500 uppercase tracking-wider">Join Table</th>
+                        <th scope="col" class="px-4 py-2 text-left font-bold text-slate-500 uppercase tracking-wider">Join Type</th>
+                        <th scope="col" class="px-4 py-2 text-left font-bold text-slate-500 uppercase tracking-wider">Join Conditions</th>
+                        <th scope="col" class="px-4 py-2 text-right font-bold text-slate-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-200 bg-white">
+                    <template x-for="(join, index) in joins" :key="index">
+                        <tr>
+                            <td class="px-4 py-3 whitespace-nowrap font-mono font-bold text-slate-800" x-text="join.table"></td>
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                <span class="px-2 py-0.5 inline-flex text-[10px] leading-5 font-semibold bg-indigo-100 text-indigo-800 uppercase tracking-wider" x-text="join.join_type + ' join'"></span>
+                            </td>
+                            <td class="px-4 py-3 font-mono text-slate-600">
+                                <div class="space-y-1">
+                                    <template x-for="(cond, cIdx) in (join.conditions || [{on_left: join.on_left, on_right: join.on_right}])" :key="cIdx">
+                                        <div class="flex items-center space-x-1.5">
+                                            <span class="font-bold text-slate-750" x-text="cond.on_left"></span>
+                                            <span class="text-slate-400 font-sans font-normal">=</span>
+                                            <span class="font-bold text-slate-750" x-text="cond.on_right"></span>
+                                        </div>
+                                    </template>
+                                </div>
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap text-right space-x-3 font-medium">
+                                <button @click="editJoinConfig(index)" class="text-blue-600 hover:text-blue-900 font-bold uppercase tracking-wider text-[10px]">Edit</button>
+                                <button @click="deleteJoinConfig(index)" class="text-red-600 hover:text-red-900 font-bold uppercase tracking-wider text-[10px]">Delete</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Filters Section -->
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
+        <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Visual Query Filters (WHERE)</h3>
+            <div class="flex space-x-4">
+                <template x-if="filters.length > 0">
+                    <button @click="clearAllFilters()" class="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider">Clear All</button>
+                </template>
+                <button @click="addFilter()" class="text-xs font-bold text-blue-600 hover:text-blue-800 uppercase tracking-wider">+ Add Filter</button>
+            </div>
+        </div>
+        
+        <div class="space-y-3">
+            <template x-for="(filter, index) in filters" :key="index">
+                <div class="flex flex-col md:flex-row items-start md:items-center space-y-2 md:space-y-0 md:space-x-3 bg-slate-50 border border-slate-200 p-3 rounded-none">
+                    <div class="w-full md:w-[48%]">
+                        <select x-model="filter.column" @change="fetchUniqueValues(filter.column); filter.value = filter.operator === 'in' ? [] : ''" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 text-xs py-1.5 px-2 border bg-white">
+                            <option value="">-- Choose Column --</option>
+                            <template x-for="col in activeCanvasColumns" :key="col">
+                                <option :value="col" x-text="col"></option>
+                            </template>
+                        </select>
+                    </div>
+                    
+                    <div class="w-full md:w-[23%]">
+                        <select x-model="filter.operator" @change="onFilterOperatorChange(filter)" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 text-xs py-1.5 px-2 border bg-white">
+                            <option value="exact">Equals (=)</option>
+                            <option value="icontains">Contains (ILIKE)</option>
+                            <option value="in">In (Multiple Values)</option>
+                            <option value="gt">Greater Than (&gt;)</option>
+                            <option value="lt">Less Than (&lt;)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="w-full md:w-[23%] relative" x-data="{ open: false }">
+                        <!-- Single Select Dropdown -->
+                        <template x-if="filter.operator !== 'in'">
+                            <select x-model="filter.value" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 text-xs py-1.5 px-2 border bg-white">
+                                <option value="">-- Choose Value --</option>
+                                <template x-for="val in (uniqueValuesCache[filter.column] || [])" :key="val">
+                                    <option :value="val" x-text="val"></option>
+                                </template>
+                            </select>
+                        </template>
+                        
+                        <!-- Multi-Select Dropdown Popover for 'in' operator -->
+                        <template x-if="filter.operator === 'in'">
+                            <div class="relative w-full">
+                                <button @click="open = !open" 
+                                        type="button"
+                                        class="w-full border border-slate-300 bg-white rounded-none shadow-sm text-left text-xs py-1.5 px-2 flex justify-between items-center focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                    <span class="truncate" x-text="getSelectedLabel(filter)"></span>
+                                    <svg class="h-3.5 w-3.5 text-slate-400 shrink-0 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+                                
+                                <div x-show="open" 
+                                     @click.away="open = false"
+                                     class="absolute z-30 mt-1 w-full bg-white border border-slate-200 shadow-lg max-h-48 overflow-y-auto p-2 space-y-1"
+                                     style="display: none;" x-transition>
+                                    <div class="flex justify-between border-b pb-1 mb-1 bg-white sticky top-0 z-40">
+                                        <button @click="selectAllFilterValues(filter)" type="button" class="text-[9px] font-bold text-blue-600 hover:text-blue-800 uppercase">Select All</button>
+                                        <button @click="clearFilterValues(filter)" type="button" class="text-[9px] font-bold text-red-600 hover:text-red-800 uppercase">Clear</button>
+                                    </div>
+                                    <template x-for="val in (uniqueValuesCache[filter.column] || [])" :key="val">
+                                        <label class="flex items-center text-[10px] text-slate-700 py-0.5 hover:bg-slate-50 cursor-pointer w-full truncate">
+                                            <input type="checkbox" 
+                                                   :value="val" 
+                                                   x-model="filter.value"
+                                                   class="text-blue-600 focus:ring-blue-500 border-slate-300 mr-2 rounded-none h-3.5 w-3.5 shrink-0">
+                                            <span class="truncate" x-text="val"></span>
+                                        </label>
+                                    </template>
+                                    <template x-if="!(uniqueValuesCache[filter.column] || []).length">
+                                        <div class="text-[10px] text-slate-400 text-center py-2">No values found. Choose a column first.</div>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    
+                    <div class="w-full md:w-[6%] flex justify-center md:justify-end">
+                        <button @click="removeFilter(index)" class="text-slate-400 hover:text-red-500 transition" title="Delete filter rule">
+                            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </template>
+            <div x-show="filters.length === 0" class="text-center py-4 text-xs text-slate-400">
+                No filters configured. All records will be matched.
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview Panel -->
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
+        <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Live SQL & Preview Results</h3>
+            <div class="flex space-x-2">
+                <button @click="runPreview()" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-widest transition rounded-none">
+                    Run Query
+                </button>
+                <button @click="exportCSV()" class="px-3 py-1 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs uppercase tracking-widest transition rounded-none disabled:opacity-40" :disabled="previewLoading">
+                    Export CSV
+                </button>
+            </div>
+        </div>
+        
+        <div class="border-b border-slate-200 mb-4 flex space-x-4">
+            <button @click="previewTab = 'data'" :class="previewTab === 'data' ? 'border-blue-500 text-blue-600 font-bold border-b-2 pb-2 text-xs' : 'text-slate-500 pb-2 text-xs'">Preview Data</button>
+            <button @click="previewTab = 'sql'" :class="previewTab === 'sql' ? 'border-blue-500 text-blue-600 font-bold border-b-2 pb-2 text-xs' : 'text-slate-500 pb-2 text-xs'">SQL Preview</button>
+        </div>
+        
+        <!-- Tab Data -->
+        <div x-show="previewTab === 'data'">
+            <div x-show="previewLoading" class="text-center py-12 text-sm text-slate-500 font-sans">
+                Compiling visual layout and querying PostgreSQL...
+            </div>
+            <div x-show="!previewLoading" id="preview-result-container">
+                <div class="text-center py-12 text-sm text-slate-400 font-sans">
+                    Click "Run Query" to fetch rows.
+                </div>
+            </div>
+        </div>
+        
+        <!-- Tab SQL -->
+        <div x-show="previewTab === 'sql'">
+            <pre class="bg-slate-50 p-4 border border-slate-200 text-xs font-mono overflow-x-auto text-slate-700 whitespace-pre-wrap select-all" x-text="compiledSQL || 'SQL will be displayed here once query runs.'"></pre>
+        </div>
+    </div>
+
+    <!-- Configure Join Modal -->
+    <div class="fixed z-50 inset-0 overflow-y-auto" x-show="joinModalOpen" style="display: none;" x-transition>
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="closeJoinModal()">
+                <div class="absolute inset-0 bg-slate-500 opacity-75"></div>
+            </div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+            
+            <div class="inline-block align-middle bg-white border border-slate-200 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full rounded-none">
+                <div class="bg-white px-6 py-6 border-b border-slate-100 flex justify-between items-center">
+                    <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Configure Table Join</h3>
+                    <button @click="closeJoinModal()" class="text-slate-400 hover:text-slate-500">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                </div>
+                
+                <div class="bg-white px-6 py-6 space-y-4 text-sm">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <span class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Left Table</span>
+                            <span class="font-mono text-sm font-bold text-slate-800" x-text="joiningSourceNode ? joiningSourceNode.table : ''"></span>
+                        </div>
+                        <div>
+                            <span class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Right (Join) Table</span>
+                            <span class="font-mono text-sm font-bold text-slate-800" x-text="joiningTargetNode ? joiningTargetNode.table : ''"></span>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Join Type</label>
+                        <select x-model="modalJoin.join_type" class="w-full border-slate-300 rounded-none shadow-sm text-sm py-2 px-3 border bg-white focus:ring-blue-500 focus:border-blue-500">
+                            <option value="left">Left Join</option>
+                            <option value="inner">Inner Join</option>
+                            <option value="right">Right Join</option>
+                        </select>
+                    </div>
+                    
+                    <!-- Join Conditions List -->
+                    <div class="space-y-3">
+                        <span class="block text-xs font-bold text-slate-400 uppercase tracking-wider">Join Conditions</span>
+                        <template x-for="(cond, condIdx) in modalJoin.conditions" :key="condIdx">
+                            <div class="flex items-center space-x-2 bg-slate-50 p-3 border border-slate-200">
+                                <div class="w-[45%]">
+                                    <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Left Match Column</label>
+                                    <select x-model="cond.on_left" class="w-full border-slate-300 rounded-none shadow-sm text-[11px] py-1 px-1.5 border bg-white focus:ring-blue-500 focus:border-blue-500">
+                                        <option value="">-- Choose Column --</option>
+                                        <template x-if="joiningSourceNode">
+                                            <template x-for="col in schema[joiningSourceNode.table]" :key="col">
+                                                <option :value="joiningSourceNode.table + '.' + col" x-text="col"></option>
+                                            </template>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="w-[10%] text-center text-slate-400 text-sm font-bold font-mono pt-4">
+                                    =
+                                </div>
+                                <div class="w-[45%]">
+                                    <label class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Join Match Column</label>
+                                    <select x-model="cond.on_right" class="w-full border-slate-300 rounded-none shadow-sm text-[11px] py-1 px-1.5 border bg-white focus:ring-blue-500 focus:border-blue-500">
+                                        <option value="">-- Choose Column --</option>
+                                        <template x-if="joiningTargetNode">
+                                            <template x-for="col in schema[joiningTargetNode.table]" :key="col">
+                                                <option :value="joiningTargetNode.table + '.' + col" x-text="col"></option>
+                                            </template>
+                                        </template>
+                                    </select>
+                                </div>
+                                <div class="pt-4 self-center">
+                                    <button @click="removeModalCondition(condIdx)" class="text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed" :disabled="modalJoin.conditions.length === 1">
+                                        <svg class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        <button @click="addModalCondition()" class="text-xs font-bold text-blue-600 hover:text-blue-800 uppercase tracking-wider pt-1">+ Add Column Condition</button>
+                    </div>
+                    
+                    <!-- Join Mismatch Warnings -->
+                    <template x-if="modalValidationWarning">
+                        <div class="bg-amber-50 border-l-4 border-amber-400 p-3 mt-2 text-xs text-amber-700 flex items-start space-x-2" x-transition>
+                            <span class="text-sm shrink-0">⚠️</span>
+                            <span x-text="modalValidationWarning"></span>
+                        </div>
+                    </template>
+                </div>
+                
+                <div class="bg-slate-50 px-6 py-4 border-t border-slate-100 flex justify-between items-center">
+                    <div>
+                        <template x-if="editingJoinIndex !== null">
+                            <button @click="deleteJoinConfig(editingJoinIndex)" class="px-4 py-2 border border-red-300 text-xs font-bold text-red-600 hover:bg-red-50 rounded-none transition">
+                                Delete Join
+                            </button>
+                        </template>
+                    </div>
+                    <div class="flex space-x-3">
+                        <button @click="closeJoinModal()" class="px-4 py-2 border border-slate-300 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 rounded-none transition">Cancel</button>
+                        <button @click="saveJoinModalConfig()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-none transition">Establish Join</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% if dataset %}
+{{ dataset.joins|json_script:"joins-data" }}
+{{ dataset.filters|json_script:"filters-data" }}
+{{ dataset.columns|json_script:"columns-data" }}
+{{ dataset.column_mappings|json_script:"mappings-data" }}
+{% endif %}
+
+<!-- ── Column Alias Mapper Panel ─────────────────────────────────────────── -->
+
+<!-- Backdrop -->
+<div x-show="aliasPanelOpen"
+     @click="aliasPanelOpen = false"
+     class="fixed inset-0 bg-slate-900/40 z-40 backdrop-blur-sm"
+     style="display:none"
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0"></div>
+
+<!-- Slide-out Panel -->
+<div x-show="aliasPanelOpen"
+     @keydown.escape.window="aliasPanelOpen = false"
+     class="fixed top-0 right-0 h-full w-full sm:w-[520px] bg-white shadow-2xl z-50 flex flex-col border-l border-slate-200"
+     style="display:none"
+     x-transition:enter="transition ease-out duration-250"
+     x-transition:enter-start="translate-x-full"
+     x-transition:enter-end="translate-x-0"
+     x-transition:leave="transition ease-in duration-200"
+     x-transition:leave-start="translate-x-0"
+     x-transition:leave-end="translate-x-full">
+
+    <!-- Panel Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
+        <div class="flex items-center space-x-2">
+            <svg class="h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
+            <h2 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Column Alias Mapper</h2>
+        </div>
+        <button @click="aliasPanelOpen = false" class="text-slate-400 hover:text-slate-600 transition">
+            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+    </div>
+
+    <!-- Panel Description + actions -->
+    <div class="px-6 py-3 border-b border-slate-100 bg-white shrink-0 space-y-3">
+        <p class="text-xs text-slate-500 leading-relaxed">
+            Give each dataset column a clean alias used in charts and drill-through tables.
+            Link to a <span class="font-semibold text-slate-700">Data Explorer column</span> so filters flow automatically,
+            or type a <span class="font-semibold text-slate-700">custom alias</span>.
+        </p>
+        <div class="flex items-center space-x-3">
+            <button @click="autoFillAliases()"
+                    class="flex items-center text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-wider transition">
+                <svg class="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                Auto-fill Empty
+            </button>
+            <span class="text-slate-300">|</span>
+            <button @click="fillAllAliases()"
+                    class="flex items-center text-xs font-bold text-slate-500 hover:text-slate-700 uppercase tracking-wider transition">
+                <svg class="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                Reset All
+            </button>
+            <span class="text-slate-300">|</span>
+            <button @click="clearAllAliases()"
+                    class="flex items-center text-xs font-bold text-red-500 hover:text-red-700 uppercase tracking-wider transition">
+                <svg class="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                Clear All
+            </button>
+        </div>
+    </div>
+
+    <!-- Column count badge -->
+    <div class="px-6 py-2 border-b border-slate-100 bg-slate-50/50 shrink-0">
+        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider"
+              x-text="columns.length + ' column' + (columns.length !== 1 ? 's' : '') + ' selected'"></span>
+    </div>
+
+    <!-- Rows (scrollable) -->
+    <div class="flex-1 overflow-y-auto divide-y divide-slate-100">
+        <template x-if="columns.length === 0">
+            <div class="px-6 py-16 text-center text-xs text-slate-400">
+                No columns selected yet. Check columns on the canvas first.
+            </div>
+        </template>
+
+        <template x-for="col in columns" :key="col">
+            <div class="px-6 py-4 hover:bg-slate-50/60 transition">
+                <!-- Source column label -->
+                <div class="flex items-start mb-2.5">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                            <span class="inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold bg-slate-100 text-slate-500 border border-slate-200 font-mono uppercase tracking-wide"
+                                  x-text="formatDsColDisplay(col).table"></span>
+                            <span class="text-[11px] font-mono font-semibold text-slate-700 truncate"
+                                  x-text="formatDsColDisplay(col).col"
+                                  :title="col"></span>
+                        </div>
+                        <!-- Show auto-generated preview when alias is empty -->
+                        <template x-if="!columnMappings[col]">
+                            <p class="mt-1 text-[10px] text-slate-400">
+                                Auto: <span class="font-mono text-slate-500" x-text="computeAutoAliasFor(col)"></span>
+                            </p>
+                        </template>
+                    </div>
+                    <!-- Clear this alias -->
+                    <template x-if="columnMappings[col]">
+                        <button @click="clearAlias(col)"
+                                class="ml-2 text-slate-300 hover:text-red-400 transition shrink-0"
+                                title="Clear alias — use auto-generated">
+                            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                    </template>
+                </div>
+
+                <!-- Alias controls: two columns -->
+                <div class="flex items-center space-x-2">
+                    <!-- Custom alias text field -->
+                    <div class="flex-1">
+                        <label class="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Alias / Custom Name</label>
+                        <input type="text"
+                               :value="columnMappings[col] || ''"
+                               @input="setAlias(col, $event.target.value)"
+                               :placeholder="computeAutoAliasFor(col)"
+                               class="w-full border border-slate-300 bg-white text-xs font-mono py-1.5 px-2.5 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 outline-none transition placeholder-slate-300"
+                               :class="columnMappings[col] ? 'border-indigo-300 text-indigo-700 bg-indigo-50/30' : ''">
+                    </div>
+
+                    <!-- Explorer column picker -->
+                    <div class="shrink-0 w-40">
+                        <label class="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">Link Explorer Col</label>
+                        <select @change="linkExplorerCol(col, $event.target.value); $event.target.value = ''"
+                                class="w-full border border-slate-300 bg-white text-[11px] py-1.5 px-1.5 focus:border-indigo-400 outline-none transition text-slate-500">
+                            <option value="">— Link to Explorer —</option>
+                            <template x-for="grp in explorerGroups" :key="grp.title">
+                                <optgroup :label="grp.title">
+                                    <template x-for="ec in grp.columns" :key="ec.key">
+                                        <option :value="ec.key" x-text="ec.label + ' (' + ec.key + ')'"></option>
+                                    </template>
+                                </optgroup>
+                            </template>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Active link badge -->
+                <template x-if="columnMappings[col] && isExplorerCol(columnMappings[col])">
+                    <div class="mt-1.5">
+                        <span class="inline-flex items-center text-[9px] font-bold px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200">
+                            <svg class="h-2.5 w-2.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                            Linked → Explorer: <span class="ml-1 font-mono" x-text="columnMappings[col]"></span>
+                        </span>
+                    </div>
+                </template>
+            </div>
+        </template>
+    </div>
+
+    <!-- Panel Footer -->
+    <div class="px-6 py-4 border-t border-slate-200 bg-slate-50 shrink-0 flex items-center justify-between">
+        <p class="text-[10px] text-slate-400">
+            <span x-text="mappedCount"></span> of <span x-text="columns.length"></span> columns have custom aliases.
+        </p>
+        <button @click="aliasPanelOpen = false"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs uppercase tracking-wider transition rounded-none">
+            Done
+        </button>
+    </div>
+</div>
+
+<script>
+    function datasetBuilder() {
+        return {
+            // Backend variables
+            name: "{% if dataset %}{{ dataset.name|escapejs }}{% else %}{% endif %}",
+            description: "{% if dataset %}{{ dataset.description|escapejs }}{% else %}{% endif %}",
+            baseTable: "{% if dataset %}{{ dataset.base_table|escapejs }}{% else %}{% endif %}",
+            distinct: {% if dataset %}{% if dataset.distinct %}true{% else %}false{% endif %}{% else %}true{% endif %},
+            joins: [],
+            filters: [],
+            columns: [],
+
+            // Column alias state
+            columnMappings: {},      // { 'table.col': 'alias' }
+            aliasPanelOpen: false,
+            explorerGroups: {{ explorer_groups_json|safe }},
+
+            // Canvas state variables
+            nodes: [],
+            draggingNode: null,
+            dragOffset: { x: 0, y: 0 },
+
+            // Pan & Zoom state variables
+            pan: { x: 0, y: 0 },
+            zoom: 1,
+            isPanning: false,
+            panStart: { x: 0, y: 0 },
+
+            // Join linking state variables
+            joinLinkActive: false,
+            joinSourceNode: null,
+
+            // Modal config variables
+            joinModalOpen: false,
+            editingJoinIndex: null,
+            joiningSourceNode: null,
+            joiningTargetNode: null,
+            modalJoin: {
+                join_type: 'left',
+                conditions: [{ on_left: '', on_right: '' }]
+            },
+            uniqueValuesCache: {},
+
+            // Preview & tabs
+            previewTab: 'data',
+            previewLoading: false,
+            errorMessage: '',
+            compiledSQL: '',
+
+            // Metadata whitelists
+            schema: {{ schema_json|safe }},
+            tablesList: {{ tables|safe }},
+
+            // Computed: how many columns have a user-set alias
+            get mappedCount() {
+                return Object.keys(this.columnMappings).filter(k => this.columns.includes(k) && this.columnMappings[k]).length;
+            },
+
+            init() {
+                // Initialize lists from backend scripts if editing
+                if (document.getElementById('joins-data')) {
+                    this.joins = JSON.parse(document.getElementById('joins-data').textContent);
+                }
+                if (document.getElementById('filters-data')) {
+                    this.filters = JSON.parse(document.getElementById('filters-data').textContent);
+                }
+                if (document.getElementById('columns-data')) {
+                    this.columns = JSON.parse(document.getElementById('columns-data').textContent);
+                }
+                if (document.getElementById('mappings-data')) {
+                    this.columnMappings = JSON.parse(document.getElementById('mappings-data').textContent) || {};
+                }
+                
+                // Normalize loaded joins to include the new conditions array
+                this.joins.forEach(j => {
+                    if (!j.conditions || j.conditions.length === 0) {
+                        j.conditions = [
+                            { on_left: j.on_left, on_right: j.on_right }
+                        ];
+                    }
+                });
+                
+                // Set up canvas nodes from active tables/joins
+                if (this.baseTable) {
+                    // Place base table node
+                    this.nodes.push({
+                        id: 'node_' + Math.random().toString(36).substr(2, 9),
+                        table: this.baseTable,
+                        x: 40,
+                        y: 120,
+                        isBase: true
+                    });
+                    
+                    // Place joined table nodes
+                    this.joins.forEach((j, index) => {
+                        this.nodes.push({
+                            id: 'node_' + Math.random().toString(36).substr(2, 9),
+                            table: j.table,
+                            x: 40 + (index + 1) * 260,
+                            y: 120 + (index % 2) * 80,
+                            isBase: false
+                        });
+                    });
+                }
+                
+                // Pre-fetch unique values for existing filters
+                this.filters.forEach(f => {
+                    if (f.column) {
+                        this.fetchUniqueValues(f.column);
+                    }
+                });
+            },
+            
+            // Key fields validation helper
+            isKeyField(col) {
+                const keySuffixes = ['_id', '_key', 'ssid', 'student_id', 'state_id', 'dw_schoolkey'];
+                const name = col.toLowerCase();
+                return keySuffixes.some(s => name === s || name.endsWith(s));
+            },
+            
+            formatColExpr(tbl, col) {
+                if (col.includes('->')) {
+                    const parts = col.split('->');
+                    const baseCol = parts[0];
+                    const key = parts[1].replace(/['"]/g, '');
+                    return `"${tbl}"."${baseCol}"->>'${key}'`;
+                }
+                return `"${tbl}"."${col}"`;
+            },
+            
+            getSortedColumns(tableName) {
+                const cols = this.schema[tableName] || [];
+                // Sort columns so key fields are pushed to the top
+                return [...cols].sort((a, b) => {
+                    const aKey = this.isKeyField(a);
+                    const bKey = this.isKeyField(b);
+                    if (aKey && !bKey) return -1;
+                    if (!aKey && bKey) return 1;
+                    return a.localeCompare(b);
+                });
+            },
+            
+            get activeCanvasColumns() {
+                // Return columns only for active tables currently on the canvas
+                let cols = [];
+                this.nodes.forEach(n => {
+                    if (this.schema[n.table]) {
+                        this.schema[n.table].forEach(c => cols.push(n.table + '.' + c));
+                    }
+                });
+                return cols;
+            },
+            
+            get validationErrors() {
+                let errors = [];
+                if (this.nodes.length === 0) return errors;
+                
+                // 1. Identify Orphan Tables (except base table)
+                const base = this.nodes.find(n => n.isBase);
+                if (base) {
+                    this.nodes.forEach(n => {
+                        if (n.isBase) return;
+                        const isJoined = this.joins.some(j => j.table === n.table);
+                        if (!isJoined) {
+                            errors.push(`Table "${n.table}" is placed on the canvas but has no join connections. Connect it to build your query.`);
+                        }
+                    });
+                }
+                
+                // 2. Validate columns are selected
+                if (this.columns.length === 0) {
+                    errors.push("No columns selected. Please check at least one column box inside the table cards.");
+                }
+                
+                return errors;
+            },
+            
+            get modalValidationWarning() {
+                if (!this.modalJoin || !this.modalJoin.conditions) return '';
+                
+                for (let cond of this.modalJoin.conditions) {
+                    if (!cond.on_left || !cond.on_right) continue;
+                    
+                    const leftCol = cond.on_left.split('.')[1].toLowerCase();
+                    const rightCol = cond.on_right.split('.')[1].toLowerCase();
+                    
+                    // Suffix categorizers
+                    const isKey = (c) => c.endsWith('_id') || c.endsWith('key') || c === 'ssid' || c === 'id';
+                    const isDate = (c) => c.endsWith('_date') || c.endsWith('_at') || c === 'year' || c === 'school_year';
+                    const isName = (c) => c.includes('name') || c.includes('email') || c.includes('staff');
+                    
+                    if (isKey(leftCol) !== isKey(rightCol)) {
+                        return `Potential mismatch: One column is a Key field (${leftCol}), but the other is not (${rightCol}).`;
+                    }
+                    if (isDate(leftCol) !== isDate(rightCol)) {
+                        return `Potential mismatch: One column appears to be a Date/Time field (${leftCol}), but the other is not (${rightCol}).`;
+                    }
+                    if (isName(leftCol) !== isName(rightCol)) {
+                        return `Potential mismatch: One column appears to be Text/Name (${leftCol}), but the other is not (${rightCol}).`;
+                    }
+                }
+                return '';
+            },
+            
+            onDragStart(event, tableName) {
+                event.dataTransfer.setData('text/plain', tableName);
+                event.dataTransfer.effectAllowed = 'copy';
+            },
+            
+            onDrop(event) {
+                event.preventDefault();
+                const tableName = event.dataTransfer.getData('text/plain');
+                if (!tableName || !this.tablesList.includes(tableName)) return;
+                
+                // Check if table card already exists on canvas
+                if (this.nodes.some(n => n.table === tableName)) {
+                    this.errorMessage = `Table "${tableName}" is already placed on the canvas.`;
+                    return;
+                }
+                
+                // Get offset coordinates inside canvas element relative to zoom/pan
+                const canvas = event.currentTarget.closest('.canvas-grid');
+                if (!canvas) return;
+                const canvasRect = canvas.getBoundingClientRect();
+                
+                const localX = (event.clientX - canvasRect.left - this.pan.x) / this.zoom;
+                const localY = (event.clientY - canvasRect.top - this.pan.y) / this.zoom;
+                
+                const x = localX - 80;
+                const y = localY - 20;
+                
+                const isBase = this.nodes.length === 0;
+                if (isBase) {
+                    this.baseTable = tableName;
+                }
+                
+                const newNode = {
+                    id: 'node_' + Math.random().toString(36).substr(2, 9),
+                    table: tableName,
+                    x: Math.max(-2000, Math.min(x, 4000)),
+                    y: Math.max(-2000, Math.min(y, 4000)),
+                    isBase: isBase
+                };
+                
+                this.nodes.push(newNode);
+                this.errorMessage = "";
+            },
+            
+            startDragNode(event, node) {
+                // Ignore drags initiated on input checkboxes, labels, buttons
+                if (['INPUT', 'SELECT', 'BUTTON', 'A', 'LABEL', 'SPAN'].includes(event.target.tagName)) return;
+                
+                this.draggingNode = node;
+                
+                const canvas = event.currentTarget.closest('.canvas-grid');
+                if (!canvas) return;
+                const canvasRect = canvas.getBoundingClientRect();
+                
+                const localX = (event.clientX - canvasRect.left - this.pan.x) / this.zoom;
+                const localY = (event.clientY - canvasRect.top - this.pan.y) / this.zoom;
+                
+                this.dragOffset.x = localX - node.x;
+                this.dragOffset.y = localY - node.y;
+                
+                event.preventDefault();
+                event.stopPropagation();
+            },
+            
+            onDragNode(event) {
+                if (!this.draggingNode) return;
+                
+                const canvas = event.currentTarget.closest('.canvas-grid');
+                if (!canvas) return;
+                const canvasRect = canvas.getBoundingClientRect();
+                
+                const localX = (event.clientX - canvasRect.left - this.pan.x) / this.zoom;
+                const localY = (event.clientY - canvasRect.top - this.pan.y) / this.zoom;
+                
+                let x = localX - this.dragOffset.x;
+                let y = localY - this.dragOffset.y;
+                
+                this.draggingNode.x = Math.max(-2000, Math.min(x, 4000));
+                this.draggingNode.y = Math.max(-2000, Math.min(y, 4000));
+            },
+            
+            endDragNode() {
+                this.draggingNode = null;
+            },
+            
+            // Drag column to connect events
+            onColumnDragStart(event, tableName, colName) {
+                const dragPayload = { table: tableName, column: colName };
+                event.dataTransfer.setData('column-connection', JSON.stringify(dragPayload));
+                event.dataTransfer.effectAllowed = 'link';
+            },
+            
+            onColumnDrop(event, targetTable, targetCol) {
+                event.preventDefault();
+                const dragData = event.dataTransfer.getData('column-connection');
+                if (!dragData) return;
+                
+                try {
+                    const source = JSON.parse(dragData);
+                    if (source.table === targetTable) return; // Cannot join self
+                    
+                    this.establishColumnJoin(source.table, source.column, targetTable, targetCol);
+                } catch (e) {
+                    console.error("Failed to parse column drag join data", e);
+                }
+            },
+            
+            onNodeDrop(event, targetNode) {
+                event.preventDefault();
+                const dragData = event.dataTransfer.getData('column-connection');
+                if (!dragData) return;
+                
+                try {
+                    const source = JSON.parse(dragData);
+                    if (source.table === targetNode.table) return; // Cannot join self
+                    
+                    // Auto-match matching column names if possible (e.g. ssid matches ssid)
+                    let matchCol = '';
+                    const targetCols = this.schema[targetNode.table] || [];
+                    if (targetCols.includes(source.column)) {
+                        matchCol = source.column;
+                    } else {
+                        // Best effort match
+                        matchCol = targetCols.find(c => c.toLowerCase() === source.column.toLowerCase()) || '';
+                    }
+                    
+                    this.establishColumnJoin(source.table, source.column, targetNode.table, matchCol);
+                } catch (e) {
+                    console.error("Failed to parse column node drop join data", e);
+                }
+            },
+            
+            establishColumnJoin(sourceTable, sourceCol, targetTable, targetCol) {
+                // Find source/target nodes on canvas
+                const sourceNode = this.nodes.find(n => n.table === sourceTable);
+                const targetNode = this.nodes.find(n => n.table === targetTable);
+                
+                if (!sourceNode || !targetNode) return;
+                
+                // Check if a join relationship already exists with targetTable
+                const existingIndex = this.joins.findIndex(j => j.table === targetTable);
+                if (existingIndex !== -1) {
+                    const existingJoin = this.joins[existingIndex];
+                    if (confirm(`A join relationship already exists with table "${targetTable}". Do you want to add this column connection as an additional join condition?`)) {
+                        if (!existingJoin.conditions) {
+                            existingJoin.conditions = [
+                                { on_left: existingJoin.on_left, on_right: existingJoin.on_right }
+                            ];
+                        }
+                        existingJoin.conditions.push({
+                            on_left: sourceTable + '.' + sourceCol,
+                            on_right: targetTable + '.' + targetCol
+                        });
+                        this.editJoinConfig(existingIndex);
+                    }
+                    return;
+                }
+                
+                this.joiningSourceNode = sourceNode;
+                this.joiningTargetNode = targetNode;
+                this.editingJoinIndex = null;
+                
+                this.modalJoin = {
+                    join_type: 'left',
+                    conditions: [
+                        {
+                            on_left: sourceTable + '.' + sourceCol,
+                            on_right: targetTable + '.' + targetCol
+                        }
+                    ]
+                };
+                
+                this.joinModalOpen = true;
+            },
+            
+            canJoinFrom(node) {
+                // Can link join if there are other nodes on canvas that aren't joined yet
+                return this.nodes.length > 1;
+            },
+            
+            triggerJoinLink(node) {
+                this.joinLinkActive = true;
+                this.joinSourceNode = node;
+                
+                // Create overlay banner helper to let user select the next node
+                this.errorMessage = `Click on another table node to join it with "${node.table}"`;
+                
+                // Set temporary document hook to capture next node click
+                const clickHandler = (e) => {
+                    const targetCard = e.target.closest('[x-data="datasetBuilder()"] .absolute');
+                    if (targetCard) {
+                        const targetId = targetCard.getAttribute('style') ? this.nodes.find(n => targetCard.innerText.includes(n.table))?.id : null;
+                        if (targetId && targetId !== this.joinSourceNode.id) {
+                            const targetNode = this.nodes.find(n => n.id === targetId);
+                            this.establishJoinLink(this.joinSourceNode, targetNode);
+                            cleanup();
+                            return;
+                        }
+                    }
+                    cleanup();
+                };
+                
+                const cleanup = () => {
+                    document.removeEventListener('click', clickHandler, true);
+                    this.joinLinkActive = false;
+                    this.joinSourceNode = null;
+                    this.errorMessage = "";
+                };
+                
+                // Defer adding hook to prevent self trigger
+                setTimeout(() => {
+                    document.addEventListener('click', clickHandler, true);
+                }, 50);
+            },
+            
+            establishJoinLink(sourceNode, targetNode) {
+                const exists = this.joins.some(j => (j.table === targetNode.table) || (j.table === sourceNode.table && this.baseTable !== sourceNode.table));
+                if (exists) {
+                    alert(`A join relationship already exists for one of these tables.`);
+                    return;
+                }
+                
+                this.joiningSourceNode = sourceNode;
+                this.joiningTargetNode = targetNode;
+                this.editingJoinIndex = null;
+                
+                this.modalJoin = {
+                    join_type: 'left',
+                    conditions: [
+                        {
+                            on_left: '',
+                            on_right: ''
+                        }
+                    ]
+                };
+                
+                this.joinModalOpen = true;
+            },
+            
+            addModalCondition() {
+                this.modalJoin.conditions.push({
+                    on_left: '',
+                    on_right: ''
+                });
+            },
+            
+            removeModalCondition(idx) {
+                if (this.modalJoin.conditions.length > 1) {
+                    this.modalJoin.conditions.splice(idx, 1);
+                }
+            },
+            
+            editJoinConfig(index) {
+                const join = this.joins[index];
+                this.editingJoinIndex = index;
+                
+                this.joiningTargetNode = this.nodes.find(n => n.table === join.table);
+                this.joiningSourceNode = this.nodes.find(n => {
+                    const firstCond = join.conditions && join.conditions[0] ? join.conditions[0] : join;
+                    return firstCond.on_left.startsWith(n.table + '.');
+                });
+                
+                // Deep copy conditions to avoid mutating active joins until save is hit
+                const conditions = join.conditions ? JSON.parse(JSON.stringify(join.conditions)) : [
+                    { on_left: join.on_left, on_right: join.on_right }
+                ];
+                
+                this.modalJoin = {
+                    join_type: join.join_type,
+                    conditions: conditions
+                };
+                
+                this.joinModalOpen = true;
+            },
+            
+            deleteJoinConfig(index) {
+                if (confirm("Are you sure you want to delete this join relationship?")) {
+                    this.joins.splice(index, 1);
+                    this.closeJoinModal();
+                    this.onColumnsChange();
+                }
+            },
+            
+            closeJoinModal() {
+                this.joinModalOpen = false;
+                this.joiningSourceNode = null;
+                this.joiningTargetNode = null;
+                this.editingJoinIndex = null;
+            },
+            
+            saveJoinModalConfig() {
+                const invalid = this.modalJoin.conditions.some(c => !c.on_left || !c.on_right);
+                if (invalid) {
+                    alert("Please select the matching columns for all conditions.");
+                    return;
+                }
+                
+                const joinSpec = {
+                    table: this.joiningTargetNode.table,
+                    join_type: this.modalJoin.join_type,
+                    conditions: this.modalJoin.conditions,
+                    // Keep root attributes for backwards compatibility
+                    on_left: this.modalJoin.conditions[0].on_left,
+                    on_right: this.modalJoin.conditions[0].on_right
+                };
+                
+                if (this.editingJoinIndex !== null) {
+                    this.joins[this.editingJoinIndex] = joinSpec;
+                } else {
+                    this.joins.push(joinSpec);
+                }
+                
+                this.closeJoinModal();
+            },
+            
+            removeNode(nodeId) {
+                const node = this.nodes.find(n => n.id === nodeId);
+                if (!node) return;
+                
+                this.nodes = this.nodes.filter(n => n.id !== nodeId);
+                this.joins = this.joins.filter(j => {
+                    const isTarget = j.table === node.table;
+                    const isSource = j.conditions ? j.conditions.some(c => c.on_left.startsWith(node.table + '.')) : j.on_left.startsWith(node.table + '.');
+                    return !isTarget && !isSource;
+                });
+                this.columns = this.columns.filter(c => !c.startsWith(node.table + '.'));
+                
+                if (node.isBase) {
+                    this.baseTable = '';
+                    if (this.nodes.length > 0) {
+                        this.nodes[0].isBase = true;
+                        this.baseTable = this.nodes[0].table;
+                    }
+                }
+                this.onColumnsChange();
+            },
+            
+            clearCanvas() {
+                this.nodes = [];
+                this.joins = [];
+                this.columns = [];
+                this.filters = [];
+                this.baseTable = '';
+                this.onColumnsChange();
+            },
+            
+            getConnectionCoords(join) {
+                const targetNode = this.nodes.find(n => n.table === join.table);
+                const firstCond = join.conditions && join.conditions[0] ? join.conditions[0] : join;
+                const sourceTable = firstCond.on_left ? firstCond.on_left.split('.')[0] : '';
+                const sourceNode = this.nodes.find(n => n.table === sourceTable);
+                
+                if (!sourceNode || !targetNode) return null;
+                
+                let x1, y1, x2, y2;
+                if (sourceNode.x + 224 < targetNode.x) {
+                    // Source is to the left of Target: connect Right edge of Source to Left edge of Target
+                    x1 = sourceNode.x + 224;
+                    x2 = targetNode.x;
+                } else if (targetNode.x + 224 < sourceNode.x) {
+                    // Target is to the left of Source: connect Left edge of Source to Right edge of Target
+                    x1 = sourceNode.x;
+                    x2 = targetNode.x + 224;
+                } else {
+                    // Horizontal overlap: connect closest edges
+                    if (sourceNode.x < targetNode.x) {
+                        x1 = sourceNode.x + 224;
+                        x2 = targetNode.x;
+                    } else {
+                        x1 = sourceNode.x;
+                        x2 = targetNode.x + 224;
+                    }
+                }
+                
+                // Align vertically around header height (40px)
+                y1 = sourceNode.y + 40;
+                y2 = targetNode.y + 40;
+                
+                return { x1, y1, x2, y2 };
+            },
+            
+            getConnectionPath(join) {
+                const coords = this.getConnectionCoords(join);
+                if (!coords) return '';
+                
+                const { x1, y1, x2, y2 } = coords;
+                const dx = Math.abs(x2 - x1);
+                const controlOffset = Math.min(dx * 0.5, 100);
+                const cp1_x = x1 < x2 ? x1 + controlOffset : x1 - controlOffset;
+                const cp2_x = x2 < x1 ? x2 + controlOffset : x2 - controlOffset;
+                
+                return `M ${x1} ${y1} C ${cp1_x} ${y1}, ${cp2_x} ${y2}, ${x2} ${y2}`;
+            },
+            
+            getConnectionMidpoint(join) {
+                const coords = this.getConnectionCoords(join);
+                if (!coords) return { x: 0, y: 0 };
+                
+                return {
+                    x: (coords.x1 + coords.x2) / 2,
+                    y: (coords.y1 + coords.y2) / 2
+                };
+            },
+            
+            onColumnsChange() {
+                const activeTables = this.nodes.map(n => n.table);
+                this.filters = this.filters.filter(f => f.column && activeTables.includes(f.column.split('.')[0]));
+            },
+            
+            addFilter() {
+                this.filters.push({
+                    column: '',
+                    operator: 'exact',
+                    value: ''
+                });
+            },
+            
+            removeFilter(index) {
+                this.filters.splice(index, 1);
+            },
+            
+            clearAllFilters() {
+                if (confirm("Are you sure you want to delete all filter statements?")) {
+                    this.filters = [];
+                }
+            },
+            
+            fetchUniqueValues(column) {
+                if (!column || this.uniqueValuesCache[column]) return;
+                this.uniqueValuesCache[column] = ['Loading...'];
+                fetch(`{% url 'dataviz:api_column_unique_values' %}?column=${encodeURIComponent(column)}`)
+                    .then(res => res.json())
+                    .then(data => { this.uniqueValuesCache[column] = data.values || []; })
+                    .catch(() => { this.uniqueValuesCache[column] = []; });
+            },
+            
+            onFilterOperatorChange(filter) {
+                filter.value = (filter.operator === 'in') ? (Array.isArray(filter.value) ? filter.value : (filter.value ? [filter.value] : [])) : (Array.isArray(filter.value) ? (filter.value[0] || '') : filter.value);
+            },
+            
+            getSelectedLabel(filter) {
+                if (!Array.isArray(filter.value) || filter.value.length === 0) return '-- Select Values --';
+                return filter.value.length === 1 ? filter.value[0] : `${filter.value.length} selected`;
+            },
+            
+            selectAllFilterValues(filter) {
+                filter.value = [...(this.uniqueValuesCache[filter.column] || [])];
+            },
+            
+            clearFilterValues(filter) {
+                filter.value = [];
+            },
+            
+            startPan(event) {
+                if (event.target.closest('.canvas-card') || event.target.closest('button') || event.target.closest('select') || event.target.closest('input')) return;
+                this.isPanning = true;
+                this.panStart.x = event.clientX - this.pan.x;
+                this.panStart.y = event.clientY - this.pan.y;
+            },
+            
+            onPan(event) {
+                if (!this.isPanning) return;
+                this.pan.x = event.clientX - this.panStart.x;
+                this.pan.y = event.clientY - this.panStart.y;
+            },
+            
+            endPan() {
+                this.isPanning = false;
+            },
+            
+            onMouseMove(event) {
+                if (this.draggingNode) {
+                    this.onDragNode(event);
+                } else if (this.isPanning) {
+                    this.onPan(event);
+                }
+            },
+            
+            onMouseUp() {
+                this.endDragNode();
+                this.endPan();
+            },
+            
+            onMouseLeave() {
+                this.endDragNode();
+                this.endPan();
+            },
+            
+            onWheel(event) {
+                const zoomFactor = 0.05;
+                const direction = event.deltaY < 0 ? 1 : -1;
+                const oldZoom = this.zoom;
+                const newZoom = Math.max(0.5, Math.min(2.0, oldZoom + direction * zoomFactor));
+                
+                const canvas = event.currentTarget.closest('.canvas-grid');
+                if (!canvas) return;
+                const canvasRect = canvas.getBoundingClientRect();
+                const mouseX = event.clientX - canvasRect.left;
+                const mouseY = event.clientY - canvasRect.top;
+                
+                this.pan.x = mouseX - (mouseX - this.pan.x) * (newZoom / oldZoom);
+                this.pan.y = mouseY - (mouseY - this.pan.y) * (newZoom / oldZoom);
+                this.zoom = newZoom;
+            },
+            
+            autoArrange() {
+                if (this.nodes.length === 0) return;
+                
+                this.pan = { x: 0, y: 0 };
+                this.zoom = 1;
+                
+                const baseNode = this.nodes.find(n => n.isBase);
+                if (baseNode) {
+                    baseNode.x = 40;
+                    baseNode.y = 120;
+                }
+                
+                const nonBaseNodes = this.nodes.filter(n => !n.isBase);
+                nonBaseNodes.forEach((node, index) => {
+                    const col = index + 1;
+                    node.x = 40 + col * 280;
+                    node.y = 120 + (index % 2 === 0 ? -40 : 80);
+                });
+            },
+            
+            runPreview() {
+                if (this.nodes.length === 0 || this.columns.length === 0) {
+                    this.errorMessage = "Please drag at least one table onto the canvas and select columns.";
+                    return;
+                }
+                this.errorMessage = "";
+                this.previewLoading = true;
+                
+                const payload = {
+                    base_table: this.baseTable,
+                    distinct: this.distinct,
+                    joins: this.joins,
+                    filters: this.filters,
+                    columns: this.columns
+                };
+                
+                fetch("{% url 'dataviz:dataset_preview' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify(payload)
+                })
+                .then(res => res.text())
+                .then(html => {
+                    document.getElementById('preview-result-container').innerHTML = html;
+                    
+                    const selectKeyword = this.distinct ? 'SELECT DISTINCT' : 'SELECT';
+                    const joinsSQL = this.joins.map(j => {
+                        const conditions = j.conditions && j.conditions.length > 0 ? j.conditions : [{on_left: j.on_left, on_right: j.on_right}];
+                        const condSQL = conditions.map(c => {
+                            const leftTbl = c.on_left.split('.')[0];
+                            const leftCol = c.on_left.split('.')[1];
+                            const rightTbl = c.on_right.split('.')[0];
+                            const rightCol = c.on_right.split('.')[1];
+                            return `${this.formatColExpr(leftTbl, leftCol)} = ${this.formatColExpr(rightTbl, rightCol)}`;
+                        }).join(' AND ');
+                        return `\n${j.join_type.toUpperCase()} JOIN "${j.table}" ON ${condSQL}`;
+                    }).join('');
+                    
+                    const activeFilters = this.filters.filter(f => f.column);
+                    const filtersSQL = activeFilters.length > 0 ? `\nWHERE\n  ` + activeFilters.map(f => {
+                        const tbl = f.column.split('.')[0];
+                        const col = f.column.split('.')[1];
+                        const expr = this.formatColExpr(tbl, col);
+                        if (f.operator === 'in') {
+                            if (Array.isArray(f.value) && f.value.length > 0) {
+                                const escapedVals = f.value.map(v => `'${String(v).replace(/'/g, "''")}'`).join(', ');
+                                return `${expr} IN (${escapedVals})`;
+                            } else {
+                                return "1=0";
+                            }
+                        } else {
+                            const escapedVal = String(f.value || '').replace(/'/g, "''");
+                            if (f.operator === 'icontains') {
+                                return `${expr} ILIKE '%${escapedVal}%'`;
+                            } else if (f.operator === 'exact') {
+                                return `${expr} = '${escapedVal}'`;
+                            } else if (f.operator === 'gt') {
+                                return `${expr} > '${escapedVal}'`;
+                            } else { // 'lt'
+                                return `${expr} < '${escapedVal}'`;
+                            }
+                        }
+                    }).join(' AND ') : '';
+
+                    this.compiledSQL = `${selectKeyword}\n  ` + this.columns.map(c => `${this.formatColExpr(c.split('.')[0], c.split('.')[1])} AS "${c}"`).join(',\n  ') +
+                                       `\nFROM\n  "${this.baseTable}"` +
+                                       joinsSQL +
+                                       filtersSQL +
+                                       `\nLIMIT 150000;`;
+                })
+                .catch(err => {
+                    console.error(err);
+                    this.errorMessage = "Error running preview: " + err;
+                })
+                .finally(() => {
+                    this.previewLoading = false;
+                });
+            },
+
+            exportCSV() {
+                if (this.nodes.length === 0 || this.columns.length === 0) {
+                    this.errorMessage = "Please drag at least one table onto the canvas and select columns.";
+                    return;
+                }
+                this.errorMessage = "";
+                this.previewLoading = true;
+
+                const payload = {
+                    base_table: this.baseTable,
+                    distinct: this.distinct,
+                    joins: this.joins,
+                    filters: this.filters,
+                    columns: this.columns
+                };
+
+                fetch("{% url 'dataviz:dataset_export_csv' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify(payload)
+                })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => { throw new Error(text); });
+                    }
+                    return res.blob();
+                })
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `dataset_${this.name.trim().replace(/\s+/g, '_') || 'export'}_${new Date().toISOString().slice(0, 10)}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.error(err);
+                    this.errorMessage = "Error exporting CSV: " + err.message;
+                })
+                .finally(() => {
+                    this.previewLoading = false;
+                });
+            },
+            
+            // ── Alias Panel Helpers ──────────────────────────────────────────
+
+            // Natural alias for a single column (mirrors server-side generate_column_aliases)
+            computeNaturalAlias(dsCol) {
+                if (!dsCol.includes('.')) return dsCol;
+                const dotIdx = dsCol.indexOf('.');
+                const col = dsCol.slice(dotIdx + 1);
+                if (col.includes('->')) {
+                    return col.split('->')[1].replace(/['"]/g, '').trim();
+                }
+                return col;
+            },
+
+            // Alias for a single column accounting for collisions across the full column list
+            computeAutoAliasFor(dsCol) {
+                const aliases = this._computeAutoAliasMap();
+                return aliases[dsCol] || this.computeNaturalAlias(dsCol);
+            },
+
+            _computeAutoAliasMap() {
+                const natural = {};
+                const counts = {};
+                for (const col of this.columns) {
+                    const alias = this.computeNaturalAlias(col);
+                    natural[col] = alias;
+                    counts[alias] = (counts[alias] || 0) + 1;
+                }
+                const result = {};
+                for (const [col, alias] of Object.entries(natural)) {
+                    if (counts[alias] > 1) {
+                        const tbl = col.split('.')[0];
+                        result[col] = `${tbl}_${alias}`;
+                    } else {
+                        result[col] = alias;
+                    }
+                }
+                return result;
+            },
+
+            // Decompose "table.column" into { table, col }
+            formatDsColDisplay(dsCol) {
+                if (!dsCol.includes('.')) return { table: '', col: dsCol };
+                const dotIdx = dsCol.indexOf('.');
+                return { table: dsCol.slice(0, dotIdx), col: dsCol.slice(dotIdx + 1) };
+            },
+
+            setAlias(col, alias) {
+                const trimmed = alias.trim();
+                if (trimmed) {
+                    this.columnMappings = { ...this.columnMappings, [col]: trimmed };
+                } else {
+                    this.clearAlias(col);
+                }
+            },
+
+            clearAlias(col) {
+                const m = { ...this.columnMappings };
+                delete m[col];
+                this.columnMappings = m;
+            },
+
+            clearAllAliases() {
+                if (confirm('Remove all column aliases?')) {
+                    this.columnMappings = {};
+                }
+            },
+
+            // Fill empty slots only
+            autoFillAliases() {
+                const auto = this._computeAutoAliasMap();
+                const updated = { ...this.columnMappings };
+                for (const [col, alias] of Object.entries(auto)) {
+                    if (!updated[col]) updated[col] = alias;
+                }
+                this.columnMappings = updated;
+            },
+
+            // Override everything with auto-generated aliases
+            fillAllAliases() {
+                this.columnMappings = this._computeAutoAliasMap();
+            },
+
+            // Link this column's alias to an explorer column key
+            linkExplorerCol(col, explorerKey) {
+                if (!explorerKey) return;
+                this.columnMappings = { ...this.columnMappings, [col]: explorerKey };
+            },
+
+            // Check whether an alias matches a known explorer column key
+            isExplorerCol(alias) {
+                return this.explorerGroups.some(g => g.columns.some(c => c.key === alias));
+            },
+
+            // ── Save ─────────────────────────────────────────────────────────
+
+            saveDataset() {
+                if (!this.name) {
+                    this.errorMessage = "Please specify a Dataset Name.";
+                    window.scrollTo({top: 0, behavior: 'smooth'});
+                    return;
+                }
+                if (this.nodes.length === 0 || this.columns.length === 0) {
+                    this.errorMessage = "Please configure a Base Table on the canvas and select columns.";
+                    window.scrollTo({top: 0, behavior: 'smooth'});
+                    return;
+                }
+
+                // Only send mappings for columns actually in the current column list
+                const activeMappings = {};
+                for (const col of this.columns) {
+                    if (this.columnMappings[col]) activeMappings[col] = this.columnMappings[col];
+                }
+
+                const payload = {
+                    name: this.name,
+                    description: this.description,
+                    base_table: this.baseTable,
+                    distinct: this.distinct,
+                    joins: this.joins,
+                    filters: this.filters,
+                    columns: this.columns,
+                    column_mappings: activeMappings,
+                };
+                
+                const url = "{% if dataset %}{% url 'dataviz:dataset_detail' dataset.pk %}{% else %}{% url 'dataviz:dataset_save' %}{% endif %}";
+                
+                fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify(payload)
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.href = "{% url 'dataviz:dataset_index' %}";
+                    } else {
+                        this.errorMessage = data.error;
+                        window.scrollTo({top: 0, behavior: 'smooth'});
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    this.errorMessage = "Failed to save: " + err;
+                    window.scrollTo({top: 0, behavior: 'smooth'});
+                });
+            }
+        };
+    }
+</script>
+{% endblock %}

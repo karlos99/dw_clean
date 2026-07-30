@@ -29,7 +29,7 @@ def dashboard_save_api(request):
 
     db_id = body.get('id')
     if db_id:
-        db = get_object_or_404(Dashboard, pk=db_id, owner=request.user)
+        db = get_object_or_404(Dashboard, pk=db_id)
     else:
         db = Dashboard(owner=request.user)
 
@@ -45,7 +45,7 @@ def dashboard_detail_api(request, dashboard_id):
     if not is_project_admin(request.user):
         return FORBIDDEN
 
-    db = get_object_or_404(Dashboard, pk=dashboard_id, owner=request.user)
+    db = get_object_or_404(Dashboard, pk=dashboard_id)
 
     if request.method == 'GET':
         return JsonResponse({'dashboard': db.to_dict(include_charts=True)})
@@ -78,7 +78,7 @@ def dashboard_slots_api(request, dashboard_id):
     if not is_project_admin(request.user):
         return FORBIDDEN
 
-    db = get_object_or_404(Dashboard, pk=dashboard_id, owner=request.user)
+    db = get_object_or_404(Dashboard, pk=dashboard_id)
 
     if request.method == 'GET':
         from django.shortcuts import render
@@ -97,7 +97,7 @@ def dashboard_slots_api(request, dashboard_id):
 
     if action == 'add':
         chart_id = body.get('chart_id')
-        chart = get_object_or_404(SavedChart, pk=chart_id, owner=request.user)
+        chart = get_object_or_404(SavedChart, pk=chart_id)
         last_pos = db.chart_slots.count()
         slot = DashboardChart.objects.create(
             dashboard=db, chart=chart, position=last_pos,
@@ -143,7 +143,7 @@ def slot_detail_api(request, slot_id):
 
     slot = get_object_or_404(
         DashboardChart.objects.select_related('dashboard'),
-        pk=slot_id, dashboard__owner=request.user
+        pk=slot_id,
     )
 
     if request.method == 'DELETE':

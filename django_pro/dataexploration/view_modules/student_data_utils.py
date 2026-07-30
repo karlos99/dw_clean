@@ -19,8 +19,27 @@ def _student_summary_cache_version():
     return f"v2:{mtime}"
 
 
+def _resolve_ssid(ssid: str) -> str:
+    """If the provided ssid is actually a student_id, look up the real SSID."""
+    if not ssid:
+        return ssid
+    from studata.models import CurrentStudent
+    try:
+        # Check if the identifier exists as an SSID
+        if CurrentStudent.objects.filter(ssid=ssid).exists():
+            return ssid
+        # Fallback to student_id lookup
+        match = CurrentStudent.objects.filter(student_id=ssid).first()
+        if match and match.ssid:
+            return match.ssid
+    except Exception:
+        pass
+    return ssid
+
+
 def _student_summary_cache_keys(ssid: str, user_id=None, embedded: bool = False):
     """Generate cache keys for student summary data."""
+    ssid = _resolve_ssid(ssid)
     v = _student_summary_cache_version()
     user_part = f"u{user_id}:" if user_id else ""
     return {
@@ -86,40 +105,64 @@ def _build_student_info_for_ssid(ssid: str):
         'migrant': getattr(se_latest, 'migrant', None) if se_latest else None,
         'dli': getattr(cs_latest, 'dli', None) if cs_latest else None,
         'suspension_indicator': getattr(cs_latest, 'suspension_indicator', None) if cs_latest else None,
+        'avid': None,
+        'avid_type': None,
     }
+
+    # Extract AVID info from add_data JSON
+    if cs_latest and getattr(cs_latest, 'add_data', None):
+        try:
+            import json
+            add_data = json.loads(cs_latest.add_data)
+            student_info['avid'] = add_data.get('AVID')
+            student_info['avid_type'] = add_data.get('AVID_type')
+        except (json.JSONDecodeError, TypeError):
+            pass
 
 
 def _fetch_test_records_for_ssid(ssid: str):
     """Fetch all test records for a student from the database."""
-    with connections['default'].cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT
-                r.school_year AS school_year,
-                t.test_name AS test_name,
-                t.subject AS subject,
-                t.test_window AS test_window,
-                cs.grade AS grade,
-                cs.school AS school,
-                cs.school_state_id AS school_state_id,
-                sch.short_name AS school_short_name,
-                r.pl AS pl,
-                r.ss AS ss,
-                r.school_code AS school_code,
-                r.other_info AS other_info
-            FROM results r
-            INNER JOIN tests t ON r.test_group_key = t.test_group_key
-            LEFT JOIN current_student cs
-                ON cs.ssid = r.ssid AND cs.school_year = r.school_year
-            LEFT JOIN school sch
-                ON sch.assessment_school_code = r.school_code
-            WHERE r.ssid = %s
-            ORDER BY r.school_year DESC, t.test_name, t.subject
-            """,
-            [ssid],
-        )
-        cols = [c[0] for c in cursor.description]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+    from clickhouse_utils.executor import QueryExecutor
+
+    sql = """
+        SELECT
+            r.school_year AS school_year,
+            t.test_name AS test_name,
+            t.subject AS subject,
+            t.test_window AS test_window,
+            cs.grade AS grade,
+            cs.school AS school,
+            cs.school_state_id AS school_state_id,
+            sch.short_name AS school_short_name,
+            r.pl AS pl,
+            r.ss AS ss,
+            r.school_code AS school_code,
+            r.other_info AS other_info
+        FROM results r
+        INNER JOIN tests t ON r.test_group_key = t.test_group_key
+        LEFT JOIN current_student cs
+            ON cs.ssid = r.ssid AND cs.school_year = r.school_year
+        LEFT JOIN school sch
+            ON sch.assessment_school_code = r.school_code
+        WHERE r.ssid = %s
+        ORDER BY r.school_year DESC, t.test_name, t.subject
+    """
+    result = QueryExecutor().execute(sql, [ssid])
+    if result.get('error'):
+        return []
+    
+    import json
+    rows = result.get('rows', [])
+    for row in rows:
+        oi = row.get('other_info')
+        if isinstance(oi, str) and oi.strip():
+            try:
+                row['other_info'] = json.loads(oi)
+            except Exception:
+                row['other_info'] = {}
+        elif not isinstance(oi, dict):
+            row['other_info'] = {}
+    return rows
 
 
 def _fetch_student_marks_for_ssid(ssid: str):
@@ -131,6 +174,7 @@ def _fetch_student_marks_for_ssid(ssid: str):
 
 def get_student_info_cached(ssid: str, timeout: int = 300, user_id=None):
     """Get student info with caching."""
+    ssid = _resolve_ssid(ssid)
     keys = _student_summary_cache_keys(ssid, user_id=user_id)
     cached = cache.get(keys['student_info'])
     if cached is not None:
@@ -142,6 +186,7 @@ def get_student_info_cached(ssid: str, timeout: int = 300, user_id=None):
 
 def get_test_records_cached(ssid: str, timeout: int = 300, user_id=None):
     """Get test records with caching."""
+    ssid = _resolve_ssid(ssid)
     keys = _student_summary_cache_keys(ssid, user_id=user_id)
     cached = cache.get(keys['test_records'])
     if cached is not None:
@@ -153,6 +198,7 @@ def get_test_records_cached(ssid: str, timeout: int = 300, user_id=None):
 
 def get_student_marks_cached(ssid: str, timeout: int = 300, user_id=None):
     """Get student marks with caching."""
+    ssid = _resolve_ssid(ssid)
     keys = _student_summary_cache_keys(ssid, user_id=user_id)
     cached = cache.get(keys['student_marks'])
     if cached is not None:
@@ -164,6 +210,7 @@ def get_student_marks_cached(ssid: str, timeout: int = 300, user_id=None):
 
 def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 300, embedded: bool = False):
     """Get rendered HTML for student summary with caching."""
+    ssid = _resolve_ssid(ssid)
     user_id = getattr(getattr(request, 'user', None), 'pk', None)
     keys = _student_summary_cache_keys(ssid, user_id=user_id, embedded=embedded)
     cached = cache.get(keys['partial_html'])

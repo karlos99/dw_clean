@@ -1,0 +1,33 @@
+{% load dataviz_tags %}
+<div class="overflow-x-auto border border-slate-200">
+    {% if rows %}
+    <table class="min-w-full divide-y divide-slate-200 text-left text-xs text-slate-700">
+        <thead class="bg-slate-50 font-semibold text-slate-700 uppercase tracking-wider">
+            <tr>
+                {% for col in columns %}
+                <th scope="col" class="px-4 py-2 border-b border-r border-slate-200 whitespace-nowrap">{{ col }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-slate-100 font-mono">
+            {% for row in rows %}
+            <tr class="hover:bg-slate-50 transition">
+                {% for col in columns %}
+                <td class="px-4 py-1.5 border-r border-slate-100 whitespace-nowrap">
+                    {{ row|get_item:col|default:"—" }}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="p-6 text-center text-sm text-slate-500 font-sans">
+        No rows returned. Make sure your join conditions and filters match some database records.
+    </div>
+    {% endif %}
+</div>
+<div class="mt-2 text-right text-xs text-slate-500 font-sans">
+    Showing first 50 rows of {{ total_rows }} matched rows.
+    {% if has_more %}<span class="text-amber-600 font-semibold"> (truncated — more rows available)</span>{% endif %}
+</div>

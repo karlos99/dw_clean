@@ -30,11 +30,6 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
     if col == 'math_selection':
         return 'mr.math_selection', 'math_selection'
 
-    # ltel is a direct column on current_student in this schema; use cs.ltel
-    # to avoid requiring the students table join, which is not available in NYL queries.
-    if col == 'ltel' and db_columns and 'ltel' in db_columns:
-        return 'cs.ltel', 'ltel'
-
     # Delegate to dataexploration for all other columns
     from dataexploration.view_modules.column_management import get_column_expression as _base
     return _base(col, db_columns, enroll_columns, use_enroll, use_students, use_eht)
@@ -56,9 +51,14 @@ def load_column_structures(request):
     test_structure = get_nyl_test_columns(user=request.user, column_filters=column_filters)
     marks_structure = get_nyl_mark_columns(user=request.user, column_filters=column_filters)
 
+    from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+
+    all_years = list(test_structure.keys()) + list(marks_structure.keys())
     context = {
         'test_structure': test_structure,
         'marks_structure': marks_structure,
         'column_definitions': COLUMN_DEFINITIONS,
+        'year_labels': get_year_labels_map(all_years),
+        'year_to_alias': get_year_alias_map(),
     }
     return render(request, 'nextyearlist/partials/column_structures.html', context)

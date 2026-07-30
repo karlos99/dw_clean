@@ -266,4 +266,4 @@ class RedirectForbiddenToHomeMiddleware:
             return response
 
         messages.info(request, 'Your current role does not have access to that page. Redirected to home.')
-        return redirect('index')
+        return redirect('landing:index')

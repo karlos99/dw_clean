@@ -19,6 +19,8 @@ COLUMN_DEFINITIONS = {
     "status": "Status",
     "birth_date": "Birth Date",
     "us_enter_date": "US Enter Date",
+    "enter_date": "Enrollment Enter Date",
+    "leave_date": "Enrollment Leave Date",
     
     # Programs & Services
     "sped": "Special Education",
@@ -33,6 +35,8 @@ COLUMN_DEFINITIONS = {
     "migrant": "Migrant",
     "atendace_rate": "Attendance Rate",
     "suspension_indicator": "Suspension",
+    "avid": "AVID",
+    "avid_type": "AVID Type",
 }
 
 # Static column categories (non-test columns)
@@ -47,11 +51,11 @@ COLUMN_CATEGORIES = {
     },
     "dates": {
         "title": "Dates",
-        "columns": ["birth_date", "us_enter_date", "fep_date"]
+        "columns": ["birth_date", "us_enter_date", "fep_date", "enter_date", "leave_date"]
     },
     "programs": {
         "title": "Programs & Services",
-        "columns": ["ell", "sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant"]
+        "columns": ["ell", "sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant", "avid", "avid_type"]
     },
     "performance": {
         "title": "Performance & Behavior",
@@ -61,3 +65,22 @@ COLUMN_CATEGORIES = {
 
 # Default visible columns
 DEFAULT_COLUMNS = ["student_name", "ssid", "grade", "school_year", "status"]
+
+# ---------------------------------------------------------------------------
+# School-year alias constants
+# ---------------------------------------------------------------------------
+# These sentinel values can be stored in query/chart configs instead of a
+# hard-coded year string.  They are resolved to real years at query runtime
+# via dataexploration.school_year_utils.resolve_school_year().
+
+SY_THIS_YEAR = '__sy_this__'   # resolves to ProjectConfig.default_school_year
+SY_LAST_YEAR = '__sy_prev1__'  # resolves to one year before the default
+SY_TWO_PRIOR = '__sy_prev2__'  # resolves to two years before the default
+
+# Human-readable labels used in dropdowns
+SCHOOL_YEAR_ALIASES = {
+    SY_THIS_YEAR: 'This School Year',
+    SY_LAST_YEAR: 'Last School Year',
+    SY_TWO_PRIOR: 'Two Years Prior',
+}
+

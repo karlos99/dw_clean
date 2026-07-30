@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+
+{% block title %}DESI Export Data - DS Data{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-6 flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900">DESI Export Data</h1>
+            <p class="mt-2 text-sm text-slate-600">Choose assessments and configure columns, headers, and order for CSV export.</p>
+        </div>
+        <a href="{% url 'desi:admin_dashboard' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+            &larr; Back to Admin
+        </a>
+    </div>
+
+    <div class="mb-6 grid grid-cols-1 lg:grid-cols-[1.4fr_0.8fr] gap-4">
+        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+            <h2 class="text-sm font-bold text-slate-900">Saved Export Configurations</h2>
+            <p class="mt-1 text-xs text-slate-500">Load a previously saved export layout and reuse it for later exports.</p>
+            <form method="get" action="{% url 'desi:export_data' %}" class="mt-3 flex flex-wrap gap-2">
+                <select name="config_id" class="rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                    <option value="">Select a saved configuration</option>
+                    {% for config in saved_configs %}
+                    <option value="{{ config.id }}" {% if selected_config_id == config.id %}selected{% endif %}>{{ config.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="inline-flex items-center px-3 py-2 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                    Load
+                </button>
+            </form>
+            {% if saved_configs %}
+            <div class="mt-3 space-y-2">
+                {% for config in saved_configs %}
+                <div class="flex items-center justify-between rounded border border-slate-200 p-2">
+                    <div>
+                        <div class="text-sm font-semibold text-slate-800">{{ config.name }}</div>
+                        <div class="text-xs text-slate-500">{{ config.description|default:"No description" }}</div>
+                    </div>
+                    <a href="{% url 'desi:export_data' %}?config_id={{ config.id }}" class="text-xs font-semibold text-blue-600 hover:text-blue-800">Load</a>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+            <h2 class="text-sm font-bold text-slate-900">Save Current Configuration</h2>
+            <p class="mt-1 text-xs text-slate-500">Store the current school year, assessments, columns, and export settings for reuse later.</p>
+            <div class="mt-3 space-y-3">
+                <div>
+                    <label for="save_configuration_name" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Configuration Name</label>
+                    <input type="text" id="save_configuration_name" name="save_configuration_name" class="block w-full rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500" placeholder="e.g. 2025-2026 Math Export">
+                </div>
+                <div>
+                    <label for="save_configuration_description" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Description</label>
+                    <textarea id="save_configuration_description" name="save_configuration_description" rows="3" class="block w-full rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500" placeholder="Optional notes about this export"></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <form method="post" class="space-y-6" id="desi-export-form">
+        {% csrf_token %}
+
+        <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="school_year" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">School Year</label>
+                    <input type="text" id="school_year" name="school_year" value="{{ school_year }}" class="block w-full rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label for="support_value_field" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Support Column Value</label>
+                    <select id="support_value_field" name="support_value_field" class="block w-full rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                        <option value="name" {% if support_value_field == 'name' %}selected{% endif %}>Use Option Name</option>
+                        <option value="code" {% if support_value_field == 'code' %}selected{% endif %}>Use Option Code</option>
+                    </select>
+                </div>
+
+                <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-6">
+                    <label for="export-endpoint" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Endpoint URL (Token Auth Included)</label>
+                    <p class="text-xs text-slate-500 mb-2">Use this URL from another application to generate this same CSV configuration. Keep it private.</p>
+                    <div class="flex gap-2">
+                        <input type="text" id="export-endpoint" readonly class="block w-full rounded border-slate-300 text-xs py-2 px-3 bg-slate-50 text-slate-700">
+                        <button type="button" id="copy-export-endpoint" class="px-3 py-2 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50">Copy</button>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-4">
+                <label class="inline-flex items-center text-sm text-slate-700">
+                    <input type="checkbox" name="only_with_supports" {% if only_with_supports %}checked{% endif %}
+                           class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-2">
+                    Export only records with at least one support entered (skip blank support rows)
+                </label>
+            </div>
+
+            <div class="mt-5">
+                <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Assessments to Include</label>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-slate-200 rounded p-3 bg-slate-50">
+                    {% for ast in assessments %}
+                    <label class="inline-flex items-center text-sm text-slate-700">
+                        <input type="checkbox" name="assessment_ids" value="{{ ast.id }}" {% if ast.id in selected_assessment_ids %}checked{% endif %}
+                               class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-2">
+                        {{ ast.name }}{% if ast.subject %} ({{ ast.subject }}){% endif %}
+                    </label>
+                    {% empty %}
+                    <div class="text-sm text-slate-500 italic">No active assessments found for {{ school_year }}.</div>
+                    {% endfor %}
+                </div>
+                <p class="mt-2 text-xs text-slate-500">If multiple assessments are selected, students can appear on multiple rows.</p>
+            </div>
+        </div>
+
+        <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-200 bg-slate-900 text-white">
+                <h2 class="text-sm font-bold">Column Configuration</h2>
+                <p class="text-[11px] text-slate-300 mt-1">Each designated support is exported as its own column. Select, rename, and reorder columns interactively.</p>
+                <div class="mt-3 flex flex-wrap gap-2 text-[11px]">
+                    <button type="button" data-col-action="select-all" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Select all</button>
+                    <button type="button" data-col-action="select-none" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Clear all</button>
+                    <button type="button" data-col-action="select-student" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Student only</button>
+                    <button type="button" data-col-action="select-support" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Support only</button>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200">
+                    <thead class="bg-slate-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Include</th>
+                            <th class="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Column</th>
+                            <th class="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Group</th>
+                            <th class="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">CSV Header Name</th>
+                            <th class="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Order</th>
+                            <th class="px-4 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Move</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-200" id="column-config-body">
+                        {% for col in column_config %}
+                        <tr data-column-row data-group="{{ col.group }}">
+                            <td class="px-4 py-3">
+                                <input type="checkbox" name="include__{{ col.key }}" {% if col.include %}checked{% endif %} data-column-include
+                                       class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                            </td>
+                            <td class="px-4 py-3 text-sm font-semibold text-slate-800">{{ col.label }}</td>
+                            <td class="px-4 py-3 text-xs text-slate-600 uppercase tracking-wider">{{ col.group }}</td>
+                            <td class="px-4 py-3">
+                                <input type="text" name="header__{{ col.key }}" value="{{ col.header }}"
+                                       class="block w-full rounded border-slate-300 text-sm py-1.5 px-2.5 focus:border-blue-500 focus:ring-blue-500">
+                            </td>
+                            <td class="px-4 py-3 w-28">
+                                <input type="number" name="order__{{ col.key }}" value="{{ col.order }}" min="1" data-column-order
+                                       class="block w-full rounded border-slate-300 text-sm py-1.5 px-2.5 focus:border-blue-500 focus:ring-blue-500">
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                <button type="button" data-move="up" class="px-2 py-1 border border-slate-300 rounded text-xs text-slate-700 bg-white hover:bg-slate-50">↑</button>
+                                <button type="button" data-move="down" class="px-2 py-1 border border-slate-300 rounded text-xs text-slate-700 bg-white hover:bg-slate-50">↓</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="flex justify-end gap-3">
+            <button type="submit" name="save_configuration" value="1" class="inline-flex items-center px-6 py-2.5 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                Save Configuration
+            </button>
+            <button type="submit" class="inline-flex items-center px-6 py-2.5 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
+                Export CSV
+            </button>
+        </div>
+    </form>
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const form = document.getElementById('desi-export-form');
+        const tbody = document.getElementById('column-config-body');
+        const endpointInput = document.getElementById('export-endpoint');
+        const copyButton = document.getElementById('copy-export-endpoint');
+        const endpointBase = "{{ export_endpoint_base_url|escapejs }}";
+        const endpointAuthToken = "{{ export_endpoint_auth_token|escapejs }}";
+        if (!tbody || !form || !endpointInput) return;
+
+        const rows = () => Array.from(tbody.querySelectorAll('[data-column-row]'));
+        const syncOrder = () => {
+            rows().forEach((row, idx) => {
+                const orderInput = row.querySelector('[data-column-order]');
+                if (orderInput) orderInput.value = idx + 1;
+            });
+            updateEndpoint();
+        };
+
+        const updateEndpoint = () => {
+            const formData = new FormData(form);
+            formData.delete('csrfmiddlewaretoken');
+            formData.set('auth', endpointAuthToken);
+            const params = new URLSearchParams(formData);
+            endpointInput.value = `${endpointBase}?${params.toString()}`;
+        };
+
+        tbody.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-move]');
+            if (!btn) return;
+            const row = e.target.closest('[data-column-row]');
+            if (!row) return;
+            if (btn.dataset.move === 'up' && row.previousElementSibling) {
+                tbody.insertBefore(row, row.previousElementSibling);
+            }
+            if (btn.dataset.move === 'down' && row.nextElementSibling) {
+                tbody.insertBefore(row.nextElementSibling, row);
+            }
+            syncOrder();
+        });
+
+        const setInclude = (predicate) => {
+            rows().forEach((row) => {
+                const checkbox = row.querySelector('[data-column-include]');
+                if (checkbox) checkbox.checked = predicate(row);
+            });
+        };
+
+        document.querySelectorAll('[data-col-action]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const action = btn.getAttribute('data-col-action');
+                if (action === 'select-all') setInclude(() => true);
+                if (action === 'select-none') setInclude(() => false);
+                if (action === 'select-student') setInclude((row) => row.dataset.group === 'student');
+                if (action === 'select-support') setInclude((row) => row.dataset.group === 'support');
+                updateEndpoint();
+            });
+        });
+
+        form.addEventListener('change', updateEndpoint);
+        form.addEventListener('input', updateEndpoint);
+        if (copyButton) {
+            copyButton.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(endpointInput.value);
+                    copyButton.textContent = 'Copied';
+                    setTimeout(() => { copyButton.textContent = 'Copy'; }, 1200);
+                } catch (_err) {
+                    endpointInput.select();
+                }
+            });
+        }
+
+        syncOrder();
+        updateEndpoint();
+    });
+</script>
+{% endblock %}

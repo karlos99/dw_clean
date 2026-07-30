@@ -8,7 +8,8 @@ from dataviz.models import SavedChart
 from dataviz.utils.drill_through import (
     build_drill_filter, execute_drill_query, get_all_available_columns,
 )
-from dataexploration.constants import COLUMN_DEFINITIONS
+from dataexploration.column_utils import get_mark_columns, get_test_columns
+from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
 
 
 def _col_label(key):
@@ -21,17 +22,68 @@ def _col_label(key):
     # Sentinel keys used internally by chart builders
     if key == 'pg_cat':
         return 'Progress Category'
+
+    # Check for relative year alias in the key (e.g. __sy_this__)
+    alias = None
+    alias_label = None
+    for a in ('__sy_this__', '__sy_prev1__', '__sy_prev2__'):
+        if a in key:
+            alias = a
+            alias_label = 'This School Year' if a == '__sy_this__' else 'Last School Year' if a == '__sy_prev1__' else 'Two Years Prior'
+            break
+
+    # Resolve relative key to specific year key for parsing
+    key_for_parsing = key
+    if alias:
+        try:
+            from dataexploration.school_year_utils import resolve_relative_column_key
+            key_for_parsing = resolve_relative_column_key(key)
+        except Exception:
+            pass
+
     col_map = dict(COLUMN_DEFINITIONS) if isinstance(COLUMN_DEFINITIONS, (list, tuple)) else dict(COLUMN_DEFINITIONS)
+    
+    # Get base label
+    base_label = None
     if key in col_map:
-        return col_map[key]
-    # Prettify dynamic test/mark column keys:
-    #   test_2025_2026_Dibbles_Dibbles_BOY_PL  →  Dibbles BOY PL
-    #   mark_2025_2026_ELA_Q1                   →  ELA Q1
+        base_label = col_map[key]
+    elif key_for_parsing in col_map:
+        base_label = col_map[key_for_parsing]
+    else:
+        parts = key_for_parsing.split('_')
+        if len(parts) > 3 and parts[0] in ('test', 'mark'):
+            # skip prefix + year portions (test, yyyy, yyyy) then join the rest
+            res = ' '.join(parts[3:]).replace('  ', ' ')
+            if res.lower().endswith(' pl'):
+                res = res[:-3] + ' PL'
+            elif res.lower().endswith(' ss'):
+                res = res[:-3] + ' SS'
+            base_label = res
+        else:
+            base_label = key_for_parsing.replace('_', ' ').title()
+
+    if alias_label:
+        return f"{base_label} ({alias_label})"
+
+    # If it's a specific year key (like test_2025_2026_...), parse and append year
     parts = key.split('_')
-    if len(parts) > 3 and parts[0] in ('test', 'mark'):
-        # skip prefix + year portions (test, yyyy, yyyy) then join the rest
-        return ' '.join(parts[3:]).replace('  ', ' ')
-    return key.replace('_', ' ').title()
+    if len(parts) > 2 and parts[0] in ('test', 'mark'):
+        y1, y2 = parts[1], parts[2]
+        if y1.isdigit() and y2.isdigit() and len(y1) == 4 and len(y2) == 4:
+            return f"{base_label} ({y1}-{y2})"
+
+    # Prettify common database field abbreviations
+    clean_lower = key.lower()
+    if clean_lower == 'ss':
+        return 'Scale Score'
+    if clean_lower == 'pl':
+        return 'Performance Level'
+    if clean_lower == 'score':
+        return 'Score'
+    if clean_lower == 'mark':
+        return 'Mark'
+
+    return base_label
 
 
 def _parse_column_filters(request):
@@ -50,24 +102,40 @@ def _parse_column_filters(request):
     return result
 
 
+from django.urls import reverse
+from dataexploration.column_utils import get_mark_columns, get_test_columns
+
+
 def _build_breadcrumbs(request):
     """Build a list of breadcrumb dicts [{label, url}] from source params."""
     source = request.GET.get('source', '')
     source_id = request.GET.get('source_id', '')
     source_name = request.GET.get('source_name', '')
 
-    crumbs = [{'label': 'DataViz', 'url': '/dataviz/'}]
+    crumbs = []
 
     if source == 'page' and source_id:
         label = source_name or 'Page'
-        crumbs.append({'label': label, 'url': f'/dataviz/pages/{source_id}/'})
+        try:
+            url = reverse('dataviz:page_view', kwargs={'slug': source_id})
+            crumbs.append({'label': label, 'url': url})
+        except:
+            crumbs.append({'label': label, 'url': f'/dataviz/pages/{source_id}/'})
     elif source == 'dashboard' and source_id:
-        # Try to resolve dashboard name
         label = source_name or 'Dashboard'
-        crumbs.append({'label': label, 'url': f'/dataviz/dashboards/{source_id}/edit/'})
+        # Dashboards seem to be legacy or handled elsewhere; fall back if reverse fails
+        try:
+            url = reverse('dataviz:dashboard_edit', kwargs={'dashboard_id': source_id})
+            crumbs.append({'label': label, 'url': url})
+        except:
+            crumbs.append({'label': label, 'url': f'/dataviz/dashboards/{source_id}/edit/'})
     elif source == 'chart_view' and source_id:
         label = source_name or 'Chart'
-        crumbs.append({'label': label, 'url': f'/dataviz/charts/{source_id}/view/'})
+        try:
+            url = reverse('dataviz:chart_view', kwargs={'chart_id': source_id})
+            crumbs.append({'label': label, 'url': url})
+        except:
+            crumbs.append({'label': label, 'url': f'/dataviz/charts/{source_id}/view/'})
 
     crumbs.append({'label': 'Drill-Through', 'url': None})
     return crumbs
@@ -132,9 +200,13 @@ def drill_table(request, chart_id):
     sort_by = request.GET.get('sort_by', '')
     sort_dir = request.GET.get('sort_dir', 'asc')
 
-    # Column selection: comma-separated list, empty = all
+    # Column selection: comma-separated list, empty = chart default custom columns
     cols_param = request.GET.get('cols', '')
-    selected_columns = [c for c in cols_param.split(',') if c] if cols_param else []
+    if cols_param:
+        selected_columns = [c for c in cols_param.split(',') if c]
+    else:
+        selected_columns = chart.drill_through_columns or []
+    selected_columns = [c.split('.')[-1] for c in selected_columns]
 
     # Determine which columns are "extra" — requested but not in the original
     # query result set.  We'll ask execute_drill_query to fetch them.
@@ -161,20 +233,21 @@ def drill_table(request, chart_id):
     )
 
     # Columns that the query produced (may be restricted by selection)
-    query_columns = result['columns'] or []
-    all_columns = result.get('all_columns', query_columns)
+    query_columns = [c.split('.')[-1] for c in result['columns'] or []]
+    all_columns = [c.split('.')[-1] for c in result.get('all_columns', query_columns)]
 
     # Merge available_columns into the universe (sidebar needs both query cols
     # and all addable cols)
     universe_set = set(all_columns)
     universe = list(all_columns)
     for c in available_columns:
-        if c not in universe_set:
-            universe.append(c)
-            universe_set.add(c)
+        clean_c = c.split('.')[-1]
+        if clean_c not in universe_set:
+            universe.append(clean_c)
+            universe_set.add(clean_c)
 
     # Build column label map (include universe so sidebar labels work)
-    col_labels = {c: _col_label(c) for c in universe}
+    col_labels = {c.split('.')[-1]: _col_label(c) for c in universe}
 
     # Human-readable drill filter labels (for both active and removed)
     drill_filters_display = []
@@ -207,6 +280,10 @@ def drill_table(request, chart_id):
             'value': display_val,
         })
 
+    # Fetch assessment structures for the column picker
+    test_structure  = get_test_columns()
+    marks_structure = get_mark_columns()
+
     return render(request, 'dataviz/drill/table.html', {
         'chart':              chart,
         'rows':               result['rows'],
@@ -219,6 +296,10 @@ def drill_table(request, chart_id):
         'selected_columns_json': json.dumps(selected_columns),
         'col_labels':         col_labels,
         'col_labels_json':    json.dumps(col_labels),
+        'column_categories':  COLUMN_CATEGORIES,
+        'column_categories_json': json.dumps(COLUMN_CATEGORIES),
+        'test_structure':     test_structure,
+        'marks_structure':    marks_structure,
         'total_rows':         result['total_rows'],
         'page':               result['page'],
         'per_page':           result['per_page'],

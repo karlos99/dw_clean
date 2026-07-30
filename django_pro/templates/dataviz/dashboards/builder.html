@@ -4,10 +4,9 @@
 {% block title %}Dashboard Builder – DataViz{% endblock %}
 
 {% block extra_head %}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack.min.css"/>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack-extra.min.css"/>
-<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gridstack@11/dist/gridstack-all.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack-extra.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack-all.js"></script>
 <script>
   const _DASHBOARD_ID  = {{ dashboard_id|default:'null' }};
   const _SLOTS_JSON    = JSON.parse('{{ slots_json|escapejs }}');
@@ -25,6 +24,7 @@
 {% endblock %}
 
 {% block content %}
+{% include "dataviz/submenu.html" %}
 <div x-data="dashboardBuilder()" class="h-[calc(100vh-5rem)] flex flex-col">
 
   <!-- ── Top bar ─────────────────────────────────────────────────── -->

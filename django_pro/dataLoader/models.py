@@ -408,3 +408,144 @@ class SurveyResponse(models.Model):
             return None
         label = self.question.scale_labels.filter(value=self.value).first()
         return label.label if label else str(self.value)
+
+
+class APImportStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    PROCESSING = 'PROCESSING', 'Processing'
+    COMPLETED = 'COMPLETED', 'Completed'
+    FAILED = 'FAILED', 'Failed'
+    PARTIAL = 'PARTIAL', 'Partially Completed'
+
+
+class APExamCode(models.Model):
+    """Reference table for College Board AP exam codes."""
+    code = models.CharField(max_length=4, primary_key=True, help_text="Two-digit College Board exam code (e.g., '07')")
+    name = models.CharField(max_length=255, help_text="Full exam name (e.g., 'United States History')")
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = 'AP Exam Code'
+        verbose_name_plural = 'AP Exam Codes'
+
+    def __str__(self):
+        return f"{self.code}: {self.name}"
+
+
+class APAwardType(models.Model):
+    """Reference table for College Board AP award types."""
+    code = models.CharField(max_length=4, primary_key=True, help_text="Two-digit College Board award code (e.g., '01')")
+    description = models.CharField(max_length=255, help_text="Award description (e.g., 'AP Scholar')")
+
+    class Meta:
+        ordering = ['code']
+        verbose_name = 'AP Award Type'
+        verbose_name_plural = 'AP Award Types'
+
+    def __str__(self):
+        return f"{self.code}: {self.description}"
+
+
+class APImportLog(models.Model):
+    """Tracks each AP Student Datafile import operation."""
+    name = models.CharField(max_length=255, help_text="User-provided name for this import")
+    school_year = models.CharField(max_length=9, help_text="School year (e.g., '2025-2026')")
+    filename = models.CharField(max_length=255, help_text="Original filename uploaded")
+    file_hash = models.CharField(max_length=64, blank=True, help_text="SHA256 hash for duplicate detection")
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='ap_data_imports'
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=APImportStatus.choices,
+        default=APImportStatus.PENDING
+    )
+
+    total_students = models.PositiveIntegerField(default=0)
+    exams_detected = models.PositiveIntegerField(default=0, help_text="Total exam results found in CSV")
+    exams_created = models.PositiveIntegerField(default=0, help_text="New exam results inserted into DB")
+    exams_skipped = models.PositiveIntegerField(default=0, help_text="Exam results that already existed")
+    awards_detected = models.PositiveIntegerField(default=0, help_text="Total awards found in CSV")
+    awards_created = models.PositiveIntegerField(default=0, help_text="New awards inserted into DB")
+    awards_skipped = models.PositiveIntegerField(default=0, help_text="Awards that already existed")
+    students_matched = models.PositiveIntegerField(default=0)
+    students_unmatched = models.PositiveIntegerField(default=0)
+    records_processed = models.PositiveIntegerField(default=0, help_text="Student rows processed")
+
+    manual_overrides = models.JSONField(
+        default=dict,
+        help_text="Manually-entered SSID overrides (e.g., {'ap_number': 'ssid'})"
+    )
+    error_count = models.PositiveIntegerField(default=0)
+    error_log = models.JSONField(default=list, help_text="List of error messages")
+    warnings = models.JSONField(default=list, help_text="List of warning messages")
+
+    class Meta:
+        ordering = ['-uploaded_at']
+        verbose_name = 'AP Import Log'
+        verbose_name_plural = 'AP Import Logs'
+
+    def __str__(self):
+        return f"{self.name} - {self.uploaded_at.strftime('%Y-%m-%d %H:%M')}"
+
+    @staticmethod
+    def compute_file_hash(file_content):
+        if isinstance(file_content, str):
+            file_content = file_content.encode('utf-8')
+        return hashlib.sha256(file_content).hexdigest()
+
+
+class APStudentAward(models.Model):
+    """Awards earned by a student during an AP test year."""
+    import_log = models.ForeignKey(
+        APImportLog, on_delete=models.CASCADE, related_name='awards'
+    )
+    ssid = models.CharField(max_length=50, db_index=True, blank=True, help_text="Matched State Student ID")
+    ap_number = models.CharField(max_length=50, db_index=True)
+    award_type = models.ForeignKey(APAwardType, on_delete=models.PROTECT)
+    award_year = models.CharField(max_length=9, help_text="School year (e.g., '2025-2026')")
+
+    class Meta:
+        unique_together = ['ap_number', 'award_type', 'award_year']
+        indexes = [
+            models.Index(fields=['ssid']),
+            models.Index(fields=['ap_number']),
+        ]
+        verbose_name = 'AP Student Award'
+        verbose_name_plural = 'AP Student Awards'
+
+    def __str__(self):
+        return f"{self.ap_number}: {self.award_type.description} ({self.award_year})"
+
+
+class APExamResult(models.Model):
+    """Individual AP exam result linked to a student by SSID."""
+    import_log = models.ForeignKey(
+        APImportLog, on_delete=models.CASCADE, related_name='exam_results'
+    )
+    ssid = models.CharField(max_length=50, db_index=True, blank=True, help_text="Matched State Student ID")
+    ap_number = models.CharField(max_length=50, db_index=True)
+    exam = models.ForeignKey(APExamCode, on_delete=models.PROTECT)
+    admin_year = models.CharField(max_length=9, help_text="School year of exam administration")
+    exam_grade = models.CharField(max_length=10, help_text="Exam grade (1-5, or blank if not yet scored)")
+    school_code = models.CharField(max_length=50, blank=True, help_text="AI institution school code")
+    ai_institution_name = models.CharField(max_length=255, blank=True)
+    student_grade_level = models.CharField(max_length=50, blank=True)
+
+    class Meta:
+        unique_together = ['ap_number', 'exam', 'admin_year']
+        indexes = [
+            models.Index(fields=['ssid']),
+            models.Index(fields=['ap_number']),
+            models.Index(fields=['exam', 'admin_year']),
+        ]
+        verbose_name = 'AP Exam Result'
+        verbose_name_plural = 'AP Exam Results'
+
+    def __str__(self):
+        return f"{self.ap_number}: {self.exam.name} ({self.admin_year}) = {self.exam_grade}"

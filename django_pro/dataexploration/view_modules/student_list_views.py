@@ -8,10 +8,11 @@ from django.db import connections
 from django.core.cache import cache
 from django.conf import settings
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import hashlib
 import json
 
+from clickhouse_utils.executor import QueryExecutor
 from ..models import SavedQuery, StudentList
 from studata.models import CurrentStudent
 from ..column_utils import get_test_columns, get_mark_columns, _get_display_name
@@ -26,6 +27,57 @@ from .column_management import (
     get_saved_default_columns,
     get_column_expression,
 )
+from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
+from landing.utils import get_project_config
+
+def _append_school_year_filter(where_clauses: list, params: list, school_year) -> None:
+    """Append a school_year predicate; no-op when school_year is unset."""
+    if not school_year:
+        return
+    if isinstance(school_year, list):
+        if len(school_year) == 1:
+            where_clauses.append("cs.school_year = %s")
+            params.append(school_year[0])
+        elif len(school_year) > 1:
+            where_clauses.append("cs.school_year = ANY(%s)")
+            params.append(school_year)
+    else:
+        where_clauses.append("cs.school_year = %s")
+        params.append(school_year)
+
+
+def _serialize_context_filter(val):
+    """Normalize a filter value for JSON responses and UI sync."""
+    if isinstance(val, list):
+        return val[0] if len(val) == 1 else (val if val else '')
+    return val or ''
+
+
+def _normalize_filter_param(col, value):
+    """Coerce filter values to native Python types for typed columns."""
+    if value in (None, ''):
+        return value
+
+    if col in {'birth_date', 'us_enter_date', 'fep_date'}:
+        if isinstance(value, (datetime, date)):
+            return value
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return value
+            try:
+                parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except ValueError:
+                try:
+                    parsed = datetime.combine(date.fromisoformat(value), datetime.min.time())
+                except ValueError:
+                    return value
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+
+    return value
+
 
 class StudentWithTestsListView(LoginRequiredMixin, ListView):
     """Display list of students with their test results (one row per student)."""
@@ -99,6 +151,13 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
                 cache.set(grades_key, grades, 3600)
         
         context['school_years'] = school_years
+        context['school_year_choices'] = get_school_year_choices(school_years)
+        all_years = list(test_structure.keys()) + list(marks_structure.keys())
+        context['year_labels'] = get_year_labels_map(all_years)
+        year_to_alias = get_year_alias_map()
+        context['year_to_alias'] = year_to_alias
+        # underscore-format keys for JS (column keys use underscores not hyphens)
+        context['year_alias_map_json'] = json.dumps({y.replace('-', '_'): a for y, a in year_to_alias.items()})
         context['grades'] = grades
         context['test_structure'] = test_structure
         context['marks_structure'] = marks_structure
@@ -126,13 +185,38 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
 
         filters = query_config.get('filters', {})
 
+        # Resolve the project default school year for the initial page load
+        _project_default_year = ''
+        try:
+            _cfg = get_project_config()
+            _project_default_year = _cfg.default_school_year or ''
+        except Exception:
+            pass
+
         def get_param(name, default=''):
             # URL param takes precedence over saved query, which takes precedence over default
             return self.request.GET.get(name) or filters.get(name, default)
 
         # Current filter values
         context['search_query'] = get_param('search')
-        context['selected_school_year'] = get_param('school_year')
+        if 'school_year' in self.request.GET:
+            selected_year = self.request.GET.get('school_year')
+        elif _project_default_year:
+            selected_year = _project_default_year
+        else:
+            selected_year = filters.get('school_year', '')
+
+        if not selected_year:
+            selected_year = '__sy_this__'
+
+        # Resolve selected_school_year to concrete school year if it is an alias
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            if selected_year:
+                selected_year = resolve_school_year(selected_year)
+        except Exception:
+            pass
+        context['selected_school_year'] = selected_year
         context['selected_grade'] = get_param('grade')
         context['selected_status'] = get_param('status', 'Active')
         
@@ -171,7 +255,10 @@ def load_students(request):
         selected_columns = saved_config.get('columns')
     else:
         selected_columns = get_saved_default_columns()
-    
+
+    # Resolve any relative column keys (e.g. test___sy_this___...) to real year keys
+    selected_columns = [resolve_relative_column_key(c) for c in selected_columns]
+
     # Extract saved filters (they may be nested under 'filters' key or at top level)
     saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
     
@@ -210,12 +297,37 @@ def load_students(request):
     # Get filters - URL params take precedence over saved config
     search = request.GET.get('search', '') or saved_filters.get('search', '') or saved_config.get('search', '')
     
-    _sy_raw = request.GET.get('school_year', '')
-    school_year = _parse_multi(
-        _sy_raw,
-        _parse_multi(saved_filters.get('school_year', ''),
-                     _parse_multi(saved_config.get('school_year', ''), ''))
-    )
+    _project_default_year = ''
+    try:
+        _cfg = get_project_config()
+        _project_default_year = _cfg.default_school_year or ''
+    except Exception:
+        pass
+
+    _sy_in_url = 'school_year' in request.GET
+    if _sy_in_url:
+        _sy_raw = request.GET.get('school_year', '')
+        school_year = _parse_multi(_sy_raw, '')
+    elif _project_default_year:
+        school_year = _project_default_year
+    else:
+        school_year = _parse_multi(
+            saved_filters.get('school_year', ''),
+            _parse_multi(saved_config.get('school_year', ''), '')
+        )
+
+    if not school_year:
+        school_year = '__sy_this__'
+
+    # Resolve school-year aliases to concrete year strings
+    try:
+        from dataexploration.school_year_utils import resolve_school_year
+        if isinstance(school_year, list):
+            school_year = [resolve_school_year(y) for y in school_year]
+        elif school_year:
+            school_year = resolve_school_year(school_year)
+    except Exception:
+        pass
     
     _gr_raw = request.GET.get('grade', '')
     grade = _parse_multi(
@@ -247,6 +359,12 @@ def load_students(request):
     else:
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
+    
+    # Resolve any relative column keys in sort_by and filters keys
+    if sort_by:
+        sort_by = resolve_relative_column_key(sort_by)
+    if isinstance(filters, dict):
+        filters = {resolve_relative_column_key(k): v for k, v in filters.items()}
     
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
         """Append SQL filter clauses + params for the provided filters dict."""
@@ -308,60 +426,77 @@ def load_students(request):
                     window_clause = "AND t.test_window ILIKE %s "
                     window_params = [test_info['test_window']]
 
-                exist_query_base = (
-                    "SELECT 1 FROM results r "
+                id_subquery_base = (
+                    "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.local_student_id = cs.student_id "
+                    "WHERE r.school_year = %s "
+                    "AND t.test_name ILIKE %s "
+                    "AND t.subject ILIKE %s "
+                    f"{window_clause}"
+                )
+                ssid_subquery_base = (
+                    "SELECT r.ssid FROM results r "
+                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' "
                     "AND r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
                 )
-                exist_params_base = [
+                base_params = [
                     test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
+                    test_info['test_name'],
+                    test_info['subject'],
                     *window_params,
                 ]
 
                 conditions = []
 
                 if real_values:
-                    # Exists and matches value
-                    val_clause = exist_query_base
+                    val_id = id_subquery_base
+                    val_ssid = ssid_subquery_base
                     if metric_col in {'ss', 'pl'}:
-                        val_clause += f"AND r.{metric_col} = ANY(%s)"
+                        val_id += f"AND r.{metric_col} = ANY(%s)"
+                        val_ssid += f"AND r.{metric_col} = ANY(%s)"
                     else:
-                        val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
+                        val_id += "AND (r.other_info ->> %s) = ANY(%s)"
+                        val_ssid += "AND (r.other_info ->> %s) = ANY(%s)"
                     
-                    val_params = list(exist_params_base)
-                    if metric_col == 'oi':
-                         val_params.append(test_info['other_info_key'])
-                    val_params.append(real_values)
+                    val_id_params = list(base_params)
+                    val_ssid_params = list(base_params)
+                    if metric_col in {'oi', 'dfp'}:
+                        val_id_params.append(test_info.get('other_info_key', ''))
+                        val_ssid_params.append(test_info.get('other_info_key', ''))
+                    val_id_params.append(real_values)
+                    val_ssid_params.append(real_values)
                     
-                    conditions.append(f"EXISTS ({val_clause})")
-                    params.extend(val_params)
+                    conditions.append(f"(cs.student_id IN ({val_id}) OR cs.ssid IN ({val_ssid}))")
+                    params.extend(val_id_params + val_ssid_params)
 
                 if has_blank:
-                    # Does not exist (Blank) OR Exists but value is null
                     blank_subconditions = []
                     
                     # 1. No record exists
-                    blank_subconditions.append(f"NOT EXISTS ({exist_query_base})")
-                    params.extend(exist_params_base)
+                    blank_subconditions.append(f"(cs.student_id NOT IN ({id_subquery_base}) AND cs.ssid NOT IN ({ssid_subquery_base}))")
+                    params.extend(base_params + base_params)
 
                     # 2. Record exists but value is NULL
-                    null_clause = exist_query_base
-                    null_params = list(exist_params_base)
+                    null_id = id_subquery_base
+                    null_ssid = ssid_subquery_base
+                    null_id_params = list(base_params)
+                    null_ssid_params = list(base_params)
                     
                     if metric_col in {'ss', 'pl'}:
-                        null_clause += f"AND r.{metric_col} IS NULL"
+                        null_id += f"AND r.{metric_col} IS NULL"
+                        null_ssid += f"AND r.{metric_col} IS NULL"
                     else:
-                        null_clause += "AND (r.other_info ->> %s) IS NULL"
-                        null_params.append(test_info['other_info_key'])
+                        null_id += "AND (r.other_info ->> %s) IS NULL"
+                        null_ssid += "AND (r.other_info ->> %s) IS NULL"
+                        null_id_params.append(test_info.get('other_info_key', ''))
+                        null_ssid_params.append(test_info.get('other_info_key', ''))
                     
-                    blank_subconditions.append(f"EXISTS ({null_clause})")
-                    params.extend(null_params)
+                    blank_subconditions.append(f"(cs.student_id IN ({null_id}) OR cs.ssid IN ({null_ssid}))")
+                    params.extend(null_id_params + null_ssid_params)
                     
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
                 
@@ -376,55 +511,35 @@ def load_students(request):
 
                 conditions = []
 
-                # Match marks with selected values
+                mark_subquery_base = (
+                    "SELECT sm.stu_annual_key FROM student_marks_list sm "
+                    "WHERE sm.school_year = %s "
+                    "AND sm.subject ILIKE %s "
+                    "AND sm.course_name ILIKE %s "
+                )
+                mark_base_params = [
+                    mark_info['year'],
+                    f"%{mark_info['subject']}%",
+                    f"%{mark_info['course_name']}%",
+                ]
+
+                if mark_info.get('mark_period'):
+                    mark_subquery_base += "AND sm.mark_period ILIKE %s "
+                    mark_base_params.append(mark_info['mark_period'])
+                else:
+                    mark_subquery_base += "AND (sm.mark_period IS NULL OR sm.mark_period = '') "
+
                 if real_values:
-                    mark_clause = (
-                        "SELECT 1 FROM student_marks_list sm "
-                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
-                        "AND sm.school_year = %s "
-                        "AND sm.subject ILIKE %s "
-                        "AND sm.course_name ILIKE %s "
-                    )
-                    mark_params = [
-                        mark_info['year'],
-                        f"%{mark_info['subject']}%",
-                        f"%{mark_info['course_name']}%",
-                    ]
-
-                    if mark_info.get('mark_period'):
-                        mark_clause += "AND sm.mark_period ILIKE %s "
-                        mark_params.append(mark_info['mark_period'])
-                    else:
-                        mark_clause += "AND (sm.mark_period IS NULL OR sm.mark_period = '') "
-
-                    mark_clause += "AND sm.mark = ANY(%s)"
-                    mark_params.append(real_values)
-
-                    conditions.append(f"EXISTS ({mark_clause})")
-                    params.extend(mark_params)
+                    val_clause = mark_subquery_base + "AND sm.mark = ANY(%s)"
+                    val_params = list(mark_base_params) + [real_values]
+                    conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                    params.extend(val_params)
 
                 if has_blank:
-                    blank_clause = (
-                        "SELECT 1 FROM student_marks_list sm "
-                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
-                        "AND sm.school_year = %s "
-                        "AND sm.subject ILIKE %s "
-                        "AND sm.course_name ILIKE %s "
-                    )
-                    blank_params = [
-                        mark_info['year'],
-                        f"%{mark_info['subject']}%",
-                        f"%{mark_info['course_name']}%",
-                    ]
-                    if mark_info.get('mark_period'):
-                        blank_clause += "AND sm.mark_period ILIKE %s "
-                        blank_params.append(mark_info['mark_period'])
-                    else:
-                        blank_clause += "AND (sm.mark_period IS NULL OR sm.mark_period = '') "
-
-                    blank_clause += "AND (sm.mark IS NULL OR sm.mark = '')"
-                    conditions.append(f"EXISTS ({blank_clause})")
-                    params.extend(blank_params)
+                    blank_clause = mark_subquery_base + "AND (sm.mark IS NULL OR sm.mark = '')"
+                    blank_params = list(mark_base_params)
+                    conditions.append(f"(cs.stu_annual_key NOT IN ({mark_subquery_base}) OR cs.stu_annual_key IN ({blank_clause}))")
+                    params.extend(mark_base_params + blank_params)
 
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
@@ -435,8 +550,9 @@ def load_students(request):
             if expr:
                  conditions = []
                  if real_values:
+                      normalized_values = [_normalize_filter_param(col, v) for v in real_values]
                       conditions.append(f"{expr} = ANY(%s)")
-                      params.append(real_values)
+                      params.append(normalized_values)
                  if has_blank:
                       # Check if date (only IS NULL) or string (IS NULL or Empty)
                       if col in {'birth_date', 'us_enter_date', 'fep_date'}:
@@ -447,7 +563,7 @@ def load_students(request):
                  if conditions:
                       where_clauses.append(f"({' OR '.join(conditions)})")
 
-    with connections['default'].cursor() as cursor:
+    with QueryExecutor().cursor() as cursor:
         db_columns = get_current_student_columns()
         enroll_columns = get_student_enroll_columns()
         base_where_clauses = ["1=1"]
@@ -495,20 +611,18 @@ def load_students(request):
             if has_test_window:
                 cursor.execute(
                     """
-                    SELECT DISTINCT r.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
-                    FROM results r
-                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+                    SELECT DISTINCT t.school_year, t.test_name, t.subject, COALESCE(t.test_window, '')
+                    FROM tests t
+                    WHERE t.school_year = ANY(%s) AND t.school_year IS NOT NULL AND t.test_name IS NOT NULL
                     """,
                     [years],
                 )
             else:
                 cursor.execute(
                     """
-                    SELECT DISTINCT r.school_year, t.test_name, t.subject, ''
-                    FROM results r
-                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.school_year = ANY(%s) AND r.school_year IS NOT NULL AND t.test_name IS NOT NULL
+                    SELECT DISTINCT t.school_year, t.test_name, t.subject, ''
+                    FROM tests t
+                    WHERE t.school_year = ANY(%s) AND t.school_year IS NOT NULL AND t.test_name IS NOT NULL
                     """,
                     [years],
                 )
@@ -534,8 +648,9 @@ def load_students(request):
 
                 ss_norm = f"test_{key_base}_SS"
                 pl_norm = f"test_{key_base}_PL"
+                dfp_norm = f"test_{key_base}_DFP"
 
-                for norm_key, metric in ((ss_norm, 'ss'), (pl_norm, 'pl')):
+                for norm_key, metric in ((ss_norm, 'ss'), (pl_norm, 'pl'), (dfp_norm, 'dfp')):
                     original_key = normalized_to_original.get(norm_key)
                     if not original_key:
                         continue
@@ -548,6 +663,8 @@ def load_students(request):
                         'test_window': win_value,
                         'metric': metric,
                     }
+                    if metric == 'dfp':
+                        info['other_info_key'] = 'dfp'
                     infos.append(info)
                     # Map both exact and normalized keys for lookups
                     col_map[original_key] = info
@@ -755,17 +872,7 @@ def load_students(request):
                 search_param = f'%{search}%'
                 base_params.extend([search_param, search_param, search_param])
         
-        if school_year:
-            if isinstance(school_year, list):
-                if len(school_year) == 1:
-                    base_where_clauses.append("cs.school_year = %s")
-                    base_params.append(school_year[0])
-                elif len(school_year) > 1:
-                    base_where_clauses.append("cs.school_year = ANY(%s)")
-                    base_params.append(school_year)
-            else:
-                base_where_clauses.append("cs.school_year = %s")
-                base_params.append(school_year)
+        _append_school_year_filter(base_where_clauses, base_params, school_year)
         
         if grade:
             if isinstance(grade, list):
@@ -834,8 +941,15 @@ def load_students(request):
                     base_params.append(accessible_keys)
 
         # Separate base columns from test/mark/survey columns
-        selected_test_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')]
-        selected_mark_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')]
+        filter_keys = list(filters.keys()) if isinstance(filters, dict) else []
+        selected_test_cols = list(set(
+            [c for c in selected_columns if isinstance(c, str) and c.startswith('test_')] +
+            [k for k in filter_keys if isinstance(k, str) and k.startswith('test_')]
+        ))
+        selected_mark_cols = list(set(
+            [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')] +
+            [k for k in filter_keys if isinstance(k, str) and k.startswith('mark_')]
+        ))
         selected_survey_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')]
         base_cols = [
             c for c in selected_columns
@@ -1056,7 +1170,7 @@ def load_students(request):
                 order_by_expr = (
                     f"(SELECT {select_expr} FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.local_student_id = cs.student_id "
+                    "WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) "
                     "AND r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
@@ -1066,8 +1180,8 @@ def load_students(request):
                 params.extend(extra_params)
                 params.extend([
                     test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
+                    test_info['test_name'],
+                    test_info['subject'],
                 ])
                 params.extend(window_params)
 
@@ -1122,9 +1236,20 @@ def load_students(request):
                 # 2. Sort them in Python to match the cached order.
                 # 3. Proceed to fetch Test/Mark data as usual.
                 
-                cursor.execute(f"SELECT {base_col_sql} FROM current_student cs {join_sql} WHERE cs.ssid = ANY(%s)", [cached_ssids])
-                cols = [desc[0] for desc in cursor.description]
-                unordered_students = {row[cols.index('ssid')]: dict(zip(cols, row)) for row in cursor.fetchall()}
+                cached_exec = QueryExecutor()
+                sy_clauses = []
+                sy_params = []
+                _append_school_year_filter(sy_clauses, sy_params, school_year)
+                sy_sql = (' AND ' + ' AND '.join(sy_clauses)) if sy_clauses else ''
+                cached_result = cached_exec.execute(
+                    f"SELECT {base_col_sql} FROM current_student cs {join_sql} "
+                    f"WHERE cs.ssid = ANY(%s){sy_sql}",
+                    [cached_ssids, *sy_params],
+                )
+                cols = cached_result['columns']
+                unordered_students = {}
+                for row_dict in cached_result['rows']:
+                    unordered_students[row_dict.get('ssid')] = row_dict
                 
                 # Reconstruct ordered list
                 students = []
@@ -1138,7 +1263,7 @@ def load_students(request):
         else:
             # MISS: Run expensive sort query
             query = f"""
-            SELECT /*+ Leading(cs) */ {base_col_sql}
+            SELECT {base_col_sql}
             FROM current_student cs
             {join_sql}
             WHERE {where_sql}
@@ -1146,15 +1271,13 @@ def load_students(request):
             LIMIT %s OFFSET %s
             """
             
-            # We need to preserve params for the full query
-            # (params already contains where_params + sort_params)
             query_params = list(params)
             query_params.extend([limit, offset])
             
-            cursor.execute(query, query_params)
-            
-            columns = [desc[0] for desc in cursor.description]
-            students = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            main_exec = QueryExecutor()
+            main_result = main_exec.execute(query, query_params)
+            columns = main_result['columns']
+            students = main_result['rows']
             
             # Cache the SSIDs of this result page
             result_ssids = [s.get('ssid') for s in students if s.get('ssid')]
@@ -1165,8 +1288,11 @@ def load_students(request):
         student_ids = [s.get('student_id') for s in students if s.get('student_id')]
         student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
         
+        _fetch_cursor = QueryExecutor().cursor()
+        
         # Fetch test data in bulk for selected test columns
         if test_cols_info and student_ids:
+            student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
             for test_info in test_cols_info:
                 metric_col = test_info['metric']
                 test_name_db = test_info['test_name'].replace(' ', '_')
@@ -1186,30 +1312,46 @@ def load_students(request):
                     extra_params = [test_info.get('other_info_key', '')]
 
                 query = f"""
-                    SELECT /*+ IndexScan(r) */ r.local_student_id, {select_expr}
+                    SELECT /*+ IndexScan(r) */ r.local_student_id, r.ssid, {select_expr}
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.local_student_id = ANY(%s)
+                    WHERE (r.local_student_id = ANY(%s) OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
                       AND r.school_year = %s
                       AND t.test_name ILIKE %s
                       AND t.subject ILIKE %s
                       {window_clause}
                 """
-                cursor.execute(query, [
+                _fetch_cursor.execute(query, [
                     *extra_params,
                     student_ids,
+                    student_ssids,
                     test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
+                    test_info['test_name'],
+                    test_info['subject'],
                     *window_params,
                 ])
                 
-                test_data = {row[0]: row[1] for row in cursor.fetchall()}
+                test_data_by_id = {}
+                test_data_by_ssid = {}
+                for row in _fetch_cursor.fetchall():
+                    local_id = row[0]
+                    ssid = row[1]
+                    val = row[2]
+                    if local_id:
+                        test_data_by_id[local_id] = val
+                    if ssid:
+                        test_data_by_ssid[ssid] = val
                 
                 # Add test data to each student
                 for student in students:
                     student_id = student.get('student_id')
-                    student[test_info['col_name']] = test_data.get(student_id, '—')
+                    ssid = student.get('ssid')
+                    val = '—'
+                    if student_id in test_data_by_id:
+                        val = test_data_by_id[student_id]
+                    elif ssid in test_data_by_ssid:
+                        val = test_data_by_ssid[ssid]
+                    student[test_info['col_name']] = val
 
         # Fetch mark data in bulk for selected mark columns
         if mark_cols_info and student_keys:
@@ -1231,7 +1373,7 @@ def load_students(request):
                       AND sm.course_name ILIKE %s
                       {period_clause}
                 """
-                cursor.execute(query, [
+                _fetch_cursor.execute(query, [
                     student_keys,
                     mark_info['year'],
                     f"%{mark_info['subject']}%",
@@ -1239,7 +1381,7 @@ def load_students(request):
                     *period_params,
                 ])
 
-                mark_data = {row[0]: row[1] for row in cursor.fetchall()}
+                mark_data = {row[0]: row[1] for row in _fetch_cursor.fetchall()}
 
                 for student in students:
                     student_key = student.get('stu_annual_key')
@@ -1275,8 +1417,8 @@ def load_students(request):
                 AND sl.period = '0'
                 AND sch.school_group = 'Elementary School'
             """
-            cursor.execute(q_eht, [student_keys])
-            eht_map = {row[0]: row[1] for row in cursor.fetchall()}
+            _fetch_cursor.execute(q_eht, [student_keys])
+            eht_map = {row[0]: row[1] for row in _fetch_cursor.fetchall()}
             for student in students:
                 key = student.get('stu_annual_key')
                 if key:
@@ -1358,15 +1500,7 @@ def load_students(request):
                 _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
-                distinct_query = f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {join_sql} WHERE {option_where_sql}"
-                cursor.execute(distinct_query, option_params)
-                distinct_count = cursor.fetchone()[0] or 0
-                if distinct_count <= 1 or (distinct_count > 30 and col not in always_include):
-                    continue
-                
-                limit_clause = "LIMIT 30"
-                if col in always_include:
-                    limit_clause = ""
+                limit_clause = "" if col in always_include else "LIMIT 31"
 
                 options_query = f"""
                     SELECT {expr}
@@ -1378,21 +1512,22 @@ def load_students(request):
                     {limit_clause}
                 """
                 cursor.execute(options_query, option_params)
-                values = []
-                for row in cursor.fetchall():
-                    val = row[0]
-                    if val is None:
-                        val = ""
-                    values.append(val)
+                rows = cursor.fetchall()
+                num_rows = len(rows)
+
+                if num_rows <= 1 or (num_rows > 30 and col not in always_include):
+                    continue
+
+                values = [("" if row[0] is None else row[0]) for row in rows[:30]]
 
                 if values:
                     filter_options[col] = values
                     # Cache for 5 minutes
                     cache.set(cache_key, values, 300)
 
-            # Add filter options for test PL columns and other_info columns (with caching)
+            # Add filter options for test PL columns, dfp, and other_info columns (with caching)
             for test_info in test_cols_info:
-                if test_info['metric'] not in {'pl', 'oi'}:
+                if test_info['metric'] not in {'pl', 'oi', 'dfp'}:
                     continue
                 col_key = test_info['col_name']
                 
@@ -1425,7 +1560,7 @@ def load_students(request):
                     SELECT r.pl AS v
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    INNER JOIN current_student cs ON r.local_student_id = cs.student_id
+                    INNER JOIN current_student cs ON (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid))
                     {join_sql}
                     WHERE {option_where_sql}
                       AND r.school_year = %s
@@ -1438,8 +1573,8 @@ def load_students(request):
                 """
                     cursor.execute(options_query, option_params + [
                         test_info['year'],
-                        f"%{test_info['test_name']}%",
-                        f"%{test_info['subject']}%",
+                        test_info['test_name'],
+                        test_info['subject'],
                         *window_params,
                     ])
                 else:
@@ -1447,7 +1582,7 @@ def load_students(request):
                     SELECT (r.other_info ->> %s) AS v
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    INNER JOIN current_student cs ON r.local_student_id = cs.student_id
+                    INNER JOIN current_student cs ON (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid))
                     {join_sql}
                     WHERE {option_where_sql}
                       AND r.school_year = %s
@@ -1463,8 +1598,8 @@ def load_students(request):
                         other_key,
                         *option_params,
                         test_info['year'],
-                        f"%{test_info['test_name']}%",
-                        f"%{test_info['subject']}%",
+                        test_info['test_name'],
+                        test_info['subject'],
                         *window_params,
                     ])
                 
@@ -1485,7 +1620,7 @@ def load_students(request):
                     AND NOT EXISTS (
                         SELECT 1 FROM results r
                         INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                        WHERE r.local_student_id = cs.student_id
+                        WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid))
                         AND r.school_year = %s
                         AND t.test_name ILIKE %s
                         AND t.subject ILIKE %s
@@ -1495,8 +1630,8 @@ def load_students(request):
                 """
                 check_params = option_params + [
                     test_info['year'],
-                    f"%{test_info['test_name']}%",
-                    f"%{test_info['subject']}%",
+                    test_info['test_name'],
+                    test_info['subject'],
                     *window_params,
                 ]
                 cursor.execute(check_blank_query, check_params)
@@ -1594,7 +1729,7 @@ def load_students(request):
     dynamic_definitions.update(get_survey_columns().get('definitions', {}))
     if test_cols_info:
         for info in test_cols_info:
-            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'oi': info.get('other_info_key', 'Info')}
+            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
             metric_label = metric_map.get(info['metric'], info['metric'])
             display_test = _get_display_name(info['test_name'])
             display_subject = _get_display_name(info['subject'])
@@ -1620,9 +1755,9 @@ def load_students(request):
             'filter_options': filter_options,
             'filters': filters,
             'search': search or '',
-            'school_year': school_year or '',
-            'grade': grade or '',
-            'status': status or '',
+            'school_year': _serialize_context_filter(school_year),
+            'grade': _serialize_context_filter(grade),
+            'status': _serialize_context_filter(status),
             'sort_by': sort_by,
             'sort_dir': sort_dir,
             'survey_colors': survey_colors,
