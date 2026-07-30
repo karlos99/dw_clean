@@ -748,6 +748,63 @@ class DatasetDrillThroughTests(TestCase):
         self.assertIn('current_student.grade', resolved)
         self.assertEqual(resolved['current_student.grade'], ['12'])
 
+    def test_resolve_dataset_filters_test_name_not_treated_as_dynamic_column(self):
+        from dataviz.utils.compiler import resolve_dataset_filters, build_dataset_col_index
+
+        self.dataset.base_table = 'results'
+        self.dataset.columns = [
+            'tests.test_name',
+            'tests.subject',
+            'results.pl',
+        ]
+        self.dataset.joins = [
+            {'table': 'tests', 'join_type': 'inner', 'conditions': []},
+        ]
+        self.dataset.column_mappings = {
+            'tests.test_name': 'test_name',
+            'tests.subject': 'subject',
+            'results.pl': 'pl',
+        }
+        active_tables = {self.dataset.base_table, 'tests'}
+        resolved = resolve_dataset_filters({'test_name': ['CAASPP']}, self.dataset, active_tables)
+        self.assertEqual(resolved, {'tests.test_name': ['CAASPP']})
+        self.assertIn('test_name', build_dataset_col_index(self.dataset))
+
+    def test_resolve_dataset_filters_prefixed_collision_alias(self):
+        from dataviz.utils.compiler import resolve_dataset_filters
+
+        self.dataset.base_table = 'results'
+        self.dataset.columns = [
+            'current_student.school_year',
+            'relative_year.relative_label',
+        ]
+        self.dataset.joins = [
+            {'table': 'current_student', 'join_type': 'inner', 'conditions': []},
+            {'table': 'relative_year', 'join_type': 'inner', 'conditions': []},
+        ]
+        self.dataset.column_mappings = {
+            'current_student.school_year': 'current_student_school_year',
+            'relative_year.relative_label': 'relative_label',
+        }
+        active_tables = {self.dataset.base_table, 'current_student', 'relative_year'}
+        resolved = resolve_dataset_filters(
+            {'current_student_school_year': ['2024-2025', '2025-2026']},
+            self.dataset,
+            active_tables,
+        )
+        self.assertEqual(resolved, {'current_student.school_year': ['2024-2025', '2025-2026']})
+
+    def test_resolve_dataset_filters_still_skips_dynamic_test_columns(self):
+        from dataviz.utils.compiler import resolve_dataset_filters
+
+        active_tables = {self.dataset.base_table}
+        resolved = resolve_dataset_filters(
+            {'test_2024_2025_caaspp_ela_pl': ['3', '4']},
+            self.dataset,
+            active_tables,
+        )
+        self.assertEqual(resolved, {})
+
     def test_line_chart_options(self):
         from dataviz.utils.chart_builder import build_option
         col_defs = {

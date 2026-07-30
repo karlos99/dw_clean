@@ -113,6 +113,29 @@ def _allowed(tbl: str) -> set:
     return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
 
 
+_DYNAMIC_ASSESSMENT_COL_RE = re.compile(r'^(test|mark)_(?:\d{4}|__sy_)')
+
+
+def _is_dynamic_assessment_filter_key(fkey: str) -> bool:
+    """True for exploration keys like test_2024_2025_iready_reading_PL, not tests.test_name."""
+    return bool(_DYNAMIC_ASSESSMENT_COL_RE.match((fkey or '').replace('-', '_')))
+
+
+def _resolve_prefixed_table_filter_key(fkey: str, col_index: dict, priority: list[str]) -> str | None:
+    """Resolve dataset-builder collision keys like current_student_school_year."""
+    for tbl in priority:
+        prefix = f'{tbl}_'
+        if not fkey.startswith(prefix):
+            continue
+        bare = fkey[len(prefix):]
+        resolved = col_index.get(bare)
+        if resolved and resolved.split('.', 1)[0] == tbl:
+            return resolved
+        if bare in _allowed(tbl):
+            return f'{tbl}.{bare}'
+    return None
+
+
 def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
     """
     Resolve a mixed filter dict (keys may be bare exploration names, JSONB key
@@ -134,7 +157,7 @@ def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
     for fk, fval in filters.items():
         if not fval:
             continue
-        if fk.startswith(('test_', 'mark_')):
+        if _is_dynamic_assessment_filter_key(fk):
             continue
         fval = _resolve_year_token(fval)
         if not fval:
@@ -146,6 +169,8 @@ def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
                 out[fk] = fval
         else:
             resolved = col_index.get(fk)
+            if not resolved:
+                resolved = _resolve_prefixed_table_filter_key(fk, col_index, priority)
             if not resolved:
                 for tbl in priority:
                     if fk in _allowed(tbl):
