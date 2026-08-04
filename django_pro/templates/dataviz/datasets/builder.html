@@ -312,6 +312,34 @@
         </div>
     </div>
 
+    <!-- Student Status Section -->
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
+        <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Student Status</h3>
+            <button @click="statusFilter = []" class="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider" x-show="statusFilter.length > 0">All Statuses</button>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-3">
+            Restrict which students are included in this dataset. When a chart or page uses this
+            dataset, this selection is applied automatically. <span class="font-bold text-slate-700">All Statuses</span>
+            (empty) includes every student regardless of status.
+        </p>
+        <div class="space-y-2">
+            <label class="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
+                <input type="checkbox" :value="'Active'" x-model="statusFilter" class="text-blue-600 focus:ring-blue-500 border-slate-300 rounded-none h-3.5 w-3.5">
+                <span class="font-semibold">Active</span>
+                <span class="text-slate-400">Currently enrolled / active students</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
+                <input type="checkbox" :value="'Inactive'" x-model="statusFilter" class="text-blue-600 focus:ring-blue-500 border-slate-300 rounded-none h-3.5 w-3.5">
+                <span class="font-semibold">Inactive</span>
+                <span class="text-slate-400">Left / inactive students</span>
+            </label>
+        </div>
+        <template x-if="statusFilter.length === 0">
+            <div class="mt-2 text-[10px] text-slate-400">All statuses selected — no status restriction applied.</div>
+        </template>
+    </div>
+
     <!-- Filters Section -->
     <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
         <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
@@ -323,7 +351,7 @@
                 <button @click="addFilter()" class="text-xs font-bold text-blue-600 hover:text-blue-800 uppercase tracking-wider">+ Add Filter</button>
             </div>
         </div>
-        
+
         <div class="space-y-3">
             <template x-for="(filter, index) in filters" :key="index">
                 <div class="flex flex-col md:flex-row items-start md:items-center space-y-2 md:space-y-0 md:space-x-3 bg-slate-50 border border-slate-200 p-3 rounded-none">
@@ -405,6 +433,70 @@
             </template>
             <div x-show="filters.length === 0" class="text-center py-4 text-xs text-slate-400">
                 No filters configured. All records will be matched.
+            </div>
+        </div>
+    </div>
+
+    <!-- Order By Section -->
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
+        <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Order By</h3>
+            <div class="flex space-x-4">
+                <template x-if="orderBy.length > 0">
+                    <button @click="clearAllOrderBy()" class="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider">Clear All</button>
+                </template>
+                <button @click="addOrderBy()" class="text-xs font-bold text-blue-600 hover:text-blue-800 uppercase tracking-wider">+ Add Sort Column</button>
+            </div>
+        </div>
+
+        <!-- Summary text when sort rules are active -->
+        <template x-if="orderBy.length > 0">
+            <div class="mb-3 px-2 py-1.5 bg-blue-50 border border-blue-200 rounded-none text-[10px] text-blue-700 flex items-center space-x-2">
+                <svg class="h-3.5 w-3.5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+                <span class="font-mono" x-text="'Sorted by: ' + orderBy.filter(o => o.column).map(o => {
+                    const parts = o.column.split('.');
+                    return parts[1] || parts[0];
+                }).join(', ')"></span>
+            </div>
+        </template>
+
+        <div class="space-y-3">
+            <template x-for="(ob, index) in orderBy" :key="index">
+                <div class="flex items-center space-x-3 bg-slate-50 border border-slate-200 p-3 rounded-none">
+                    <div class="w-8 text-center">
+                        <span class="text-[10px] font-bold text-slate-400" x-text="index + 1"></span>
+                    </div>
+                    <div class="flex-1">
+                        <select x-model="ob.column" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 text-xs py-1.5 px-2 border bg-white">
+                            <option value="">-- Choose Column --</option>
+                            <template x-for="col in activeCanvasColumns" :key="col">
+                                <option :value="col" x-text="col"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="w-32">
+                        <select x-model="ob.direction" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 text-xs py-1.5 px-2 border bg-white">
+                            <option value="asc">Ascending ↑</option>
+                            <option value="desc">Descending ↓</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center space-x-1">
+                        <button @click="moveOrderByUp(index)" :disabled="index === 0"
+                                class="text-slate-400 hover:text-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition" title="Move up">
+                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>
+                        </button>
+                        <button @click="moveOrderByDown(index)" :disabled="index === orderBy.length - 1"
+                                class="text-slate-400 hover:text-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition" title="Move down">
+                            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+                        </button>
+                        <button @click="removeOrderBy(index)" class="text-slate-400 hover:text-red-500 transition ml-1" title="Remove sort">
+                            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        </button>
+                    </div>
+                </div>
+            </template>
+            <div x-show="orderBy.length === 0" class="text-center py-4 text-xs text-slate-400">
+                No sorting configured. Rows will be returned in default database order.
             </div>
         </div>
     </div>
@@ -551,8 +643,11 @@
 {% if dataset %}
 {{ dataset.joins|json_script:"joins-data" }}
 {{ dataset.filters|json_script:"filters-data" }}
+{{ dataset.status_filter|json_script:"status_filter-data" }}
 {{ dataset.columns|json_script:"columns-data" }}
+{{ dataset.order_by|json_script:"order_by-data" }}
 {{ dataset.column_mappings|json_script:"mappings-data" }}
+{{ dataset.sql_preview|json_script:"sql_preview-data" }}
 {% endif %}
 
 <!-- ── Column Alias Mapper Panel ─────────────────────────────────────────── -->
@@ -728,7 +823,9 @@
             distinct: {% if dataset %}{% if dataset.distinct %}true{% else %}false{% endif %}{% else %}true{% endif %},
             joins: [],
             filters: [],
+            statusFilter: ['Active'],
             columns: [],
+            orderBy: [],
 
             // Column alias state
             columnMappings: {},      // { 'table.col': 'alias' }
@@ -784,8 +881,21 @@
                 if (document.getElementById('filters-data')) {
                     this.filters = JSON.parse(document.getElementById('filters-data').textContent);
                 }
+                if (document.getElementById('status_filter-data')) {
+                    this.statusFilter = JSON.parse(document.getElementById('status_filter-data').textContent) || [];
+                }
                 if (document.getElementById('columns-data')) {
                     this.columns = JSON.parse(document.getElementById('columns-data').textContent);
+                }
+                if (document.getElementById('order_by-data')) {
+                    this.orderBy = JSON.parse(document.getElementById('order_by-data').textContent) || [];
+                }
+                if (document.getElementById('sql_preview-data')) {
+                    try {
+                        this.compiledSQL = JSON.parse(document.getElementById('sql_preview-data').textContent);
+                    } catch(e) {
+                        this.compiledSQL = '';
+                    }
                 }
                 if (document.getElementById('mappings-data')) {
                     this.columnMappings = JSON.parse(document.getElementById('mappings-data').textContent) || {};
@@ -1264,6 +1374,7 @@
                 this.joins = [];
                 this.columns = [];
                 this.filters = [];
+                this.orderBy = [];
                 this.baseTable = '';
                 this.onColumnsChange();
             },
@@ -1329,6 +1440,7 @@
             onColumnsChange() {
                 const activeTables = this.nodes.map(n => n.table);
                 this.filters = this.filters.filter(f => f.column && activeTables.includes(f.column.split('.')[0]));
+                this.orderBy = this.orderBy.filter(o => o.column && activeTables.includes(o.column.split('.')[0]));
             },
             
             addFilter() {
@@ -1373,6 +1485,38 @@
             
             clearFilterValues(filter) {
                 filter.value = [];
+            },
+            
+            // ── Order By Helpers ────────────────────────────────────────────
+            
+            addOrderBy() {
+                this.orderBy.push({ column: '', direction: 'asc' });
+            },
+            
+            removeOrderBy(index) {
+                this.orderBy.splice(index, 1);
+            },
+            
+            clearAllOrderBy() {
+                if (confirm("Are you sure you want to clear all sort rules?")) {
+                    this.orderBy = [];
+                }
+            },
+            
+            moveOrderByUp(index) {
+                if (index > 0) {
+                    const items = [...this.orderBy];
+                    [items[index - 1], items[index]] = [items[index], items[index - 1]];
+                    this.orderBy = items;
+                }
+            },
+            
+            moveOrderByDown(index) {
+                if (index < this.orderBy.length - 1) {
+                    const items = [...this.orderBy];
+                    [items[index], items[index + 1]] = [items[index + 1], items[index]];
+                    this.orderBy = items;
+                }
             },
             
             startPan(event) {
@@ -1460,7 +1604,9 @@
                     distinct: this.distinct,
                     joins: this.joins,
                     filters: this.filters,
-                    columns: this.columns
+                    status_filter: this.statusFilter,
+                    columns: this.columns,
+                    order_by: this.orderBy
                 };
                 
                 fetch("{% url 'dataviz:dataset_preview' %}", {
@@ -1489,7 +1635,7 @@
                     }).join('');
                     
                     const activeFilters = this.filters.filter(f => f.column);
-                    const filtersSQL = activeFilters.length > 0 ? `\nWHERE\n  ` + activeFilters.map(f => {
+                    const filterSQLParts = activeFilters.map(f => {
                         const tbl = f.column.split('.')[0];
                         const col = f.column.split('.')[1];
                         const expr = this.formatColExpr(tbl, col);
@@ -1512,12 +1658,29 @@
                                 return `${expr} < '${escapedVal}'`;
                             }
                         }
-                    }).join(' AND ') : '';
+                    });
+
+                    // Status filter — included when the user has narrowed statuses
+                    if (this.statusFilter && this.statusFilter.length > 0) {
+                        if (this.statusFilter.length === 1) {
+                            filterSQLParts.push(`"current_student"."status" = '${String(this.statusFilter[0]).replace(/'/g, "''")}'`);
+                        } else {
+                            const statusVals = this.statusFilter.map(v => `'${String(v).replace(/'/g, "''")}'`).join(', ');
+                            filterSQLParts.push(`"current_student"."status" IN (${statusVals})`);
+                        }
+                    }
+
+                    const filtersSQL = filterSQLParts.length > 0 ? `\nWHERE\n  ` + filterSQLParts.join(' AND ') : '';
 
                     this.compiledSQL = `${selectKeyword}\n  ` + this.columns.map(c => `${this.formatColExpr(c.split('.')[0], c.split('.')[1])} AS "${c}"`).join(',\n  ') +
                                        `\nFROM\n  "${this.baseTable}"` +
                                        joinsSQL +
                                        filtersSQL +
+                                       (this.orderBy.length > 0 ? `\nORDER BY\n  ` + this.orderBy.filter(o => o.column).map(o => {
+                                           const tbl = o.column.split('.')[0];
+                                           const col = o.column.split('.')[1];
+                                           return `${this.formatColExpr(tbl, col)} ${(o.direction || 'asc').toUpperCase()}`;
+                                       }).join(',\n  ') : '') +
                                        `\nLIMIT 150000;`;
                 })
                 .catch(err => {
@@ -1542,7 +1705,9 @@
                     distinct: this.distinct,
                     joins: this.joins,
                     filters: this.filters,
-                    columns: this.columns
+                    status_filter: this.statusFilter,
+                    columns: this.columns,
+                    order_by: this.orderBy
                 };
 
                 fetch("{% url 'dataviz:dataset_export_csv' %}", {
@@ -1698,7 +1863,9 @@
                     distinct: this.distinct,
                     joins: this.joins,
                     filters: this.filters,
+                    status_filter: this.statusFilter,
                     columns: this.columns,
+                    order_by: this.orderBy,
                     column_mappings: activeMappings,
                 };
                 

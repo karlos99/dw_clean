@@ -588,7 +588,8 @@ def execute_drill_query(
             # clean aliases from column_mappings, or already-qualified table.column)
             # into the table.column format required by compile_dataset_to_sql.
             from dataviz.utils.compiler import resolve_dataset_filters as _resolve_filters
-            dataset_filters = _resolve_filters(merged_filters, ds, active_tables)
+            from dataviz.utils.status_filter import prepare_interactive_filters
+            dataset_filters, status_val = prepare_interactive_filters(merged_filters, ds, active_tables)
 
             # Extract school_year for the explorer fallback (used below when yr_col
             # is absent from the dataset columns).
@@ -657,12 +658,16 @@ def execute_drill_query(
                     self.distinct = original.distinct
                     self.joins = original.joins
                     self.filters = original.filters
+                    self.status_filter = getattr(original, 'status_filter', None)
                     self.columns = columns
                     self.column_mappings = getattr(original, 'column_mappings', None) or {}
                     self.updated_at = getattr(original, 'updated_at', None)
             
             mock_ds = MockDataset(ds, dataset_columns)
-            sql, params = compile_dataset_to_sql(mock_ds, user=user, interactive_filters=dataset_filters, limit=None)
+            sql, params = compile_dataset_to_sql(
+                mock_ds, user=user, interactive_filters=dataset_filters,
+                limit=None, status_filter=status_val,
+            )
             # Use aliased executor so column_mappings are applied to result keys
             _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
             ds_result = execute_compiled_query_aliased(sql, params, _col_mappings)
@@ -728,6 +733,10 @@ def execute_drill_query(
                         resolved_col = resolve_exploration_column(ds, fk)
                         if resolved_col:
                             explorer_filters[resolved_col] = fval
+                    if status_val is None:
+                        explorer_filters['status'] = []
+                    elif status_val != 'Active':
+                        explorer_filters['status'] = status_val
 
                     if yr_col:
                         years = list(set(str(r.get(yr_col) or '').strip() for r in ds_rows))

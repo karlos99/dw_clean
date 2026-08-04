@@ -7,6 +7,8 @@ from django.db import connection
 from django.core.cache import cache
 from dataexploration.utils import get_user_roles
 
+from dataviz.utils.status_filter import _UNSET
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +113,29 @@ def _allowed(tbl: str) -> set:
     return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
 
 
+_DYNAMIC_ASSESSMENT_COL_RE = re.compile(r'^(test|mark)_(?:\d{4}|__sy_)')
+
+
+def _is_dynamic_assessment_filter_key(fkey: str) -> bool:
+    """True for exploration keys like test_2024_2025_iready_reading_PL, not tests.test_name."""
+    return bool(_DYNAMIC_ASSESSMENT_COL_RE.match((fkey or '').replace('-', '_')))
+
+
+def _resolve_prefixed_table_filter_key(fkey: str, col_index: dict, priority: list[str]) -> str | None:
+    """Resolve dataset-builder collision keys like current_student_school_year."""
+    for tbl in priority:
+        prefix = f'{tbl}_'
+        if not fkey.startswith(prefix):
+            continue
+        bare = fkey[len(prefix):]
+        resolved = col_index.get(bare)
+        if resolved and resolved.split('.', 1)[0] == tbl:
+            return resolved
+        if bare in _allowed(tbl):
+            return f'{tbl}.{bare}'
+    return None
+
+
 def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
     """
     Resolve a mixed filter dict (keys may be bare exploration names, JSONB key
@@ -132,7 +157,7 @@ def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
     for fk, fval in filters.items():
         if not fval:
             continue
-        if fk.startswith(('test_', 'mark_')):
+        if _is_dynamic_assessment_filter_key(fk):
             continue
         fval = _resolve_year_token(fval)
         if not fval:
@@ -144,6 +169,8 @@ def resolve_dataset_filters(filters: dict, dataset, active_tables: set) -> dict:
                 out[fk] = fval
         else:
             resolved = col_index.get(fk)
+            if not resolved:
+                resolved = _resolve_prefixed_table_filter_key(fk, col_index, priority)
             if not resolved:
                 for tbl in priority:
                     if fk in _allowed(tbl):
@@ -373,7 +400,7 @@ def format_column_expr(tbl, col):
     return f'"{tbl}"."{col}"'
 
 
-def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=None):
+def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=None, status_filter=_UNSET, order_by=None):
     """
     Compiles a Dataset definition object into parameterized SQL.
     Returns (sql_query_string, parameters_list).
@@ -394,6 +421,8 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
             'limit': limit,
             'updated': str(getattr(dataset, 'updated_at', '')),
             'interactive_filters': interactive_filters or {},
+            'status_filter': '__unset__' if status_filter is _UNSET else status_filter,
+            'order_by': order_by or getattr(dataset, 'order_by', None) or [],
         }, sort_keys=True, default=str).encode()
     ).hexdigest()
     cache_key = f"dv:compiled_sql:{ds_hash}{user_part}"
@@ -621,6 +650,22 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                 else:
                     where_parts.append("1=0")  # No students assigned
 
+    # Status filter — charts/pages pass status_filter explicitly (default Active via
+    # prepare_interactive_filters). Dataset builder compiles without interactive
+    # filters and must not implicitly restrict to Active; users control status via
+    # dataset.filters or page filters at render time.
+    from dataviz.utils.status_filter import append_quoted_status_where, normalize_status_value
+    if status_filter is not _UNSET:
+        resolved_status = status_filter
+    elif interactive_filters:
+        scratch = dict(interactive_filters)
+        resolved_status = normalize_status_value(scratch, pop=True)
+        interactive_filters = scratch
+    else:
+        resolved_status = None
+    if 'current_student' in active_tables:
+        append_quoted_status_where(where_parts, params, resolved_status, table='current_student')
+
     # Construct interactive filters
     if interactive_filters:
         allowed_tables = get_allowed_dataset_tables()
@@ -687,6 +732,23 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
         
+    # ORDER BY clause — accepts a list of {"column": "table.col", "direction": "asc"|"desc"}
+    order_list = order_by or getattr(dataset, 'order_by', None) or []
+    if order_list:
+        order_parts = []
+        for ob in order_list:
+            col_str = ob.get('column')
+            direction = (ob.get('direction') or 'asc').lower()
+            if direction not in ('asc', 'desc'):
+                direction = 'asc'
+            if not col_str:
+                continue
+            tbl, col = validate_column_identifier(col_str, active_tables)
+            expr = format_column_expr(tbl, col)
+            order_parts.append(f'{expr} {direction.upper()}')
+        if order_parts:
+            sql += " ORDER BY " + ", ".join(order_parts)
+    
     if limit is not None:
         sql += f" LIMIT {limit}"
     
