@@ -1518,7 +1518,9 @@ def load_students(request):
                 if num_rows <= 1 or (num_rows > 30 and col not in always_include):
                     continue
 
-                values = [("" if row[0] is None else row[0]) for row in rows[:30]]
+                values = [("" if row[0] is None else row[0]) for row in rows]
+                if col not in always_include:
+                    values = values[:30]
 
                 if values:
                     filter_options[col] = values
