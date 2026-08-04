@@ -402,6 +402,9 @@ class Dataset(models.Model):
     # column_mappings: {"tests.test_window": "test_window"}
     column_mappings = models.JSONField(default=dict, blank=True)
     
+    # order_by: [{"column": "current_student.grade", "direction": "asc"}] or "desc"
+    order_by = models.JSONField(default=list, blank=True)
+    
     sql_preview = models.TextField(blank=True)
     
     owner = models.ForeignKey(
@@ -430,6 +433,7 @@ class Dataset(models.Model):
             'filters': self.filters or [],
             'columns': self.columns or [],
             'column_mappings': self.column_mappings or {},
+            'order_by': self.order_by or [],
             'sql_preview': self.sql_preview,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),

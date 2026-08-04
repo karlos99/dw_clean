@@ -33,7 +33,28 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertEqual(params[0], 'Active')
         self.assertEqual(params[1], ['K', '1'])
 
-    def test_compile_dataset_to_sql_status_default_active(self):
+    def test_compile_dataset_to_sql_status_default_active_with_interactive_filters(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade'],
+            updated_at=None,
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', return_value=('current_student', 'grade')), \
+             patch('dataviz.utils.compiler.format_column_expr', return_value='"current_student"."grade"'):
+            sql, params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={'current_student.grade': ['K']},
+                user=None,
+            )
+        self.assertIn('"current_student"."status" = %s', sql)
+        self.assertIn('Active', params)
+
+    def test_compile_dataset_to_sql_status_no_implicit_filter_for_dataset_builder(self):
         dataset = SimpleNamespace(
             base_table='current_student',
             distinct=False,
@@ -47,8 +68,7 @@ class CompilerSqlTests(SimpleTestCase):
              patch('dataviz.utils.compiler.validate_column_identifier', return_value=('current_student', 'grade')), \
              patch('dataviz.utils.compiler.format_column_expr', return_value='"current_student"."grade"'):
             sql, params = compile_dataset_to_sql(dataset, interactive_filters={}, user=None)
-        self.assertIn('"current_student"."status" = %s', sql)
-        self.assertIn('Active', params)
+        self.assertNotIn('"current_student"."status"', sql)
 
     def test_compile_dataset_to_sql_status_explicit_all(self):
         dataset = SimpleNamespace(
@@ -101,6 +121,65 @@ class CompilerSqlTests(SimpleTestCase):
             )
             self.assertIn('("current_student"."atendace_rate" < %s OR "current_student"."atendace_rate" > %s OR "current_student"."atendace_rate" IS NULL)', sql)
             self.assertEqual(params[1:], [90.0, 95.0])
+
+    def test_compile_dataset_to_sql_order_by(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade', 'current_student.student_name'],
+            updated_at=None,
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade', 'student_name'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=lambda c, t: (c.split('.')[0], c.split('.')[1])), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=lambda t, c: f'"{t}"."{c}"'):
+            sql, params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                order_by=[
+                    {'column': 'current_student.grade', 'direction': 'asc'},
+                    {'column': 'current_student.student_name', 'direction': 'desc'},
+                ],
+            )
+        self.assertIn('ORDER BY "current_student"."grade" ASC, "current_student"."student_name" DESC', sql)
+
+    def test_compile_dataset_to_sql_order_by_defaults_asc(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade'],
+            updated_at=None,
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=lambda c, t: (c.split('.')[0], c.split('.')[1])), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=lambda t, c: f'"{t}"."{c}"'):
+            sql, params = compile_dataset_to_sql(
+                dataset, interactive_filters={}, user=None,
+                order_by=[{'column': 'current_student.grade'}],
+            )
+        self.assertIn('ORDER BY "current_student"."grade" ASC', sql)
+
+    def test_compile_dataset_to_sql_order_by_none_skipped(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade'],
+            updated_at=None,
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', return_value=('current_student', 'grade')), \
+             patch('dataviz.utils.compiler.format_column_expr', return_value='"current_student"."grade"'):
+            sql, params = compile_dataset_to_sql(dataset, interactive_filters={}, user=None)
+        self.assertNotIn('ORDER BY', sql)
 
     def test_build_where_clause_range_filters(self):
         from dataviz.views.api.query_api import _build_where_clause

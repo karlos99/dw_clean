@@ -200,12 +200,13 @@ def dataset_save_api(request):
         ds.joins = joins
         ds.filters = filters
         ds.columns = columns
+        ds.order_by = data.get('order_by', [])
         # Auto-generate clean aliases; user-provided overrides in the request body
         # are preserved — generate_column_aliases only fills in unmapped columns.
         user_mappings = data.get('column_mappings', {}) or {}
         ds.column_mappings = generate_column_aliases(columns, user_mappings)
 
-        sql, params = compile_dataset_to_sql(ds, user=request.user)
+        sql, params = compile_dataset_to_sql(ds, user=request.user, status_filter=None)
         ds.sql_preview = sql
         ds.save()
         return JsonResponse({'success': True, 'id': ds.pk, 'column_mappings': ds.column_mappings})
@@ -251,12 +252,13 @@ def dataset_detail_api(request, dataset_id):
             ds.joins = joins
             ds.filters = filters
             ds.columns = columns
+            ds.order_by = data.get('order_by', [])
             # Re-generate aliases when the column list changes; user-provided
             # overrides in the request body are preserved.
             user_mappings = data.get('column_mappings', ds.column_mappings or {}) or {}
             ds.column_mappings = generate_column_aliases(columns, user_mappings)
 
-            sql, params = compile_dataset_to_sql(ds, user=request.user)
+            sql, params = compile_dataset_to_sql(ds, user=request.user, status_filter=None)
             ds.sql_preview = sql
             ds.save()
             return JsonResponse({'success': True, 'id': ds.pk, 'column_mappings': ds.column_mappings})
@@ -310,9 +312,10 @@ def dataset_preview_api(request):
             distinct=data.get('distinct', True),
             joins=data.get('joins', []),
             filters=data.get('filters', []),
-            columns=data.get('columns', [])
+            columns=data.get('columns', []),
+            order_by=data.get('order_by', []),
         )
-        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=51)
+        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=51, status_filter=None)
         res = execute_compiled_query(sql, params)
 
         if res.get('error'):
@@ -346,9 +349,10 @@ def dataset_export_csv_api(request):
             distinct=data.get('distinct', True),
             joins=data.get('joins', []),
             filters=data.get('filters', []),
-            columns=data.get('columns', [])
+            columns=data.get('columns', []),
+            order_by=data.get('order_by', []),
         )
-        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=None)
+        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=None, status_filter=None)
         res = execute_compiled_query(sql, params)
 
         if res.get('error'):
@@ -451,9 +455,9 @@ def dataset_filter_options_api(request, dataset_id):
     import hashlib
     from dataviz.utils.compiler import (
         compile_dataset_to_sql, execute_compiled_query,
-        apply_column_aliases, resolve_dataset_filters,
-        generate_column_aliases,
+        apply_column_aliases, generate_column_aliases,
     )
+    from dataviz.utils.status_filter import prepare_interactive_filters
     ds = g4(Dataset, pk=dataset_id)
 
     current_filters_raw = request.GET.get('current_filters', '')
@@ -464,9 +468,8 @@ def dataset_filter_options_api(request, dataset_id):
         except (json.JSONDecodeError, ValueError):
             pass
 
-    # Resolve alias-format filter keys to table.column for compile_dataset_to_sql
     active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-    resolved_filters = resolve_dataset_filters(current_filters, ds, active_tables) if current_filters else {}
+    resolved_filters, status_val = prepare_interactive_filters(current_filters, ds, active_tables)
 
     # Cache key: dataset id + updated_at + resolved filters hash
     filters_hash = hashlib.md5(json.dumps(resolved_filters, sort_keys=True).encode()).hexdigest()[:10]
@@ -501,7 +504,10 @@ def dataset_filter_options_api(request, dataset_id):
                     if not (fk == sql_col or fk.startswith(sql_col + '->'))
                 }
                 # Compile base SQL with the excluded filters
-                sql, params = compile_dataset_to_sql(ds, user=request.user, interactive_filters=col_filters, limit=1)
+                sql, params = compile_dataset_to_sql(
+                    ds, user=request.user, interactive_filters=col_filters,
+                    limit=1, status_filter=status_val,
+                )
                 # Strip the trailing LIMIT clause so the subquery is unlimited
                 sql_base = sql.rsplit(' LIMIT ', 1)[0]
 

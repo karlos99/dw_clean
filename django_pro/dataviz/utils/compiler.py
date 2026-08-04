@@ -400,7 +400,7 @@ def format_column_expr(tbl, col):
     return f'"{tbl}"."{col}"'
 
 
-def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=None, status_filter=_UNSET):
+def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=None, status_filter=_UNSET, order_by=None):
     """
     Compiles a Dataset definition object into parameterized SQL.
     Returns (sql_query_string, parameters_list).
@@ -422,6 +422,7 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
             'updated': str(getattr(dataset, 'updated_at', '')),
             'interactive_filters': interactive_filters or {},
             'status_filter': '__unset__' if status_filter is _UNSET else status_filter,
+            'order_by': order_by or getattr(dataset, 'order_by', None) or [],
         }, sort_keys=True, default=str).encode()
     ).hexdigest()
     cache_key = f"dv:compiled_sql:{ds_hash}{user_part}"
@@ -649,14 +650,19 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                 else:
                     where_parts.append("1=0")  # No students assigned
 
-    # Status filter — same semantics as data exploration / column queries.
+    # Status filter — charts/pages pass status_filter explicitly (default Active via
+    # prepare_interactive_filters). Dataset builder compiles without interactive
+    # filters and must not implicitly restrict to Active; users control status via
+    # dataset.filters or page filters at render time.
     from dataviz.utils.status_filter import append_quoted_status_where, normalize_status_value
     if status_filter is not _UNSET:
         resolved_status = status_filter
-    else:
-        scratch = dict(interactive_filters or {})
+    elif interactive_filters:
+        scratch = dict(interactive_filters)
         resolved_status = normalize_status_value(scratch, pop=True)
         interactive_filters = scratch
+    else:
+        resolved_status = None
     if 'current_student' in active_tables:
         append_quoted_status_where(where_parts, params, resolved_status, table='current_student')
 
@@ -726,6 +732,23 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
         
+    # ORDER BY clause — accepts a list of {"column": "table.col", "direction": "asc"|"desc"}
+    order_list = order_by or getattr(dataset, 'order_by', None) or []
+    if order_list:
+        order_parts = []
+        for ob in order_list:
+            col_str = ob.get('column')
+            direction = (ob.get('direction') or 'asc').lower()
+            if direction not in ('asc', 'desc'):
+                direction = 'asc'
+            if not col_str:
+                continue
+            tbl, col = validate_column_identifier(col_str, active_tables)
+            expr = format_column_expr(tbl, col)
+            order_parts.append(f'{expr} {direction.upper()}')
+        if order_parts:
+            sql += " ORDER BY " + ", ".join(order_parts)
+    
     if limit is not None:
         sql += f" LIMIT {limit}"
     
