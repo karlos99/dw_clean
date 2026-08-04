@@ -658,6 +658,7 @@ def execute_drill_query(
                     self.distinct = original.distinct
                     self.joins = original.joins
                     self.filters = original.filters
+                    self.status_filter = getattr(original, 'status_filter', None)
                     self.columns = columns
                     self.column_mappings = getattr(original, 'column_mappings', None) or {}
                     self.updated_at = getattr(original, 'updated_at', None)

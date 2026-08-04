@@ -99,11 +99,43 @@ def append_quoted_status_where(
         params.append(status_val)
 
 
+def dataset_status_value(dataset) -> str | list | None:
+    """Resolve the status filter a Dataset should apply when rendered.
+
+    Returns:
+        ``'Active'`` when the dataset has no ``status_filter`` configured
+        (field missing or ``None``) — the historical default, so existing
+        datasets keep their current behavior.
+        ``None`` when ``status_filter`` is an empty list (all statuses).
+        ``str`` or ``list`` for a specific selection.
+    """
+    raw = getattr(dataset, 'status_filter', None)
+    if raw is None:
+        return 'Active'
+    if isinstance(raw, list):
+        cleaned = [s for s in raw if s]
+        if not cleaned:
+            return None
+        return cleaned[0] if len(cleaned) == 1 else cleaned
+    if raw == '':
+        return None
+    return raw
+
+
 def prepare_interactive_filters(raw_filters: dict | None, dataset, active_tables: set) -> tuple[dict, str | list | None]:
-    """Extract status before ``resolve_dataset_filters`` drops empty values."""
+    """Extract status before ``resolve_dataset_filters`` drops empty values.
+
+    An explicit ``status`` / ``current_student.status`` key in *raw_filters*
+    (chart or page-level override) takes precedence.  Otherwise the dataset's
+    own ``status_filter`` (set in the dataset builder) is used.
+    """
     from dataviz.utils.compiler import resolve_dataset_filters
 
     filters_copy = dict(raw_filters or {})
-    status_val = normalize_status_value(filters_copy, pop=True)
+    has_explicit_status = any(k in STATUS_KEYS for k in filters_copy)
+    if has_explicit_status:
+        status_val = normalize_status_value(filters_copy, pop=True)
+    else:
+        status_val = dataset_status_value(dataset)
     resolved = resolve_dataset_filters(filters_copy, dataset, active_tables)
     return resolved, status_val

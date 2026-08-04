@@ -229,6 +229,45 @@ class StatusFilterTests(SimpleTestCase):
         self.assertEqual(where, ['cs.status = %s'])
         self.assertEqual(params, ['Inactive'])
 
+    def test_dataset_status_value_defaults_active(self):
+        from dataviz.utils.status_filter import dataset_status_value
+        # Field missing → historical default Active
+        self.assertEqual(dataset_status_value(SimpleNamespace()), 'Active')
+        # Empty list → all statuses (no restriction)
+        self.assertEqual(dataset_status_value(SimpleNamespace(status_filter=[])), None)
+        # Single value
+        self.assertEqual(dataset_status_value(SimpleNamespace(status_filter=['Inactive'])), 'Inactive')
+        # Multiple values
+        self.assertEqual(
+            dataset_status_value(SimpleNamespace(status_filter=['Active', 'Inactive'])),
+            ['Active', 'Inactive'],
+        )
+        # Explicit None → default Active
+        self.assertEqual(dataset_status_value(SimpleNamespace(status_filter=None)), 'Active')
+
+    def test_prepare_interactive_filters_uses_dataset_status_when_no_explicit(self):
+        from dataviz.utils.status_filter import prepare_interactive_filters
+        ds = SimpleNamespace(
+            base_table='current_student', joins=[], columns=['current_student.grade'],
+            column_mappings=None, filters=[], status_filter=['Inactive'],
+        )
+        with patch('dataviz.utils.compiler.resolve_dataset_filters', return_value={}):
+            resolved, status_val = prepare_interactive_filters({}, ds, {'current_student'})
+        self.assertEqual(status_val, 'Inactive')
+        self.assertEqual(resolved, {})
+
+    def test_prepare_interactive_filters_explicit_status_wins(self):
+        from dataviz.utils.status_filter import prepare_interactive_filters
+        ds = SimpleNamespace(
+            base_table='current_student', joins=[], columns=['current_student.grade'],
+            column_mappings=None, filters=[], status_filter=['Inactive'],
+        )
+        with patch('dataviz.utils.compiler.resolve_dataset_filters', return_value={}):
+            resolved, status_val = prepare_interactive_filters({'status': ['Active']}, ds, {'current_student'})
+        self.assertEqual(status_val, ['Active'])
+        self.assertEqual(resolved, {})
+
+
 
 class DatasetDrillThroughTests(TestCase):
     def setUp(self):

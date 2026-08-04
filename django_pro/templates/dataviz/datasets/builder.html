@@ -312,6 +312,34 @@
         </div>
     </div>
 
+    <!-- Student Status Section -->
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
+        <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Student Status</h3>
+            <button @click="statusFilter = []" class="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider" x-show="statusFilter.length > 0">All Statuses</button>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-3">
+            Restrict which students are included in this dataset. When a chart or page uses this
+            dataset, this selection is applied automatically. <span class="font-bold text-slate-700">All Statuses</span>
+            (empty) includes every student regardless of status.
+        </p>
+        <div class="space-y-2">
+            <label class="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
+                <input type="checkbox" :value="'Active'" x-model="statusFilter" class="text-blue-600 focus:ring-blue-500 border-slate-300 rounded-none h-3.5 w-3.5">
+                <span class="font-semibold">Active</span>
+                <span class="text-slate-400">Currently enrolled / active students</span>
+            </label>
+            <label class="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
+                <input type="checkbox" :value="'Inactive'" x-model="statusFilter" class="text-blue-600 focus:ring-blue-500 border-slate-300 rounded-none h-3.5 w-3.5">
+                <span class="font-semibold">Inactive</span>
+                <span class="text-slate-400">Left / inactive students</span>
+            </label>
+        </div>
+        <template x-if="statusFilter.length === 0">
+            <div class="mt-2 text-[10px] text-slate-400">All statuses selected — no status restriction applied.</div>
+        </template>
+    </div>
+
     <!-- Filters Section -->
     <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
         <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
@@ -323,7 +351,7 @@
                 <button @click="addFilter()" class="text-xs font-bold text-blue-600 hover:text-blue-800 uppercase tracking-wider">+ Add Filter</button>
             </div>
         </div>
-        
+
         <div class="space-y-3">
             <template x-for="(filter, index) in filters" :key="index">
                 <div class="flex flex-col md:flex-row items-start md:items-center space-y-2 md:space-y-0 md:space-x-3 bg-slate-50 border border-slate-200 p-3 rounded-none">
@@ -615,6 +643,7 @@
 {% if dataset %}
 {{ dataset.joins|json_script:"joins-data" }}
 {{ dataset.filters|json_script:"filters-data" }}
+{{ dataset.status_filter|json_script:"status_filter-data" }}
 {{ dataset.columns|json_script:"columns-data" }}
 {{ dataset.order_by|json_script:"order_by-data" }}
 {{ dataset.column_mappings|json_script:"mappings-data" }}
@@ -794,6 +823,7 @@
             distinct: {% if dataset %}{% if dataset.distinct %}true{% else %}false{% endif %}{% else %}true{% endif %},
             joins: [],
             filters: [],
+            statusFilter: ['Active'],
             columns: [],
             orderBy: [],
 
@@ -850,6 +880,9 @@
                 }
                 if (document.getElementById('filters-data')) {
                     this.filters = JSON.parse(document.getElementById('filters-data').textContent);
+                }
+                if (document.getElementById('status_filter-data')) {
+                    this.statusFilter = JSON.parse(document.getElementById('status_filter-data').textContent) || [];
                 }
                 if (document.getElementById('columns-data')) {
                     this.columns = JSON.parse(document.getElementById('columns-data').textContent);
@@ -1571,6 +1604,7 @@
                     distinct: this.distinct,
                     joins: this.joins,
                     filters: this.filters,
+                    status_filter: this.statusFilter,
                     columns: this.columns,
                     order_by: this.orderBy
                 };
@@ -1601,7 +1635,7 @@
                     }).join('');
                     
                     const activeFilters = this.filters.filter(f => f.column);
-                    const filtersSQL = activeFilters.length > 0 ? `\nWHERE\n  ` + activeFilters.map(f => {
+                    const filterSQLParts = activeFilters.map(f => {
                         const tbl = f.column.split('.')[0];
                         const col = f.column.split('.')[1];
                         const expr = this.formatColExpr(tbl, col);
@@ -1624,7 +1658,19 @@
                                 return `${expr} < '${escapedVal}'`;
                             }
                         }
-                    }).join(' AND ') : '';
+                    });
+
+                    // Status filter — included when the user has narrowed statuses
+                    if (this.statusFilter && this.statusFilter.length > 0) {
+                        if (this.statusFilter.length === 1) {
+                            filterSQLParts.push(`"current_student"."status" = '${String(this.statusFilter[0]).replace(/'/g, "''")}'`);
+                        } else {
+                            const statusVals = this.statusFilter.map(v => `'${String(v).replace(/'/g, "''")}'`).join(', ');
+                            filterSQLParts.push(`"current_student"."status" IN (${statusVals})`);
+                        }
+                    }
+
+                    const filtersSQL = filterSQLParts.length > 0 ? `\nWHERE\n  ` + filterSQLParts.join(' AND ') : '';
 
                     this.compiledSQL = `${selectKeyword}\n  ` + this.columns.map(c => `${this.formatColExpr(c.split('.')[0], c.split('.')[1])} AS "${c}"`).join(',\n  ') +
                                        `\nFROM\n  "${this.baseTable}"` +
@@ -1659,6 +1705,7 @@
                     distinct: this.distinct,
                     joins: this.joins,
                     filters: this.filters,
+                    status_filter: this.statusFilter,
                     columns: this.columns,
                     order_by: this.orderBy
                 };
@@ -1816,6 +1863,7 @@
                     distinct: this.distinct,
                     joins: this.joins,
                     filters: this.filters,
+                    status_filter: this.statusFilter,
                     columns: this.columns,
                     order_by: this.orderBy,
                     column_mappings: activeMappings,

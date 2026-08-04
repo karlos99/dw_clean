@@ -3,6 +3,10 @@ from django.db import models
 from django.utils.text import slugify
 
 
+def _default_status_filter():
+    return ['Active']
+
+
 class SavedChart(models.Model):
     """A chart configuration saved by a user — can be powered by a Saved Query or raw SQL."""
 
@@ -395,6 +399,12 @@ class Dataset(models.Model):
     
     # filters: [{"column": "current_student.grade", "operator": "exact", "value": "12"}]
     filters = models.JSONField(default=list, blank=True)
+
+    # status_filter: which student statuses to include, e.g. ["Active"].
+    # Empty list ([]) = all statuses (no restriction). Applied when the dataset
+    # is rendered by charts/pages via prepare_interactive_filters. Defaults to
+    # Active to match the historical chart render behavior.
+    status_filter = models.JSONField(default=_default_status_filter, blank=True)
     
     # columns: ["current_student.ssid", "current_student.student_name", "results.test_name", "results.ss"]
     columns = models.JSONField(default=list, blank=True)
@@ -431,6 +441,7 @@ class Dataset(models.Model):
             'distinct': self.distinct,
             'joins': self.joins or [],
             'filters': self.filters or [],
+            'status_filter': self.status_filter or [],
             'columns': self.columns or [],
             'column_mappings': self.column_mappings or {},
             'order_by': self.order_by or [],

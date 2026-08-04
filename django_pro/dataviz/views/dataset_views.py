@@ -199,6 +199,7 @@ def dataset_save_api(request):
         ds.distinct = distinct
         ds.joins = joins
         ds.filters = filters
+        ds.status_filter = data.get('status_filter', []) or []
         ds.columns = columns
         ds.order_by = data.get('order_by', [])
         # Auto-generate clean aliases; user-provided overrides in the request body
@@ -206,7 +207,8 @@ def dataset_save_api(request):
         user_mappings = data.get('column_mappings', {}) or {}
         ds.column_mappings = generate_column_aliases(columns, user_mappings)
 
-        sql, params = compile_dataset_to_sql(ds, user=request.user, status_filter=None)
+        from dataviz.utils.status_filter import dataset_status_value
+        sql, params = compile_dataset_to_sql(ds, user=request.user, status_filter=dataset_status_value(ds))
         ds.sql_preview = sql
         ds.save()
         return JsonResponse({'success': True, 'id': ds.pk, 'column_mappings': ds.column_mappings})
@@ -251,6 +253,7 @@ def dataset_detail_api(request, dataset_id):
             ds.distinct = distinct
             ds.joins = joins
             ds.filters = filters
+            ds.status_filter = data.get('status_filter', []) or []
             ds.columns = columns
             ds.order_by = data.get('order_by', [])
             # Re-generate aliases when the column list changes; user-provided
@@ -258,7 +261,8 @@ def dataset_detail_api(request, dataset_id):
             user_mappings = data.get('column_mappings', ds.column_mappings or {}) or {}
             ds.column_mappings = generate_column_aliases(columns, user_mappings)
 
-            sql, params = compile_dataset_to_sql(ds, user=request.user, status_filter=None)
+            from dataviz.utils.status_filter import dataset_status_value
+            sql, params = compile_dataset_to_sql(ds, user=request.user, status_filter=dataset_status_value(ds))
             ds.sql_preview = sql
             ds.save()
             return JsonResponse({'success': True, 'id': ds.pk, 'column_mappings': ds.column_mappings})
@@ -312,10 +316,12 @@ def dataset_preview_api(request):
             distinct=data.get('distinct', True),
             joins=data.get('joins', []),
             filters=data.get('filters', []),
+            status_filter=data.get('status_filter', []) or [],
             columns=data.get('columns', []),
             order_by=data.get('order_by', []),
         )
-        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=51, status_filter=None)
+        from dataviz.utils.status_filter import dataset_status_value
+        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=51, status_filter=dataset_status_value(dataset))
         res = execute_compiled_query(sql, params)
 
         if res.get('error'):
@@ -352,7 +358,8 @@ def dataset_export_csv_api(request):
             columns=data.get('columns', []),
             order_by=data.get('order_by', []),
         )
-        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=None, status_filter=None)
+        from dataviz.utils.status_filter import dataset_status_value
+        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=None, status_filter=dataset_status_value(dataset))
         res = execute_compiled_query(sql, params)
 
         if res.get('error'):

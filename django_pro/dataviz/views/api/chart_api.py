@@ -140,7 +140,8 @@ def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset, s
     needed_years = []
     for k in needed_keys:
         res_k = resolve_relative_column_key(k)
-        yr = _parse_year(res_k)
+        prefix = 'test_' if str(k).startswith('test_') else 'mark_' if str(k).startswith('mark_') else ''
+        yr = _parse_year(res_k, prefix) if prefix else None
         if yr:
             needed_years.append(yr)
 

@@ -38,3 +38,4 @@ logs/
 *.log
 
 *.dump
+django_pro_old/
