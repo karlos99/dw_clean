@@ -1,0 +1,52 @@
+# Standalone stack: Rocket API + optional local ClickHouse for development.
+# For production, remove the clickhouse service and point CLICKHOUSE_URL at your instance.
+
+services:
+  api:
+    build: .
+    ports:
+      - "${PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      CLICKHOUSE_URL: ${CLICKHOUSE_URL:-http://clickhouse:8123}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-fastapi_clickhouse_db}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse_user}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-devpassword}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "clickhouse-client",
+          "--user",
+          "${CLICKHOUSE_USER:-clickhouse_user}",
+          "--password",
+          "${CLICKHOUSE_PASSWORD:-devpassword}",
+          "--query",
+          "SELECT 1",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+volumes:
+  clickhouse_data:
