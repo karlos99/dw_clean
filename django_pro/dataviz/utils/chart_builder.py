@@ -535,8 +535,24 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
         option.setdefault('dv', {})['category_axis'] = 'radius'
         return
         
+    t = _theme(cfg)
     if orientation == 'horizontal':
         if group_labels:
+            cat_font_size = int(cfg.get('compare_cat_font_size', 12) or 12)
+            cat_rotation  = int(cfg.get('compare_cat_rotation', 0) or 0)
+            x_label_font_size = int(cfg.get('x_label_font_size', 11) or 11)
+            x_label_rotation  = int(cfg.get('x_label_rotation', 0) or 0)
+            
+            # Estimate offset dynamically based on inner axis label rotation
+            if x_label_rotation > 0:
+                import math
+                text_width = 12 * x_label_font_size * 0.6
+                rad = math.radians(x_label_rotation)
+                height_contrib = text_width * math.sin(rad) + x_label_font_size * math.cos(rad)
+                offset = max(60, int(height_contrib + 12))
+            else:
+                offset = 60
+
             y_axis_option = [
                 {
                     'type': 'category',
@@ -549,11 +565,18 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
                     'type': 'category',
                     'data': group_labels,
                     'position': 'left',
-                    'offset': 60,
+                    'offset': offset,
                     'axisLine': {'show': False},
                     'axisTick': {'show': False},
                     'splitLine': {'show': False},
-                    'axisLabel': {'interval': 0, 'textStyle': {'fontWeight': 'bold'}, **x_lbl}
+                    'axisLabel': {
+                        'interval': 0,
+                        'textStyle': {'fontWeight': 'bold'},
+                        'fontSize': cat_font_size,
+                        'rotate': cat_rotation,
+                        'color': t['text'],
+                        'show': cfg.get('show_categories', True) is not False,
+                    }
                 }
             ]
         else:
@@ -568,6 +591,21 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
         return
         
     if group_labels:
+        cat_font_size = int(cfg.get('compare_cat_font_size', 12) or 12)
+        cat_rotation  = int(cfg.get('compare_cat_rotation', 0) or 0)
+        x_label_font_size = int(cfg.get('x_label_font_size', 11) or 11)
+        x_label_rotation  = int(cfg.get('x_label_rotation', 0) or 0)
+
+        # Estimate offset dynamically based on inner axis label rotation
+        if x_label_rotation > 0:
+            import math
+            text_width = 12 * x_label_font_size * 0.6
+            rad = math.radians(x_label_rotation)
+            height_contrib = text_width * math.sin(rad) + x_label_font_size * math.cos(rad)
+            offset = max(30, int(height_contrib + 12))
+        else:
+            offset = 30
+
         x_axis_option = [
             {
                 'type': 'category',
@@ -580,11 +618,18 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
                 'type': 'category',
                 'data': group_labels,
                 'position': 'bottom',
-                'offset': 30,
+                'offset': offset,
                 'axisLine': {'show': False},
                 'axisTick': {'show': False},
                 'splitLine': {'show': False},
-                'axisLabel': {'interval': 0, 'textStyle': {'fontWeight': 'bold'}, **x_lbl}
+                'axisLabel': {
+                    'interval': 0,
+                    'textStyle': {'fontWeight': 'bold'},
+                    'fontSize': cat_font_size,
+                    'rotate': cat_rotation,
+                    'color': t['text'],
+                    'show': cfg.get('show_categories', True) is not False,
+                }
             }
         ]
     else:
@@ -3701,6 +3746,8 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     compare_gap   = int(_raw_gap) if _raw_gap is not None and str(_raw_gap) != '' else 30
     cat_font_size = int(cfg.get('compare_cat_font_size', 12) or 12)
     cat_rotation  = int(cfg.get('compare_cat_rotation', 0) or 0)
+    x_label_font_size = int(cfg.get('x_label_font_size', 10) or 10)
+    x_label_rotation  = int(cfg.get('x_label_rotation', 0) or 0)
 
     # Collect all unique PL values across selected columns (skip blanks)
     _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL', 'nan', 'NAN', 'NaN'})
@@ -3851,7 +3898,8 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         'axisLabel': {
             **ax.get('axisLabel', {}),
             'interval': 0,
-            'fontSize': 10,
+            'fontSize': x_label_font_size,
+            'rotate': x_label_rotation,
             'show': cfg.get('show_categories', True) is not False,
         },
         'axisTick': {'show': False},
@@ -3868,11 +3916,22 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
 
     cat_formatter_js = "function(value) { return value || ''; }"
 
+    # Estimate offset dynamically based on inner axis label rotation
+    if x_label_rotation > 0:
+        import math
+        # Approx width of text = 12 (characters) * font_size * 0.6
+        text_width = 12 * x_label_font_size * 0.6
+        rad = math.radians(x_label_rotation)
+        height_contrib = text_width * math.sin(rad) + x_label_font_size * math.cos(rad)
+        offset = max(22, int(height_contrib + 12))
+    else:
+        offset = 22
+
     x_axis_1 = {
         'type': 'category',
         'data': cat_labels_for_axis,
         'position': 'bottom',
-        'offset': 22,
+        'offset': offset,
         'axisLabel': {
             'interval': 0,
             'fontSize': cat_font_size,
