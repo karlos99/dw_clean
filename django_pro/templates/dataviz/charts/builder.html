@@ -2438,18 +2438,48 @@
       <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
         <div class="px-3 py-3 border-b border-slate-100 space-y-2">
           <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Axis &amp; Layout</p>
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <div class="flex justify-between"><span class="text-[9px] text-slate-400">X rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
-              <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
-                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+          <template x-if="chartType === 'assessment_compare' || xCols.length > 1">
+            <div class="space-y-2">
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Compare Labels Rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
+                  <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
+                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                </div>
+                <div>
+                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Category Labels Rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatRotation+'°'"></span></div>
+                  <input type="range" min="0" max="90" step="15" x-model.number="compareCatRotation"
+                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Compare Labels Font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
+                  <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
+                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                </div>
+                <div>
+                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Category Labels Font</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatFontSize+'px'"></span></div>
+                  <input type="range" min="8" max="16" step="1" x-model.number="compareCatFontSize"
+                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                </div>
+              </div>
             </div>
-            <div>
-              <div class="flex justify-between"><span class="text-[9px] text-slate-400">X font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
-              <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
-                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+          </template>
+          <template x-if="chartType !== 'assessment_compare' && xCols.length <= 1">
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <div class="flex justify-between"><span class="text-[9px] text-slate-400">X rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
+                <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
+                       class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+              </div>
+              <div>
+                <div class="flex justify-between"><span class="text-[9px] text-slate-400">X font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
+                <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
+                       class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+              </div>
             </div>
-          </div>
+          </template>
           <div class="flex items-center gap-2">
             <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Truncate</span>
             <input type="range" min="0" max="30" step="1" x-model.number="xLabelMaxLength"

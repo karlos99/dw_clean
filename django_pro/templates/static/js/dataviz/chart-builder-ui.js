@@ -259,7 +259,7 @@ function chartBuilderUIMethods() {
                          'sortCol','sortDir','categoryOrder','limit','palette','showPercent','showPercentSymbol','percentDecimals','stackOrder',
                          'stRowCol','stColCol','stRowCols','stColCols','stAggFunc','stValueCol','stAggDecimals','explorerSelected',
                          'acIncludeCats','acIncludePl','acColFilters',
-                         'compareGap','compareCatFontSize','compareCatRotation','showCategories','showAxisTitles',
+                         'compareGap','showCategories','showAxisTitles',
                          'tooltipShowPct','tooltipShowCount','tooltipValuePct',
                          'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS'];
       const styleProps = ['chartTitle','titleFontSize','showLegend','showLabels',
@@ -268,6 +268,7 @@ function chartBuilderUIMethods() {
                           'barBorderRadius','showPoints','smooth',
                           'showZoom','showToolbox','showGrid','showAxisLabels','enableAnimation','showTooltip',
                           'xLabelRotation','xLabelFontSize','xLabelMaxLength','forceShowAllLabels','barCategoryGap','yAxisMin','yAxisMax',
+                          'compareCatFontSize','compareCatRotation',
                           'colorMap'];
       dataProps.forEach(prop => this.$watch(prop, () => this._scheduleDataPreview()));
       styleProps.forEach(prop => this.$watch(prop, () => this._scheduleStylePreview()));
@@ -360,7 +361,36 @@ function chartBuilderUIMethods() {
         const catLblShow = !!this.showCategories;
         const valLblShow = !!this.showAxisLabels;
         const catInterval = this.forceShowAllLabels ? 0 : 'auto';
-        if (this.chartType === 'bar' && this.barRadial) {
+        if (Array.isArray(curOpt.xAxis) && curOpt.xAxis.length > 1) {
+          let offset = this.chartType === 'assessment_compare' ? 22 : 30;
+          if (this.xLabelRotation > 0) {
+            const rad = (this.xLabelRotation * Math.PI) / 180;
+            const baseFontSize = this.chartType === 'assessment_compare' ? 10 : 11;
+            const textWidth = 12 * (this.xLabelFontSize || baseFontSize) * 0.6;
+            const heightContrib = textWidth * Math.sin(rad) + (this.xLabelFontSize || baseFontSize) * Math.cos(rad);
+            offset = Math.max(offset, Math.round(heightContrib + 12));
+          }
+          opt.xAxis = [
+            { axisLabel: { show: catLblShow, interval: 0, rotate: +this.xLabelRotation || 0, fontSize: +this.xLabelFontSize || (this.chartType === 'assessment_compare' ? 10 : 11) } },
+            { offset: offset, axisLabel: { show: catLblShow, interval: 0, rotate: +this.compareCatRotation || 0, fontSize: +this.compareCatFontSize || 12 } },
+          ];
+          opt.yAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow } }];
+        } else if (Array.isArray(curOpt.yAxis) && curOpt.yAxis.length > 1) {
+          let offset = 60;
+          if (this.xLabelRotation > 0) {
+            const rad = (this.xLabelRotation * Math.PI) / 180;
+            const textWidth = 12 * (this.xLabelFontSize || 11) * 0.6;
+            const heightContrib = textWidth * Math.sin(rad) + (this.xLabelFontSize || 11) * Math.cos(rad);
+            offset = Math.max(offset, Math.round(heightContrib + 12));
+          }
+          opt.yAxis = [
+            { axisLabel: { show: catLblShow, rotate: +this.xLabelRotation || 0, fontSize: +this.xLabelFontSize || 11 } },
+            { offset: offset, axisLabel: { show: catLblShow, interval: 0, rotate: +this.compareCatRotation || 0, fontSize: +this.compareCatFontSize || 12 } },
+          ];
+          opt.xAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow },
+            min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
+            max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined }];
+        } else if (this.chartType === 'bar' && this.barRadial) {
           opt.angleAxis = [{ axisLabel: { show: catLblShow, rotate: +this.xLabelRotation || 0, fontSize: +this.xLabelFontSize || 11, interval: catInterval } }];
           opt.radiusAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow },
             min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
@@ -375,12 +405,6 @@ function chartBuilderUIMethods() {
           opt.xAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow },
             min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
             max: this.yAxisMax !== '' && this.yAxisMax != null ? +this.yAxisMax : undefined }];
-        } else if (this.chartType === 'assessment_compare') {
-          opt.xAxis = [
-            { axisLabel: { show: catLblShow, interval: 0, fontSize: +this.xLabelFontSize || 10 } },
-            { axisLabel: { show: catLblShow, interval: 0 } },
-          ];
-          opt.yAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow } }];
         } else {
           opt.xAxis = [{ axisLabel: { show: catLblShow, rotate: +this.xLabelRotation || 0, fontSize: +this.xLabelFontSize || 11, interval: catInterval } }];
           opt.yAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow },
