@@ -4226,6 +4226,19 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
 
     # Apply category-axis label overrides (rotation, font size, truncation)
     x_label_style = _x_axis_label_style(cfg)
+    
+    # Secondary category axis label style (outer group categories)
+    sec_label_style = {
+        'show': cfg.get('show_categories', True) is not False,
+        'fontSize': int(cfg.get('compare_cat_font_size', 12) or 12),
+        'color': _theme(cfg)['text']
+    }
+    sec_rotation = int(cfg.get('compare_cat_rotation', 0) or 0)
+    if sec_rotation:
+        sec_label_style['rotate'] = sec_rotation
+    else:
+        sec_label_style['rotate'] = 0
+
     category_axis = (option.get('dv') or {}).get('category_axis', 'x')
     axis_targets = []
     if category_axis == 'y':
@@ -4241,9 +4254,12 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         if axes is None:
             continue
         if isinstance(axes, list):
-            for axis in axes:
+            for i, axis in enumerate(axes):
                 if isinstance(axis, dict):
-                    axis.setdefault('axisLabel', {}).update(x_label_style)
+                    if i == 0:
+                        axis.setdefault('axisLabel', {}).update(x_label_style)
+                    else:
+                        axis.setdefault('axisLabel', {}).update(sec_label_style)
         elif isinstance(axes, dict):
             axes.setdefault('axisLabel', {}).update(x_label_style)
 
