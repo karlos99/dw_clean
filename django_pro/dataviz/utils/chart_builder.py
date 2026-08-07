@@ -514,6 +514,49 @@ def _build_grouped_axis_data(categories, sep=' · '):
 def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax, x_lbl, orientation='vertical', radial=False, polar=False):
     leaf_categories, group_labels = _build_grouped_axis_data(categories)
     
+    # Insert spacers if group_gap_size is configured
+    group_gap_size = int(cfg.get('group_gap_size', 0) or 0)
+    if group_labels and group_gap_size > 0:
+        new_categories = []
+        new_leaf_categories = []
+        new_group_labels = []
+        spacer_indices = []
+        
+        last_parent = None
+        for idx, cat in enumerate(categories):
+            parts = cat.split(' · ')
+            parent = ' · '.join(parts[:-1]) if len(parts) > 1 else ""
+            if last_parent is not None and parent != last_parent:
+                for j in range(group_gap_size):
+                    spacer_cat = f"{last_parent} ·  spacer_{idx}_{j}"
+                    new_categories.append(spacer_cat)
+                    new_leaf_categories.append(" ")
+                    new_group_labels.append(last_parent)
+                    spacer_indices.append(len(new_categories) - 1)
+            new_categories.append(cat)
+            new_leaf_categories.append(leaf_categories[idx])
+            new_group_labels.append(group_labels[idx])
+            last_parent = parent
+            
+        if spacer_indices:
+            categories = new_categories
+            leaf_categories = new_leaf_categories
+            group_labels = new_group_labels
+            
+            for s in series:
+                if isinstance(s, dict) and 'data' in s:
+                    new_data = []
+                    orig_data = s['data']
+                    orig_idx = 0
+                    for i in range(len(categories)):
+                        if i in spacer_indices:
+                            new_data.append(None)
+                        else:
+                            if orig_idx < len(orig_data):
+                                new_data.append(orig_data[orig_idx])
+                                orig_idx += 1
+                    s['data'] = new_data
+    
     if radial:
         option.pop('grid', None)
         option.update({
@@ -3780,19 +3823,32 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             pl_color[pv] = palette[pal_idx % len(palette)]
             pal_idx += 1
 
-    # ── Build flat x-axis: one position per (category, group) — no spacers ──
+    # ── Build flat x-axis: one position per (category, group) ──
     x_labels = []          # xAxis[0] labels: window/year
     cat_for_pos = []       # category name per position (for drill-through)
     col_for_pos = []       # PL column name per position (for drill-through)
     group_ranges = []      # [(start, end, cat_name), ...] for xAxis[1] labels
+    spacer_positions = set()
+
+    group_gap_size = int(cfg.get('group_gap_size', 0) or 0)
 
     flat_pos = 0
+    pos_map = {}
     for ci, cat in enumerate(base_categories):
+        if ci > 0 and group_gap_size > 0:
+            for j in range(group_gap_size):
+                x_labels.append(" ")
+                cat_for_pos.append("")
+                col_for_pos.append("")
+                spacer_positions.add(flat_pos)
+                flat_pos += 1
+                
         group_start = flat_pos
         for gi, col in enumerate(ordered_cols):
             x_labels.append(group_labels[col])
             cat_for_pos.append(cat)
             col_for_pos.append(col)
+            pos_map[flat_pos] = (cat, col)
             flat_pos += 1
         group_end = flat_pos - 1
         group_ranges.append((group_start, group_end, cat))
@@ -3802,10 +3858,10 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     # Pre-compute raw counts per position
     raw_counts = {}    # {pos: {pv: count}}
     for pos in range(total_positions):
-        ci = pos // n_groups
-        gi = pos % n_groups
-        cat = base_categories[ci]
-        col = ordered_cols[gi]
+        if pos in spacer_positions:
+            raw_counts[pos] = {pv: 0 for pv in pl_vals}
+            continue
+        cat, col = pos_map[pos]
         counts = {}
         for pv in pl_vals:
             mask = (df[x_col].fillna('(Blank)').astype(str) == cat) & (df[col].astype(str).str.strip() == pv)
@@ -3820,6 +3876,9 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     for pv in reversed(pl_vals):
         data_vals = []
         for pos in range(total_positions):
+            if pos in spacer_positions:
+                data_vals.append(None)
+                continue
             cnt = raw_counts[pos].get(pv, 0)
             if show_percent and totals[pos] > 0:
                 data_vals.append(round(cnt / totals[pos] * 100, percent_decimals))

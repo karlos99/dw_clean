@@ -297,6 +297,7 @@ function chartBuilderPreviewMethods(urls) {
         compare_gap: this.compareGap,
         compare_cat_font_size: this.compareCatFontSize,
         compare_cat_rotation: this.compareCatRotation,
+        group_gap_size: this.groupGapSize,
         x_label_rotation: this.xLabelRotation,
         x_label_font_size: this.xLabelFontSize,
         x_label_max_length: this.xLabelMaxLength,

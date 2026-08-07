@@ -2464,6 +2464,13 @@
                          class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
                 </div>
               </div>
+              <div class="flex items-center gap-2 pt-1 border-t border-slate-100">
+                <span class="text-[9px] text-slate-400 w-24 flex-shrink-0">Group gap size</span>
+                <input type="range" min="0" max="3" step="1" x-model.number="groupGapSize"
+                       class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                <span class="text-[9px] font-mono text-slate-400 w-12 text-right"
+                      x-text="groupGapSize > 0 ? groupGapSize + ' col' : 'Off'"></span>
+              </div>
             </div>
           </template>
           <template x-if="chartType !== 'assessment_compare' && xCols.length <= 1">
@@ -3043,6 +3050,7 @@
     <input type="hidden" name="compare_gap"     x-bind:value="compareGap">
     <input type="hidden" name="compare_cat_font_size" x-bind:value="compareCatFontSize">
     <input type="hidden" name="compare_cat_rotation" x-bind:value="compareCatRotation">
+    <input type="hidden" name="group_gap_size"     x-bind:value="groupGapSize">
     <input type="hidden" name="x_label_rotation"    x-bind:value="xLabelRotation">
     <input type="hidden" name="x_label_font_size"   x-bind:value="xLabelFontSize">
     <input type="hidden" name="x_label_max_length"  x-bind:value="xLabelMaxLength">
@@ -3358,6 +3366,7 @@ function chartBuilder() {
     compareGap:       existing?.config?.compare_gap ?? 30,
     compareCatFontSize: existing?.config?.compare_cat_font_size ?? 12,
     compareCatRotation: existing?.config?.compare_cat_rotation ?? 0,
+    groupGapSize:     existing?.config?.group_gap_size ?? 0,
     /* Parliament options */
     parliamentDotScale: existing?.config?.parliament_dot_scale ?? 1.0,
     parliamentShape:    existing?.config?.parliament_shape    ?? 'semi-circle',
