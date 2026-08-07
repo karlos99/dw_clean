@@ -261,7 +261,7 @@ function chartBuilderUIMethods() {
                          'acIncludeCats','acIncludePl','acColFilters',
                          'compareGap','showCategories','showAxisTitles',
                          'tooltipShowPct','tooltipShowCount','tooltipValuePct',
-                         'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS'];
+                         'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS','groupGapSize'];
       const styleProps = ['chartTitle','titleFontSize','showLegend','showLabels',
                           'legendPos','legendItemGap','legendFontSize','legendIconSize','legendOffset',
                           'labelPosition','labelFontSize','background','opacity',

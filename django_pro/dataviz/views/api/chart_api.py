@@ -427,6 +427,7 @@ def _cfg_from_post(post):
         'compare_gap':       _parse_int(post.get('compare_gap'), 30),
         'compare_cat_font_size': _parse_int(post.get('compare_cat_font_size'), 12),
         'compare_cat_rotation':  _parse_int(post.get('compare_cat_rotation'), 0),
+        'group_gap_size':        _parse_int(post.get('group_gap_size'), 0),
         # Axis & layout
         'x_label_rotation':  _parse_int(post.get('x_label_rotation'), 0),
         'x_label_font_size': _parse_int(post.get('x_label_font_size'), 11),
