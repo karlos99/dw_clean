@@ -1,0 +1,41 @@
+# New Axum + React stack. Reuses the same Postgres/Redis/ClickHouse as docker-compose.yml.
+services:
+  api:
+    build:
+      context: ./apps/api
+    container_name: dw_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      API_PORT: "8080"
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8080}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ALLOW_DEV_LOGIN: ${ALLOW_DEV_LOGIN:-true}
+    ports:
+      - "8080:8080"
+    networks:
+      - dwdev_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./apps/web
+    container_name: dw_web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    networks:
+      - dwdev_network
+    depends_on:
+      - api
+
+networks:
+  dwdev_network:
+    external: true
+    name: dw_clean_dwdev_network

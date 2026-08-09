@@ -1,0 +1,65 @@
+:root {
+  color: #14201a;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #d7ebe1 0%, transparent 55%),
+    linear-gradient(180deg, #f3f7f4 0%, #e7eee9 100%);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 1.45;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+a { color: inherit; text-decoration: none; }
+button, input, select {
+  font: inherit;
+  border: 1px solid #b7c7bd;
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+}
+button { cursor: pointer; }
+button.primary, a.btn.primary {
+  background: #1f6b4a;
+  border-color: #1f6b4a;
+  color: #fff;
+  display: inline-block;
+  padding: 0.7rem 1rem;
+  border-radius: 8px;
+}
+
+.layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+.sidebar {
+  background: #163528;
+  color: #edf6f1;
+  padding: 1.25rem 1rem;
+}
+.brand { font-size: 1.25rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing: 0.02em; }
+.nav-link { display: block; padding: 0.55rem 0.65rem; border-radius: 8px; margin-bottom: 0.25rem; }
+.nav-link:hover { background: rgba(255,255,255,0.08); }
+.nav-link.muted { opacity: 0.75; font-size: 0.92rem; }
+main { display: flex; flex-direction: column; }
+.topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 1.5rem; border-bottom: 1px solid #cddad2; background: rgba(255,255,255,0.65);
+  backdrop-filter: blur(6px);
+}
+.topbar-actions { display: flex; gap: 0.5rem; align-items: center; }
+.content { padding: 1.5rem; }
+.muted { color: #5b6b62; }
+.error { color: #a11; }
+.center, .login {
+  min-height: 100vh; display: grid; place-content: center; gap: 0.75rem; text-align: center; padding: 2rem;
+}
+.login form { display: grid; gap: 0.5rem; width: min(360px, 90vw); margin: 0 auto; }
+.divider { margin: 0.75rem 0; color: #5b6b62; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+.table-wrap { overflow: auto; background: #fff; border: 1px solid #cddad2; border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.65rem 0.8rem; border-bottom: 1px solid #e4ebe6; }
+th { background: #f6faf7; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; }
+
+@media (max-width: 800px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { display: flex; gap: 1rem; align-items: center; overflow-x: auto; }
+  .sidebar nav { display: flex; gap: 0.25rem; }
+}
