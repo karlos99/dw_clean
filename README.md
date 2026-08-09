@@ -15,21 +15,24 @@ django_pro # Legacy Django (reference)
 
 ## Quick start (local)
 
-1. Copy `.env.example` → `.env` and point Postgres at your existing DB.
-2. API:
+### A) Smoke against a local seed DB (no prod secrets)
 
 ```bash
-cd apps/api
-cargo run
+# requires local PostgreSQL 16
+bash scripts/dev_db_setup.sh
+cp .env.example .env   # defaults match scripts/dev_db_setup.sh (dw_dev / dw_dev)
+cd apps/api && cargo run
+# other terminal:
+cd apps/web && npm install && npm run dev
 ```
 
-3. Web:
+Dev login: `dev@example.com` (button on the login page).
 
-```bash
-cd apps/web
-npm install
-npm run dev
-```
+### B) Point at your existing dw_clean Postgres
+
+1. Copy `.env.example` → `.env` and set `POSTGRES_*` or `DATABASE_URL`.
+2. API: `cd apps/api && cargo run`
+3. Web: `cd apps/web && npm install && npm run dev`
 
 Open http://localhost:5173 — Vite proxies `/api` → `:8080`.
 
