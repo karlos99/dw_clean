@@ -280,8 +280,9 @@ function pageBuilder() {
         }
       });
 
-      // After paint, auto-fit height to content for HTML blocks
-      if (sec.element_type === 'html') {
+      // Only auto-fit when the saved value explicitly requests it. Running
+      // this for every HTML block overwrites fixed heights on page reload.
+      if (sec.element_type === 'html' && Number(sec.gs_h) === 0) {
         this.$nextTick(() => this._fitHtmlWidget(grid, item));
       }
 
