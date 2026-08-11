@@ -1,4 +1,6 @@
 """Visual Dataset views: list, canvas builder, save, delete, preview API."""
+import csv
+import io
 import json
 import logging
 
@@ -355,6 +357,7 @@ def dataset_export_csv_api(request):
             distinct=data.get('distinct', True),
             joins=data.get('joins', []),
             filters=data.get('filters', []),
+            status_filter=data.get('status_filter', []) or [],
             columns=data.get('columns', []),
             order_by=data.get('order_by', []),
         )
@@ -371,13 +374,15 @@ def dataset_export_csv_api(request):
 
         from django.http import StreamingHttpResponse
         def stream_csv():
-            yield ','.join(f'"{str(c).replace(chr(34), chr(34)+chr(34))}"' for c in columns) + '\n'
+            buffer = io.StringIO()
+            writer = csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator='\n')
+            writer.writerow(columns)
+            yield buffer.getvalue()
             for row in rows:
-                yield ','.join(
-                    f'"{str(row.get(c, "")).replace(chr(34), chr(34)+chr(34))}"'
-                    if row.get(c) is not None else '""'
-                    for c in columns
-                ) + '\n'
+                buffer.seek(0)
+                buffer.truncate(0)
+                writer.writerow([row.get(c) for c in columns])
+                yield buffer.getvalue()
 
         response = StreamingHttpResponse(stream_csv(), content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="dataset_export.csv"'
@@ -735,4 +740,3 @@ def _dataset_filter_options_legacy(request, dataset_id):
         filter_labels[col_str] = col_str
 
     return JsonResponse({'filter_options': filter_options, 'filter_labels': filter_labels})
-

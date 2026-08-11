@@ -2,7 +2,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from django.test import SimpleTestCase, TestCase
 from django.contrib.auth import get_user_model
-from dataviz.models import SavedChart, Dataset
+from dataviz.models import (
+    SavedChart, Dataset, DataVizPage, DataVizPageRow, DataVizPageSection,
+)
 from dataviz.utils.compiler import compile_dataset_to_sql
 from dataviz.utils.drill_through import execute_drill_query
 
@@ -2146,6 +2148,65 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res_dyn['rows'][0][2], {'val': 400.0, 'tooltip': 'Count: 2'})
 
 
+class PageDuplicateTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='pageadmin', password='password', is_superuser=True,
+        )
+        self.chart = SavedChart.objects.create(
+            name='Shared Chart', owner=self.user, chart_type='bar',
+        )
+        self.page = DataVizPage.objects.create(
+            title='Enrollment Overview',
+            description='Page description',
+            container_width='wide',
+            show_header=False,
+            owner=self.user,
+            status=DataVizPage.STATUS_ACTIVE,
+            page_filters=[{'source_col': 'grade', 'label': 'Grade'}],
+        )
+        row = DataVizPageRow.objects.create(
+            page=self.page, label='Main row', position=2,
+            bg_color='#fff', collapsed=True, col_guide=4,
+        )
+        DataVizPageSection.objects.create(
+            page=self.page, row=row,
+            element_type=DataVizPageSection.TYPE_CHART,
+            chart=self.chart, show_title=False,
+            slot_filters=[{'col': 'grade', 'value': '5'}],
+            gs_x=2, gs_y=3, gs_w=8, gs_h=5, position=1,
+        )
+        DataVizPageSection.objects.create(
+            page=self.page,
+            element_type=DataVizPageSection.TYPE_HTML,
+            html_content='<p>Notes</p>', position=2,
+            gs_w=12, gs_h=2,
+        )
+
+    def test_duplicate_page_copies_layout_and_reuses_shared_charts(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(f'/dataviz/api/pages/{self.page.slug}/duplicate/')
+
+        self.assertEqual(response.status_code, 200)
+        copied = DataVizPage.objects.get(slug=response.json()['page']['slug'])
+        self.assertEqual(copied.title, 'Enrollment Overview (Copy)')
+        self.assertEqual(copied.status, DataVizPage.STATUS_DRAFT)
+        self.assertEqual(copied.owner, self.user)
+        self.assertIsNone(copied.linked_site_page_id)
+        self.assertEqual(copied.page_filters, self.page.page_filters)
+        self.assertEqual(copied.rows.count(), 1)
+        self.assertEqual(copied.sections.count(), 2)
+
+        copied_row = copied.rows.get()
+        self.assertEqual(copied_row.label, 'Main row')
+        self.assertTrue(copied_row.collapsed)
+        copied_chart_section = copied.sections.get(element_type=DataVizPageSection.TYPE_CHART)
+        self.assertEqual(copied_chart_section.chart_id, self.chart.id)
+        self.assertEqual(copied_chart_section.row_id, copied_row.id)
+        self.assertEqual(copied_chart_section.slot_filters, [{'col': 'grade', 'value': '5'}])
+
+
 class DatasetExportCSVTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testadmin', password='password', is_superuser=True)
@@ -2167,6 +2228,7 @@ class DatasetExportCSVTests(TestCase):
             'distinct': True,
             'joins': [],
             'filters': [],
+            'status_filter': ['Inactive'],
             'columns': ['current_student.ssid', 'current_student.student_name', 'current_student.grade']
         }
 
@@ -2179,6 +2241,7 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['Content-Type'], 'text/csv')
         self.assertIn('attachment; filename="dataset_export.csv"', response['Content-Disposition'])
+        self.assertEqual(mock_compile.call_args.kwargs['status_filter'], ['Inactive'])
 
         # Consume the streaming content
         content = b"".join(response.streaming_content).decode('utf-8')
@@ -2186,10 +2249,5 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(len(lines), 2)
         self.assertEqual(lines[0], '"ssid","student_name","grade"')
         self.assertEqual(lines[1], '"123","Alice","5"')
-
-
-
-
-
 
 
