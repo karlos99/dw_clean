@@ -650,10 +650,8 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                 else:
                     where_parts.append("1=0")  # No students assigned
 
-    # Status filter — charts/pages pass status_filter explicitly (default Active via
-    # prepare_interactive_filters). Dataset builder compiles without interactive
-    # filters and must not implicitly restrict to Active; users control status via
-    # dataset.filters or page filters at render time.
+    # Status filter — callers pass this explicitly. Dataset compilation must not
+    # implicitly restrict rows to Active when no status was selected.
     from dataviz.utils.status_filter import append_quoted_status_where, normalize_status_value
     if status_filter is not _UNSET:
         resolved_status = status_filter

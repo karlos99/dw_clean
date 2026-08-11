@@ -227,7 +227,7 @@
                 setMultiSelectValues(gradeBtn, gradeDd, 'dv-grade-opt',
                     filters.grade || cfg.grade || [], 'All');
                 setMultiSelectValues(statusBtn, statusDd, 'dv-status-opt',
-                    filters.status || cfg.status || ['Active'], 'All');
+                    filters.status || cfg.status || [], 'All');
 
                 // Pre-check column checkboxes from saved query columns list
                 const savedCols = cfg.columns || [];
@@ -509,4 +509,3 @@
             chartTypeEl.value = 'bar';
         }
         updateBuildAssistant();
-

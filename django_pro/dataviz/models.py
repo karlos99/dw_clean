@@ -4,7 +4,7 @@ from django.utils.text import slugify
 
 
 def _default_status_filter():
-    return ['Active']
+    return []
 
 
 class SavedChart(models.Model):
@@ -400,10 +400,10 @@ class Dataset(models.Model):
     # filters: [{"column": "current_student.grade", "operator": "exact", "value": "12"}]
     filters = models.JSONField(default=list, blank=True)
 
-    # status_filter: which student statuses to include, e.g. ["Active"].
+    # status_filter: explicitly selected student statuses, e.g. ["Active"].
+    # Empty means all statuses.
     # Empty list ([]) = all statuses (no restriction). Applied when the dataset
-    # is rendered by charts/pages via prepare_interactive_filters. Defaults to
-    # Active to match the historical chart render behavior.
+    # is rendered by charts/pages via prepare_interactive_filters.
     status_filter = models.JSONField(default=_default_status_filter, blank=True)
     
     # columns: ["current_student.ssid", "current_student.student_name", "results.test_name", "results.ss"]
