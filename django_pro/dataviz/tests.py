@@ -229,10 +229,10 @@ class StatusFilterTests(SimpleTestCase):
         self.assertEqual(where, ['cs.status = %s'])
         self.assertEqual(params, ['Inactive'])
 
-    def test_dataset_status_value_defaults_active(self):
+    def test_dataset_status_value_requires_explicit_selection(self):
         from dataviz.utils.status_filter import dataset_status_value
-        # Field missing → historical default Active
-        self.assertEqual(dataset_status_value(SimpleNamespace()), 'Active')
+        # A dataset without a selection includes all statuses.
+        self.assertIsNone(dataset_status_value(SimpleNamespace()))
         # Empty list → all statuses (no restriction)
         self.assertEqual(dataset_status_value(SimpleNamespace(status_filter=[])), None)
         # Single value
@@ -242,8 +242,8 @@ class StatusFilterTests(SimpleTestCase):
             dataset_status_value(SimpleNamespace(status_filter=['Active', 'Inactive'])),
             ['Active', 'Inactive'],
         )
-        # Explicit None → default Active
-        self.assertEqual(dataset_status_value(SimpleNamespace(status_filter=None)), 'Active')
+        # Explicit None also means all statuses.
+        self.assertIsNone(dataset_status_value(SimpleNamespace(status_filter=None)))
 
     def test_prepare_interactive_filters_uses_dataset_status_when_no_explicit(self):
         from dataviz.utils.status_filter import prepare_interactive_filters
@@ -1117,6 +1117,27 @@ class DrillThroughResultAlignmentTests(TestCase):
         response = self.client.get(f'/dataviz/api/drill/{self.chart.id}/rows/?cols=', HTTP_HX_REQUEST='true')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['columns'], ['grade', 'student_name'])
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_bar_count_drill_deduplicates_joined_rows_by_student(self, mock_run_sql):
+        mock_run_sql.return_value = {
+            'columns': ['ssid', 'student_name', 'grade', 'result_id'],
+            'rows': [
+                {'ssid': '123', 'student_name': 'Alice', 'grade': '5', 'result_id': 'a'},
+                {'ssid': '123', 'student_name': 'Alice', 'grade': '5', 'result_id': 'b'},
+                {'ssid': '456', 'student_name': 'Bob', 'grade': '5', 'result_id': 'c'},
+            ]
+        }
+
+        result = execute_drill_query(
+            self.chart,
+            drill_filters={'grade': '5'},
+            columns=['grade', 'student_name'],
+            user=self.user,
+        )
+
+        self.assertEqual(result['total_rows'], 2)
+        self.assertEqual([row['student_name'] for row in result['rows']], ['Alice', 'Bob'])
 
     @patch('dataviz.utils.drill_through.run_raw_sql')
     def test_drill_export_csv_api(self, mock_run_sql):
@@ -2165,8 +2186,6 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(len(lines), 2)
         self.assertEqual(lines[0], '"ssid","student_name","grade"')
         self.assertEqual(lines[1], '"123","Alice","5"')
-
-
 
 
 

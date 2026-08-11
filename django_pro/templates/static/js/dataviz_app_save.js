@@ -193,6 +193,7 @@
             });
         }
 
+
         function loadChartIntoExplore(chart) {
             // Switch to Explore mode
             document.getElementById('dv-mode-explore') && document.getElementById('dv-mode-explore').click();
@@ -249,7 +250,7 @@
             setMultiSelectValues(gradeBtn, gradeDd, 'dv-grade-opt',
                 filters.grade || [], 'All');
             setMultiSelectValues(statusBtn, statusDd, 'dv-status-opt',
-                filters.status || ['Active'], 'All');
+                filters.status || [], 'All');
 
             // Restore saved query selection
             if (savedQueryEl && chart.source_id) savedQueryEl.value = chart.source_id;
@@ -465,4 +466,3 @@
                     });
             });
         }
-

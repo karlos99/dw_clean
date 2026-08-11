@@ -19,7 +19,7 @@ def normalize_status_value(filters: dict | None, *, pop: bool = True) -> str | l
     """Return status filter value from a filters dict.
 
     Returns:
-        ``'Active'`` when the status key is absent (default).
+        ``'Active'`` when the status key is absent (default for saved queries).
         ``None`` when status is explicitly empty (all statuses).
         ``str`` or ``list`` for a specific filter.
     """
@@ -103,15 +103,13 @@ def dataset_status_value(dataset) -> str | list | None:
     """Resolve the status filter a Dataset should apply when rendered.
 
     Returns:
-        ``'Active'`` when the dataset has no ``status_filter`` configured
-        (field missing or ``None``) — the historical default, so existing
-        datasets keep their current behavior.
-        ``None`` when ``status_filter`` is an empty list (all statuses).
+        ``None`` when the dataset has no ``status_filter`` configured or it is
+        empty. Dataset status must be explicitly selected.
         ``str`` or ``list`` for a specific selection.
     """
     raw = getattr(dataset, 'status_filter', None)
     if raw is None:
-        return 'Active'
+        return None
     if isinstance(raw, list):
         cleaned = [s for s in raw if s]
         if not cleaned:

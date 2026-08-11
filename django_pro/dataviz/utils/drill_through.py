@@ -49,6 +49,36 @@ def _find_id_col(row_dict):
     return None
 
 
+def _deduplicate_count_drill_rows(rows, chart):
+    """Keep one drill row per student for row-count bar charts.
+
+    Drill queries add identifier/extra columns to the chart query. For joined
+    datasets those columns can make otherwise identical rows distinct, even
+    though the chart count was calculated from one row per student. Numeric
+    and occurrence aggregations intentionally retain their source rows.
+    """
+    if not rows or chart.chart_type not in ('bar', 'grouped_bar', 'stacked_bar'):
+        return rows
+    if (chart.config or {}).get('agg', 'count') != 'count':
+        return rows
+
+    id_col = _find_id_col(rows[0])
+    if not id_col:
+        return rows
+
+    seen = set()
+    deduped = []
+    for row in rows:
+        key = row.get(id_col)
+        if key is None or not str(key).strip():
+            deduped.append(row)
+            continue
+        if key not in seen:
+            seen.add(key)
+            deduped.append(row)
+    return deduped
+
+
 def build_drill_filter(chart, params: dict) -> dict:
     """
     Translate an ECharts click event params dict into dataexploration filter dict.
@@ -844,6 +874,10 @@ def execute_drill_query(
                     _seen.add(_k)
                     _deduped.append(_r)
             rows = _deduped
+
+    # Bar counts are student counts, not counts of duplicate joined rows.
+    # Do this before filtering, sorting, and pagination so totals stay aligned.
+    rows = _deduplicate_count_drill_rows(rows, chart)
 
     # Calculations mode: restrict to students with a valid numeric value in
     # the aggregated column — mirrors _dynamic_summary_table_option's
