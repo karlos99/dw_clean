@@ -530,7 +530,7 @@
                           <!-- Height control -->
                           <div>
                             <div class="text-[9px] text-slate-500 mb-0.5 font-semibold uppercase tracking-wider">Height</div>
-                            <select :value="getSection(selectedSection)?.gs_h || 2"
+                            <select :value="getSection(selectedSection)?.gs_h ?? 2"
                                     @change="updateSectionHeight(selectedSection, parseInt($event.target.value))"
                                     class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
                               <option value="0">Auto (fit content)</option>
