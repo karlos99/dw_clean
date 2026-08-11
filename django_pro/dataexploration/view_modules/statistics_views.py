@@ -14,7 +14,7 @@ import statistics
 
 from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
-from ..column_utils import _get_display_name
+from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL
 from ..utils import can_user_view_query, get_user_folders
 from ..survey_utils import get_survey_columns
 from .student_data_utils import (
@@ -181,6 +181,16 @@ def get_column_statistics(request):
                     "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.school_year = %s "
+                    f"AND {RESULTS_BLANK_SSID_SQL} "
+                    "AND t.test_name ILIKE %s "
+                    "AND t.subject ILIKE %s "
+                    f"{window_clause}"
+                )
+                ssid_subquery_base = (
+                    "SELECT r.ssid FROM results r "
+                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' "
+                    "AND r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
@@ -189,34 +199,47 @@ def get_column_statistics(request):
 
                 conditions = []
                 if real_values:
-                    val_clause = id_subquery_base
+                    val_id = id_subquery_base
+                    val_ssid = ssid_subquery_base
                     if metric_col in {'ss', 'pl'}:
-                        val_clause += f"AND r.{metric_col} = ANY(%s)"
+                        val_id += f"AND r.{metric_col} = ANY(%s)"
+                        val_ssid += f"AND r.{metric_col} = ANY(%s)"
                     else:
-                        val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
-                    val_params = list(base_params)
+                        val_id += "AND (r.other_info ->> %s) = ANY(%s)"
+                        val_ssid += "AND (r.other_info ->> %s) = ANY(%s)"
+                    val_id_params = list(base_params)
+                    val_ssid_params = list(base_params)
                     if metric_col in {'oi', 'dfp'}:
-                        val_params.append(test_info.get('other_info_key', ''))
-                    val_params.append(real_values)
-                    conditions.append(f"cs.student_id IN ({val_clause})")
-                    params.extend(val_params)
+                        val_id_params.append(test_info.get('other_info_key', ''))
+                        val_ssid_params.append(test_info.get('other_info_key', ''))
+                    val_id_params.append(real_values)
+                    val_ssid_params.append(real_values)
+                    conditions.append(f"(cs.student_id IN ({val_id}) OR cs.ssid IN ({val_ssid}))")
+                    params.extend(val_id_params + val_ssid_params)
                 
                 if has_blank:
                     blank_subconditions = []
 
-                    blank_subconditions.append(f"cs.student_id NOT IN ({id_subquery_base})")
-                    params.extend(base_params)
+                    blank_subconditions.append(
+                        f"(cs.student_id NOT IN ({id_subquery_base}) AND cs.ssid NOT IN ({ssid_subquery_base}))"
+                    )
+                    params.extend(base_params + base_params)
 
-                    null_clause = id_subquery_base
-                    null_params = list(base_params)
+                    null_id = id_subquery_base
+                    null_ssid = ssid_subquery_base
+                    null_id_params = list(base_params)
+                    null_ssid_params = list(base_params)
                     if metric_col in {'ss', 'pl'}:
-                        null_clause += f"AND r.{metric_col} IS NULL"
+                        null_id += f"AND r.{metric_col} IS NULL"
+                        null_ssid += f"AND r.{metric_col} IS NULL"
                     else:
-                        null_clause += "AND (r.other_info ->> %s) IS NULL"
-                        null_params.append(test_info.get('other_info_key', ''))
+                        null_id += "AND (r.other_info ->> %s) IS NULL"
+                        null_ssid += "AND (r.other_info ->> %s) IS NULL"
+                        null_id_params.append(test_info.get('other_info_key', ''))
+                        null_ssid_params.append(test_info.get('other_info_key', ''))
 
-                    blank_subconditions.append(f"cs.student_id IN ({null_clause})")
-                    params.extend(null_params)
+                    blank_subconditions.append(f"(cs.student_id IN ({null_id}) OR cs.ssid IN ({null_ssid}))")
+                    params.extend(null_id_params + null_ssid_params)
 
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
                 
@@ -615,8 +638,10 @@ def get_column_statistics(request):
                     SELECT {val_expr} as val, COUNT(*) as cnt
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.local_student_id IN (
-                        SELECT cs.student_id FROM current_student cs {join_sql} WHERE {where_sql}
+                    WHERE EXISTS (
+                        SELECT 1 FROM current_student cs {join_sql}
+                        WHERE {where_sql}
+                          AND {RESULTS_STUDENT_MATCH_SQL}
                     )
                     AND r.school_year = %s
                     AND t.test_name ILIKE %s

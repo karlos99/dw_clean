@@ -322,6 +322,7 @@ function chartBuilderPreviewMethods(urls) {
         parliament_rows: this.parliamentRowsAuto ? null : this.parliamentRows,
         parliament_show_ss: this.parliamentShowSS,
         school_filter_mode: this.schoolFilterMode,
+        one_row_per_stu_annual_key: !!this.oneRowPerStuAnnualKey,
         source_filters: this.cleanSourceFilters(),
       };
     },

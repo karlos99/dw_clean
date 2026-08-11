@@ -342,11 +342,14 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                r.school_year, t.test_name, t.subject, t.test_window
         FROM results r
         INNER JOIN tests t ON r.test_group_key = t.test_group_key
-        WHERE (r.local_student_id = ANY(%s) OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
+        WHERE (
+            (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s))
+            OR ((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = ANY(%s))
+          )
           AND ({" OR ".join(where_parts)})
           {tested_school_clause}
     """
-    cursor.execute(sql, [student_ids, student_ssids, *params])
+    cursor.execute(sql, [student_ssids, student_ids, *params])
 
     # Group infos by year so each row only scans the (small) subset of infos
     # that could possibly match its year, instead of every info every time.
@@ -358,12 +361,12 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
 
     for row in cursor.fetchall():
         sid, ssid, ss, pl, oi, ry, rt, rs, rw = row
-        # Look up by compound key. Try local_student_id first, then ssid
+        # Prefer SSID when present — local_student_id is reused across students.
         s_objs = []
-        if sid:
-            s_objs = student_map.get(str(sid).strip()) or []
-        if not s_objs and ssid:
+        if ssid:
             s_objs = student_ssid_map.get(str(ssid).strip()) or []
+        elif sid:
+            s_objs = student_map.get(str(sid).strip()) or []
         if not s_objs:
             continue
         for info in infos_by_year.get(ry, ()):

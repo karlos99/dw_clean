@@ -10,7 +10,11 @@ import hashlib
 
 from ..models import SavedQuery, StudentList
 from ..constants import COLUMN_DEFINITIONS
-from ..column_utils import _get_display_name
+from ..column_utils import (
+    _get_display_name,
+    RESULTS_BULK_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
+    assign_result_value_maps, lookup_result_value,
+)
 from ..utils import can_user_view_query, get_user_folders
 from .student_data_utils import (
     get_current_student_columns,
@@ -135,6 +139,16 @@ def export_students_csv(request):
                     "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.school_year = %s "
+                    f"AND {RESULTS_BLANK_SSID_SQL} "
+                    "AND LOWER(t.test_name) = LOWER(%s) "
+                    "AND LOWER(t.subject) = LOWER(%s) "
+                    f"{window_clause}"
+                )
+                ssid_subquery_base = (
+                    "SELECT r.ssid FROM results r "
+                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' "
+                    "AND r.school_year = %s "
                     "AND LOWER(t.test_name) = LOWER(%s) "
                     "AND LOWER(t.subject) = LOWER(%s) "
                     f"{window_clause}"
@@ -147,39 +161,52 @@ def export_students_csv(request):
                 conditions = []
 
                 if real_values:
-                    val_clause = id_subquery_base
+                    val_id = id_subquery_base
+                    val_ssid = ssid_subquery_base
                     if metric_col in {'ss', 'pl'}:
-                        val_clause += f"AND r.{metric_col} = ANY(%s)"
+                        val_id += f"AND r.{metric_col} = ANY(%s)"
+                        val_ssid += f"AND r.{metric_col} = ANY(%s)"
                     else:
-                        val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
+                        val_id += "AND (r.other_info ->> %s) = ANY(%s)"
+                        val_ssid += "AND (r.other_info ->> %s) = ANY(%s)"
                     
-                    val_params = list(base_params)
+                    val_id_params = list(base_params)
+                    val_ssid_params = list(base_params)
                     if metric_col in {'oi', 'dfp'}:
-                         val_params.append(test_info.get('other_info_key', ''))
-                    val_params.append(real_values)
+                         val_id_params.append(test_info.get('other_info_key', ''))
+                         val_ssid_params.append(test_info.get('other_info_key', ''))
+                    val_id_params.append(real_values)
+                    val_ssid_params.append(real_values)
                     
-                    conditions.append(f"cs.student_id IN ({val_clause})")
-                    params.extend(val_params)
+                    conditions.append(f"(cs.student_id IN ({val_id}) OR cs.ssid IN ({val_ssid}))")
+                    params.extend(val_id_params + val_ssid_params)
 
                 if has_blank:
                     blank_subconditions = []
                     
                     # 1. No record exists
-                    blank_subconditions.append(f"cs.student_id NOT IN ({id_subquery_base})")
-                    params.extend(base_params)
+                    blank_subconditions.append(
+                        f"(cs.student_id NOT IN ({id_subquery_base}) AND cs.ssid NOT IN ({ssid_subquery_base}))"
+                    )
+                    params.extend(base_params + base_params)
 
                     # 2. Record exists but value is NULL
-                    null_clause = id_subquery_base
-                    null_params = list(base_params)
+                    null_id = id_subquery_base
+                    null_ssid = ssid_subquery_base
+                    null_id_params = list(base_params)
+                    null_ssid_params = list(base_params)
                     
                     if metric_col in {'ss', 'pl'}:
-                        null_clause += f"AND r.{metric_col} IS NULL"
+                        null_id += f"AND r.{metric_col} IS NULL"
+                        null_ssid += f"AND r.{metric_col} IS NULL"
                     else:
-                        null_clause += "AND (r.other_info ->> %s) IS NULL"
-                        null_params.append(test_info.get('other_info_key', ''))
+                        null_id += "AND (r.other_info ->> %s) IS NULL"
+                        null_ssid += "AND (r.other_info ->> %s) IS NULL"
+                        null_id_params.append(test_info.get('other_info_key', ''))
+                        null_ssid_params.append(test_info.get('other_info_key', ''))
                     
-                    blank_subconditions.append(f"cs.student_id IN ({null_clause})")
-                    params.extend(null_params)
+                    blank_subconditions.append(f"(cs.student_id IN ({null_id}) OR cs.ssid IN ({null_ssid}))")
+                    params.extend(null_id_params + null_ssid_params)
                     
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
                 
@@ -647,34 +674,23 @@ def export_students_csv(request):
                                 SELECT r.local_student_id, r.ssid, {select_expr}
                                 FROM results r
                                 INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                                WHERE (r.local_student_id = ANY(%s)
-                                       OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
+                                WHERE {RESULTS_BULK_MATCH_SQL}
                                 AND r.school_year = %s
                                 AND LOWER(t.test_name) = LOWER(%s)
                                 AND LOWER(t.subject) = LOWER(%s)
                                 {window_clause}
                             """
                             cursor.execute(tquery, [
-                                *extra_params, student_ids, student_ssids, test_info['year'],
+                                *extra_params, student_ssids, student_ids, test_info['year'],
                                 test_info['test_name'], test_info['subject'], *window_params,
                             ])
-                            test_data_by_id = {}
-                            test_data_by_ssid = {}
-                            for row in cursor.fetchall():
-                                local_id, ssid, val = row[0], row[1], row[2]
-                                if local_id:
-                                    test_data_by_id[local_id] = val
-                                if ssid:
-                                    test_data_by_ssid[ssid] = val
+                            test_data_by_id, test_data_by_ssid = assign_result_value_maps(
+                                cursor.fetchall()
+                            )
                             for student in chunk_students:
-                                val = '—'
-                                sid = student.get('student_id')
-                                ssid = student.get('ssid')
-                                if sid in test_data_by_id:
-                                    val = test_data_by_id[sid]
-                                elif ssid in test_data_by_ssid:
-                                    val = test_data_by_ssid[ssid]
-                                student[test_info['col_name']] = val
+                                student[test_info['col_name']] = lookup_result_value(
+                                    student, test_data_by_id, test_data_by_ssid,
+                                )
                     
                     # Fetch marks data for this chunk
                     student_keys = [s.get('stu_annual_key') for s in chunk_students if s.get('stu_annual_key')]

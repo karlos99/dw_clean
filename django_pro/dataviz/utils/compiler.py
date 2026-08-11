@@ -400,10 +400,69 @@ def format_column_expr(tbl, col):
     return f'"{tbl}"."{col}"'
 
 
-def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=None, status_filter=_UNSET, order_by=None):
+def find_stu_annual_key_column(active_tables, columns_list=None) -> str | None:
+    """Return ``table.stu_annual_key`` from selected columns or active tables."""
+    if columns_list:
+        for col_str in columns_list:
+            if not isinstance(col_str, str):
+                continue
+            if col_str.endswith('.stu_annual_key') or col_str.split('.')[-1] == 'stu_annual_key':
+                return col_str if '.' in col_str else None
+    preferred = (
+        'current_student', 'student_enroll', 'schedule_list',
+        'student_marks_list', 'results',
+    )
+    for tbl in preferred:
+        if tbl in active_tables and 'stu_annual_key' in _allowed(tbl):
+            return f'{tbl}.stu_annual_key'
+    for tbl in sorted(active_tables):
+        if 'stu_annual_key' in _allowed(tbl):
+            return f'{tbl}.stu_annual_key'
+    return None
+
+
+def dedupe_rows_by_stu_annual_key(rows: list) -> list:
+    """Keep the first row for each non-blank ``stu_annual_key`` value."""
+    if not rows:
+        return rows
+    key_col = None
+    for k in rows[0].keys():
+        if k == 'stu_annual_key' or str(k).split('.')[-1] == 'stu_annual_key':
+            key_col = k
+            break
+    if not key_col:
+        return rows
+    seen = set()
+    out = []
+    for row in rows:
+        val = row.get(key_col)
+        if val is None or not str(val).strip():
+            out.append(row)
+            continue
+        key = str(val).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def compile_dataset_to_sql(
+    dataset,
+    user=None,
+    limit=None,
+    interactive_filters=None,
+    status_filter=_UNSET,
+    order_by=None,
+    one_row_per_stu_annual_key=False,
+):
     """
     Compiles a Dataset definition object into parameterized SQL.
     Returns (sql_query_string, parameters_list).
+
+    When ``one_row_per_stu_annual_key`` is True, emit
+    ``SELECT DISTINCT ON (stu_annual_key)`` so join fan-out collapses to one
+    enrollment-year record (mirrors chart / drill counts).
     """
     # Cache compiled SQL keyed on dataset content + user context + interactive filters
     user_part = ""
@@ -423,6 +482,7 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
             'interactive_filters': interactive_filters or {},
             'status_filter': '__unset__' if status_filter is _UNSET else status_filter,
             'order_by': order_by or getattr(dataset, 'order_by', None) or [],
+            'one_row_per_stu_annual_key': bool(one_row_per_stu_annual_key),
         }, sort_keys=True, default=str).encode()
     ).hexdigest()
     cache_key = f"dv:compiled_sql:{ds_hash}{user_part}"
@@ -499,10 +559,20 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                     })
                     active_tables.add(target_tbl)
         
-    columns_list = dataset.columns or []
+    columns_list = list(dataset.columns or [])
     if not columns_list:
         raise SQLCompilationError("Dataset has no select columns specified.")
-        
+
+    sak_col = None
+    sak_expr = None
+    if one_row_per_stu_annual_key:
+        sak_col = find_stu_annual_key_column(active_tables, columns_list)
+        if sak_col and sak_col not in columns_list:
+            columns_list.append(sak_col)
+        if sak_col:
+            sak_tbl, sak_name = validate_column_identifier(sak_col, active_tables)
+            sak_expr = format_column_expr(sak_tbl, sak_name)
+
     select_clauses = []
     for col_str in columns_list:
         tbl, col = validate_column_identifier(col_str, active_tables)
@@ -511,8 +581,14 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
         
     select_sql = ", ".join(select_clauses)
     
-    # Construct base query
-    select_keyword = "SELECT DISTINCT" if getattr(dataset, 'distinct', True) else "SELECT"
+    # Construct base query. DISTINCT ON (stu_annual_key) wins over row-level DISTINCT
+    # when the chart asks for one enrollment-year record.
+    if sak_expr:
+        select_keyword = f"SELECT DISTINCT ON ({sak_expr})"
+    elif getattr(dataset, 'distinct', True):
+        select_keyword = "SELECT DISTINCT"
+    else:
+        select_keyword = "SELECT"
     sql = f'{select_keyword} {select_sql} FROM "{base_table}"'
     
     # Construct joins
@@ -731,9 +807,12 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
         sql += " WHERE " + " AND ".join(where_parts)
         
     # ORDER BY clause — accepts a list of {"column": "table.col", "direction": "asc"|"desc"}
+    # DISTINCT ON requires its expressions to be the leftmost ORDER BY keys.
     order_list = order_by or getattr(dataset, 'order_by', None) or []
+    order_parts = []
+    if sak_expr:
+        order_parts.append(f'{sak_expr} ASC')
     if order_list:
-        order_parts = []
         for ob in order_list:
             col_str = ob.get('column')
             direction = (ob.get('direction') or 'asc').lower()
@@ -743,9 +822,11 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                 continue
             tbl, col = validate_column_identifier(col_str, active_tables)
             expr = format_column_expr(tbl, col)
+            if sak_expr and expr == sak_expr:
+                continue
             order_parts.append(f'{expr} {direction.upper()}')
-        if order_parts:
-            sql += " ORDER BY " + ", ".join(order_parts)
+    if order_parts:
+        sql += " ORDER BY " + ", ".join(order_parts)
     
     if limit is not None:
         sql += f" LIMIT {limit}"

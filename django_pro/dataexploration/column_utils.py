@@ -37,6 +37,61 @@ def test_metadata_matches(info: dict, row_test_name, row_subject, row_window=Non
     return expected_window.lower() == actual_window.lower()
 
 
+# Prefer SSID when the result row has one. Local student IDs are reused across
+# students, so matching on local_student_id alone attaches the wrong scores.
+RESULTS_STUDENT_MATCH_SQL = (
+    "("
+    "(r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)"
+    " OR "
+    "((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = cs.student_id)"
+    ")"
+)
+
+# Bulk fetch: params are (student_ssids, student_ids) in that order.
+RESULTS_BULK_MATCH_SQL = (
+    "("
+    "(r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s))"
+    " OR "
+    "((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = ANY(%s))"
+    ")"
+)
+
+RESULTS_BLANK_SSID_SQL = "(r.ssid IS NULL OR r.ssid = '')"
+
+
+def assign_result_value_maps(rows):
+    """Build local-id / ssid maps from ``(local_student_id, ssid, value)`` rows.
+
+    Rows that include an SSID are indexed only by SSID. Local-id indexing is
+    reserved for results with a blank SSID so recycled local IDs cannot leak.
+    """
+    by_id = {}
+    by_ssid = {}
+    for row in rows:
+        local_id, ssid, val = row[0], row[1], row[2]
+        ssid_s = str(ssid).strip() if ssid is not None else ''
+        if ssid_s:
+            by_ssid[ssid_s] = val
+        elif local_id:
+            by_id[str(local_id).strip()] = val
+    return by_id, by_ssid
+
+
+def lookup_result_value(student, by_id, by_ssid, blank='—'):
+    """Resolve a student's assessment value, preferring SSID over local ID."""
+    ssid = student.get('ssid')
+    if ssid is not None:
+        ssid_s = str(ssid).strip()
+        if ssid_s and ssid_s in by_ssid:
+            return by_ssid[ssid_s]
+    sid = student.get('student_id')
+    if sid is not None:
+        sid_s = str(sid).strip()
+        if sid_s and sid_s in by_id:
+            return by_id[sid_s]
+    return blank
+
+
 def _generate_cache_key(prefix, filters, extra_hash_str=""):
     """Generate a consistent cache key from filters and extra conditions."""
     if filters:
