@@ -2,8 +2,10 @@
 import json
 
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.utils.text import slugify
 from django.views.decorators.http import require_GET
 
 from dataviz.models import Dashboard, DataVizPage, DataVizPageSection, DataVizPageRow, SavedChart
@@ -55,6 +57,67 @@ def page_save_api(request):
         publish_page(page, request.user)
     elif page.status == DataVizPage.STATUS_DRAFT and not was_draft:
         unpublish_page(page)
+
+    return JsonResponse({'page': page.to_dict(), 'success': True})
+
+
+@login_required
+def page_duplicate_api(request, slug):
+    """Duplicate a page and its layout without copying shared charts."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    source = get_object_or_404(DataVizPage, slug=slug)
+    copy_number = 1
+    with transaction.atomic():
+        while True:
+            suffix = ' (Copy)' if copy_number == 1 else f' (Copy {copy_number})'
+            title = f'{source.title[:200 - len(suffix)]}{suffix}'
+            new_slug = slugify(title)[:200] or f'page-{source.pk}-copy'
+            if not DataVizPage.objects.filter(slug=new_slug).exists():
+                break
+            copy_number += 1
+
+        page = DataVizPage.objects.create(
+            title=title,
+            slug=new_slug,
+            description=source.description,
+            container_width=source.container_width,
+            show_header=source.show_header,
+            owner=request.user,
+            status=DataVizPage.STATUS_DRAFT,
+            page_filters=source.page_filters or [],
+        )
+
+        row_map = {}
+        for source_row in source.rows.all():
+            row_map[source_row.pk] = DataVizPageRow.objects.create(
+                page=page,
+                label=source_row.label,
+                position=source_row.position,
+                bg_color=source_row.bg_color,
+                collapsed=source_row.collapsed,
+                col_guide=source_row.col_guide,
+            )
+
+        for source_section in source.sections.all():
+            DataVizPageSection.objects.create(
+                page=page,
+                row=row_map.get(source_section.row_id),
+                element_type=source_section.element_type,
+                chart=source_section.chart,
+                show_title=source_section.show_title,
+                slot_filters=source_section.slot_filters or [],
+                gs_x=source_section.gs_x,
+                gs_y=source_section.gs_y,
+                gs_w=source_section.gs_w,
+                gs_h=source_section.gs_h,
+                dashboard=source_section.dashboard,
+                html_content=source_section.html_content,
+                position=source_section.position,
+            )
 
     return JsonResponse({'page': page.to_dict(), 'success': True})
 
