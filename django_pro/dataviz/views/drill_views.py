@@ -116,11 +116,20 @@ def _build_breadcrumbs(request):
 
     if source == 'page' and source_id:
         label = source_name or 'Page'
+        slug = source_id
+        if source_id.isdigit():
+            from dataviz.models import DataVizPage
+            try:
+                page = DataVizPage.objects.get(pk=int(source_id))
+                slug = page.slug
+                label = page.title or label
+            except DataVizPage.DoesNotExist:
+                pass
         try:
-            url = reverse('dataviz:page_view', kwargs={'slug': source_id})
+            url = reverse('dataviz:page_view', kwargs={'slug': slug})
             crumbs.append({'label': label, 'url': url})
         except:
-            crumbs.append({'label': label, 'url': f'/dataviz/pages/{source_id}/'})
+            crumbs.append({'label': label, 'url': f'/dataviz/pages/{slug}/'})
     elif source == 'dashboard' and source_id:
         label = source_name or 'Dashboard'
         # Dashboards seem to be legacy or handled elsewhere; fall back if reverse fails
