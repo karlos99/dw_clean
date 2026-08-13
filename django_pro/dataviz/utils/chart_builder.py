@@ -438,6 +438,74 @@ def _resolve_color_map(cfg: dict, series_names: list[str]) -> dict[str, str]:
     return merged
 
 
+_X_COMP_SEP = ' · '
+
+
+def _alias_category_label(label, value_map: dict, sep: str = _X_COMP_SEP):
+    """Map a category label, including each part of a composite ``A · B`` label."""
+    if label is None:
+        return label
+    s = str(label)
+    if not s:
+        return label
+    if s in value_map:
+        return value_map[s]
+    if sep in s:
+        return sep.join(value_map.get(part, part) for part in s.split(sep))
+    return label
+
+
+def _apply_x_value_map(option: dict, cfg: dict) -> None:
+    """Replace category-axis *display* labels using ``cfg['x_value_map']``.
+
+    Aliases match individual field values (e.g. grade ``K`` or year ``2024``),
+    not only full composite labels. On grouped multi-field axes both the leaf
+    and outer group axes are remapped. Raw values stay in
+    ``__category_names__`` for drill-through.
+    """
+    raw_map = cfg.get('x_value_map') or {}
+    if not isinstance(raw_map, dict) or not raw_map:
+        return
+    value_map = {
+        str(k): str(v)
+        for k, v in raw_map.items()
+        if k is not None and str(k).strip() != '' and v is not None and str(v).strip() != ''
+    }
+    if not value_map:
+        return
+
+    def _remap_axis(axis):
+        if not isinstance(axis, dict) or axis.get('type') != 'category':
+            return
+        data = axis.get('data')
+        if not isinstance(data, list) or not data:
+            return
+        axis['data'] = [_alias_category_label(v, value_map) for v in data]
+
+    category_axis = (option.get('dv') or {}).get('category_axis', 'x')
+    if category_axis == 'y':
+        axes = option.get('yAxis')
+    elif category_axis == 'angle':
+        axes = option.get('angleAxis')
+    elif category_axis == 'radius':
+        axes = option.get('radiusAxis')
+    else:
+        axes = option.get('xAxis')
+
+    if isinstance(axes, list):
+        # Dual-axis layouts: remap leaf (0) and outer group (1+) separately.
+        for axis in axes:
+            _remap_axis(axis)
+    else:
+        _remap_axis(axes)
+
+    bands = option.get('__group_label_bands__')
+    if isinstance(bands, list):
+        for band in bands:
+            if isinstance(band, dict) and 'label' in band:
+                band['label'] = _alias_category_label(band.get('label'), value_map)
+
+
 def _apply_color_map(option: dict, cfg: dict) -> None:
     """Mutate *option* in-place: override palette colours so that each series
     uses its mapped colour (from user color_map or semantic defaults).
@@ -518,6 +586,66 @@ def _build_grouped_axis_data(categories, sep=' · '):
     return leaf_categories, group_labels
 
 
+def _group_bands_from_composite(categories, sep=' · '):
+    """Return ``[{start, end, label}, ...]`` for contiguous composite parents.
+
+    Spacer categories (leaf containing ``spacer_``) are skipped and split groups.
+    """
+    bands = []
+    i = 0
+    n = len(categories)
+    while i < n:
+        parts = str(categories[i]).split(sep)
+        leaf = parts[-1] if parts else ''
+        if 'spacer_' in leaf or len(parts) < 2:
+            i += 1
+            continue
+        parent = sep.join(parts[:-1])
+        j = i + 1
+        while j < n:
+            p2 = str(categories[j]).split(sep)
+            leaf2 = p2[-1] if p2 else ''
+            if 'spacer_' in leaf2 or len(p2) < 2:
+                break
+            if sep.join(p2[:-1]) != parent:
+                break
+            j += 1
+        bands.append({'start': i, 'end': j - 1, 'label': parent})
+        i = j
+    return bands
+
+
+def _attach_group_label_bands(option, categories, cfg, theme_text, axis, offset, cat_font_size, cat_rotation):
+    """Place outer group labels: tick-aligned or true-centered via renderer bands."""
+    bands = _group_bands_from_composite(categories)
+    if not bands:
+        return [''] * len(categories)
+
+    center = cfg.get('center_group_labels', True) is not False
+    show = cfg.get('show_categories', True) is not False
+    group_labels = [''] * len(categories)
+    if center:
+        option['__group_label_bands__'] = [
+            {
+                'start': b['start'],
+                'end': b['end'],
+                'label': b['label'],
+                'axis': axis,
+                'fontSize': cat_font_size,
+                'rotate': cat_rotation,
+                'color': theme_text,
+                'offset': offset,
+                'show': show,
+            }
+            for b in bands
+        ]
+    else:
+        for b in bands:
+            mid = (b['start'] + b['end']) // 2
+            group_labels[mid] = b['label']
+    return group_labels
+
+
 def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax, x_lbl, orientation='vertical', radial=False, polar=False):
     leaf_categories, group_labels = _build_grouped_axis_data(categories)
     
@@ -538,7 +666,7 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
                     spacer_cat = f"{last_parent} ·  spacer_{idx}_{j}"
                     new_categories.append(spacer_cat)
                     new_leaf_categories.append(" ")
-                    new_group_labels.append(last_parent)
+                    new_group_labels.append("")
                     spacer_indices.append(len(new_categories) - 1)
             new_categories.append(cat)
             new_leaf_categories.append(leaf_categories[idx])
@@ -586,6 +714,7 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
         return
         
     t = _theme(cfg)
+    center_groups = cfg.get('center_group_labels', True) is not False
     if orientation == 'horizontal':
         if group_labels:
             cat_font_size = int(cfg.get('compare_cat_font_size', 12) or 12)
@@ -602,6 +731,10 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
                 offset = max(60, int(height_contrib + 12))
             else:
                 offset = 60
+
+            group_labels = _attach_group_label_bands(
+                option, categories, cfg, t['text'], 'y', offset, cat_font_size, cat_rotation,
+            )
 
             y_axis_option = [
                 {
@@ -625,7 +758,8 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
                         'fontSize': cat_font_size,
                         'rotate': cat_rotation,
                         'color': t['text'],
-                        'show': cfg.get('show_categories', True) is not False,
+                        # Tick labels hidden when true-centered via graphic bands.
+                        'show': (not center_groups) and (cfg.get('show_categories', True) is not False),
                     }
                 }
             ]
@@ -656,6 +790,10 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
         else:
             offset = 30
 
+        group_labels = _attach_group_label_bands(
+            option, categories, cfg, t['text'], 'x', offset, cat_font_size, cat_rotation,
+        )
+
         x_axis_option = [
             {
                 'type': 'category',
@@ -678,7 +816,7 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
                     'fontSize': cat_font_size,
                     'rotate': cat_rotation,
                     'color': t['text'],
-                    'show': cfg.get('show_categories', True) is not False,
+                    'show': (not center_groups) and (cfg.get('show_categories', True) is not False),
                 }
             }
         ]
@@ -3973,12 +4111,15 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         'splitLine': {'show': False},
     }
 
-    # ── xAxis[1]: category labels, one per group, centred ──
+    # ── xAxis[1]: category labels, one per group (true-centered via graphic bands) ──
+    center_groups = cfg.get('center_group_labels', True) is not False
+    show_cats = cfg.get('show_categories', True) is not False
     cat_labels_for_axis = [''] * total_positions
-    for start, end, cat_name in group_ranges:
-        mid = int(round((start + end) / 2.0))
-        if 0 <= mid < total_positions:
-            cat_labels_for_axis[mid] = cat_name
+    if not center_groups:
+        for start, end, cat_name in group_ranges:
+            mid = (start + end) // 2
+            if 0 <= mid < total_positions:
+                cat_labels_for_axis[mid] = cat_name
 
     cat_formatter_js = "function(value) { return value || ''; }"
 
@@ -3993,6 +4134,22 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     else:
         offset = 22
 
+    if center_groups:
+        option['__group_label_bands__'] = [
+            {
+                'start': start,
+                'end': end,
+                'label': cat_name,
+                'axis': 'x',
+                'fontSize': cat_font_size,
+                'rotate': cat_rotation,
+                'color': ax.get('axisLabel', {}).get('color', '#475569'),
+                'offset': offset,
+                'show': show_cats,
+            }
+            for start, end, cat_name in group_ranges
+        ]
+
     x_axis_1 = {
         'type': 'category',
         'data': cat_labels_for_axis,
@@ -4005,7 +4162,7 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
             'color': ax.get('axisLabel', {}).get('color', '#475569'),
             'rotate': cat_rotation,
             'margin': 4,
-            'show': cfg.get('show_categories', True) is not False,
+            'show': (not center_groups) and show_cats,
             '__formatter_js__': cat_formatter_js,
         },
         'axisTick': {'show': False},
@@ -4238,6 +4395,18 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     if df.empty:
         return _message_option('All rows filtered out (no valid data)', cfg)
 
+    # Unique per-field x values for alias UI (grade, year, … — not "K · 2024").
+    _alias_src_cols = x_cols if len(x_cols) > 1 else ([x_col] if x_col else [])
+    x_alias_keys: list[str] = []
+    _alias_seen: set[str] = set()
+    for _ac in _alias_src_cols:
+        if _ac not in df.columns:
+            continue
+        for _av in df[_ac].fillna('(Blank)').astype(str):
+            if _av not in _alias_seen:
+                _alias_seen.add(_av)
+                x_alias_keys.append(_av)
+
     labels = {
         'x': (' · '.join([_label(c, col_defs) for c in x_cols]) if len(x_cols) > 1
               else (_META_LABEL_MAP.get(x_col) or _label(x_col, col_defs)) if x_col else ''),
@@ -4290,12 +4459,22 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Apply colour mapping (user overrides + semantic defaults) to all chart types
     _apply_color_map(option, cfg)
 
+    # Alias category-axis display labels (bar / category charts). Raw values stay
+    # in __category_names__ for drill-through.
+    _apply_x_value_map(option, cfg)
+    option['__x_alias_keys__'] = x_alias_keys
+
     # Apply category-axis label overrides (rotation, font size, truncation)
     x_label_style = _x_axis_label_style(cfg)
     
-    # Secondary category axis label style (outer group categories)
+    # Secondary category axis label style (outer group categories).
+    # When true-centered via graphic bands, keep tick labels hidden.
+    _center_groups = (
+        cfg.get('center_group_labels', True) is not False
+        and bool(option.get('__group_label_bands__'))
+    )
     sec_label_style = {
-        'show': cfg.get('show_categories', True) is not False,
+        'show': (not _center_groups) and (cfg.get('show_categories', True) is not False),
         'fontSize': int(cfg.get('compare_cat_font_size', 12) or 12),
         'color': _theme(cfg)['text']
     }
@@ -4347,12 +4526,27 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
                     try: ya['max'] = float(y_max)
                     except (TypeError, ValueError): pass
 
-    # Apply bar category gap
+    # Apply bar category gap (legacy config / interactive editor)
     bar_gap = cfg.get('bar_category_gap')
     if bar_gap not in (None, ''):
         for s in option.get('series', []):
             if isinstance(s, dict) and s.get('type') == 'bar':
                 s['barCategoryGap'] = str(bar_gap) + '%'
+
+    # Apply category gap (Cat. gap) — smooth % gap between categories on the
+    # base category axis.  This is the ONLY smooth native gap control in
+    # ECharts; between-group spacing is handled separately via spacer columns
+    # (group_gap_size) so it never spaces the bars inside a group.
+    _raw_gg = cfg.get('group_gap')
+    if _raw_gg not in (None, ''):
+        try:
+            gg = float(_raw_gg)
+        except (TypeError, ValueError):
+            gg = None
+        if gg is not None and gg > 0:
+            for s in option.get('series', []):
+                if isinstance(s, dict) and s.get('type') == 'bar':
+                    s['barCategoryGap'] = f'{gg:g}%'
 
     # Apply label distance
     label_dist = cfg.get('label_distance')

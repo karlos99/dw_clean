@@ -1510,6 +1510,164 @@ class ProgressGrowthMatrixTests(SimpleTestCase):
         self.assertEqual(result['total_rows'], 1)
 
 
+class GroupGapOptionTests(SimpleTestCase):
+    def _bar_rows(self):
+        return [
+            {'grade': 'K', 'subject': 'Reading', 'n': 10},
+            {'grade': 'K', 'subject': 'Math', 'n': 12},
+            {'grade': '1', 'subject': 'Reading', 'n': 15},
+            {'grade': '1', 'subject': 'Math', 'n': 9},
+            {'grade': '2', 'subject': 'Reading', 'n': 8},
+            {'grade': '2', 'subject': 'Math', 'n': 14},
+        ]
+
+    def _base_cfg(self, **overrides):
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': '__x_comp__',
+            'x_cols': ['grade', 'subject'],
+            'y_col': 'n',
+            'agg_func': 'sum',
+            'bar_layout': 'grouped',
+        }
+        cfg.update(overrides)
+        return cfg
+
+    def test_x_value_map_aliases_category_labels_keeps_raw_for_drill(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': 'K', 'n': 10},
+            {'grade': '1', 'n': 15},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'grade',
+            'y_col': 'n',
+            'agg_func': 'sum',
+            'x_value_map': {'K': 'Kindergarten', '1': 'Grade 1'},
+        }
+        opt = build_option(rows, {}, cfg)
+        x_axis = opt.get('xAxis')
+        if isinstance(x_axis, list):
+            x_axis = x_axis[0]
+        raw = opt.get('__category_names__') or []
+        display = x_axis.get('data') or []
+        self.assertEqual(set(raw), {'K', '1'})
+        self.assertEqual(set(display), {'Kindergarten', 'Grade 1'})
+        # Display order matches raw category order; drill keeps originals.
+        self.assertEqual(len(display), len(raw))
+        for orig, shown in zip(raw, display):
+            self.assertEqual(shown, cfg['x_value_map'][orig])
+
+    def test_x_value_map_aliases_each_multi_x_field_separately(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(
+            self._bar_rows(),
+            {},
+            self._base_cfg(
+                x_value_map={'K': 'Kindergarten', 'Reading': 'ELA'},
+                center_group_labels=False,
+            ),
+        )
+        self.assertEqual(
+            set(opt.get('__x_alias_keys__') or []),
+            {'K', '1', '2', 'Reading', 'Math'},
+        )
+        # Composite raw categories stay for drill.
+        self.assertIn('K · Reading', opt.get('__category_names__') or [])
+        x_axes = opt.get('xAxis')
+        self.assertIsInstance(x_axes, list)
+        leaf, groups = x_axes[0].get('data') or [], x_axes[1].get('data') or []
+        self.assertIn('ELA', leaf)
+        self.assertIn('Math', leaf)
+        self.assertNotIn('Reading', leaf)
+        self.assertIn('Kindergarten', groups)
+        self.assertNotIn('K', [g for g in groups if g])
+
+    def test_center_group_labels_emits_bands_and_hides_tick_labels(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(center_group_labels=True))
+        bands = opt.get('__group_label_bands__') or []
+        self.assertTrue(bands)
+        self.assertEqual({b['label'] for b in bands}, {'K', '1', '2'})
+        for b in bands:
+            self.assertEqual(b['end'] - b['start'], 1)  # two leaf values per grade
+        x_axes = opt.get('xAxis')
+        self.assertIsInstance(x_axes, list)
+        self.assertFalse(x_axes[1].get('axisLabel', {}).get('show'))
+        self.assertTrue(all(not v for v in (x_axes[1].get('data') or [])))
+
+    def test_group_gap_sets_bar_category_gap_on_grouped_axis_bar(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(group_gap=40))
+        self.assertIsInstance(opt.get('xAxis'), list)  # two-level grouped axis
+        gaps = {s.get('barCategoryGap') for s in opt.get('series', []) if s.get('type') == 'bar'}
+        self.assertTrue(len(gaps) > 0)
+        self.assertEqual(gaps, {'40%'})
+
+    def test_group_gap_default_does_not_override_bar_category_gap(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg())
+        for s in opt.get('series', []):
+            if s.get('type') == 'bar':
+                self.assertNotEqual(s.get('barCategoryGap'), '0%')
+
+        opt_bar = build_option(self._bar_rows(), {}, self._base_cfg(bar_category_gap='50'))
+        gaps = {s.get('barCategoryGap') for s in opt_bar.get('series', []) if s.get('type') == 'bar'}
+        self.assertEqual(gaps, {'50%'})
+
+    def test_group_gap_takes_precedence_over_bar_category_gap(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(bar_category_gap='50', group_gap=70))
+        gaps = {s.get('barCategoryGap') for s in opt.get('series', []) if s.get('type') == 'bar'}
+        self.assertEqual(gaps, {'70%'})
+
+    def test_group_gap_sets_category_gap_on_single_base_category_bar(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': 'K', 'ssid': 1},
+            {'grade': '1', 'ssid': 2},
+            {'grade': '2', 'ssid': 3},
+        ]
+        cfg = {'chart_type': 'bar', 'x_col': 'grade', 'y_col': 'ssid',
+               'agg': 'count', 'group_gap': 45}
+        opt = build_option(rows, {}, cfg)
+        self.assertNotIsInstance(opt.get('xAxis'), list)  # single category axis
+        gaps = {s.get('barCategoryGap') for s in opt.get('series', []) if s.get('type') == 'bar'}
+        self.assertEqual(gaps, {'45%'})
+
+    def test_group_gap_size_inserts_spacers_between_groups(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(group_gap_size=2))
+        self.assertIsInstance(opt.get('xAxis'), list)  # two-level grouped axis
+        leaf = opt['xAxis'][0]['data']
+        # one spacer band (plus a blank for the same position) inserted between each group
+        self.assertIn(' ', leaf)
+        series = [s for s in opt.get('series', []) if s.get('type') == 'bar']
+        self.assertTrue(len(series) > 0)
+        self.assertEqual(len(series[0]['data']), len(leaf))
+        spacer_nones = sum(1 for v in series[0]['data'] if v is None)
+        self.assertEqual(spacer_nones, 2 * 2)  # 2 groups boundaries × 2 spacer cols
+
+    def test_spacer_categories_have_empty_group_labels(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(group_gap_size=1))
+        group_axis = opt['xAxis'][1]
+        labels = group_axis['data']
+        # spacer positions must not repeat the group name — it stays centered once per group
+        self.assertEqual(labels.count('K'), 1)
+        self.assertEqual(labels.count('1'), 1)
+
+
 class DateSeriesOptionTests(SimpleTestCase):
     def test_basic_count_line_per_date(self):
         from dataviz.utils.chart_builder import build_option
