@@ -272,6 +272,15 @@ def _cfg_from_post(post):
     except (json.JSONDecodeError, ValueError):
         color_map = {}
 
+    # Parse x_value_map JSON (category-axis display aliases)
+    xvm_raw = post.get('x_value_map', '')
+    try:
+        x_value_map = json.loads(xvm_raw) if xvm_raw else {}
+    except (json.JSONDecodeError, ValueError):
+        x_value_map = {}
+    if not isinstance(x_value_map, dict):
+        x_value_map = {}
+
     # Parse stack_order JSON
     so_raw = post.get('stack_order', '')
     try:
@@ -400,6 +409,7 @@ def _cfg_from_post(post):
         'show_points':       bool(post.get('show_points')),
         'smooth':            bool(post.get('smooth')),
         'color_map':         color_map,
+        'x_value_map':       x_value_map,
         # Stack order
         'stack_order':       stack_order,
         # Element toggles
@@ -428,6 +438,8 @@ def _cfg_from_post(post):
         'compare_cat_font_size': _parse_int(post.get('compare_cat_font_size'), 12),
         'compare_cat_rotation':  _parse_int(post.get('compare_cat_rotation'), 0),
         'group_gap_size':        _parse_int(post.get('group_gap_size'), 0),
+        'group_gap':             _parse_int(post.get('group_gap'), 0),
+        'center_group_labels':   post.get('center_group_labels', '1') in ('1', 'true', 'True', 'on', True),
         # Axis & layout
         'x_label_rotation':  _parse_int(post.get('x_label_rotation'), 0),
         'x_label_font_size': _parse_int(post.get('x_label_font_size'), 11),
@@ -648,6 +660,7 @@ def chart_preview_api(request):
         # Extract series names for the stack-order UI, then strip the internal key
         series_names    = option.pop('__series_names__', [])
         category_names  = option.pop('__category_names__', [])
+        x_alias_keys    = option.pop('__x_alias_keys__', [])
         ac_avail_cats   = option.pop('__ac_avail_cats__', [])
         ac_avail_pl     = option.pop('__ac_avail_pl__', [])
         query_columns = list(rows[0].keys()) if rows else (result.get('columns', []))
@@ -655,6 +668,7 @@ def chart_preview_api(request):
             'option_json':        json.dumps(option),
             'series_names_json':  json.dumps(series_names),
             'category_names_json': json.dumps(category_names),
+            'x_alias_keys_json':  json.dumps(x_alias_keys),
             'ac_avail_cats_json': json.dumps(ac_avail_cats),
             'ac_avail_pl_json':   json.dumps(ac_avail_pl),
             'query_columns_json': json.dumps(query_columns),

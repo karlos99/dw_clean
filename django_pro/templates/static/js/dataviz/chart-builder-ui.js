@@ -232,7 +232,7 @@ function chartBuilderUIMethods() {
         if (cfg.title_left       != null) this.titleLeft       = cfg.title_left;
         if (cfg.title_top        != null) this.titleTop        = cfg.title_top;
         if (cfg.title_font_size  != null) this.titleFontSize   = cfg.title_font_size;
-        if (cfg.bar_category_gap != null) this.barCategoryGap  = cfg.bar_category_gap;
+        if (cfg.bar_category_gap != null) { this.barCategoryGap  = cfg.bar_category_gap; this.groupGap = cfg.bar_category_gap; }
         if (cfg.label_distance   != null) this.labelDistance   = cfg.label_distance;
         if (cfg.legend_left      != null) this.legendLeft      = cfg.legend_left;
         if (cfg.legend_top       != null) this.legendTop       = cfg.legend_top;
@@ -261,14 +261,15 @@ function chartBuilderUIMethods() {
                          'acIncludeCats','acIncludePl','acColFilters',
                          'compareGap','showCategories','showAxisTitles',
                          'tooltipShowPct','tooltipShowCount','tooltipValuePct',
-                         'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS','groupGapSize'];
+                         'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS','groupGapPct',
+                         'centerGroupLabels'];
       const styleProps = ['chartTitle','titleFontSize','showLegend','showLabels',
                           'legendPos','legendItemGap','legendFontSize','legendIconSize','legendOffset',
                           'labelPosition','labelFontSize','background','opacity',
                           'barBorderRadius','showPoints','smooth',
                           'showZoom','showToolbox','showGrid','showAxisLabels','enableAnimation','showTooltip',
                           'xLabelRotation','xLabelFontSize','xLabelMaxLength','forceShowAllLabels','barCategoryGap','yAxisMin','yAxisMax',
-                          'compareCatFontSize','compareCatRotation',
+                          'compareCatFontSize','compareCatRotation','groupGap',
                           'colorMap'];
       dataProps.forEach(prop => this.$watch(prop, () => this._scheduleDataPreview()));
       styleProps.forEach(prop => this.$watch(prop, () => this._scheduleStylePreview()));
@@ -361,6 +362,14 @@ function chartBuilderUIMethods() {
         const catLblShow = !!this.showCategories;
         const valLblShow = !!this.showAxisLabels;
         const catInterval = this.forceShowAllLabels ? 0 : 'auto';
+        const hasGroupBands = !!(chart._groupLabelBands && chart._groupLabelBands.length);
+        if (hasGroupBands) {
+          chart._groupLabelBands.forEach(b => {
+            b.show = catLblShow;
+            b.fontSize = +this.compareCatFontSize || 12;
+            b.rotate = +this.compareCatRotation || 0;
+          });
+        }
         if (Array.isArray(curOpt.xAxis) && curOpt.xAxis.length > 1) {
           let offset = this.chartType === 'assessment_compare' ? 22 : 30;
           if (this.xLabelRotation > 0) {
@@ -370,9 +379,12 @@ function chartBuilderUIMethods() {
             const heightContrib = textWidth * Math.sin(rad) + (this.xLabelFontSize || baseFontSize) * Math.cos(rad);
             offset = Math.max(offset, Math.round(heightContrib + 12));
           }
+          if (hasGroupBands) {
+            chart._groupLabelBands.forEach(b => { b.offset = offset; });
+          }
           opt.xAxis = [
             { axisLabel: { show: catLblShow, interval: 0, rotate: +this.xLabelRotation || 0, fontSize: +this.xLabelFontSize || (this.chartType === 'assessment_compare' ? 10 : 11) } },
-            { offset: offset, axisLabel: { show: catLblShow, interval: 0, rotate: +this.compareCatRotation || 0, fontSize: +this.compareCatFontSize || 12 } },
+            { offset: offset, axisLabel: { show: hasGroupBands ? false : catLblShow, interval: 0, rotate: +this.compareCatRotation || 0, fontSize: +this.compareCatFontSize || 12 } },
           ];
           opt.yAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow } }];
         } else if (Array.isArray(curOpt.yAxis) && curOpt.yAxis.length > 1) {
@@ -383,9 +395,12 @@ function chartBuilderUIMethods() {
             const heightContrib = textWidth * Math.sin(rad) + (this.xLabelFontSize || 11) * Math.cos(rad);
             offset = Math.max(offset, Math.round(heightContrib + 12));
           }
+          if (hasGroupBands) {
+            chart._groupLabelBands.forEach(b => { b.offset = offset; });
+          }
           opt.yAxis = [
             { axisLabel: { show: catLblShow, rotate: +this.xLabelRotation || 0, fontSize: +this.xLabelFontSize || 11 } },
-            { offset: offset, axisLabel: { show: catLblShow, interval: 0, rotate: +this.compareCatRotation || 0, fontSize: +this.compareCatFontSize || 12 } },
+            { offset: offset, axisLabel: { show: hasGroupBands ? false : catLblShow, interval: 0, rotate: +this.compareCatRotation || 0, fontSize: +this.compareCatFontSize || 12 } },
           ];
           opt.xAxis = [{ splitLine: { show: !!this.showGrid }, axisLabel: { show: valLblShow },
             min: this.yAxisMin !== '' && this.yAxisMin != null ? +this.yAxisMin : undefined,
@@ -438,6 +453,9 @@ function chartBuilderUIMethods() {
       if (updSeries.length) opt.series = updSeries;
 
       chart.setOption(opt, { replaceMerge: ['dataZoom'] });
+      if (typeof window.applyCenteredGroupLabels === 'function') {
+        window.applyCenteredGroupLabels(chart);
+      }
 
       if (this._editorInstance) {
         this._editorInstance.destroy();

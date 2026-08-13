@@ -74,6 +74,12 @@ function chartBuilderPreviewMethods(urls) {
                 }
               } catch (_) {}
               try {
+                const aliasKeys = JSON.parse(el.dataset.xAliasKeys || '[]');
+                this.xValueAliasAvail = Array.isArray(aliasKeys) ? aliasKeys : [];
+              } catch (_) {
+                this.xValueAliasAvail = [];
+              }
+              try {
                 const availCats = JSON.parse(el.dataset.acAvailCats || '[]');
                 const availPl   = JSON.parse(el.dataset.acAvailPl   || '[]');
                 if (availCats.length) this.acAvailCats = availCats;
@@ -273,6 +279,7 @@ function chartBuilderPreviewMethods(urls) {
         show_points: this.showPoints,
         smooth: this.smooth,
         color_map: this.colorMap,
+        x_value_map: this.xValueMap,
         show_zoom: this.showZoom,
         show_toolbox: this.showToolbox,
         show_grid: this.showGrid,
@@ -297,7 +304,9 @@ function chartBuilderPreviewMethods(urls) {
         compare_gap: this.compareGap,
         compare_cat_font_size: this.compareCatFontSize,
         compare_cat_rotation: this.compareCatRotation,
-        group_gap_size: this.groupGapSize,
+        group_gap_size: Math.round(this.groupGapPct / 100 * 8),
+        center_group_labels: this.centerGroupLabels,
+        group_gap: this.groupGap,
         x_label_rotation: this.xLabelRotation,
         x_label_font_size: this.xLabelFontSize,
         x_label_max_length: this.xLabelMaxLength,
