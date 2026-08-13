@@ -131,9 +131,6 @@ def export_students_csv(request):
                 if test_info.get('test_window'):
                     window_clause = "AND LOWER(t.test_window) = LOWER(%s) "
                     window_params = [test_info['test_window']]
-                else:
-                    window_clause = "AND (t.test_window IS NULL OR t.test_window = '') "
-                    window_params = []
 
                 id_subquery_base = (
                     "SELECT r.local_student_id FROM results r "
@@ -660,12 +657,11 @@ def export_students_csv(request):
                         student_ssids = [s.get('ssid') for s in chunk_students if s.get('ssid')]
                         for test_info in test_cols_info:
                             metric_col = test_info['metric']
+                            window_clause = ""
+                            window_params = []
                             if test_info.get('test_window'):
                                 window_clause = "AND LOWER(t.test_window) = LOWER(%s)"
                                 window_params = [test_info['test_window']]
-                            else:
-                                window_clause = "AND (t.test_window IS NULL OR t.test_window = '')"
-                                window_params = []
 
                             select_expr = f"r.{metric_col}" if metric_col in {'ss', 'pl'} else "(r.other_info ->> %s)"
                             extra_params = [] if metric_col in {'ss', 'pl'} else [test_info.get('other_info_key', '')]
