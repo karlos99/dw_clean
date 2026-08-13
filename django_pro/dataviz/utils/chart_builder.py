@@ -359,7 +359,9 @@ def _theme(cfg: dict) -> dict:
 
 
 def _legend(cfg: dict, text_color: str) -> dict:
-    pos       = cfg.get('legend_pos', 'bottom')
+    # Legends show by default: any missing/blank position means "bottom"
+    # (visible). Only an explicit 'hidden' value turns them off.
+    pos       = (cfg.get('legend_pos') or 'bottom').strip() or 'bottom'
     if pos == 'hidden':
         return {'show': False}
 
@@ -370,6 +372,11 @@ def _legend(cfg: dict, text_color: str) -> dict:
     legend_offset = cfg.get('legend_offset')   # None = use default
     legend_left   = cfg.get('legend_left')     # None = use default
     legend_top    = cfg.get('legend_top')      # None = use default
+
+    if cfg.get('is_embed', False):
+        legend_offset = 0
+        legend_left = None
+        legend_top = None
 
     base = {
         'show': True,

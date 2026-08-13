@@ -196,12 +196,28 @@
     // Correct size after the browser commits the flex / grid layout.
     // This is the primary fix for charts in page-builder grid cells where
     // clientHeight may be 0 or stale at the time echarts.init() runs.
-    requestAnimationFrame(function () {
+    function _forceRelayout() {
       chart.resize();
       if (option && option.__is_parliament__) {
         adjustParliamentAspectRatio(chart, container, option);
       }
+      if (option) {
+        chart.setOption(option);
+      }
+    }
+    requestAnimationFrame(_forceRelayout);
+    // Flex/grid layouts can commit their final dimensions a frame or two
+    // after the chart is inserted, and the legend is a layout component that
+    // ECharts only paints on render/resize. Without these extra passes the
+    // legend could stay un-painted until an interaction (e.g. a click) forces
+    // a repaint. Running resize again once layout has definitely settled makes
+    // the legend appear reliably on first paint.
+    requestAnimationFrame(function () {
+      _forceRelayout();
+      setTimeout(_forceRelayout, 60);
     });
+
+    let resizeTimer = null;
 
     // Auto-resize when container dimensions change
     const ro = new ResizeObserver(() => {
@@ -209,6 +225,16 @@
         adjustParliamentAspectRatio(chart, container, option);
       }
       chart.resize();
+
+      // Debounce setOption to prevent lag during active resizing, but ensure legend layout updates
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (option) {
+          try {
+            chart.setOption(option);
+          } catch (e) {}
+        }
+      }, 100);
     });
     ro.observe(container);
 
