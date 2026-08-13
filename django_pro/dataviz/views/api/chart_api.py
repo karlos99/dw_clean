@@ -1030,6 +1030,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             # Save data cache (30 min TTL — confirmed acceptable staleness window)
             if data_cached is None and result.get('rows'):
                 cache.set(data_cache_key, result, timeout=1800)
+            chart_cfg['is_embed'] = is_embed
             option = build_option(result.get('rows', []), chart.column_defs, chart_cfg)
             option.pop('__series_names__', None)
             option_json = json.dumps(option)
