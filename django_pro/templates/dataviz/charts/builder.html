@@ -270,6 +270,14 @@
             Load Columns
           </button>
         </div>
+        <label x-show="datasetSourceId" class="mt-2 flex items-start gap-2 cursor-pointer select-none">
+          <input type="checkbox" x-model="oneRowPerStuAnnualKey"
+                 class="mt-0.5 w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-[10px] text-slate-600 leading-snug">
+            <span class="font-semibold text-slate-700">One record per school year</span>
+            <span class="block text-slate-400">(stu_annual_key — limits join fan-out to one row per enrollment year)</span>
+          </span>
+        </label>
         <p x-show="!datasetSourceId" class="text-[9px] text-slate-400 mt-1.5">
           <a href="{% url 'dataviz:dataset_index' %}" target="_blank" class="text-blue-500 hover:underline">Manage datasets →</a>
         </p>
@@ -3102,6 +3110,7 @@
     <input type="hidden" name="drill_through_columns_str" x-bind:value="drillColumns">
     <input type="hidden" name="source_filters" x-bind:value="JSON.stringify(cleanSourceFilters())">
     <input type="hidden" name="school_filter_mode" x-bind:value="schoolFilterMode">
+    <input type="hidden" name="one_row_per_stu_annual_key" x-bind:value="oneRowPerStuAnnualKey ? '1' : ''">
     <input type="hidden" name="parliament_dot_scale" x-bind:value="parliamentDotScale">
     <input type="hidden" name="parliament_shape"     x-bind:value="parliamentShape">
     <input type="hidden" name="parliament_rows"      x-bind:value="parliamentRowsAuto ? '' : parliamentRows">
@@ -3262,6 +3271,7 @@ function chartBuilder() {
     sourceType:   existing ? (existing.source_type === 'sql' ? 'sql' : existing.source_type === 'columns' ? 'columns' : existing.source_type === 'dataset' ? 'dataset' : 'query') : 'query',
     savedQueryId: existing && existing.source_type === 'query' ? String(existing.source_id ?? '') : '',
     datasetSourceId: existing?.source_type === 'dataset' ? String(existing.source_id ?? '') : '',
+    oneRowPerStuAnnualKey: existing?.config?.one_row_per_stu_annual_key === true,
     rawSql:       existing?.source_sql ?? '',
     chartType:    existing?.chart_type ?? 'bar',
     barLayout:    existing?.config?.bar_layout ?? 'grouped',

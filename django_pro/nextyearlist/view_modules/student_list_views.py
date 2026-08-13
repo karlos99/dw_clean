@@ -356,6 +356,7 @@ def load_students(request):
                     "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.school_year = %s "
+                    "AND (r.ssid IS NULL OR r.ssid = '') "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
@@ -751,7 +752,7 @@ def load_students(request):
                     extra_params = [test_info.get('other_info_key', '')]
                 order_by_expr = (
                     f"(SELECT {select_expr} FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key"
-                    " WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) AND r.school_year = %s"
+                    " WHERE (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid) OR ((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = cs.student_id) AND r.school_year = %s"
                     " AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                     f"{window_clause} LIMIT 1)"
                 )
@@ -795,7 +796,7 @@ def load_students(request):
                     val_expr = f"(r.other_info ->> '{ti.get('other_info_key', '')}')"
                 test_sub = (
                     f"(SELECT {val_expr} FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key"
-                    f" WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) AND r.school_year = %s"
+                    f" WHERE (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid) OR ((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = cs.student_id) AND r.school_year = %s"
                     f" AND t.test_name ILIKE %s AND t.subject ILIKE %s {window_clause}LIMIT 1)"
                     f" AS \"{ti['col_name']}\""
                 )

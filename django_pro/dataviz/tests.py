@@ -11,6 +11,52 @@ from dataviz.utils.drill_through import execute_drill_query
 User = get_user_model()
 
 class CompilerSqlTests(SimpleTestCase):
+    def test_compile_dataset_to_sql_one_row_per_stu_annual_key(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade', 'current_student.stu_annual_key'],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade', 'stu_annual_key', 'status'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                status_filter=None,
+                one_row_per_stu_annual_key=True,
+            )
+
+        self.assertIn('SELECT DISTINCT ON ("current_student"."stu_annual_key")', sql)
+        self.assertIn('ORDER BY "current_student"."stu_annual_key" ASC', sql)
+        self.assertFalse(sql.startswith('SELECT DISTINCT "'))
+
+    def test_dedupe_rows_by_stu_annual_key(self):
+        from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
+
+        rows = [
+            {'stu_annual_key': 'A', 'grade': '1'},
+            {'stu_annual_key': 'A', 'grade': '2'},
+            {'stu_annual_key': 'B', 'grade': '3'},
+            {'stu_annual_key': '', 'grade': '4'},
+        ]
+        out = dedupe_rows_by_stu_annual_key(rows)
+        self.assertEqual(len(out), 3)
+        self.assertEqual([r['grade'] for r in out], ['1', '3', '4'])
+
     def test_compile_dataset_to_sql_uses_any_for_multi_value_filters(self):
         dataset = SimpleNamespace(
             base_table='current_student',

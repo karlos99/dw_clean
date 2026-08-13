@@ -18,7 +18,7 @@ from dataviz.utils.chart_builder import build_option
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '8'
+_CHART_PIPELINE_VERSION = '9'
 
 
 def _effective_chart_cfg(chart) -> dict:
@@ -452,6 +452,7 @@ def _cfg_from_post(post):
         'parliament_shape':     post.get('parliament_shape', 'semi-circle'),
         'parliament_rows':      _parse_int(post.get('parliament_rows'), None) if post.get('parliament_rows') else None,
         'parliament_show_ss':   bool(post.get('parliament_show_ss')),
+        'one_row_per_stu_annual_key': bool(post.get('one_row_per_stu_annual_key')),
     }
 
 
@@ -557,6 +558,7 @@ def chart_preview_api(request):
         'ssql': source_sql,
         'sf': source_filters,
         'sc': _sel_cols,
+        'one_row_per_stu_annual_key': bool(cfg.get('one_row_per_stu_annual_key')),
     }, sort_keys=True).encode()).hexdigest()[:12]
     preview_data_key = f'preview_data:{preview_source_hash}'
     preview_cached = cache.get(preview_data_key)
@@ -586,7 +588,7 @@ def chart_preview_api(request):
         from dataviz.models import Dataset
         from dataviz.utils.compiler import (
             compile_dataset_to_sql, execute_compiled_query_aliased,
-            generate_column_aliases,
+            generate_column_aliases, dedupe_rows_by_stu_annual_key,
         )
         from dataviz.utils.status_filter import prepare_interactive_filters
         try:
@@ -598,14 +600,18 @@ def chart_preview_api(request):
         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
         resolved_filters, status_val = prepare_interactive_filters(source_filters or {}, ds, active_tables)
         limit_val = _parse_chart_row_limit(cfg)
+        one_per_sak = bool(cfg.get('one_row_per_stu_annual_key'))
         sql, params = compile_dataset_to_sql(
             ds, user=None, interactive_filters=resolved_filters,
             limit=limit_val, status_filter=status_val,
+            one_row_per_stu_annual_key=one_per_sak,
         )
         res = execute_compiled_query_aliased(sql, params, col_mappings)
         if res.get('error'):
             return _error(res['error'])
         aliased_rows = res.get('rows', [])
+        if one_per_sak:
+            aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
         # Fetch test_*/mark_* columns via data explorer for any alias that wasn't
         # returned by the dataset SQL (dataset without a results/tests JOIN).
         _missing_assessment = _get_missing_assessment_cols(cfg, col_mappings, aliased_rows)
@@ -614,7 +620,7 @@ def chart_preview_api(request):
                 aliased_rows, _missing_assessment, None, source_filters=source_filters,
             )
         cfg = _remap_config_cols(cfg, col_mappings)
-        result = {'rows': aliased_rows, 'columns': res.get('columns', []), 'row_count': res.get('row_count', 0)}
+        result = {'rows': aliased_rows, 'columns': res.get('columns', []), 'row_count': len(aliased_rows)}
     else:
         if not source_id:
             return _error('Select a data source first')
@@ -930,7 +936,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             from dataviz.models import Dataset
             from dataviz.utils.compiler import (
                 compile_dataset_to_sql, execute_compiled_query_aliased,
-                generate_column_aliases,
+                generate_column_aliases, dedupe_rows_by_stu_annual_key,
             )
             from dataviz.utils.status_filter import prepare_interactive_filters
             try:
@@ -946,9 +952,15 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                 resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
                 limit_val = _parse_chart_row_limit(chart_cfg)
+                one_per_sak = bool(chart_cfg.get('one_row_per_stu_annual_key'))
                 ds_updated = int(ds.updated_at.timestamp())
                 ds_filter_hash = hashlib.md5(json.dumps(
-                    {**resolved_filters, '__status__': status_val}, sort_keys=True, default=str,
+                    {
+                        **resolved_filters,
+                        '__status__': status_val,
+                        '__one_per_sak__': one_per_sak,
+                    },
+                    sort_keys=True, default=str,
                 ).encode()).hexdigest()[:12]
                 user = getattr(request, 'user', None)
                 user_part = ""
@@ -967,12 +979,16 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     sql, params = compile_dataset_to_sql(
                         ds, user=user, interactive_filters=resolved_filters,
                         limit=limit_val, status_filter=status_val,
+                        one_row_per_stu_annual_key=one_per_sak,
                     )
                     res = execute_compiled_query_aliased(sql, params, col_mappings)
                     if res.get('error'):
                         result = {'error': res['error'], 'rows': [], 'columns': []}
                     else:
-                        result = {'rows': res.get('rows', []), 'columns': res.get('columns', []), 'row_count': res.get('row_count', 0)}
+                        rows = res.get('rows', [])
+                        if one_per_sak:
+                            rows = dedupe_rows_by_stu_annual_key(rows)
+                        result = {'rows': rows, 'columns': res.get('columns', []), 'row_count': len(rows)}
                         if result.get('rows'):
                             cache.set(ds_cache_key, result, timeout=1800)
                     chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
@@ -982,13 +998,16 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 # might require different assessment columns.
                 if not result.get('error') and result.get('rows'):
                     aliased_rows = result['rows']
+                    if one_per_sak:
+                        aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
                     _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
                     if _missing_assessment:
                         aliased_rows = _augment_rows_with_assessment_cols(
                             aliased_rows, _missing_assessment, None,
                             source_filters=raw_filters,
                         )
-                        result['rows'] = aliased_rows
+                    result['rows'] = aliased_rows
+                    result['row_count'] = len(aliased_rows)
 
         else:
             merged_filters = dict(chart.source_filters or {})

@@ -56,8 +56,18 @@ def _deduplicate_count_drill_rows(rows, chart):
     datasets those columns can make otherwise identical rows distinct, even
     though the chart count was calculated from one row per student. Numeric
     and occurrence aggregations intentionally retain their source rows.
+
+    When the chart uses ``one_row_per_stu_annual_key``, always collapse on
+    ``stu_annual_key`` so drill matches the dataset chart row set.
     """
-    if not rows or chart.chart_type not in ('bar', 'grouped_bar', 'stacked_bar'):
+    if not rows:
+        return rows
+
+    if (chart.config or {}).get('one_row_per_stu_annual_key'):
+        from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
+        return dedupe_rows_by_stu_annual_key(rows)
+
+    if chart.chart_type not in ('bar', 'grouped_bar', 'stacked_bar'):
         return rows
     if (chart.config or {}).get('agg', 'count') != 'count':
         return rows
@@ -558,7 +568,11 @@ def execute_drill_query(
         school_id = active_school.state_id if active_school else 'All'
         user_part = f":u{user.pk}:r{role_name}:s{school_id}"
     _fetch_hash = hashlib.md5(json.dumps(
-        {'f': drill_filters, 'ec': sorted(extra_columns) if extra_columns else None},
+        {
+            'f': drill_filters,
+            'ec': sorted(extra_columns) if extra_columns else None,
+            'one_per_sak': bool((chart.config or {}).get('one_row_per_stu_annual_key')),
+        },
         sort_keys=True, default=str,
     ).encode()).hexdigest()[:16]
     updated_ts = int(chart.updated_at.timestamp())
@@ -694,13 +708,20 @@ def execute_drill_query(
                     self.updated_at = getattr(original, 'updated_at', None)
             
             mock_ds = MockDataset(ds, dataset_columns)
+            one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
             sql, params = compile_dataset_to_sql(
                 mock_ds, user=user, interactive_filters=dataset_filters,
                 limit=None, status_filter=status_val,
+                one_row_per_stu_annual_key=one_per_sak,
             )
             # Use aliased executor so column_mappings are applied to result keys
             _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
             ds_result = execute_compiled_query_aliased(sql, params, _col_mappings)
+            if one_per_sak and not ds_result.get('error') and ds_result.get('rows'):
+                from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
+                ds_result = dict(ds_result)
+                ds_result['rows'] = dedupe_rows_by_stu_annual_key(ds_result['rows'])
+                ds_result['row_count'] = len(ds_result['rows'])
             
             error = ds_result.get('error')
             if error:

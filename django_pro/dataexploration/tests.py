@@ -86,6 +86,29 @@ class TestMetadataMatchesTests(SimpleTestCase):
 		self.assertTrue(test_metadata_matches(info, 'CAA', 'Math', None))
 
 
+class ResultsStudentMatchTests(SimpleTestCase):
+	def test_recycled_local_id_does_not_attach_wrong_ssid_scores(self):
+		from dataexploration.column_utils import assign_result_value_maps, lookup_result_value
+
+		# Result belongs to SSID 3122440885 but shares local_id with another student.
+		rows = [
+			('20250161', '3122440885', '1'),
+			('999', None, '4'),
+		]
+		by_id, by_ssid = assign_result_value_maps(rows)
+		self.assertEqual(by_ssid['3122440885'], '1')
+		self.assertNotIn('20250161', by_id)
+		self.assertEqual(by_id['999'], '4')
+
+		emily = {'student_id': '20250161', 'ssid': '8442970229'}
+		owner = {'student_id': 'other', 'ssid': '3122440885'}
+		orphan = {'student_id': '999', 'ssid': 'orphan'}
+
+		self.assertEqual(lookup_result_value(emily, by_id, by_ssid), '—')
+		self.assertEqual(lookup_result_value(owner, by_id, by_ssid), '1')
+		self.assertEqual(lookup_result_value(orphan, by_id, by_ssid), '4')
+
+
 class SchoolYearUtilsTests(SimpleTestCase):
 	@patch("dataexploration.school_year_utils.resolve_school_year")
 	def test_resolve_relative_column_key(self, mock_resolve):
