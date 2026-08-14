@@ -9,13 +9,16 @@ This system allows Project Admins to manage all pages and views in the applicati
 - **Status Management**: Pages can be Active, Inactive, or Draft
 - **Menu Control**: Show/hide pages in navigation and control display order
 - **Hierarchical Structure**: Support for parent-child page relationships
+- **Navbar Configuration**: Toggle sticky behavior, nav label style, and submenu style, with a live preview
 
 ## Usage
 
 ### Managing Pages via UI
 
 1. Navigate to **Admin → Pages** (Project Admin only)
-2. Add, edit, or delete pages through the interface
+2. The Page Management screen has two tabs:
+   - **Pages** — browse pages via the structure tree (click to edit), filter/search/sort the table, and open the add/edit modal (organized into Page Info / Access / Navigation sections). A collapsible **Menu Preview** shows the live navbar.
+   - **Navbar** — configure navbar-level settings and see a live preview.
 3. Configure:
    - Page name and description
    - URL path
@@ -23,6 +26,7 @@ This system allows Project Admins to manage all pages and views in the applicati
    - Status (Active/Inactive/Draft)
    - Required roles for access
    - Menu visibility and order
+   - Navbar sticky behavior and label style
 
 ### Managing Pages via Command Line
 
@@ -73,6 +77,12 @@ def my_view(request):
 - `show_in_menu`: Display in navigation
 - `menu_order`: Display order (lower = first)
 - `parent_page`: For hierarchical menus
+
+**NavbarConfig (singleton) Fields:**
+- `sticky`: Pin the navbar to the top of the viewport while scrolling
+- `label_case`: `uppercase` (classic look) or `normal` (customer.io-style cleaner labels)
+- `submenu_style`: `dropdown` (classic small menu) or `megamenu` (customer.io-style full-width panel with page descriptions)
+- Managed from the **Navbar** tab in Page Management or via Django admin. The navbar itself is rendered from `templates/partials/navbar.html` and driven by the `navigation_pages` context processor. The header logo uses `static/images/logo.svg`.
 
 ## Access Control Logic
 

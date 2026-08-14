@@ -1,4 +1,4 @@
-from .models_pages import Page
+from .models_pages import Page, NavbarConfig
 from mathr.view_modules.access_utils import can_user_access_mathr
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
@@ -49,6 +49,13 @@ def _page_is_accessible(user, page, user_roles: set[str]) -> bool:
     if not page.required_roles or len(page.required_roles) == 0:
         return True
     return bool(user_roles & set(page.required_roles))
+
+
+def _navbar_config():
+    try:
+        return NavbarConfig.get()
+    except Exception:
+        return NavbarConfig()
 
 
 def _menu_target_allows(user, page, user_roles: set[str]) -> bool:
@@ -201,6 +208,7 @@ def navigation_pages(request):
             'is_project_admin': False,
             'placement_cards_access': False,
             'default_school_year': default_school_year,
+            'navbar_config': _navbar_config(),
         }
 
     user_roles = _user_roles(request.user)
@@ -266,6 +274,7 @@ def navigation_pages(request):
         'is_project_admin': is_project_admin,
         'placement_cards_access': placement_cards_access,
         'default_school_year': default_school_year,
+        'navbar_config': _navbar_config(),
     }
 
 
