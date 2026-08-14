@@ -336,8 +336,8 @@ class DatasetDrillThroughTests(TestCase):
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
     @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
-    @patch('dataviz.utils.data_loader._run_saved_query_sql')
-    def test_dataset_drill_through_with_ssids(self, mock_run_sql, mock_execute_query, mock_compile):
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_through_with_ssids(self, mock_enrich, mock_execute_query, mock_compile):
         # 1. Mock dataset query result returning ssids
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
@@ -349,17 +349,15 @@ class DatasetDrillThroughTests(TestCase):
             'row_count': 2
         }
 
-        # 2. Mock _run_saved_query_sql which queries standard student list
-        mock_run_sql.return_value = {
-            'columns': ['student_id', 'student_name', 'grade', 'school', 'school_year'],
-            'rows': [
-                {'student_id': 'S1', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026', 'ssid': '12345'},
-                {'student_id': 'S2', 'student_name': 'Bob', 'grade': '6', 'school': 'School B', 'school_year': '2025-2026', 'ssid': '67890'}
+        mock_enrich.return_value = (
+            [
+                {'ssid': '12345', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026'},
+                {'ssid': '67890', 'student_name': 'Bob', 'grade': '6', 'school': 'School B', 'school_year': '2025-2026'},
             ],
-            'error': None
-        }
+            ['ssid', 'student_name', 'grade', 'student_id', 'school', 'school_year'],
+            None,
+        )
 
-        # Run execute_drill_query
         result = execute_drill_query(
             self.chart,
             drill_filters={'current_student.grade': '5'},
@@ -373,23 +371,12 @@ class DatasetDrillThroughTests(TestCase):
         args, kwargs = mock_compile.call_args
         self.assertEqual(kwargs['interactive_filters'], {'current_student.grade': '5'})
 
-        # Check standard query runner config
-        mock_run_sql.assert_called_once()
-        run_config = mock_run_sql.call_args[0][0]
-        self.assertIn('ssid', run_config['filters'])
-        self.assertCountEqual(run_config['filters']['ssid'], ['12345', '67890'])
+        mock_enrich.assert_called_once()
+        enrich_args, enrich_kwargs = mock_enrich.call_args
+        self.assertIn('ssid', enrich_args[1] or enrich_args[0])
 
-        # Check columns default to dataset columns + basic columns
-        self.assertCountEqual(
-            run_config['columns'],
-            ['ssid', 'student_name', 'grade', 'student_id', 'school', 'school_year']
-        )
-
-        # Result verification
         self.assertEqual(len(result['rows']), 2)
-        # Should have student_name merged from demographics
         self.assertEqual(result['rows'][0]['student_name'], 'Alice')
-        # Cleaned dataset key should exist
         self.assertEqual(result['rows'][0]['ssid'], '12345')
 
     def test_build_drill_filter_multiple_x_axis(self):
@@ -411,8 +398,8 @@ class DatasetDrillThroughTests(TestCase):
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
     @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
-    @patch('dataviz.utils.data_loader._run_saved_query_sql')
-    def test_dataset_drill_through_with_multiple_x_axis(self, mock_run_sql, mock_execute_query, mock_compile):
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_through_with_multiple_x_axis(self, mock_enrich, mock_execute_query, mock_compile):
         # 1. Mock dataset query result returning ssids
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
@@ -421,12 +408,11 @@ class DatasetDrillThroughTests(TestCase):
             'row_count': 1
         }
 
-        # 2. Mock _run_saved_query_sql
-        mock_run_sql.return_value = {
-            'columns': ['student_id', 'student_name', 'grade', 'school', 'school_year'],
-            'rows': [{'student_id': 'S1', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026', 'ssid': '12345'}],
-            'error': None
-        }
+        mock_enrich.return_value = (
+            [{'ssid': '12345', 'student_name': 'Alice', 'grade': '5'}],
+            ['ssid', 'student_name', 'grade'],
+            None,
+        )
 
         # Update chart config to have multiple x axis columns
         self.chart.config = {
@@ -566,19 +552,19 @@ class DatasetDrillThroughTests(TestCase):
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
     @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
-    @patch('dataviz.utils.data_loader._run_saved_query_sql')
-    def test_dataset_drill_through_with_jsonb_filter_key(self, mock_run_sql, mock_execute_query, mock_compile):
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_through_with_jsonb_filter_key(self, mock_enrich, mock_execute_query, mock_compile):
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
             'columns': ['ssid'],
             'rows': [{'ssid': '12345'}],
             'row_count': 1,
         }
-        mock_run_sql.return_value = {
-            'columns': ['student_id', 'student_name', 'grade', 'school', 'school_year'],
-            'rows': [{'student_id': 'S1', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026', 'ssid': '12345'}],
-            'error': None,
-        }
+        mock_enrich.return_value = (
+            [{'ssid': '12345', 'student_name': 'Alice'}],
+            ['ssid', 'student_name'],
+            None,
+        )
 
         result = execute_drill_query(
             self.chart,
@@ -594,19 +580,19 @@ class DatasetDrillThroughTests(TestCase):
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
     @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
-    @patch('dataviz.utils.data_loader._run_saved_query_sql')
-    def test_dataset_drill_through_with_custom_column_mapping(self, mock_run_sql, mock_execute_query, mock_compile):
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_through_with_custom_column_mapping(self, mock_enrich, mock_execute_query, mock_compile):
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
             'columns': ['ssid'],
             'rows': [{'ssid': '12345'}],
             'row_count': 1
         }
-        mock_run_sql.return_value = {
-            'columns': ['student_id', 'student_name', 'grade', 'school', 'school_year'],
-            'rows': [{'student_id': 'S1', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026', 'ssid': '12345'}],
-            'error': None
-        }
+        mock_enrich.return_value = (
+            [{'ssid': '12345', 'student_name': 'Alice', 'test_window': 'Fall'}],
+            ['ssid', 'student_name', 'test_window'],
+            None,
+        )
 
         # Set up custom mapping on the dataset
         self.dataset.joins = [{'table': 'tests', 'join_type': 'left', 'conditions': []}]
@@ -624,14 +610,40 @@ class DatasetDrillThroughTests(TestCase):
             extra_columns=[]
         )
 
-        # Verify compiler received the dataset filter
         mock_compile.assert_called_once()
         self.assertEqual(mock_compile.call_args[1]['interactive_filters'], {'tests.test_window': 'Fall'})
+        mock_enrich.assert_called_once()
+        self.assertEqual(result['rows'][0]['ssid'], '12345')
 
-        # Verify that Data Exploration runner received the mapped filter key 'test_window' rather than 'tests.test_window'
-        mock_run_sql.assert_called_once()
-        run_config = mock_run_sql.call_args[0][0]
-        self.assertEqual(run_config['filters'].get('test_window'), 'Fall')
+    @patch('dataviz.utils.compiler.compile_dataset_to_sql')
+    @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_skips_enrichment_when_empty(self, mock_enrich, mock_execute_query, mock_compile):
+        mock_compile.return_value = ("SELECT ...", [])
+        mock_execute_query.return_value = {
+            'columns': ['ssid'],
+            'rows': [],
+            'row_count': 0,
+        }
+        result = execute_drill_query(
+            self.chart, drill_filters={}, columns=[], user=self.user, extra_columns=[],
+        )
+        mock_enrich.assert_not_called()
+        self.assertEqual(result['rows'], [])
+
+    @patch('dataviz.utils.compiler.compile_dataset_to_sql')
+    @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_preserves_row_count(self, mock_enrich, mock_execute_query, mock_compile):
+        mock_compile.return_value = ("SELECT ...", [])
+        ds_rows = [
+            {'ssid': '12345', 'student_name': 'Alice', 'grade': '5'},
+            {'ssid': '67890', 'student_name': 'Bob', 'grade': '6'},
+        ]
+        mock_execute_query.return_value = {'columns': ['ssid', 'student_name', 'grade'], 'rows': ds_rows, 'row_count': 2}
+        mock_enrich.return_value = (ds_rows, ['ssid', 'student_name', 'grade'], None)
+        result = execute_drill_query(self.chart, drill_filters={}, columns=[], user=self.user)
+        self.assertEqual(len(result['rows']), 2)
 
     def test_allowed_dataset_tables_whitelisting(self):
         from dataviz.utils.compiler import get_allowed_dataset_tables, compile_dataset_to_sql, SQLCompilationError
@@ -881,11 +893,10 @@ class DatasetDrillThroughTests(TestCase):
             self.assertEqual(grade_call_args, {'current_student.school': ['Lincoln']})
 
     def test_new_aggregations_and_empty_mappings_resolution(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _agg
-        
-        # Test 1: pandas-based count_unique and count_occurrence aggregation
-        df = pd.DataFrame([
+
+        df = pl.from_dicts([
             {'x': 'A', 'y': 10},
             {'x': 'A', 'y': 10},
             {'x': 'A', 'y': 20},
@@ -1660,12 +1671,53 @@ class GroupGapOptionTests(SimpleTestCase):
     def test_spacer_categories_have_empty_group_labels(self):
         from dataviz.utils.chart_builder import build_option
 
-        opt = build_option(self._bar_rows(), {}, self._base_cfg(group_gap_size=1))
+        opt = build_option(
+            self._bar_rows(), {},
+            self._base_cfg(group_gap_size=1, center_group_labels=False),
+        )
         group_axis = opt['xAxis'][1]
         labels = group_axis['data']
         # spacer positions must not repeat the group name — it stays centered once per group
         self.assertEqual(labels.count('K'), 1)
         self.assertEqual(labels.count('1'), 1)
+
+    def test_group_gap_size_tooltip_categories_match_expanded_axis(self):
+        import json
+        import re
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': '__x_comp__',
+            'x_cols': ['grade', 'school_year'],
+            'y_col': 'pl',
+            'stack_col': 'pl',
+            'agg': 'count',
+            'show_percent': True,
+            'group_gap_size': 1,
+        }
+        opt = build_option(rows, {}, cfg)
+        axis_cats = opt['__category_names__']
+        leaf = opt['xAxis'][0]['data']
+        self.assertEqual(len(axis_cats), len(leaf))
+        self.assertEqual(len(opt['series'][0]['data']), len(axis_cats))
+
+        fmt = opt['tooltip']['__formatter_js__']
+        tooltip_cats = json.loads(re.search(r'var cats = (\[.*?\]);', fmt).group(1))
+        self.assertEqual(tooltip_cats, axis_cats)
+
+        raw_lookup = json.loads(re.search(r'var rawLookup = (\{.*?\});', fmt).group(1))
+        real_cat = '03 · 2024-2025'
+        self.assertIn(real_cat, axis_cats)
+        self.assertTrue(any(raw_lookup[s].get(real_cat, 0) > 0 for s in raw_lookup))
 
 
 class DateSeriesOptionTests(SimpleTestCase):
@@ -2115,6 +2167,47 @@ class DateSeriesCalcOperatorTests(SimpleTestCase):
         self.assertEqual(by_name['C'], [2.0])  # 2 * 1
 
 
+class DrillCacheTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        self.user = User.objects.create_user(username='drillcache', password='password', is_superuser=True)
+        self.chart = SavedChart.objects.create(
+            name='Cache Chart',
+            chart_type='bar',
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['grade', 'student_id']},
+            owner=self.user,
+        )
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_drill_tier2_hit_on_page_change(self, mock_run_query):
+        mock_run_query.return_value = {
+            'rows': [{'student_id': str(i), 'grade': 'K'} for i in range(5)],
+            'columns': ['student_id', 'grade'],
+            'error': None,
+        }
+        r1 = execute_drill_query(self.chart, {'grade': 'K'}, [], self.user, page=1, per_page=2)
+        r2 = execute_drill_query(self.chart, {'grade': 'K'}, [], self.user, page=2, per_page=2)
+        self.assertEqual(r1['total_rows'], 5)
+        self.assertEqual(len(r1['rows']), 2)
+        self.assertEqual(len(r2['rows']), 2)
+        self.assertEqual(mock_run_query.call_count, 1)
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_drill_source_filters_bust_tier1(self, mock_run_query):
+        mock_run_query.return_value = {
+            'rows': [{'student_id': '1', 'grade': 'K'}],
+            'columns': ['student_id', 'grade'],
+            'error': None,
+        }
+        execute_drill_query(self.chart, {}, [], self.user)
+        self.chart.source_filters = {'grade': '1'}
+        self.chart.save()
+        execute_drill_query(self.chart, {}, [], self.user)
+        self.assertEqual(mock_run_query.call_count, 2)
+
+
 class ChartRenderCacheTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testadmin', password='password', is_staff=True, is_superuser=True)
@@ -2224,10 +2317,10 @@ class ChartAccessControlTests(TestCase):
 
 class DynamicSummaryTableOptionTests(TestCase):
     def test_dynamic_summary_table_calculations_mode(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _dynamic_summary_table_option
 
-        df = pd.DataFrame([
+        df = pl.from_dicts([
             {'grade': '5', 'ssid': '123', 'scale_score': 300.0},
             {'grade': '5', 'ssid': '456', 'scale_score': 400.0},
             {'grade': '6', 'ssid': '789', 'scale_score': 500.0},
@@ -2253,10 +2346,10 @@ class DynamicSummaryTableOptionTests(TestCase):
         ])
 
     def test_dynamic_summary_table_echarts_mode(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _dynamic_summary_table_option
 
-        df = pd.DataFrame([
+        df = pl.from_dicts([
             {'grade': '5', 'ssid': '123', 'scale_score': 300.0},
             {'grade': '5', 'ssid': '456', 'scale_score': 400.0},
             {'grade': '6', 'ssid': '789', 'scale_score': 500.0},
@@ -2282,10 +2375,10 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res['series'][0]['data'], [2.0, 1.0])
 
     def test_dynamic_summary_table_pivot_decimals(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _dynamic_summary_table_option
 
-        df = pd.DataFrame([
+        df = pl.from_dicts([
             {'grade': '5', 'gender': 'F', 'scale_score': 300.567},
             {'grade': '5', 'gender': 'F', 'scale_score': 400.123},
             {'grade': '6', 'gender': 'M', 'scale_score': 500.000},
@@ -2309,10 +2402,10 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res['total_row'], ['Total', 350.3, 500.0, 850.3])
 
     def test_summary_table_and_dynamic_table_tooltips(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _summary_table_option, _dynamic_summary_table_option
 
-        df = pd.DataFrame([
+        df = pl.from_dicts([
             {'grade': '5', 'gender': 'F', 'scale_score': 300.0, 'ssid': '1'},
             {'grade': '5', 'gender': 'F', 'scale_score': 400.0, 'ssid': '1'},
             {'grade': '5', 'gender': 'F', 'scale_score': 500.0, 'ssid': '2'},
@@ -2454,4 +2547,155 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(lines[0], '"ssid","student_name","grade"')
         self.assertEqual(lines[1], '"123","Alice","5"')
 
+
+class AssessmentEnrichmentRegressionTests(TestCase):
+    def test_augment_passes_school_year_from_rows_and_column_keys(self):
+        from unittest.mock import patch
+        from dataviz.utils.assessment_enrichment import augment_rows_with_assessment_cols
+
+        rows = [
+            {'ssid': '123', 'grade': '5', 'school_year': '2025-2026'},
+        ]
+        with patch('dataviz.utils.data_loader.enrich_drill_rows') as mock_enrich:
+            mock_enrich.return_value = (rows, [], None)
+            augment_rows_with_assessment_cols(
+                rows,
+                ['test_2025_2026_ELA_Fall_PL'],
+                None,
+            )
+        filters = mock_enrich.call_args[0][2]
+        self.assertIn('2025-2026', filters.get('school_year', []))
+
+    def test_enrich_requests_student_id_when_column_empty(self):
+        from unittest.mock import patch
+        from dataviz.utils.data_loader import enrich_drill_rows
+
+        rows = [
+            {'ssid': '123', 'student_id': None, 'grade': '5', 'school_year': '2025-2026'},
+            {'ssid': '456', 'student_id': '', 'grade': '6', 'school_year': '2025-2026'},
+        ]
+        with patch('dataviz.utils.data_loader._fetch_base_columns_for_rows') as mock_base, \
+             patch('dataviz.utils.data_loader._enrich_rows_test_mark') as mock_test:
+            mock_base.return_value = (
+                [
+                    {'ssid': '123', 'student_id': 'loc1', 'grade': '5', 'school_year': '2025-2026'},
+                    {'ssid': '456', 'student_id': 'loc2', 'grade': '6', 'school_year': '2025-2026'},
+                ],
+                None,
+            )
+            mock_test.return_value = None
+            enrich_drill_rows(rows, ['test_2025_2026_ELA_Fall_PL'], {})
+        mock_base.assert_called_once()
+        self.assertIn('student_id', mock_base.call_args[0][1])
+
+    @patch('clickhouse_utils.executor.QueryExecutor.pg_cursor')
+    @patch('dataviz.utils.chart_builder._record_pg_val')
+    def test_fetch_test_data_uses_ssid_when_student_id_missing(self, _mock_pg, mock_pg_cursor):
+        from unittest.mock import MagicMock
+        from dataviz.utils.data_loader import _fetch_test_data
+
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+        mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        students = [{'ssid': '999', 'grade': '5', 'school_year': '2025-2026'}]
+        test_infos = [{
+            'year': '2025-2026',
+            'test_name': 'CAASPP',
+            'subject': 'ELA',
+            'test_window': None,
+            'metric': 'pl',
+            'col_name': 'test_2025_2026_CAASPP_ELA_PL',
+        }]
+
+        _fetch_test_data(None, test_infos, [], students)
+
+        cursor.execute.assert_called_once()
+        sql = cursor.execute.call_args[0][0]
+        params = cursor.execute.call_args[0][1]
+        self.assertIn('INNER JOIN tests t', sql)
+        self.assertNotIn('test_window IS NULL', sql)
+        self.assertIn('999', params[0])
+
+    def test_fetch_test_data_no_window_matches_spring_results(self):
+        from unittest.mock import patch, MagicMock
+        from dataviz.utils.data_loader import _fetch_test_data
+
+        students = [{'ssid': '123', 'school_year': '2024-2025', 'grade': '5'}]
+        test_infos = [{
+            'year': '2024-2025',
+            'test_name': 'CAASPP',
+            'subject': 'ELA',
+            'test_window': None,
+            'metric': 'pl',
+            'col_name': 'test_2024_2025_CAASPP_ELA_PL',
+        }]
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('loc1', '123', None, '3', None, '2024-2025', 'CAASPP', 'ELA', 'Spring'),
+        ]
+        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor, \
+             patch('dataviz.utils.chart_builder._record_pg_val'):
+            mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+            mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+            _fetch_test_data(None, test_infos, [], students)
+
+        self.assertEqual(students[0]['test_2024_2025_CAASPP_ELA_PL'], '3')
+
+    def test_stack_same_as_y_uses_count_not_avg(self):
+        import polars as pl
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'grade',
+            'y_col': 'pl',
+            'stack_col': 'pl',
+            'agg': 'avg',
+            'show_percent': True,
+            'stack_order': ['1', '4'],
+        }
+        opt = build_option(rows, {}, cfg)
+        idx = {c: i for i, c in enumerate(opt['__category_names__'])}
+        pl1 = {s['name']: s['data'][idx['03']] for s in opt['series']}
+        pl4 = {s['name']: s['data'][idx['04']] for s in opt['series']}
+        self.assertNotEqual(pl1.get('1'), pl4.get('1'))
+        self.assertAlmostEqual(pl1['1'], 66.7, places=1)
+        self.assertAlmostEqual(pl4['4'], 100.0, places=1)
+
+    def test_bar_chart_keeps_students_after_test_pl_enrichment(self):
+        from unittest.mock import patch
+        from dataviz.utils.chart_builder import build_option
+        from dataviz.utils.assessment_enrichment import augment_rows_with_assessment_cols
+
+        rows = [
+            {'grade': '5', 'ssid': '1', 'school_year': '2025-2026'},
+            {'grade': '5', 'ssid': '2', 'school_year': '2025-2026'},
+            {'grade': '5', 'ssid': '3', 'school_year': '2025-2026'},
+        ]
+        enriched = [
+            {**r, 'test_2025_2026_ELA_Fall_PL': pl}
+            for r, pl in zip(rows, ['Above', 'Below', 'Above'])
+        ]
+        with patch('dataviz.utils.data_loader.enrich_drill_rows', return_value=(enriched, [], None)):
+            rows = augment_rows_with_assessment_cols(
+                rows, ['test_2025_2026_ELA_Fall_PL'], None,
+            )
+        opt = build_option(rows, {}, {
+            'chart_type': 'bar',
+            'x_col': 'test_2025_2026_ELA_Fall_PL',
+            'y_col': 'ssid',
+            'agg': 'count',
+        })
+        data = sorted(zip(opt['xAxis']['data'], opt['series'][0]['data']))
+        self.assertEqual(data, [('Above', 2.0), ('Below', 1.0)])
 

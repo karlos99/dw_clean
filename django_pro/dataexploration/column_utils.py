@@ -32,8 +32,10 @@ def test_metadata_matches(info: dict, row_test_name, row_subject, row_window=Non
         return False
     expected_window = (info.get('test_window') or '').strip()
     actual_window = (row_window or '').strip()
-    if not expected_window and not actual_window:
+    if not expected_window:
         return True
+    if not actual_window:
+        return False
     return expected_window.lower() == actual_window.lower()
 
 

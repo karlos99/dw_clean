@@ -451,6 +451,7 @@ def compile_dataset_to_sql(
     dataset,
     user=None,
     limit=None,
+    offset=None,
     interactive_filters=None,
     status_filter=_UNSET,
     order_by=None,
@@ -478,6 +479,7 @@ def compile_dataset_to_sql(
             'filters': dataset.filters or [],
             'columns': dataset.columns or [],
             'limit': limit,
+            'offset': offset,
             'updated': str(getattr(dataset, 'updated_at', '')),
             'interactive_filters': interactive_filters or {},
             'status_filter': '__unset__' if status_filter is _UNSET else status_filter,
@@ -830,6 +832,8 @@ def compile_dataset_to_sql(
     
     if limit is not None:
         sql += f" LIMIT {limit}"
+        if offset is not None and offset > 0:
+            sql += f" OFFSET {int(offset)}"
     
     result = (sql, params)
     try:

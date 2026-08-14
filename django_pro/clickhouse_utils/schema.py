@@ -12,6 +12,7 @@ def get_all_ddl():
         CREATE_STUDENT_ENROLL,
         CREATE_RESULTS,
         CREATE_TESTS,
+        CREATE_RESULTS_WITH_TESTS,
         CREATE_STUDENT_MARKS_LIST,
         CREATE_NEXTYEARLIST_PLACEMENT,
         CREATE_SCHOOL,
@@ -115,6 +116,26 @@ CREATE TABLE IF NOT EXISTS tests (
 )
 ENGINE = MergeTree
 ORDER BY (test_group_key)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_RESULTS_WITH_TESTS = """
+CREATE TABLE IF NOT EXISTS results_with_tests (
+    test_id String,
+    ssid String,
+    local_student_id String,
+    school_year String,
+    school_code String,
+    pl Nullable(String),
+    ss Nullable(String),
+    other_info Nullable(String),
+    test_group_key String,
+    test_name String,
+    subject String,
+    test_window Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (ssid, school_year, test_name, subject)
 SETTINGS index_granularity = 8192
 """
 

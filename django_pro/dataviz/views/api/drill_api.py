@@ -4,6 +4,7 @@ import io
 import json
 
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.http import HttpResponse, StreamingHttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 
@@ -11,6 +12,7 @@ from dataviz.models import SavedChart
 from dataviz.utils.drill_through import (
     build_drill_filter, execute_drill_query, get_column_distinct_values,
     get_all_available_columns,
+    _drill_user_part, _drill_fetch_hash, _drill_post_hash,
 )
 from dataviz.views.drill_views import _col_label, _parse_column_filters
 
@@ -206,40 +208,55 @@ def drill_export_csv_api(request, chart_id):
 
     column_filters = _parse_column_filters(request)
 
-    # Fetch all rows in chunks to avoid loading everything into memory
-    CHUNK_SIZE = 2000
     safe_name = chart.name.replace(' ', '_').replace('/', '_')[:50]
 
     def stream_csv():
-        first_chunk = True
-        page = 1
-        while True:
-            result = execute_drill_query(
+        user_part = _drill_user_part(request.user)
+        fetch_hash = _drill_fetch_hash(chart, drill_filters, selected_columns or None)
+        updated_ts = int(chart.updated_at.timestamp())
+        post_hash = _drill_post_hash(chart, fetch_hash)
+        post_key = f"drill_post:{chart.pk}:{updated_ts}:{post_hash}{user_part}"
+        cached = cache.get(post_key)
+        if cached is None:
+            execute_drill_query(
                 chart, drill_filters, columns=selected_columns, user=request.user,
-                page=page, per_page=CHUNK_SIZE,
+                page=1, per_page=50,
                 sort_by=sort_by, sort_dir=sort_dir,
                 column_filters=column_filters,
                 extra_columns=selected_columns or None,
             )
-            rows = result.get('rows', [])
-            cols = result.get('columns', [])
+            cached = cache.get(post_key)
 
-            if not rows:
-                break
+        all_rows = list(cached[0]) if cached else []
+        if sort_by and all_rows:
+            reverse = sort_dir.lower() == 'desc'
 
-            if first_chunk:
-                yield ','.join([_col_label(c) for c in cols]) + '\n'
-                first_chunk = False
+            def _sort_key(row):
+                v = row.get(sort_by, '') or ''
+                try:
+                    return (0, float(v))
+                except (ValueError, TypeError):
+                    return (1, str(v).lower())
 
-            for row in rows:
+            all_rows.sort(key=_sort_key, reverse=reverse)
+
+        if column_filters and all_rows:
+            for fkey, fvals in column_filters.items():
+                if not fvals:
+                    continue
+                allowed = set(fvals) if isinstance(fvals, list) else {fvals}
+                all_rows = [r for r in all_rows if str(r.get(fkey, '')) in allowed]
+
+        cols = selected_columns or (cached[1] if cached else [])
+        if all_rows and cols:
+            yield ','.join([_col_label(c) for c in cols]) + '\n'
+            for row in all_rows:
                 yield ','.join(
                     f'"{str(row.get(c, "")).replace(chr(34), chr(34)+chr(34))}"'
                     for c in cols
                 ) + '\n'
-
-            if len(rows) < CHUNK_SIZE:
-                break
-            page += 1
+        elif cached and cached[1]:
+            yield ','.join([_col_label(c) for c in cached[1]]) + '\n'
 
     response = StreamingHttpResponse(stream_csv(), content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="drill_{safe_name}.csv"'

@@ -33,7 +33,14 @@ class SQLTranslatorTests(SimpleTestCase):
         self.assertEqual(ch_params['p2'], 'student_b')
         self.assertEqual(ch_params['p3'], '2025-2026')
         self.assertEqual(ch_params['p4'], '%smarter balanced%')  # ILIKE is lowered if it contains '%'
-        self.assertEqual(ch_params['p5'], 'Mathematics')       # ILIKE is not lowered by python if it doesn't contain '%'
+        self.assertEqual(ch_params['p5'], 'Mathematics')
+
+    def test_schema_includes_results_with_tests(self):
+        from clickhouse_utils.schema import get_all_ddl, CREATE_RESULTS_WITH_TESTS
+        ddl = get_all_ddl()
+        self.assertIn(CREATE_RESULTS_WITH_TESTS, ddl)
+        combined = '\n'.join(ddl)
+        self.assertIn('results_with_tests', combined)       # ILIKE is not lowered by python if it doesn't contain '%'
 
     def test_translate_any_with_empty_collections(self):
         sql = "SELECT * FROM students WHERE ssid = ANY(%s)"

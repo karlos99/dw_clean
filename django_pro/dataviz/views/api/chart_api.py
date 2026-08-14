@@ -101,159 +101,18 @@ def _progress_growth_query_columns(chart_type: str, chart_cfg: dict) -> list:
 
 
 def _augment_chart_result_rows(chart_type: str, chart_cfg: dict, col_mappings: dict, result: dict) -> dict:
-    """Ensure test/mark PL columns are present on chart rows (mirrors drill fetch)."""
-    if result.get('error') or not result.get('rows'):
-        return result
-    missing = _get_missing_assessment_cols(chart_cfg, col_mappings or {}, result['rows'])
-    if missing:
-        result = dict(result)
-        result['rows'] = _augment_rows_with_assessment_cols(result['rows'], missing, None)
-    return result
+    from dataviz.utils.assessment_enrichment import augment_chart_result_rows
+    return augment_chart_result_rows(chart_type, chart_cfg, col_mappings, result)
 
 
 def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset, source_filters=None) -> list:
-    """Bulk-fetch missing test/mark columns for rows retrieved from a SavedQuery or
-    dataset SQL (i.e. the dataset doesn't include the results/tests JOIN).  The
-    data explorer already knows how to resolve these keys to pl/ss from results
-    and test metadata from tests — this reuses that exact mechanism.
-    """
-    if not rows or not needed_keys:
-        return rows
-    from dataviz.utils.data_loader import run_column_query, _parse_year
-    from dataexploration.school_year_utils import resolve_relative_column_key
-
-    id_key = None
-    ids = []
-    for candidate in ('student_id', 'ssid', 'stu_annual_key'):
-        ids = [str(r.get(candidate) or '').strip() for r in rows if r.get(candidate)]
-        if ids:
-            id_key = candidate
-            ids = list(set(ids))
-            break
-    if not ids:
-        return rows
-
-    explorer_filters: dict = {id_key: ids}
-    if source_filters and 'status' in source_filters:
-        explorer_filters['status'] = source_filters['status']
-    # Extract years from both existing rows AND needed assessment column keys
-    needed_years = []
-    for k in needed_keys:
-        res_k = resolve_relative_column_key(k)
-        prefix = 'test_' if str(k).startswith('test_') else 'mark_' if str(k).startswith('mark_') else ''
-        yr = _parse_year(res_k, prefix) if prefix else None
-        if yr:
-            needed_years.append(yr)
-
-    raw_years = []
-    for r in rows:
-        sy = r.get('school_year')
-        if not sy:
-            for k in r:
-                if k.endswith('school_year'):
-                    sy = r[k]
-                    break
-        if sy:
-            raw_years.append(str(sy).strip())
-    all_years = list(set(raw_years + needed_years))
-    if all_years:
-        explorer_filters['school_year'] = all_years
-
-    fetch_cols = ['stu_annual_key', 'ssid', 'student_id', 'school_year'] + needed_keys
-    exp_result = run_column_query(fetch_cols, explorer_filters, user=None)
-
-    # Merge fetched assessment columns into student dicts by student_id or candidate id_key
-    exp_rows = exp_result.get('rows', [])
-    lookup_map = {}
-    for r in exp_rows:
-        match_val = str(r.get(id_key) or '').strip()
-        if match_val:
-            lookup_map.setdefault(match_val, []).append(r)
-
-    from dataviz.utils.chart_builder import _record_pg_val
-
-    for row in rows:
-        match = str(row.get(id_key) or '').strip()
-        if match and match in lookup_map:
-            for exp_row in lookup_map[match]:
-                norm_exp_row = {str(col).replace('-', '_').lower(): val for col, val in exp_row.items()}
-                for k in needed_keys:
-                    k_norm = str(k).replace('-', '_').lower()
-                    val = norm_exp_row.get(k_norm)
-                    existing = row.get(k)
-                    existing_blank = (
-                        existing is None
-                        or str(existing).strip() in ('', '\u2014', '-', 'None', 'null', 'NULL', 'nan', 'NaN')
-                    )
-                    if val is not None and str(val).strip() not in ('', '\u2014', '-', 'None', 'null', 'NULL'):
-                        row[k] = val
-                        resolved_k = k
-                        for exp_k in exp_row:
-                            if str(exp_k).replace('-', '_').lower() == k_norm:
-                                resolved_k = exp_k
-                                break
-                        _record_pg_val(row, resolved_k, val)
-                    elif existing_blank and val is not None:
-                        row[k] = val
-                for exp_k, exp_v in exp_row.items():
-                    if not str(exp_k).startswith('__pg_all__'):
-                        continue
-                    if isinstance(exp_v, list):
-                        for item in exp_v:
-                            _record_pg_val(row, exp_k[len('__pg_all__'):], item)
-                    elif isinstance(exp_v, (set, tuple)):
-                        for item in exp_v:
-                            _record_pg_val(row, exp_k[len('__pg_all__'):], item)
-                    else:
-                        _record_pg_val(row, exp_k[len('__pg_all__'):], exp_v)
-    return rows
+    from dataviz.utils.assessment_enrichment import augment_rows_with_assessment_cols
+    return augment_rows_with_assessment_cols(rows, needed_keys, dataset, source_filters)
 
 
 def _get_missing_assessment_cols(cfg: dict, col_mappings: dict, aliased_rows: list) -> list:
-    cols = list(col_mappings.values())
-    cfg_cols = []
-    for k, v in cfg.items():
-        if k in _CONFIG_COL_KEYS:
-            if isinstance(v, str):
-                cfg_cols.extend([p.strip() for p in v.split(',') if p.strip()])
-            elif isinstance(v, list):
-                cfg_cols.extend([str(item).strip() for item in v if isinstance(item, str)])
-    
-    from dataexploration.school_year_utils import resolve_relative_column_key
-    resolved_cfg_cols = [resolve_relative_column_key(c) for c in cfg_cols]
-    cols.extend(resolved_cfg_cols)
-
-    seen = set()
-    missing = []
-    blank_vals = {'', '\u2014', '-', 'none', 'null', 'nan', 'n/a'}
-
-    def _norm(c):
-        return str(c).replace('-', '_').lower()
-
-    def _col_has_data(c_norm: str) -> bool:
-        for r in aliased_rows:
-            for k, v in r.items():
-                if _norm(k) == c_norm:
-                    if v is not None and str(v).strip().lower() not in blank_vals:
-                        return True
-        return False
-
-    existing_cols = set()
-    if aliased_rows:
-        existing_cols = {_norm(c) for c in aliased_rows[0].keys()}
-
-    for c in cols:
-        if not c:
-            continue
-        c_norm = _norm(c)
-        if c_norm in seen:
-            continue
-        seen.add(c_norm)
-        if not (c.startswith('test_') or c.startswith('mark_')):
-            continue
-        if c_norm not in existing_cols or not _col_has_data(c_norm):
-            missing.append(c)
-    return missing
+    from dataviz.utils.assessment_enrichment import get_missing_assessment_cols
+    return get_missing_assessment_cols(cfg, col_mappings, aliased_rows)
 
 
 def _cfg_from_post(post):
