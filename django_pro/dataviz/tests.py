@@ -1660,7 +1660,10 @@ class GroupGapOptionTests(SimpleTestCase):
     def test_spacer_categories_have_empty_group_labels(self):
         from dataviz.utils.chart_builder import build_option
 
-        opt = build_option(self._bar_rows(), {}, self._base_cfg(group_gap_size=1))
+        opt = build_option(
+            self._bar_rows(), {},
+            self._base_cfg(group_gap_size=1, center_group_labels=False),
+        )
         group_axis = opt['xAxis'][1]
         labels = group_axis['data']
         # spacer positions must not repeat the group name — it stays centered once per group
