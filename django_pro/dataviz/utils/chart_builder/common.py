@@ -1,9 +1,11 @@
 """Shared helpers: meta melt, aggregation, themes, axes, tooltips, maps."""
 import json
+import math
 import random
 import re
+from datetime import date, datetime, timedelta
 
-import pandas as pd
+import polars as pl
 
 try:
     from dataexploration.school_year_utils import resolve_relative_column_key
@@ -12,6 +14,132 @@ except Exception:  # pragma: no cover
         return col_key
 
 from .constants import *  # noqa: F401,F403
+
+_NUMERIC_DTYPES = {
+    pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+    pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+    pl.Float32, pl.Float64,
+}
+
+
+def rows_to_df(rows: list) -> pl.DataFrame:
+    """Build a Polars DataFrame from row dicts (``build_option`` entry point)."""
+    if not rows:
+        return pl.DataFrame()
+    return pl.from_dicts(rows, infer_schema_length=len(rows))
+
+
+def is_numeric_dtype(dtype) -> bool:
+    """Return True when *dtype* is a Polars numeric type."""
+    if isinstance(dtype, pl.Series):
+        dtype = dtype.dtype
+    return dtype in _NUMERIC_DTYPES
+
+
+def is_numeric_column(df: pl.DataFrame, col: str) -> bool:
+    if col not in df.columns:
+        return False
+    return is_numeric_dtype(df.schema[col])
+
+
+def to_numeric_series(series: pl.Series) -> pl.Series:
+    """Coerce a series to float, non-numeric values become null."""
+    if is_numeric_dtype(series):
+        return series.cast(pl.Float64, strict=False)
+    return series.cast(pl.Float64, strict=False)
+
+
+def to_numeric_expr(col: str):
+    """Expression: coerce *col* to float with invalid values as null."""
+    return pl.col(col).cast(pl.Float64, strict=False)
+
+
+def is_null_val(v) -> bool:
+    if v is None:
+        return True
+    try:
+        if isinstance(v, float) and math.isnan(v):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def df_is_empty(df: pl.DataFrame) -> bool:
+    return df.is_empty()
+
+
+def col_unique_str(df: pl.DataFrame, col: str) -> list[str]:
+    return (
+        df.select(pl.col(col).fill_null('(Blank)').cast(pl.Utf8))
+        .to_series()
+        .unique()
+        .to_list()
+    )
+
+
+def sort_df(df: pl.DataFrame, col: str, descending: bool = False) -> pl.DataFrame:
+    return df.sort(col, descending=descending)
+
+
+def agg_to_dict(adf: pl.DataFrame, key_col: str, val_col: str = '_value') -> dict:
+    if adf.is_empty():
+        return {}
+    return dict(zip(adf[key_col].cast(pl.Utf8).to_list(), adf[val_col].to_list()))
+
+
+def cross_tab_lookup(
+    df: pl.DataFrame,
+    row_cols: list[str],
+    col_col: str,
+    agg_func: str = 'count',
+    value_col: str = '',
+    agg_map: dict | None = None,
+) -> dict:
+    """Return ``{(row_key, col_val): number}`` for pivot-style table builders."""
+    _agg_map = agg_map or {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+    group_cols = row_cols + [col_col]
+    if agg_func == 'count':
+        grouped = df.group_by(group_cols).len().rename({'len': '_value'})
+    elif value_col and value_col in df.columns:
+        polars_agg = _agg_map.get(agg_func, 'mean')
+        grouped = df.group_by(group_cols).agg(getattr(pl.col(value_col), polars_agg)().alias('_value'))
+    else:
+        grouped = df.group_by(group_cols).len().rename({'len': '_value'})
+
+    lookup = {}
+    for row in grouped.iter_rows(named=True):
+        row_key = tuple(row[c] for c in row_cols) if len(row_cols) > 1 else row[row_cols[0]]
+        lookup[(row_key, row[col_col])] = float(row['_value'] or 0)
+    return lookup
+
+
+def pivot_cell(lookup: dict, row_key, col_val, default=0.0) -> float:
+    return float(lookup.get((row_key, col_val), default) or default)
+
+
+def blank_filter_expr(cols: list[str], blank_values) -> pl.Expr:
+    expr = pl.lit(True)
+    for c in cols:
+        expr = expr & ~pl.col(c).cast(pl.Utf8).str.strip_chars().is_in(list(blank_values))
+    return expr
+
+
+def strip_str_cols(df: pl.DataFrame, cols: list[str]) -> pl.DataFrame:
+    return df.with_columns([pl.col(c).cast(pl.Utf8).str.strip_chars().alias(c) for c in cols])
+
+
+def pivot_lookup(
+    df: pl.DataFrame,
+    row_cols: list[str],
+    col_col: str,
+    agg_func: str = 'count',
+    value_col: str = '',
+    agg_map: dict | None = None,
+) -> dict:
+    """Return ``{(row_key, col_val): number}`` for summary-table pivots."""
+    return cross_tab_lookup(df, row_cols, col_col, agg_func, value_col, agg_map)
+
 
 def _parse_col_year(col: str) -> str:
     m = _YEAR_RE.match(col)
@@ -96,31 +224,31 @@ def _maybe_melt_for_meta(df, x_col, stack_col, y_col, y_cols, col_defs):
         id_cols = [c for c in df.columns if c not in set(score_cols) | set(test_pl_cols)]
 
         frames = []
-        # For each PL col that has a matching SS col, melt both together per student
         for pl_col, ss_col in _pl_to_ss.items():
             meta = meta_cache[ss_col]
-            sub = df[id_cols + [ss_col, pl_col]].copy()
-            sub = sub.rename(columns={ss_col: '_test_score', pl_col: '_test_pl'})
-            sub['_test_score'] = pd.to_numeric(sub['_test_score'], errors='coerce')
-            sub['_assessment'] = meta['assessment']
-            sub['_test_school_year'] = meta['year']
-            sub['_test_window'] = meta['window']
-            sub['_mark_school_year'] = meta['year']
-            sub['_mark_period'] = meta['window']
+            sub = df.select(id_cols + [ss_col, pl_col]).rename({ss_col: '_test_score', pl_col: '_test_pl'})
+            sub = sub.with_columns([
+                to_numeric_expr('_test_score').alias('_test_score'),
+                pl.lit(meta['assessment']).alias('_assessment'),
+                pl.lit(meta['year']).alias('_test_school_year'),
+                pl.lit(meta['window']).alias('_test_window'),
+                pl.lit(meta['year']).alias('_mark_school_year'),
+                pl.lit(meta['window']).alias('_mark_period'),
+            ])
             frames.append(sub)
 
-        # PL cols with no SS sibling — melt with score as NaN but keep PL
         orphan_pl = [c for c in test_pl_cols if c not in _pl_to_ss]
         for pl_col in orphan_pl:
             meta = meta_cache[pl_col]
-            sub = df[id_cols + [pl_col]].copy()
-            sub = sub.rename(columns={pl_col: '_test_pl'})
-            sub['_test_score'] = float('nan')
-            sub['_assessment'] = meta['assessment']
-            sub['_test_school_year'] = meta['year']
-            sub['_test_window'] = meta['window']
-            sub['_mark_school_year'] = meta['year']
-            sub['_mark_period'] = meta['window']
+            sub = df.select(id_cols + [pl_col]).rename({pl_col: '_test_pl'})
+            sub = sub.with_columns([
+                pl.lit(None).cast(pl.Float64).alias('_test_score'),
+                pl.lit(meta['assessment']).alias('_assessment'),
+                pl.lit(meta['year']).alias('_test_school_year'),
+                pl.lit(meta['window']).alias('_test_window'),
+                pl.lit(meta['year']).alias('_mark_school_year'),
+                pl.lit(meta['window']).alias('_mark_period'),
+            ])
             frames.append(sub)
 
         if not frames:
@@ -132,10 +260,11 @@ def _maybe_melt_for_meta(df, x_col, stack_col, y_col, y_cols, col_defs):
                 f'Melt would produce {total_melt_rows:,} rows (> {_MELT_MAX_ROWS:,} limit). '
                 'Select fewer assessment/mark columns.'
             )
-        melted = pd.concat(frames, ignore_index=True)
-        # Strip blank PL values
-        melted = melted[melted['_test_pl'].astype(str).str.strip().ne('')]
-        melted = melted[melted['_test_pl'].notna()]
+        melted = pl.concat(frames, how='vertical')
+        melted = melted.filter(
+            pl.col('_test_pl').is_not_null()
+            & pl.col('_test_pl').cast(pl.Utf8).str.strip_chars().ne('')
+        )
 
         new_y_col = '_test_score' if (y_col in score_cols or y_col in _META_SCORE_COLS or not y_col) else y_col
         return melted, new_y_col, []
@@ -151,15 +280,23 @@ def _maybe_melt_for_meta(df, x_col, stack_col, y_col, y_cols, col_defs):
             f'Melt would produce {total_melt_rows:,} rows (> {_MELT_MAX_ROWS:,} limit). '
             'Select fewer assessment/mark columns.'
         )
-    melted = df.melt(id_vars=id_cols, value_vars=score_cols, var_name='_source_col', value_name='_test_score')
-    melted['_test_score'] = pd.to_numeric(melted['_test_score'], errors='coerce')
-    melted = melted.dropna(subset=['_test_score'])
-    melted['_assessment']       = melted['_source_col'].map(lambda c: meta_cache[c]['assessment'])
-    melted['_test_school_year'] = melted['_source_col'].map(lambda c: meta_cache[c]['year'])
-    melted['_test_window']      = melted['_source_col'].map(lambda c: meta_cache[c]['window'])
-    melted['_mark_school_year'] = melted['_test_school_year']
-    melted['_mark_period']      = melted['_test_window']
-    melted = melted.drop(columns=['_source_col'])
+    melted = df.unpivot(
+        index=id_cols,
+        on=score_cols,
+        variable_name='_source_col',
+        value_name='_test_score',
+    )
+    melted = melted.with_columns(to_numeric_expr('_test_score').alias('_test_score'))
+    melted = melted.drop_nulls(subset=['_test_score'])
+    melted = melted.with_columns([
+        pl.col('_source_col').replace({c: meta_cache[c]['assessment'] for c in score_cols}).alias('_assessment'),
+        pl.col('_source_col').replace({c: meta_cache[c]['year'] for c in score_cols}).alias('_test_school_year'),
+        pl.col('_source_col').replace({c: meta_cache[c]['window'] for c in score_cols}).alias('_test_window'),
+    ])
+    melted = melted.with_columns([
+        pl.col('_test_school_year').alias('_mark_school_year'),
+        pl.col('_test_window').alias('_mark_period'),
+    ]).drop('_source_col')
 
     # Also add _test_pl from sibling PL columns if available
     if test_pl_cols and '_test_pl' not in melted.columns:
@@ -191,15 +328,23 @@ def _label(col: str, col_defs: dict) -> str:
 
 def _bucket_date_column(series, bucket):
     """Bucket a raw date/datetime column into a lexicographically-sortable label string."""
-    dt = pd.to_datetime(series, errors='coerce')
+    if isinstance(series, pl.Series):
+        raw = series
+    elif hasattr(series, 'to_list'):
+        raw = pl.Series(series.to_list())
+    else:
+        raw = pl.Series(list(series))
 
-    def _fmt(ts):
-        if pd.isna(ts):
+    dt = raw.cast(pl.Utf8).str.to_datetime(strict=False)
+
+    def _fmt_val(ts):
+        if ts is None:
             return None
         if bucket == 'day':
             return ts.strftime('%Y-%m-%d')
         if bucket == 'week':
-            return ts.strftime('%G-W%V')
+            iso = ts.isocalendar()
+            return f'{iso[0]}-W{iso[1]:02d}'
         if bucket == 'month':
             return ts.strftime('%Y-%m')
         if bucket == 'quarter':
@@ -208,7 +353,7 @@ def _bucket_date_column(series, bucket):
             return str(ts.year)
         return ts.strftime('%Y-%m-%d')
 
-    return dt.map(_fmt)
+    return dt.map_elements(_fmt_val, return_dtype=pl.Utf8)
 
 
 def _agg(df, x_col, y_col, agg, stack_col='', agg_decimals=None, cfg=None):
@@ -220,45 +365,61 @@ def _agg(df, x_col, y_col, agg, stack_col='', agg_decimals=None, cfg=None):
             except (ValueError, TypeError):
                 pass
     if x_col not in df.columns:
-        return pd.DataFrame()
-    
+        return pl.DataFrame()
+
+    # Stacking by the same column being aggregated (e.g. pl stack + pl avg) produces
+    # the level numbers 1–4, not student counts — so percent stacks look identical
+    # for every category. Count rows instead.
+    if stack_col and y_col and stack_col == y_col and agg in ('avg', 'sum', 'min', 'max', 'median'):
+        agg = 'count'
+        y_col = ''
+
     group_cols = [x_col]
     if stack_col and stack_col in df.columns:
         group_cols.append(stack_col)
-    
-    df = df.dropna(subset=group_cols)
-    
+
+    df = df.drop_nulls(subset=group_cols)
+
     try:
         if agg in ('sum', 'avg', 'min', 'max', 'median') and y_col and y_col in df.columns:
-            dfc = df.assign(**{y_col: pd.to_numeric(df[y_col], errors='coerce')})
-            grp = dfc.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
-            result = {
-                'sum': grp.sum(), 'avg': grp.mean(),
-                'min': grp.min(), 'max': grp.max(), 'median': grp.median(),
-            }.get(agg, grp.size()).reset_index().rename(columns={y_col: '_value'})
-            if agg_decimals is not None and '_value' in result.columns:
-                result['_value'] = result['_value'].round(agg_decimals)
+            dfc = df.with_columns(to_numeric_expr(y_col).alias(y_col))
+            dfc = dfc.drop_nulls(subset=[y_col])
+            agg_exprs = {
+                'sum': pl.col(y_col).sum(),
+                'avg': pl.col(y_col).mean(),
+                'min': pl.col(y_col).min(),
+                'max': pl.col(y_col).max(),
+                'median': pl.col(y_col).median(),
+            }
+            result = dfc.group_by(group_cols).agg(agg_exprs[agg].alias('_value'))
+            if agg_decimals is not None:
+                result = result.with_columns(pl.col('_value').round(agg_decimals))
         elif agg == 'count_unique' and y_col and y_col in df.columns:
-            grp = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
-            result = grp.nunique().reset_index().rename(columns={y_col: '_value'})
-            if agg_decimals is not None and '_value' in result.columns:
-                result['_value'] = result['_value'].round(agg_decimals)
+            result = (
+                df.drop_nulls(subset=[y_col])
+                .group_by(group_cols)
+                .agg(pl.col(y_col).n_unique().alias('_value'))
+            )
+            if agg_decimals is not None:
+                result = result.with_columns(pl.col('_value').round(agg_decimals))
         elif agg == 'count_occurrence' and y_col and y_col in df.columns:
-            grp = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True)[y_col]
-            result = grp.count().reset_index().rename(columns={y_col: '_value'})
-            if agg_decimals is not None and '_value' in result.columns:
-                result['_value'] = result['_value'].round(agg_decimals)
+            result = (
+                df.drop_nulls(subset=[y_col])
+                .group_by(group_cols)
+                .agg(pl.col(y_col).count().alias('_value'))
+            )
+            if agg_decimals is not None:
+                result = result.with_columns(pl.col('_value').round(agg_decimals))
         else:
             if y_col and y_col in df.columns:
-                result = df.dropna(subset=[y_col]).groupby(group_cols, dropna=True).size().reset_index(name='_value')
+                result = df.drop_nulls(subset=[y_col]).group_by(group_cols).len().rename({'len': '_value'})
             else:
-                result = df.groupby(group_cols, dropna=True).size().reset_index(name='_value')
+                result = df.group_by(group_cols).len().rename({'len': '_value'})
     except Exception:
-        result = df.groupby(group_cols, dropna=True).size().reset_index(name='_value')
+        result = df.group_by(group_cols).len().rename({'len': '_value'})
 
-    for c in group_cols:
-        result[c] = result[c].astype(str)
-    return result
+    cast_exprs = [pl.col(c).cast(pl.Utf8) for c in group_cols]
+    return result.with_columns(cast_exprs)
 
 
 def _theme(cfg: dict) -> dict:
@@ -605,6 +766,8 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
                                 orig_idx += 1
                     s['data'] = new_data
     
+    option['__category_names__'] = categories
+
     if radial:
         option.pop('grid', None)
         option.update({
@@ -1033,7 +1196,7 @@ def _normalize_pl_val(v):
         return ''
 
     try:
-        if pd.isna(v):
+        if is_null_val(v):
             return ''
     except Exception:
         pass

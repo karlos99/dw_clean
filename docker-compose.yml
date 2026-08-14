@@ -26,9 +26,12 @@ services:
 
   # ClickHouse Analytics Database
   clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
+    image: clickhouse/clickhouse-server:24.11-alpine
     container_name: dw_clickhouse
     restart: unless-stopped
+    cap_add:
+      - SYS_NICE
+      - IPC_LOCK
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-fastapi_clickhouse_db}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse_user}

@@ -3,7 +3,7 @@ import json
 import random
 import re
 
-import pandas as pd
+import polars as pl
 
 try:
     from dataexploration.school_year_utils import resolve_relative_column_key
@@ -103,7 +103,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         _st_raw_decimals = cfg.get('st_agg_decimals')
     st_agg_decimals = int(_st_raw_decimals) if _st_raw_decimals is not None else None
 
-    df = pd.DataFrame(rows)
+    df = rows_to_df(rows)
 
     # Progress growth always uses the full query — drill and matrix need every row.
     _row_limit = cfg.get('limit')
@@ -157,14 +157,12 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Composite x-axis
     x_cols = [c for c in x_cols_raw if isinstance(c, str) and c in df.columns] if isinstance(x_cols_raw, list) else []
     if len(x_cols) > 1:
-        # Vectorized string concat instead of row-wise .agg(join, axis=1) —
-        # same output, but avoids a per-row Python call (~60x faster on
-        # large result sets).
-        _filled = df[x_cols].fillna('(Blank)').astype(str)
-        _comp = _filled[x_cols[0]]
-        for _c in x_cols[1:]:
-            _comp = _comp.str.cat(_filled[_c], sep=' · ')
-        df['__x_comp__'] = _comp
+        df = df.with_columns(
+            pl.concat_str(
+                [pl.col(c).fill_null('(Blank)').cast(pl.Utf8) for c in x_cols],
+                separator=' · ',
+            ).alias('__x_comp__')
+        )
         x_col = '__x_comp__'
     elif len(x_cols) == 1 and not x_col:
         x_col = x_cols[0]
@@ -192,12 +190,12 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
         _BLANK_VALUES = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL', 'nan', 'NAN', 'NaN'})
         for _col in (stack_col, group_col, x_col):
             if _col and _col in df.columns:
-                # Drop actual NaNs
-                df = df.dropna(subset=[_col])
-                # Drop blank-like strings
-                if not pd.api.types.is_numeric_dtype(df[_col]):
-                    df = df[~df[_col].astype(str).str.strip().isin(_BLANK_VALUES)]
-    if df.empty:
+                df = df.drop_nulls(subset=[_col])
+                if not is_numeric_column(df, _col):
+                    df = df.filter(
+                        ~pl.col(_col).cast(pl.Utf8).str.strip_chars().is_in(list(_BLANK_VALUES))
+                    )
+    if df_is_empty(df):
         return _message_option('All rows filtered out (no valid data)', cfg)
 
     # Unique per-field x values for alias UI (grade, year, … — not "K · 2024").
@@ -207,7 +205,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     for _ac in _alias_src_cols:
         if _ac not in df.columns:
             continue
-        for _av in df[_ac].fillna('(Blank)').astype(str):
+        for _av in col_unique_str(df, _ac):
             if _av not in _alias_seen:
                 _alias_seen.add(_av)
                 x_alias_keys.append(_av)

@@ -3,8 +3,6 @@ import json
 import random
 import re
 
-import pandas as pd
-
 try:
     from dataexploration.school_year_utils import resolve_relative_column_key
 except Exception:  # pragma: no cover

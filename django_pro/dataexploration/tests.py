@@ -76,6 +76,11 @@ class TestMetadataMatchesTests(SimpleTestCase):
 		info = {'test_name': 'CAASPP', 'subject': 'ELA', 'test_window': None}
 		self.assertTrue(test_metadata_matches(info, 'CAASPP', 'ELA', ''))
 
+	def test_no_window_column_accepts_any_window(self):
+		info = {'test_name': 'CAASPP', 'subject': 'ELA', 'test_window': None}
+		self.assertTrue(test_metadata_matches(info, 'CAASPP', 'ELA', 'Spring'))
+		self.assertTrue(test_metadata_matches(info, 'CAASPP', 'ELA', ''))
+
 	def test_window_must_match_when_specified(self):
 		info = {'test_name': 'CAASPP', 'subject': 'ELA', 'test_window': 'Fall'}
 		self.assertTrue(test_metadata_matches(info, 'CAASPP', 'ELA', 'Fall'))

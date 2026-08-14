@@ -30,6 +30,7 @@ ALL_TABLES = [
     'student_enroll',
     'results',
     'tests',
+    'results_with_tests',
     'student_marks_list',
     'nextyearlist_placement',
     'school',
@@ -106,19 +107,38 @@ class Command(BaseCommand):
             self.stdout.write(f'Syncing {table}...')
 
             try:
-                # Truncate table first to prevent duplicate accumulation
                 ch.command(f"TRUNCATE TABLE {ch_db}.{table}")
 
-                insert_sql = f"""
-                    INSERT INTO {ch_db}.{table}
-                    SELECT * FROM postgresql(
-                        '{pg_host}:{pg_port}',
-                        '{pg_db}',
-                        '{table}',
-                        '{pg_user}',
-                        '{pg_password}'
-                    )
-                """
+                if table == 'results_with_tests':
+                    insert_sql = f"""
+                        INSERT INTO {ch_db}.results_with_tests
+                        SELECT
+                            r.test_id,
+                            r.ssid,
+                            r.local_student_id,
+                            r.school_year,
+                            r.school_code,
+                            r.pl,
+                            r.ss,
+                            r.other_info,
+                            r.test_group_key,
+                            t.test_name,
+                            t.subject,
+                            t.test_window
+                        FROM {ch_db}.results r
+                        INNER JOIN {ch_db}.tests t ON r.test_group_key = t.test_group_key
+                    """
+                else:
+                    insert_sql = f"""
+                        INSERT INTO {ch_db}.{table}
+                        SELECT * FROM postgresql(
+                            '{pg_host}:{pg_port}',
+                            '{pg_db}',
+                            '{table}',
+                            '{pg_user}',
+                            '{pg_password}'
+                        )
+                    """
                 ch.command(insert_sql)
                 self.stdout.write(self.style.SUCCESS(f'  {table} synced successfully.'))
             except Exception as exc:

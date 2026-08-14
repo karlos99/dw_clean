@@ -3,7 +3,7 @@ import json
 import random
 import re
 
-import pandas as pd
+import polars as pl
 
 try:
     from dataexploration.school_year_utils import resolve_relative_column_key
@@ -39,24 +39,26 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
 
     # ── Apply user-defined filters and order on x-col categories ──────
     if x_col and x_col in df.columns:
-        unique_vals = df[x_col].fillna('(Blank)').astype(str).unique().tolist()
+        unique_vals = col_unique_str(df, x_col)
         if ac_include_cats:
-            # Respect user order and filter
             base_categories = [c for c in ac_include_cats if c in unique_vals]
-            df = df[df[x_col].fillna('(Blank)').astype(str).isin(ac_include_cats)]
+            df = df.filter(pl.col(x_col).fill_null('(Blank)').cast(pl.Utf8).is_in(ac_include_cats))
         else:
             base_categories = sorted(unique_vals)
     else:
         base_categories = []
     if base_categories:
-        category_value_map = {cat: int((df[x_col].fillna('(Blank)').astype(str) == cat).sum()) for cat in base_categories}
+        category_value_map = {
+            cat: int(df.filter(pl.col(x_col).fill_null('(Blank)').cast(pl.Utf8) == cat).height)
+            for cat in base_categories
+        }
         base_categories = _ordered_categories(base_categories, cfg, category_value_map)
 
     if ac_col_filters:
         for fcol, fvals in ac_col_filters.items():
             if fcol in df.columns and fvals:
-                df = df[df[fcol].fillna('(Blank)').astype(str).isin(fvals)]
-    if df.empty:
+                df = df.filter(pl.col(fcol).fill_null('(Blank)').cast(pl.Utf8).is_in(fvals))
+    if df_is_empty(df):
         return _message_option('No data after applying filters', cfg, error=True)
 
     # Parse metadata for each PL column
@@ -94,8 +96,8 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
     _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL', 'nan', 'NAN', 'NaN'})
     all_pl = set()
     for c in valid_cols:
-        vals = df[c].dropna().astype(str).str.strip()
-        all_pl.update(v for v in vals.unique() if v not in _BLANK)
+        vals = df[c].drop_nulls().cast(pl.Utf8).str.strip_chars()
+        all_pl.update(v for v in vals.unique().to_list() if v not in _BLANK)
 
     # Respect user order for PL values if selected, else use default scale detection/sorting
     if ac_include_pl:
@@ -162,8 +164,11 @@ def _assessment_compare_option(df, x_col, compare_pl_cols, cfg, labels, col_defs
         cat, col = pos_map[pos]
         counts = {}
         for pv in pl_vals:
-            mask = (df[x_col].fillna('(Blank)').astype(str) == cat) & (df[col].astype(str).str.strip() == pv)
-            counts[pv] = int(mask.sum())
+            cnt = df.filter(
+                (pl.col(x_col).fill_null('(Blank)').cast(pl.Utf8) == cat)
+                & (pl.col(col).cast(pl.Utf8).str.strip_chars() == pv)
+            ).height
+            counts[pv] = int(cnt)
         raw_counts[pos] = counts
 
     # Totals per position

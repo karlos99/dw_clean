@@ -3,7 +3,7 @@ import json
 import random
 import re
 
-import pandas as pd
+import polars as pl
 
 try:
     from dataexploration.school_year_utils import resolve_relative_column_key
@@ -60,24 +60,24 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         if not st_col_cols:
             return _message_option('Summary Table: select at least one Column (Columns mode)', cfg)
 
-        mask = ~df[row_col].astype(str).str.strip().isin(_BLANK)
+        mask = blank_filter_expr([row_col], _BLANK)
         keep_cols = list(dict.fromkeys([row_col] + st_col_cols + ([_dup_key] if _dup_key else [])))
-        work = df.loc[mask, keep_cols].copy()
-        work[row_col] = work[row_col].astype(str).str.strip()
+        work = df.filter(mask).select(keep_cols)
+        work = strip_str_cols(work, [row_col])
 
-        if work.empty:
+        if work.is_empty():
             return _message_option('Summary Table: no data after filtering blanks', cfg)
 
-        row_vals = _auto_detect_pl_scale(work[row_col].unique())
+        row_vals = _auto_detect_pl_scale(work[row_col].unique().to_list())
         col_vals = [_label(c, col_defs) if col_defs else c for c in st_col_cols]
 
         rows_data = []
         col_totals = [0.0] * len(st_col_cols)
 
         for rv in row_vals:
-            sub = work[work[row_col] == rv]
+            sub = work.filter(pl.col(row_col) == rv)
             if _dup_key and st_agg_func == 'count':
-                sub = sub.drop_duplicates(subset=[_dup_key, row_col], keep='first')
+                sub = sub.unique(subset=[_dup_key, row_col], keep='first')
             cell_vals = []
             row_cells = []
             for ci, cc in enumerate(st_col_cols):
@@ -87,20 +87,20 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
                     continue
                 col_data = sub[cc]
                 if st_agg_func == 'count':
-                    raw = float((~col_data.astype(str).str.strip().isin(_BLANK)).sum())
-                    num_data = pd.to_numeric(col_data, errors='coerce').dropna()
-                    alt_raw = float(num_data.mean()) if not num_data.empty else None
+                    raw = float(sub.filter(~pl.col(cc).cast(pl.Utf8).str.strip_chars().is_in(list(_BLANK))).height)
+                    num_data = to_numeric_series(col_data).drop_nulls()
+                    alt_raw = float(num_data.mean()) if num_data.len() > 0 else None
                 else:
-                    num_data = pd.to_numeric(col_data, errors='coerce').dropna()
-                    if num_data.empty:
+                    num_data = to_numeric_series(col_data).drop_nulls()
+                    if num_data.len() == 0:
                         raw = 0.0
                     else:
-                        raw = float(num_data.agg(_agg_map[st_agg_func]))
+                        raw = float(getattr(num_data, _agg_map[st_agg_func])())
                     if _dup_key:
-                        valid_sub = sub[~col_data.astype(str).str.strip().isin(_BLANK)]
-                        alt_raw = float(valid_sub[_dup_key].nunique())
+                        valid_sub = sub.filter(~pl.col(cc).cast(pl.Utf8).str.strip_chars().is_in(list(_BLANK)))
+                        alt_raw = float(valid_sub.select(pl.col(_dup_key).n_unique()).item())
                     else:
-                        alt_raw = float((~col_data.astype(str).str.strip().isin(_BLANK)).sum())
+                        alt_raw = float(sub.filter(~pl.col(cc).cast(pl.Utf8).str.strip_chars().is_in(list(_BLANK))).height)
 
                 if st_agg_decimals is not None and st_agg_func != 'count':
                     raw = round(raw, st_agg_decimals)
@@ -159,70 +159,63 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     if not col_col or col_col not in df.columns:
         return _message_option('Summary Table: select a Column column', cfg)
 
-    mask = (
-        ~df[row_col].astype(str).str.strip().isin(_BLANK) &
-        ~df[col_col].astype(str).str.strip().isin(_BLANK)
-    )
+    mask = blank_filter_expr([row_col, col_col], _BLANK)
     keep_cols = [row_col, col_col] + ([_dup_key] if _dup_key else [])
     if (st_agg_func != 'count' or (show_tooltips and st_value_col)) and st_value_col and st_value_col in df.columns:
         keep_cols.append(st_value_col)
-    work = df.loc[mask, keep_cols].copy()
-    work[row_col] = work[row_col].astype(str).str.strip()
-    work[col_col] = work[col_col].astype(str).str.strip()
+    work = df.filter(mask).select(keep_cols)
+    work = strip_str_cols(work, [row_col, col_col])
     if st_value_col and st_value_col in work.columns:
-        work[st_value_col] = pd.to_numeric(work[st_value_col], errors='coerce')
+        work = work.with_columns(to_numeric_expr(st_value_col).alias(st_value_col))
 
-    if work.empty:
+    if work.is_empty():
         return _message_option('Summary Table: no data after filtering blanks', cfg)
 
     # Deduplicate so each student is counted at most once per (row_col, col_col) cell.
     if _dup_key and st_agg_func == 'count':
-        work = work.drop_duplicates(subset=[_dup_key, row_col, col_col], keep='first')
+        work = work.unique(subset=[_dup_key, row_col, col_col], keep='first')
 
-    # Use auto-detection to get properly ordered PL levels if applicable, 
-    # and to ensure all values are strings for sorting.
-    row_vals = _auto_detect_pl_scale(work[row_col].unique())
-    col_vals = _auto_detect_pl_scale(work[col_col].unique())
+    row_vals = _auto_detect_pl_scale(work[row_col].unique().to_list())
+    col_vals = _auto_detect_pl_scale(work[col_col].unique().to_list())
 
-    ct_alt = None
+    ct_alt_lookup = None
     if show_tooltips:
         if st_agg_func == 'count':
             if st_value_col and st_value_col in df.columns:
-                work_alt = work.copy()
-                work_alt[st_value_col] = pd.to_numeric(work_alt[st_value_col], errors='coerce')
-                ct_alt = work_alt.groupby([row_col, col_col])[st_value_col].mean().unstack(fill_value=0)
-                ct_alt = ct_alt.reindex(index=row_vals, columns=col_vals, fill_value=0)
+                work_alt = work.with_columns(to_numeric_expr(st_value_col).alias(st_value_col))
+                ct_alt_lookup = pivot_lookup(work_alt, [row_col], col_col, 'avg', st_value_col, _agg_map)
         else:
-            work_alt = work.copy()
+            work_alt = work
             if st_value_col and st_value_col in work_alt.columns:
-                work_alt = work_alt[~work_alt[st_value_col].isna()]
+                work_alt = work_alt.drop_nulls(subset=[st_value_col])
             if _dup_key:
-                ct_alt = work_alt.groupby([row_col, col_col])[_dup_key].nunique().unstack(fill_value=0)
+                grouped = work_alt.group_by([row_col, col_col]).agg(pl.col(_dup_key).n_unique().alias('_value'))
             else:
-                ct_alt = work_alt.groupby([row_col, col_col]).size().unstack(fill_value=0)
-            ct_alt = ct_alt.reindex(index=row_vals, columns=col_vals, fill_value=0)
+                grouped = work_alt.group_by([row_col, col_col]).len().rename({'len': '_value'})
+            ct_alt_lookup = {}
+            for row in grouped.iter_rows(named=True):
+                ct_alt_lookup[(row[row_col], row[col_col])] = float(row['_value'] or 0)
 
-    if st_agg_func == 'count':
-        ct = work.groupby([row_col, col_col]).size().unstack(fill_value=0)
-    else:
-        ct = work.groupby([row_col, col_col])[st_value_col].agg(_agg_map[st_agg_func]).unstack(fill_value=0)
-
-    ct = ct.reindex(index=row_vals, columns=col_vals, fill_value=0)
-
-    if st_agg_decimals is not None:
-        ct = ct.round(st_agg_decimals)
+    ct_lookup = pivot_lookup(
+        work, [row_col], col_col,
+        st_agg_func if st_agg_func != 'count' else 'count',
+        st_value_col if st_agg_func != 'count' else '',
+        _agg_map,
+    )
 
     col_totals = [0.0] * len(col_vals)
     rows_data = []
     for rv in row_vals:
-        counts = [float(ct.at[rv, cv]) for cv in col_vals]
+        counts = [pivot_cell(ct_lookup, rv, cv) for cv in col_vals]
         for i, v in enumerate(counts):
             col_totals[i] += v
 
         row_cells = []
         for i, cv in enumerate(col_vals):
             v = counts[i]
-            alt_v = float(ct_alt.at[rv, cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
+            alt_v = pivot_cell(ct_alt_lookup, rv, cv, default=None) if ct_alt_lookup is not None else None
+            if alt_v == 0.0 and (rv, cv) not in (ct_alt_lookup or {}):
+                alt_v = None
             formatted = _format_cell_with_tooltip(v, alt_v, st_agg_func, show_tooltips, st_agg_decimals)
             row_cells.append(formatted)
 
@@ -381,22 +374,18 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         if not valid_row:
             return _message_option('Dynamic Summary Table: no valid Row columns in data', cfg)
 
-        mask = pd.Series(True, index=df.index)
-        for c in valid_row:
-            mask &= ~df[c].astype(str).str.strip().isin(_BLANK)
-
+        mask = blank_filter_expr(valid_row, _BLANK)
         calc_value_cols = [calc.get('value_col') for calc in dyn_calculations if calc.get('value_col') and calc.get('value_col') in df.columns]
         keep_cols = list(dict.fromkeys(valid_row + calc_value_cols + ([_dup_key] if _dup_key else [])))
-        work = df.loc[mask, keep_cols].copy()
-        for c in valid_row:
-            work[c] = work[c].astype(str).str.strip()
+        work = df.filter(mask).select(keep_cols)
+        work = strip_str_cols(work, valid_row)
 
-        if work.empty:
+        if work.is_empty():
             return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
 
         row_val_lists = {}
         for c in valid_row:
-            row_val_lists[c] = _auto_detect_pl_scale(work[c].unique())
+            row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
         row_combos = _build_row_combos(row_val_lists, valid_row)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
@@ -417,7 +406,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         for combo in row_combos:
             sub = work
             for r_col, r_val in zip(valid_row, combo):
-                sub = sub[sub[r_col] == r_val]
+                sub = sub.filter(pl.col(r_col) == r_val)
 
             cell_vals = []
             row_cells = []
@@ -432,31 +421,30 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
 
                 if fn == 'count':
                     if _dup_key:
-                        raw = float(sub.drop_duplicates(subset=[_dup_key] + valid_row, keep='first').shape[0])
+                        raw = float(sub.unique(subset=[_dup_key] + valid_row, keep='first').height)
                     else:
-                        raw = float(sub.shape[0])
+                        raw = float(sub.height)
                     if vc and vc in sub.columns:
-                        num_data = pd.to_numeric(sub[vc], errors='coerce').dropna()
-                        alt_raw = float(num_data.mean()) if not num_data.empty else None
+                        num_data = to_numeric_series(sub[vc]).drop_nulls()
+                        alt_raw = float(num_data.mean()) if num_data.len() > 0 else None
                     else:
                         alt_raw = None
                 else:
                     if vc and vc in sub.columns:
-                        num_data = pd.to_numeric(sub[vc], errors='coerce').dropna()
-                        if num_data.empty:
+                        num_data = to_numeric_series(sub[vc]).drop_nulls()
+                        if num_data.len() == 0:
                             raw = 0.0
                         else:
-                            raw = float(num_data.agg(_agg_map.get(fn, 'mean')))
+                            raw = float(getattr(num_data, _agg_map.get(fn, 'mean'))())
                     else:
                         raw = 0.0
                     if _dup_key:
-                        valid_sub = sub.copy()
+                        valid_sub = sub
                         if vc and vc in valid_sub.columns:
-                            valid_sub[vc] = pd.to_numeric(valid_sub[vc], errors='coerce')
-                            valid_sub = valid_sub.dropna(subset=[vc])
-                        alt_raw = float(valid_sub[_dup_key].nunique())
+                            valid_sub = valid_sub.with_columns(to_numeric_expr(vc).alias(vc)).drop_nulls(subset=[vc])
+                        alt_raw = float(valid_sub.select(pl.col(_dup_key).n_unique()).item())
                     else:
-                        alt_raw = float(sub.shape[0])
+                        alt_raw = float(sub.height)
 
                 if dec is not None:
                     raw = round(raw, dec)
@@ -535,26 +523,22 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         if (agg_func != 'count' or (show_tooltips and value_col)) and value_col and value_col in df.columns:
             keep_cols.append(value_col)
 
-        mask = pd.Series(True, index=df.index)
-        for c in valid_row + valid_col:
-            mask &= ~df[c].astype(str).str.strip().isin(_BLANK)
-
-        work = df.loc[mask, keep_cols].copy()
-        for c in valid_row + valid_col:
-            work[c] = work[c].astype(str).str.strip()
+        mask = blank_filter_expr(valid_row + valid_col, _BLANK)
+        work = df.filter(mask).select(keep_cols)
+        work = strip_str_cols(work, valid_row + valid_col)
         if value_col and value_col in work.columns:
-            work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
+            work = work.with_columns(to_numeric_expr(value_col).alias(value_col))
 
-        if work.empty:
+        if work.is_empty():
             return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
 
         if _dup_key and agg_func == 'count':
-            work = work.drop_duplicates(subset=[_dup_key] + valid_row + valid_col, keep='first')
+            work = work.unique(subset=[_dup_key] + valid_row + valid_col, keep='first')
 
         # Ordered row values
         row_val_lists = {}
         for c in valid_row:
-            row_val_lists[c] = _auto_detect_pl_scale(work[c].unique())
+            row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
         row_combos = _build_row_combos(row_val_lists, valid_row)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
@@ -565,38 +549,39 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         all_cell_cols = []   # column name tracked per header for drill-through
 
         for cc in valid_col:
-            vals = _auto_detect_pl_scale(work[cc].unique())
-            if agg_func == 'count':
-                ct = work.groupby(valid_row + [cc]).size().unstack(fill_value=0)
-            else:
-                ct = work.groupby(valid_row + [cc])[value_col].agg(_agg_map[agg_func]).unstack(fill_value=0)
-            ct = ct.reindex(columns=vals, fill_value=0)
-
-            ct_alt = None
+            vals = _auto_detect_pl_scale(work[cc].unique().to_list())
+            ct_lookup = pivot_lookup(
+                work, valid_row, cc,
+                agg_func if agg_func != 'count' else 'count',
+                value_col if agg_func != 'count' else '',
+                _agg_map,
+            )
+            ct_alt_lookup = None
             if show_tooltips:
                 if agg_func == 'count':
                     if value_col and value_col in df.columns:
-                        work_alt = work.copy()
-                        work_alt[value_col] = pd.to_numeric(work_alt[value_col], errors='coerce')
-                        ct_alt = work_alt.groupby(valid_row + [cc])[value_col].mean().unstack(fill_value=0)
-                        ct_alt = ct_alt.reindex(columns=vals, fill_value=0)
+                        work_alt = work.with_columns(to_numeric_expr(value_col).alias(value_col))
+                        ct_alt_lookup = pivot_lookup(work_alt, valid_row, cc, 'avg', value_col, _agg_map)
                 else:
-                    work_alt = work.copy()
+                    work_alt = work
                     if value_col and value_col in work_alt.columns:
-                        work_alt = work_alt[~work_alt[value_col].isna()]
+                        work_alt = work_alt.drop_nulls(subset=[value_col])
                     if _dup_key:
-                        ct_alt = work_alt.groupby(valid_row + [cc])[_dup_key].nunique().unstack(fill_value=0)
+                        grouped = work_alt.group_by(valid_row + [cc]).agg(pl.col(_dup_key).n_unique().alias('_value'))
                     else:
-                        ct_alt = work_alt.groupby(valid_row + [cc]).size().unstack(fill_value=0)
-                    ct_alt = ct_alt.reindex(columns=vals, fill_value=0)
+                        grouped = work_alt.group_by(valid_row + [cc]).len().rename({'len': '_value'})
+                    ct_alt_lookup = {}
+                    for row in grouped.iter_rows(named=True):
+                        row_key = tuple(row[c] for c in valid_row)
+                        ct_alt_lookup[(row_key, row[cc])] = float(row['_value'] or 0)
 
             group_label = _label(cc, col_defs) if col_defs else cc
             col_groups.append({
                 'label': group_label,
                 'col': cc,
                 'headers': vals,
-                'pivot': ct,
-                'pivot_alt': ct_alt
+                'pivot': ct_lookup,
+                'pivot_alt': ct_alt_lookup,
             })
             all_col_headers.extend(vals)
             all_cell_cols.extend([cc] * len(vals))
@@ -614,17 +599,13 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 ct_alt = grp.get('pivot_alt')
                 for cv in grp['headers']:
                     if len(valid_row) == 1:
-                        raw = float(ct.at[idx_tuple[0], cv]) if cv in ct.columns else 0.0
-                        alt_raw = float(ct_alt.at[idx_tuple[0], cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
+                        raw = pivot_cell(ct, idx_tuple[0], cv)
+                        alt_raw = pivot_cell(ct_alt, idx_tuple[0], cv, default=None) if ct_alt is not None else None
                     else:
-                        try:
-                            raw = float(ct.loc[idx_tuple, cv]) if cv in ct.columns else 0.0
-                        except KeyError:
-                            raw = 0.0
-                        try:
-                            alt_raw = float(ct_alt.loc[idx_tuple, cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
-                        except KeyError:
-                            alt_raw = None
+                        raw = pivot_cell(ct, idx_tuple, cv)
+                        alt_raw = pivot_cell(ct_alt, idx_tuple, cv, default=None) if ct_alt is not None else None
+                    if alt_raw == 0.0 and ct_alt is not None and (idx_tuple if len(valid_row) > 1 else idx_tuple[0], cv) not in ct_alt:
+                        alt_raw = None
 
                     if agg_decimals is not None:
                         raw = round(raw, agg_decimals)
@@ -699,62 +680,57 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     _COMP_COL = valid_col[0]
     col_col = _COMP_COL
 
-    mask = pd.Series(True, index=df.index)
-    for c in valid_row:
-        mask &= ~df[c].astype(str).str.strip().isin(_BLANK)
-    mask &= ~df[col_col].astype(str).str.strip().isin(_BLANK)
-
+    mask = blank_filter_expr(valid_row + [col_col], _BLANK)
     keep_cols = list(dict.fromkeys(valid_row + [col_col] + ([_dup_key] if _dup_key else [])))
     if (agg_func != 'count' or (show_tooltips and value_col)) and value_col and value_col in df.columns:
         keep_cols.append(value_col)
-    work = df.loc[mask, keep_cols].copy()
+    work = df.filter(mask).select(keep_cols)
 
-    for c in valid_row:
-        work[c] = work[c].astype(str).str.strip()
-    work[col_col] = work[col_col].astype(str).str.strip()
+    work = strip_str_cols(work, valid_row + [col_col])
     if value_col and value_col in work.columns:
-        work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
+        work = work.with_columns(to_numeric_expr(value_col).alias(value_col))
 
-    if work.empty:
+    if work.is_empty():
         return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
 
     if _dup_key and agg_func == 'count':
-        work = work.drop_duplicates(subset=[_dup_key] + valid_row + [col_col], keep='first')
+        work = work.unique(subset=[_dup_key] + valid_row + [col_col], keep='first')
 
     row_val_lists = {}
     for c in valid_row:
-        row_val_lists[c] = _auto_detect_pl_scale(work[c].unique())
+            row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
 
     row_combos = _build_row_combos(row_val_lists, valid_row)
 
     group_cols = valid_row + [col_col]
     _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
-    col_vals = _auto_detect_pl_scale(work[col_col].unique())
+    col_vals = _auto_detect_pl_scale(work[col_col].unique().to_list())
 
-    ct_alt = None
+    ct_alt_lookup = None
     if show_tooltips:
         if agg_func == 'count':
             if value_col and value_col in df.columns:
-                work_alt = work.copy()
-                work_alt[value_col] = pd.to_numeric(work_alt[value_col], errors='coerce')
-                ct_alt = work_alt.groupby(group_cols)[value_col].mean().unstack(fill_value=0)
-                ct_alt = ct_alt.reindex(columns=col_vals, fill_value=0)
+                work_alt = work.with_columns(to_numeric_expr(value_col).alias(value_col))
+                ct_alt_lookup = pivot_lookup(work_alt, valid_row, col_col, 'avg', value_col, _agg_map)
         else:
-            work_alt = work.copy()
+            work_alt = work
             if value_col and value_col in work_alt.columns:
-                work_alt = work_alt[~work_alt[value_col].isna()]
+                work_alt = work_alt.drop_nulls(subset=[value_col])
             if _dup_key:
-                ct_alt = work_alt.groupby(group_cols)[_dup_key].nunique().unstack(fill_value=0)
+                grouped = work_alt.group_by(group_cols).agg(pl.col(_dup_key).n_unique().alias('_value'))
             else:
-                ct_alt = work_alt.groupby(group_cols).size().unstack(fill_value=0)
-            ct_alt = ct_alt.reindex(columns=col_vals, fill_value=0)
+                grouped = work_alt.group_by(group_cols).len().rename({'len': '_value'})
+            ct_alt_lookup = {}
+            for row in grouped.iter_rows(named=True):
+                row_key = tuple(row[c] for c in valid_row) if len(valid_row) > 1 else row[valid_row[0]]
+                ct_alt_lookup[(row_key, row[col_col])] = float(row['_value'] or 0)
 
-    if agg_func == 'count':
-        ct = work.groupby(group_cols).size().unstack(fill_value=0)
-    else:
-        ct = work.groupby(group_cols)[value_col].agg(_agg_map[agg_func]).unstack(fill_value=0)
-
-    ct = ct.reindex(columns=col_vals, fill_value=0)
+    ct_lookup = pivot_lookup(
+        work, valid_row, col_col,
+        agg_func if agg_func != 'count' else 'count',
+        value_col if agg_func != 'count' else '',
+        _agg_map,
+    )
 
     rows_data = []
     col_totals = [0.0] * len(col_vals)
@@ -764,16 +740,14 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         row_cells = []
         for cv in col_vals:
             if len(valid_row) == 1:
-                raw = float(ct.at[idx_tuple[0], cv]) if cv in ct.columns else 0.0
-                alt_raw = float(ct_alt.at[idx_tuple[0], cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
+                raw = pivot_cell(ct_lookup, idx_tuple[0], cv)
+                alt_raw = pivot_cell(ct_alt_lookup, idx_tuple[0], cv, default=None) if ct_alt_lookup is not None else None
             else:
-                try:
-                    raw = float(ct.loc[idx_tuple, cv]) if cv in ct.columns else 0.0
-                except KeyError:
-                    raw = 0.0
-                try:
-                    alt_raw = float(ct_alt.loc[idx_tuple, cv]) if (ct_alt is not None and cv in ct_alt.columns) else None
-                except KeyError:
+                raw = pivot_cell(ct_lookup, idx_tuple, cv)
+                alt_raw = pivot_cell(ct_alt_lookup, idx_tuple, cv, default=None) if ct_alt_lookup is not None else None
+            if alt_raw == 0.0 and ct_alt_lookup is not None:
+                key = (idx_tuple if len(valid_row) > 1 else idx_tuple[0], cv)
+                if key not in ct_alt_lookup:
                     alt_raw = None
 
             if agg_decimals is not None:

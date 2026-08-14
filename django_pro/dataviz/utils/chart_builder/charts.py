@@ -3,7 +3,7 @@ import json
 import random
 import re
 
-import pandas as pd
+import polars as pl
 
 try:
     from dataexploration.school_year_utils import resolve_relative_column_key
@@ -69,13 +69,13 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax, x_lbl, orientation, radial, polar)
 
     if len(valid_y) > 1:
-        categories = sorted(df[x_col].fillna('(Blank)').astype(str).unique().tolist())
+        categories = sorted(col_unique_str(df, x_col))
         series_value_maps = {}
         series = []
         for mc in valid_y:
-            col_agg = agg if agg in ('count_unique', 'count_occurrence') or (pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count') else 'count'
+            col_agg = agg if agg in ('count_unique', 'count_occurrence') or (is_numeric_column(df, mc) and agg != 'count') else 'count'
             adf = _agg(df, x_col, mc, col_agg, cfg=cfg)
-            vm = dict(zip(adf[x_col].astype(str), adf['_value']))
+            vm = agg_to_dict(adf, x_col)
             series_value_maps[_label(mc, col_defs)] = vm
             series.append(make_series(_label(mc, col_defs), [float(vm.get(xv, 0) or 0) for xv in categories], is_stacked))
         if series_value_maps:
@@ -89,25 +89,38 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
     elif group_col and group_col in df.columns and stack_col and stack_col in df.columns:
         # Grouped + stacked: x_col = inner category, group_col = outer group, stack_col = stack within group
         gc = [x_col, group_col, stack_col]
-        df_gs = df.dropna(subset=[c for c in gc if c in df.columns])
-        if agg in ('sum', 'avg', 'min', 'max', 'median') and y_col and y_col in df_gs.columns:
-            df_gs[y_col] = pd.to_numeric(df_gs[y_col], errors='coerce')
-            adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].agg(
-                {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}[agg]
-            ).reset_index().rename(columns={y_col: '_value'})
+        df_gs = df.drop_nulls(subset=[c for c in gc if c in df.columns])
+        if stack_col and y_col and stack_col == y_col and agg in ('avg', 'sum', 'min', 'max', 'median'):
+            adf = df_gs.group_by(gc).len().rename({'len': '_value'})
+        elif agg in ('sum', 'avg', 'min', 'max', 'median') and y_col and y_col in df_gs.columns:
+            _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+            df_gs = df_gs.with_columns(to_numeric_expr(y_col).alias(y_col))
+            adf = (
+                df_gs.drop_nulls(subset=[y_col])
+                .group_by(gc)
+                .agg(getattr(pl.col(y_col), _agg_map[agg])().alias('_value'))
+            )
         elif agg == 'count_unique' and y_col and y_col in df_gs.columns:
-            adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].nunique().reset_index().rename(columns={y_col: '_value'})
+            adf = (
+                df_gs.drop_nulls(subset=[y_col])
+                .group_by(gc)
+                .agg(pl.col(y_col).n_unique().alias('_value'))
+            )
         elif agg == 'count_occurrence' and y_col and y_col in df_gs.columns:
-            adf = df_gs.dropna(subset=[y_col]).groupby(gc, dropna=True)[y_col].count().reset_index().rename(columns={y_col: '_value'})
+            adf = (
+                df_gs.drop_nulls(subset=[y_col])
+                .group_by(gc)
+                .agg(pl.col(y_col).count().alias('_value'))
+            )
         else:
-            adf = df_gs.groupby(gc, dropna=True).size().reset_index(name='_value')
+            adf = df_gs.group_by(gc).len().rename({'len': '_value'})
 
-        categories = sorted(adf[x_col].astype(str).unique().tolist())
-        groups = sorted(adf[group_col].astype(str).unique().tolist())
-        stacks = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
+        categories = sorted(adf[x_col].cast(pl.Utf8).unique().to_list())
+        groups = sorted(adf[group_col].cast(pl.Utf8).unique().to_list())
+        stacks = _ordered_stacks(adf[stack_col].cast(pl.Utf8).unique().to_list(), cfg)
 
         raw_vals = {}
-        for _, row in adf.iterrows():
+        for row in adf.iter_rows(named=True):
             raw_vals[(str(row[x_col]), str(row[group_col]), str(row[stack_col]))] = float(row['_value'] or 0)
 
         cat_totals_per_group = {
@@ -151,14 +164,13 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
 
     elif stack_col and stack_col in df.columns:
         adf = _agg(df, x_col, y_col, agg, stack_col, cfg=cfg)
-        categories = sorted(adf[x_col].astype(str).unique().tolist())
-        stacks = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
+        categories = sorted(adf[x_col].cast(pl.Utf8).unique().to_list())
+        stacks = _ordered_stacks(adf[stack_col].cast(pl.Utf8).unique().to_list(), cfg)
 
-        # Build raw count/value lookup: {(cat, stack): value}
         raw_vals = {}
         for sv in stacks:
-            sub = adf[adf[stack_col].astype(str) == sv]
-            vm = dict(zip(sub[x_col].astype(str), sub['_value']))
+            sub = adf.filter(pl.col(stack_col).cast(pl.Utf8) == sv)
+            vm = agg_to_dict(sub, x_col)
             for xv in categories:
                 raw_vals[(xv, sv)] = float(vm.get(xv, 0) or 0)
 
@@ -201,9 +213,9 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                              'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
                              '__formatter_js__': tooltip_js}
     else:
-        adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False)
-        value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
-        ordered_categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+        adf = sort_df(_agg(df, x_col, y_col, agg, cfg=cfg), '_value', descending=True)
+        value_map = agg_to_dict(adf, x_col)
+        ordered_categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
         ordered_values = [float(value_map.get(cat, 0) or 0) for cat in ordered_categories]
         series_name = labels['y'] or 'Value'
         update_axes(
@@ -219,7 +231,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                                                                          show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
                                                                          value_pct_suffix='%' if _tooltip_value_pct(cfg) else '',
                                                                          categories=ordered_categories)}
-    option['__category_names__'] = categories if 'categories' in locals() else ordered_categories
+    option.setdefault('__category_names__', categories if 'categories' in locals() else ordered_categories)
     if (radial or polar) and isinstance(option.get('tooltip'), dict):
         option['tooltip']['axisPointer'] = {'type': 'line'}
     if not radial and not polar:
@@ -252,25 +264,25 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
                 break
 
     # 2. Sort the student rows by SS (ascending, lowest to highest)
-    df_sorted = df.copy()
+    df_sorted = df.clone()
     if ss_col:
-        # Create a numeric column for sorting, coercing invalid values to NaN
-        df_sorted['_ss_numeric'] = pd.to_numeric(df_sorted[ss_col], errors='coerce')
-        # Sort ascending, placing NaNs first (so they are on the left-most / lowest side)
-        df_sorted = df_sorted.sort_values(by='_ss_numeric', ascending=True, na_position='first')
+        df_sorted = df_sorted.with_columns(to_numeric_expr(ss_col).alias('_ss_numeric'))
+        df_sorted = df_sorted.sort('_ss_numeric', nulls_last=False)
     else:
-        # Fallback: sort by Category or Student Name
         sort_by_cols = []
         if x_col in df_sorted.columns:
             sort_by_cols.append(x_col)
         if 'student_name' in df_sorted.columns:
             sort_by_cols.append('student_name')
         if sort_by_cols:
-            df_sorted = df_sorted.sort_values(by=sort_by_cols, ascending=True)
+            df_sorted = df_sorted.sort(sort_by_cols)
 
-    # 3. Get categories and value counts for sorting the categories list
-    value_counts = df_sorted[x_col].dropna().astype(str).value_counts()
-    value_map = value_counts.to_dict()
+    value_counts = (
+        df_sorted.select(pl.col(x_col).drop_nulls().cast(pl.Utf8))
+        .to_series()
+        .value_counts(sort=True)
+    )
+    value_map = dict(zip(value_counts['_value'].to_list(), value_counts['count'].to_list()))
     categories = _ordered_categories(list(value_map.keys()), cfg, value_map)
 
     # 4. Total dots N = number of students
@@ -356,7 +368,7 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
     student_data_by_cat = {cat: [] for cat in categories}
     
     def _clean_val(val):
-        if pd.isna(val):
+        if is_null_val(val):
             return None
         if isinstance(val, (int, float)):
             if float(val).is_integer():
@@ -372,19 +384,19 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
             return val_str
 
     for i in range(N):
-        row = df_sorted.iloc[i]
+        row = df_sorted.row(i, named=True)
         cat = str(row[x_col])
         if cat not in student_data_by_cat:
             student_data_by_cat[cat] = []
-            
+
         cx, cy = sorted_coords[i]
-        
+
         student_name = row.get('student_name', '')
-        if pd.isna(student_name):
+        if is_null_val(student_name):
             student_name = 'Student'
-            
+
         pl_val = row.get(x_col, '')
-        if pd.isna(pl_val):
+        if is_null_val(pl_val):
             pl_val = ''
             
         ss_val = _clean_val(row.get(ss_col, '')) if ss_col else None
@@ -492,7 +504,7 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         return _message_option('X / Category is required', cfg, error=True)
     date_bucket = (cfg.get('x_date_bucket') or '').strip().lower()
     if date_bucket and x_col in df.columns:
-        df = df.assign(**{x_col: _bucket_date_column(df[x_col], date_bucket)})
+        df = df.with_columns(_bucket_date_column(df[x_col], date_bucket).alias(x_col))
     option = _base_option(cfg)
     ax = _axis_style(cfg)
     x_lbl = _x_axis_label_style(cfg)
@@ -523,13 +535,13 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
     percent_suffix = _percent_suffix(cfg)
 
     if len(valid_y) > 1:
-        categories = sorted(df[x_col].fillna('(Blank)').astype(str).unique().tolist())
+        categories = sorted(col_unique_str(df, x_col))
         series_value_maps = {}
         series = []
         for mc in valid_y:
-            col_agg = agg if pd.api.types.is_numeric_dtype(df[mc]) and agg != 'count' else 'count'
+            col_agg = agg if is_numeric_column(df, mc) and agg != 'count' else 'count'
             adf = _agg(df, x_col, mc, col_agg, cfg=cfg)
-            vm = dict(zip(adf[x_col].astype(str), adf['_value']))
+            vm = agg_to_dict(adf, x_col)
             series_name = _label(mc, col_defs or {})
             series_value_maps[series_name] = vm
             series.append(make_series(series_name, [float(vm.get(xv, 0) or 0) for xv in categories], stacked))
@@ -548,14 +560,20 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}})
     elif stack_col and stack_col in df.columns:
         adf = _agg(df, x_col, y_col, agg, stack_col, cfg=cfg)
-        categories = sorted(adf[x_col].astype(str).unique().tolist())
-        stacks_ordered = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
-        total_value_map = {cat: float(adf[adf[x_col].astype(str) == cat]['_value'].sum() or 0) for cat in categories}
+        categories = sorted(adf[x_col].cast(pl.Utf8).unique().to_list())
+        stacks_ordered = _ordered_stacks(adf[stack_col].cast(pl.Utf8).unique().to_list(), cfg)
+        total_value_map = {
+            cat: float(
+                adf.filter(pl.col(x_col).cast(pl.Utf8) == cat)['_value'].sum() or 0
+            )
+            for cat in categories
+        }
         categories = _ordered_categories(categories, cfg, total_value_map)
-        raw_lookup = {sv: {xv: float(dict(zip(adf[adf[stack_col].astype(str) == sv][x_col].astype(str),
-                                              adf[adf[stack_col].astype(str) == sv]['_value'])).get(xv, 0) or 0)
-                           for xv in categories}
-                      for sv in stacks_ordered}
+        raw_lookup = {}
+        for sv in stacks_ordered:
+            sub = adf.filter(pl.col(stack_col).cast(pl.Utf8) == sv)
+            vm = agg_to_dict(sub, x_col)
+            raw_lookup[sv] = {xv: float(vm.get(xv, 0) or 0) for xv in categories}
         totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
         series = [make_series(sv, [raw_lookup[sv][xv] for xv in categories], stacked)
                   for sv in reversed(stacks_ordered)]
@@ -567,8 +585,8 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}})
     else:
         adf = _agg(df, x_col, y_col, agg, cfg=cfg)
-        value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
-        categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+        value_map = agg_to_dict(adf, x_col)
+        categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
         ordered_vals = [float(value_map.get(cat, 0) or 0) for cat in categories]
         grand_total = sum(ordered_vals)
         _ltjs = _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
@@ -588,29 +606,33 @@ _DS_AGG_FUNCS = frozenset({'count', 'sum', 'avg', 'min', 'max', 'median'})
 
 
 def _ds_bucket_label_range(label, bucket):
-    """Inverse of _bucket_date_column: the calendar [start, end] Timestamps
+    """Inverse of _bucket_date_column: the calendar [start, end] dates
     a bucket label covers (e.g. '2025-09' -> (Sep 1, Sep 30))."""
+    import calendar
+
+    def _month_end(year: int, month: int) -> date:
+        return date(year, month, calendar.monthrange(year, month)[1])
+
     try:
         if bucket == 'week':
             year_s, week_s = str(label).split('-W')
             import datetime as _dt
-            start = pd.Timestamp(_dt.date.fromisocalendar(int(year_s), int(week_s), 1))
-            end = pd.Timestamp(_dt.date.fromisocalendar(int(year_s), int(week_s), 7))
+            start = _dt.date.fromisocalendar(int(year_s), int(week_s), 1)
+            end = _dt.date.fromisocalendar(int(year_s), int(week_s), 7)
             return start, end
         if bucket == 'month':
-            start = pd.Timestamp(str(label) + '-01')
-            return start, start + pd.offsets.MonthEnd(0)
+            year_s, month_s = str(label).split('-')
+            start = date(int(year_s), int(month_s), 1)
+            return start, _month_end(start.year, start.month)
         if bucket == 'quarter':
             year_s, q_s = str(label).split('-Q')
             start_month = (int(q_s) - 1) * 3 + 1
-            start = pd.Timestamp(year=int(year_s), month=start_month, day=1)
-            end = pd.Timestamp(year=int(year_s), month=start_month + 2, day=1) + pd.offsets.MonthEnd(0)
-            return start, end
+            end_month = start_month + 2
+            return date(int(year_s), start_month, 1), _month_end(int(year_s), end_month)
         if bucket == 'year':
             y = int(label)
-            return pd.Timestamp(year=y, month=1, day=1), pd.Timestamp(year=y, month=12, day=31)
-        # 'day' (and fallback)
-        d = pd.Timestamp(label)
+            return date(y, 1, 1), date(y, 12, 31)
+        d = datetime.fromisoformat(str(label)[:10]).date()
         return d, d
     except (ValueError, TypeError):
         return None, None
@@ -650,24 +672,29 @@ def _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs):
     # Union every date column referenced by any line (the primary date
     # column plus any Active-Range enter/leave columns) to find the overall
     # span, then generate a continuous calendar axis over it.
-    date_parts = [pd.to_datetime(df[ds_date_col], errors='coerce')]
+    date_parts = [df.select(pl.col(ds_date_col).cast(pl.Utf8).str.to_datetime(strict=False)).to_series()]
     for line in ds_lines:
         if line.get('line_type') == 'active_range':
             for col_key in ('enter_col', 'leave_col'):
                 col = line.get(col_key, '')
                 if col and col in df.columns:
-                    date_parts.append(pd.to_datetime(df[col], errors='coerce'))
-    all_valid_dates = pd.concat(date_parts, ignore_index=True).dropna()
-    if all_valid_dates.empty:
+                    date_parts.append(
+                        df.select(pl.col(col).cast(pl.Utf8).str.to_datetime(strict=False)).to_series()
+                    )
+    all_valid_dates = pl.concat(date_parts).drop_nulls()
+    if all_valid_dates.len() == 0:
         return _message_option('No valid dates in data', cfg, error=True)
 
-    overall_min = all_valid_dates.min().normalize()
-    overall_max = all_valid_dates.max().normalize()
-    full_days = pd.Series(pd.date_range(overall_min, overall_max, freq='D'))
-    all_dates = sorted(set(_bucket_date_column(full_days, date_bucket).tolist()))
+    overall_min = all_valid_dates.min()
+    overall_max = all_valid_dates.max()
+    if hasattr(overall_min, 'date'):
+        overall_min = overall_min.date()
+        overall_max = overall_max.date()
+    full_days = pl.date_range(overall_min, overall_max, interval='1d', eager=True)
+    all_dates = sorted(set(_bucket_date_column(full_days, date_bucket).drop_nulls().to_list()))
     bucket_ranges = {lbl: _ds_bucket_label_range(lbl, date_bucket) for lbl in all_dates}
 
-    base = df.assign(**{ds_date_col: _bucket_date_column(df[ds_date_col], date_bucket)})
+    base = df.with_columns(_bucket_date_column(df[ds_date_col], date_bucket).alias(ds_date_col))
     _dup_key = next((c for c in ('ssid', 'student_id', 'stu_annual_key') if c in df.columns), None)
 
     line_series: dict[str, dict[str, float]] = {}
@@ -690,18 +717,29 @@ def _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs):
                 # Enrollment table not loaded yet — plot as 0, not an error.
                 line_series[lid] = {d: 0.0 for d in all_dates}
                 continue
-            enter_dt = pd.to_datetime(df[enter_col], errors='coerce')
-            leave_dt = (pd.to_datetime(df[leave_col], errors='coerce')
-                        if leave_col and leave_col in df.columns
-                        else pd.Series(pd.NaT, index=df.index))
-            valid = enter_dt.notna()
+            enter_expr = pl.col(enter_col).cast(pl.Utf8).str.to_datetime(strict=False)
+            leave_expr = (
+                pl.col(leave_col).cast(pl.Utf8).str.to_datetime(strict=False)
+                if leave_col and leave_col in df.columns
+                else pl.lit(None).cast(pl.Datetime)
+            )
             counts = {}
             for lbl, (start, end) in bucket_ranges.items():
                 if start is None:
                     counts[lbl] = 0.0
                     continue
-                mask = valid & (enter_dt <= end) & (leave_dt.isna() | (leave_dt >= start))
-                counts[lbl] = float(df.loc[mask, _dup_key].nunique()) if _dup_key else float(mask.sum())
+                end_dt = datetime.combine(end, datetime.max.time()) if isinstance(end, date) else end
+                start_dt = datetime.combine(start, datetime.min.time()) if isinstance(start, date) else start
+                mask = (
+                    enter_expr.is_not_null()
+                    & (enter_expr <= end_dt)
+                    & (leave_expr.is_null() | (leave_expr >= start_dt))
+                )
+                filtered = df.filter(mask)
+                if _dup_key:
+                    counts[lbl] = float(filtered.select(pl.col(_dup_key).n_unique()).item())
+                else:
+                    counts[lbl] = float(filtered.height)
             line_series[lid] = counts
             continue
 
@@ -723,10 +761,10 @@ def _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs):
                 if fcol not in sub.columns or not fvals:
                     continue
                 allowed = {str(v) for v in fvals} if isinstance(fvals, list) else {str(fvals)}
-                sub = sub[sub[fcol].astype(str).isin(allowed)]
+                sub = sub.filter(pl.col(fcol).cast(pl.Utf8).is_in(list(allowed)))
 
         adf = _agg(sub, ds_date_col, value_col, agg_func, cfg=cfg)
-        vm = dict(zip(adf[ds_date_col].astype(str), adf['_value'])) if not adf.empty else {}
+        vm = agg_to_dict(adf, ds_date_col) if not adf.is_empty() else {}
         line_series[lid] = {d: float(vm.get(d, 0) or 0) for d in all_dates}
 
     # Calc lines can reference other calc lines (e.g. an attendance-rate line
@@ -837,9 +875,9 @@ def _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs):
 def _pie_option(df, x_col, y_col, agg, cfg, donut=False):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False).head(30)
-    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
-    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort('_value', descending=True).head(30)
+    value_map = agg_to_dict(adf, x_col)
+    categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     grand_total = sum(float(v or 0) for v in value_map.values())
     percent_decimals = _percent_decimals(cfg)
@@ -870,21 +908,23 @@ def _scatter_option(df, x_col, y_col, stack_col, size_col, cfg, labels, bubble=F
         return _message_option('X and Y are required for scatter', cfg, error=True)
     option = _base_option(cfg)
     ax = _axis_style(cfg)
-    dfc = df.copy()
-    dfc[x_col] = pd.to_numeric(dfc[x_col], errors='coerce')
-    dfc[y_col] = pd.to_numeric(dfc[y_col], errors='coerce')
-    if size_col and size_col in dfc.columns:
-        dfc[size_col] = pd.to_numeric(dfc[size_col], errors='coerce')
-    dfc = dfc.dropna(subset=[x_col, y_col])
+    dfc = df.clone()
+    cast_cols = []
+    for c in dict.fromkeys([x_col, y_col, size_col] if size_col else [x_col, y_col]):
+        if c and c in dfc.columns:
+            cast_cols.append(to_numeric_expr(c).alias(c))
+    if cast_cols:
+        dfc = dfc.with_columns(cast_cols)
+    dfc = dfc.drop_nulls(subset=[x_col, y_col])
     pt = int(cfg.get('point_size', 6) or 6)
 
     def _pt_data(sub):
-        return [[float(x), float(y)] for x, y in zip(sub[x_col], sub[y_col])]
+        return [[float(x), float(y)] for x, y in zip(sub[x_col].to_list(), sub[y_col].to_list())]
 
     if stack_col and stack_col in dfc.columns:
         series = [{'name': g, 'type': 'scatter', 'symbolSize': pt,
-                   'data': _pt_data(dfc[dfc[stack_col].astype(str) == g])}
-                  for g in _ordered_stacks(dfc[stack_col].astype(str).unique().tolist(), cfg)]
+                   'data': _pt_data(dfc.filter(pl.col(stack_col).cast(pl.Utf8) == g))}
+                  for g in _ordered_stacks(dfc[stack_col].cast(pl.Utf8).unique().to_list(), cfg)]
     else:
         series = [{'name': labels['y'] or 'Values', 'type': 'scatter', 'symbolSize': pt, 'data': _pt_data(dfc)}]
 
@@ -918,17 +958,16 @@ def _jitter_option(df, x_col, y_col, stack_col, size_col, cfg, labels):
     option = _base_option(cfg)
     ax = _axis_style(cfg)
     x_lbl = _x_axis_label_style(cfg)
-    dfc = df.copy()
-    # Force x_col to string so numeric codes like "01" stay as categories
-    dfc[x_col] = dfc[x_col].astype(str)
-    dfc[y_col] = pd.to_numeric(dfc[y_col], errors='coerce')
-    dfc = dfc.dropna(subset=[y_col])
-    if dfc.empty:
+    dfc = df.clone()
+    dfc = dfc.with_columns(pl.col(x_col).cast(pl.Utf8).alias(x_col))
+    dfc = dfc.with_columns(to_numeric_expr(y_col).alias(y_col))
+    dfc = dfc.drop_nulls(subset=[y_col])
+    if dfc.is_empty():
         return _message_option('No numeric data for jitter', cfg)
     pt = int(cfg.get('point_size', 6) or 6)
     mode = cfg.get('jitter_mode', 'raw')
     overlay = cfg.get('jitter_overlay', 'none')
-    categories = _ordered_categories(sorted(dfc[x_col].unique().tolist()), cfg)
+    categories = _ordered_categories(sorted(dfc[x_col].unique().to_list()), cfg)
     cat_index = {v: i for i, v in enumerate(categories)}
 
     # ── Build formatter as a JS string so it survives JSON serialization ──
@@ -946,19 +985,19 @@ def _jitter_option(df, x_col, y_col, stack_col, size_col, cfg, labels):
     if mode == 'aggregate':
         agg_func = cfg.get('agg', 'avg')
         adf = _agg(dfc, x_col, y_col, agg_func, stack_col=stack_col, cfg=cfg)
-        x_vals = [c for c in categories if c in adf[x_col].values]
+        x_vals = [c for c in categories if c in adf[x_col].cast(pl.Utf8).to_list()]
         if stack_col and stack_col in adf.columns:
-            stacks = _ordered_stacks(adf[stack_col].astype(str).unique().tolist(), cfg)
+            stacks = _ordered_stacks(adf[stack_col].cast(pl.Utf8).unique().to_list(), cfg)
             series = []
             for g in stacks:
-                sub = adf[adf[stack_col].astype(str) == g]
-                data = [float(sub[sub[x_col] == c]['_value'].iloc[0]) if c in sub[x_col].values else None
-                        for c in x_vals]
+                sub = adf.filter(pl.col(stack_col).cast(pl.Utf8) == g)
+                vm = agg_to_dict(sub, x_col)
+                data = [float(vm.get(c, 0) or 0) if c in vm else None for c in x_vals]
                 series.append({'name': str(g), 'type': 'bar', 'data': data,
                                'itemStyle': {'borderRadius': [4, 4, 0, 0]}})
         else:
-            data = [float(adf[adf[x_col] == c]['_value'].iloc[0]) if c in adf[x_col].values else None
-                    for c in x_vals]
+            vm = agg_to_dict(adf, x_col)
+            data = [float(vm.get(c, 0) or 0) if c in vm else None for c in x_vals]
             series = [{'name': labels.get('y', y_col), 'type': 'bar', 'data': data,
                        'itemStyle': {'borderRadius': [4, 4, 0, 0]}}]
         option.update({
@@ -975,11 +1014,11 @@ def _jitter_option(df, x_col, y_col, stack_col, size_col, cfg, labels):
     series = []
     groups = [None]
     if stack_col and stack_col in dfc.columns:
-        groups = _ordered_stacks(dfc[stack_col].astype(str).unique().tolist(), cfg)
+        groups = _ordered_stacks(dfc[stack_col].cast(pl.Utf8).unique().to_list(), cfg)
     for g in groups:
-        sub = dfc if g is None else dfc[dfc[stack_col].astype(str) == g]
+        sub = dfc if g is None else dfc.filter(pl.col(stack_col).cast(pl.Utf8) == g)
         jittered = []
-        for _, row in sub.iterrows():
+        for row in sub.iter_rows(named=True):
             cat = str(row[x_col])
             if cat not in cat_index:
                 continue
@@ -999,10 +1038,10 @@ def _jitter_option(df, x_col, y_col, stack_col, size_col, cfg, labels):
         box_sizes = []        # [[w, h], ...] for each box
 
         for ci, cat in enumerate(categories):
-            cat_data = dfc[dfc[x_col] == cat][y_col]
-            if cat_data.empty:
+            cat_data = dfc.filter(pl.col(x_col) == cat)[y_col]
+            if cat_data.len() == 0:
                 continue
-            vals = sorted(cat_data.dropna().tolist())
+            vals = sorted(v for v in cat_data.drop_nulls().to_list() if v is not None)
             if not vals:
                 continue
             n = len(vals)
@@ -1084,16 +1123,16 @@ def _heatmap_option(df, x_col, y_col, agg, cfg, labels):
     if not x_col or not y_col:
         return _message_option('X and Y are required for heatmap', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg, stack_col=y_col, cfg=cfg)
-    if adf.empty:
+    if adf.is_empty():
         return _message_option('No data loaded', cfg)
     option = _base_option(cfg, axis_trigger=False)
     ax = _axis_style(cfg)
     x_lbl = _x_axis_label_style(cfg)
-    x_vals = _ordered_categories(sorted(adf[x_col].astype(str).unique().tolist()), cfg)
-    y_vals = _ordered_categories(sorted(adf[y_col].astype(str).unique().tolist()), {'sort_col': cfg.get('sort_col') if cfg.get('sort_col') == '__manual__' else '', 'category_order': cfg.get('category_order', []), 'sort_dir': cfg.get('sort_dir', 'asc')})
+    x_vals = _ordered_categories(sorted(adf[x_col].cast(pl.Utf8).unique().to_list()), cfg)
+    y_vals = _ordered_categories(sorted(adf[y_col].cast(pl.Utf8).unique().to_list()), {'sort_col': cfg.get('sort_col') if cfg.get('sort_col') == '__manual__' else '', 'category_order': cfg.get('category_order', []), 'sort_dir': cfg.get('sort_dir', 'asc')})
     xi, yi = {v: i for i, v in enumerate(x_vals)}, {v: i for i, v in enumerate(y_vals)}
     points, max_val = [], 0
-    for _, row in adf.iterrows():
+    for row in adf.iter_rows(named=True):
         val = float(row['_value'] or 0)
         points.append([xi[str(row[x_col])], yi[str(row[y_col])], val])
         max_val = max(max_val, val)
@@ -1117,17 +1156,32 @@ def _histogram_option(df, x_col, stack_col, cfg, labels):
     bins = max(4, min(40, int(cfg.get('bins', 12) or 12)))
 
     def hist(vals, nbins):
-        s = pd.to_numeric(vals, errors='coerce').dropna()
-        if s.empty:
-            c = vals.fillna('(Blank)').astype(str).value_counts().sort_index()
-            return c.index.tolist(), c.values.tolist()
-        bc = pd.cut(s, bins=min(nbins, max(4, int(s.nunique() or 1))), include_lowest=True).value_counts().sort_index()
-        return [f'{iv.left:.1f}–{iv.right:.1f}' for iv in bc.index], bc.values.tolist()
+        raw = pl.Series(vals.to_list() if hasattr(vals, 'to_list') else list(vals))
+        s = to_numeric_series(raw).drop_nulls()
+        if s.len() == 0:
+            c = raw.fill_null('(Blank)').cast(pl.Utf8).value_counts().sort('_value')
+            return c['_value'].to_list(), c['count'].to_list()
+        n_bins = min(nbins, max(4, int(s.n_unique())))
+        lo, hi = float(s.min()), float(s.max())
+        if lo == hi:
+            return [f'{lo:.1f}–{hi:.1f}'], [s.len()]
+        step = (hi - lo) / n_bins
+        labels, counts = [], []
+        values = s.to_list()
+        for i in range(n_bins):
+            left = lo + step * i
+            right = hi if i == n_bins - 1 else lo + step * (i + 1)
+            labels.append(f'{left:.1f}–{right:.1f}')
+            if i == n_bins - 1:
+                counts.append(sum(1 for v in values if left <= v <= right))
+            else:
+                counts.append(sum(1 for v in values if left <= v < right))
+        return labels, counts
 
     if stack_col and stack_col in df.columns:
         all_x, per_group = [], {}
-        for g in _ordered_stacks(df[stack_col].fillna('(Blank)').astype(str).unique().tolist(), cfg):
-            sub = df[df[stack_col].fillna('(Blank)').astype(str) == g]
+        for g in _ordered_stacks(df[stack_col].fill_null('(Blank)').cast(pl.Utf8).unique().to_list(), cfg):
+            sub = df.filter(pl.col(stack_col).fill_null('(Blank)').cast(pl.Utf8) == g)
             bns, cnts = hist(sub[x_col], bins)
             per_group[g] = dict(zip(bns, cnts))
             all_x.extend(bns)
@@ -1156,16 +1210,21 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
     x_lbl = _x_axis_label_style(cfg)
 
     def stats(vals):
-        s = pd.to_numeric(vals, errors='coerce').dropna()
-        if s.empty:
+        s = to_numeric_series(pl.Series(vals.to_list() if hasattr(vals, 'to_list') else list(vals))).drop_nulls()
+        if s.len() == 0:
             return None
-        q = s.quantile([0.25, 0.5, 0.75])
-        return [float(s.min()), float(q[0.25]), float(q[0.5]), float(q[0.75]), float(s.max())]
+        return [
+            float(s.min()),
+            float(s.quantile(0.25)),
+            float(s.quantile(0.5)),
+            float(s.quantile(0.75)),
+            float(s.max()),
+        ]
 
     lbls, data = [], []
     if x_col and x_col in df.columns:
-        for g in sorted(df[x_col].fillna('(Blank)').astype(str).unique()):
-            st = stats(df[df[x_col].fillna('(Blank)').astype(str) == g][y_col])
+        for g in sorted(df[x_col].fill_null('(Blank)').cast(pl.Utf8).unique().to_list()):
+            st = stats(df.filter(pl.col(x_col).fill_null('(Blank)').cast(pl.Utf8) == g)[y_col])
             if st:
                 lbls.append(g)
                 data.append(st)
@@ -1186,9 +1245,9 @@ def _boxplot_option(df, x_col, y_col, cfg, labels):
 def _funnel_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
-    adf = _agg(df, x_col, y_col, agg, cfg=cfg).sort_values('_value', ascending=False)
-    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
-    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+    adf = sort_df(_agg(df, x_col, y_col, agg, cfg=cfg), '_value', descending=True)
+    value_map = agg_to_dict(adf, x_col)
+    categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'funnel', 'left': '10%', 'top': 40, 'bottom': 20, 'width': '80%',
                            'sort': 'descending', 'label': {'show': True, 'position': 'inside', 'fontSize': int(cfg.get('label_font_size', 10) or 10)},
@@ -1201,8 +1260,8 @@ def _treemap_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg, cfg=cfg)
-    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
-    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+    value_map = agg_to_dict(adf, x_col)
+    categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
     option = _base_option(cfg, axis_trigger=False)
     option['series'] = [{'type': 'treemap', 'nodeClick': 'zoomToNode',
                           'data': [{'name': cat, 'value': float(value_map.get(cat, 0) or 0)} for cat in categories]}]
@@ -1214,8 +1273,8 @@ def _radar_option(df, x_col, y_col, agg, cfg):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg, cfg=cfg)
-    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
-    names = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+    value_map = agg_to_dict(adf, x_col)
+    names = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
     vals = [float(value_map.get(name, 0) or 0) for name in names]
     max_v = max(vals) if vals else 1
     option = _base_option(cfg, axis_trigger=False)
@@ -1228,13 +1287,13 @@ def _radar_option(df, x_col, y_col, agg, cfg):
 def _gauge_option(df, y_col, agg, cfg, labels):
     if not y_col or y_col not in df.columns:
         return _message_option('Y / Value is required', cfg, error=True)
-    vals = pd.to_numeric(df[y_col], errors='coerce').dropna()
-    if vals.empty:
+    vals = to_numeric_series(df[y_col]).drop_nulls()
+    if vals.len() == 0:
         return _message_option('No numeric values for gauge', cfg, error=True)
     value = {
         'sum': float(vals.sum()), 'avg': float(vals.mean()), 'min': float(vals.min()),
         'max': float(vals.max()), 'median': float(vals.median()),
-        'count_unique': float(vals.nunique()), 'count_occurrence': float(vals.count()),
+        'count_unique': float(vals.n_unique()), 'count_occurrence': float(vals.len()),
     }.get(agg, float(len(df)))
     _ad = cfg.get('agg_decimals')
     if _ad is not None and agg in ('avg', 'sum', 'min', 'max', 'median', 'count_unique', 'count_occurrence'):
@@ -1254,8 +1313,8 @@ def _waterfall_option(df, x_col, y_col, agg, cfg, labels):
     if not x_col:
         return _message_option('X / Category is required', cfg, error=True)
     adf = _agg(df, x_col, y_col, agg, cfg=cfg)
-    value_map = dict(zip(adf[x_col].astype(str), adf['_value']))
-    categories = _ordered_categories(adf[x_col].astype(str).tolist(), cfg, value_map)
+    value_map = agg_to_dict(adf, x_col)
+    categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
     option = _base_option(cfg)
     option['xAxis'] = {'type': 'category', 'data': categories, 'name': _axis_name(labels.get('x', ''), cfg)}
     option['yAxis'] = {'name': _axis_name(labels.get('y', ''), cfg)}

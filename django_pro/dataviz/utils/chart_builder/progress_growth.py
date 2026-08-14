@@ -3,7 +3,7 @@ import json
 import random
 import re
 
-import pandas as pd
+import polars as pl
 
 try:
     from dataexploration.school_year_utils import resolve_relative_column_key
@@ -298,9 +298,9 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
         return _message_option(f'PL column(s) not found in data: {", ".join(missing)}', cfg, error=True)
 
     # One row per student with both PL columns coalesced (matches data exploration).
-    source_rows = raw_rows if raw_rows is not None else df.to_dict('records')
+    source_rows = raw_rows if raw_rows is not None else df.to_dicts()
     source_rows = consolidate_progress_growth_rows(source_rows, pg_before_col, pg_after_col)
-    df = pd.DataFrame(source_rows)
+    df = rows_to_df(source_rows)
 
     _BLANK = frozenset({'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'})
 
@@ -308,7 +308,7 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     all_vals = set()
     for col in (pg_before_col, pg_after_col):
         all_vals.update(
-            _normalize_pl_val(v) for v in df[col].dropna().astype(str).unique()
+            _normalize_pl_val(v) for v in df[col].drop_nulls().cast(pl.Utf8).unique().to_list()
             if _normalize_pl_val(v) not in _BLANK
         )
 
@@ -323,9 +323,10 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
     rank = {v: i for i, v in enumerate(ordered)}
 
     # Classify each row
-    dfc = df.copy()
-    dfc['_before'] = dfc[pg_before_col].astype(str).apply(_normalize_pl_val)
-    dfc['_after']  = dfc[pg_after_col].astype(str).apply(_normalize_pl_val)
+    dfc = df.with_columns([
+        pl.col(pg_before_col).cast(pl.Utf8).map_elements(_normalize_pl_val, return_dtype=pl.Utf8).alias('_before'),
+        pl.col(pg_after_col).cast(pl.Utf8).map_elements(_normalize_pl_val, return_dtype=pl.Utf8).alias('_after'),
+    ])
 
     _dup_key = _find_student_id_key(list(dfc.columns))
     t = _theme(cfg)
@@ -429,26 +430,29 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
         }
         return mat_opt
 
-    valid = dfc['_before'].isin(rank) & dfc['_after'].isin(rank)
-    dfc = dfc[valid].copy()
+    valid = pl.col('_before').is_in(list(rank.keys())) & pl.col('_after').is_in(list(rank.keys()))
+    dfc = dfc.filter(valid)
 
-    # Bar / donut / pie: one transition per student — dedupe after valid PL filter.
     if _dup_key:
-        dfc = dfc.drop_duplicates(subset=_dup_key, keep='first')
+        dfc = dfc.unique(subset=[_dup_key], keep='first')
 
-    if dfc.empty:
+    if dfc.is_empty():
         return _message_option(
             'No rows matched the PL scale. Check column names and scale values.', cfg, error=True)
 
-    before_rank = dfc['_before'].map(rank)
-    after_rank  = dfc['_after'].map(rank)
-    dfc['_pg'] = 'Stickers'
-    dfc.loc[after_rank > before_rank, '_pg'] = 'Growth'
-    dfc.loc[after_rank < before_rank, '_pg'] = 'Sliders'
+    dfc = dfc.with_columns(
+        pl.when(pl.col('_after').replace(rank) > pl.col('_before').replace(rank))
+        .then(pl.lit('Growth'))
+        .when(pl.col('_after').replace(rank) < pl.col('_before').replace(rank))
+        .then(pl.lit('Sliders'))
+        .otherwise(pl.lit('Stickers'))
+        .alias('_pg')
+    )
 
-    ORDER = ['Growth', 'Sliders', 'Stickers']   # consistent display order
-    total = len(dfc)
-    counts = dfc['_pg'].value_counts()
+    ORDER = ['Growth', 'Sliders', 'Stickers']
+    total = dfc.height
+    vc = dfc['_pg'].value_counts()
+    counts = dict(zip(vc['_pg'].to_list(), vc['count'].to_list()))
     opacity = float(cfg.get('opacity', 0.9) or 0.9)
     border_radius = int(cfg.get('bar_border_radius', 0) or 0)
     show_labels = bool(cfg.get('data_labels', False))
@@ -526,11 +530,12 @@ def _progress_growth_option(df, x_col, pg_before_col, pg_after_col, pl_scale, pg
         return s
 
     if x_col and x_col in dfc.columns:
-        categories = sorted(dfc[x_col].fillna('(Blank)').astype(str).unique().tolist())
+        categories = sorted(col_unique_str(dfc, x_col))
         raw = {}
         for cat in ORDER:
-            sub = dfc[dfc['_pg'] == cat]
-            raw[cat] = {k: int(v) for k, v in sub[x_col].fillna('(Blank)').astype(str).value_counts().items()}
+            sub = dfc.filter(pl.col('_pg') == cat)
+            counts_by_x = sub.group_by(pl.col(x_col).fill_null('(Blank)').cast(pl.Utf8)).len()
+            raw[cat] = dict(zip(counts_by_x[x_col].to_list(), counts_by_x['len'].to_list()))
         cat_totals = {xv: int(sum(raw[cat].get(xv, 0) for cat in ORDER)) for xv in categories}
         categories = _ordered_categories(categories, cfg, cat_totals)
 
