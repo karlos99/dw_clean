@@ -193,13 +193,14 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         if show_percent:
             y_axis['max'] = 100
 
-        # Build tooltip — always shows raw count + % + (n=total), regardless of show_percent display mode
+        # Build tooltip after axis expansion so dataIndex matches spacer-expanded categories.
         raw_lookup = {sv: {xv: raw_vals.get((xv, sv), 0) for xv in categories} for sv in stacks}
         totals_lookup = {xv: cat_totals.get(xv, 0) for xv in categories}
-        tooltip_js = _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+        update_axes(categories, series, y_axis_name)
+        axis_cats = option.get('__category_names__', categories)
+        tooltip_js = _rich_tooltip_js(axis_cats, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
                                       show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
                                       value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')
-        update_axes(categories, series, y_axis_name)
         if show_percent:
             if radial:
                 option['radiusAxis']['max'] = 100
@@ -553,9 +554,10 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         totals_lookup = {cat: total_value_map.get(cat, 0) for cat in categories}
         raw_lookup = {sn: {cat: float(vm.get(cat, 0) or 0) for cat in categories} for sn, vm in series_value_maps.items()}
         _update_chart_axes(option, categories, series, 'Value', labels, cfg, ax, x_lbl)
+        axis_cats = option.get('__category_names__', categories)
         option.update({
                        'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                   '__formatter_js__': _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                   '__formatter_js__': _rich_tooltip_js(axis_cats, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}})
     elif stack_col and stack_col in df.columns:
@@ -578,9 +580,10 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         series = [make_series(sv, [raw_lookup[sv][xv] for xv in categories], stacked)
                   for sv in reversed(stacks_ordered)]
         _update_chart_axes(option, categories, series, labels['y'] or 'Count', labels, cfg, ax, x_lbl)
+        axis_cats = option.get('__category_names__', categories)
         option.update({
                        'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
-                                   '__formatter_js__': _rich_tooltip_js(categories, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
+                                   '__formatter_js__': _rich_tooltip_js(axis_cats, raw_lookup, totals_lookup, percent_decimals, percent_suffix,
                                                                         show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
                                                                         value_pct_suffix='%' if _tooltip_value_pct(cfg) else '')}})
     else:
@@ -589,15 +592,16 @@ def _line_area_option(df, x_col, y_col, stack_col, agg, cfg, labels, fill, stack
         categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
         ordered_vals = [float(value_map.get(cat, 0) or 0) for cat in categories]
         grand_total = sum(ordered_vals)
+        _update_chart_axes(option, categories, [make_series(labels['y'] or 'Value', ordered_vals)], labels['y'] or 'Count', labels, cfg, ax, x_lbl)
+        axis_cats = option.get('__category_names__', categories)
         _ltjs = _inline_pct_tooltip_js(percent_decimals, percent_suffix, grand_total,
                                            show_pct=_tooltip_show_pct(cfg), show_count=_tooltip_show_count(cfg),
                                            value_pct_suffix='%' if _tooltip_value_pct(cfg) else '',
-                                           categories=categories)
-        _update_chart_axes(option, categories, [make_series(labels['y'] or 'Value', ordered_vals)], labels['y'] or 'Count', labels, cfg, ax, x_lbl)
+                                           categories=axis_cats)
         option.update({
                        'tooltip': {'show': cfg.get('show_tooltip', True) is not False, 'trigger': 'axis', 'axisPointer': {'type': 'shadow'},
                                    '__formatter_js__': _ltjs}})
-    option['__category_names__'] = categories
+    option.setdefault('__category_names__', categories)
     _add_zoom(option, cfg)
     return option
 

@@ -1681,6 +1681,44 @@ class GroupGapOptionTests(SimpleTestCase):
         self.assertEqual(labels.count('K'), 1)
         self.assertEqual(labels.count('1'), 1)
 
+    def test_group_gap_size_tooltip_categories_match_expanded_axis(self):
+        import json
+        import re
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': '__x_comp__',
+            'x_cols': ['grade', 'school_year'],
+            'y_col': 'pl',
+            'stack_col': 'pl',
+            'agg': 'count',
+            'show_percent': True,
+            'group_gap_size': 1,
+        }
+        opt = build_option(rows, {}, cfg)
+        axis_cats = opt['__category_names__']
+        leaf = opt['xAxis'][0]['data']
+        self.assertEqual(len(axis_cats), len(leaf))
+        self.assertEqual(len(opt['series'][0]['data']), len(axis_cats))
+
+        fmt = opt['tooltip']['__formatter_js__']
+        tooltip_cats = json.loads(re.search(r'var cats = (\[.*?\]);', fmt).group(1))
+        self.assertEqual(tooltip_cats, axis_cats)
+
+        raw_lookup = json.loads(re.search(r'var rawLookup = (\{.*?\});', fmt).group(1))
+        real_cat = '03 · 2024-2025'
+        self.assertIn(real_cat, axis_cats)
+        self.assertTrue(any(raw_lookup[s].get(real_cat, 0) > 0 for s in raw_lookup))
+
 
 class DateSeriesOptionTests(SimpleTestCase):
     def test_basic_count_line_per_date(self):

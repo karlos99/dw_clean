@@ -347,6 +347,9 @@
       // use the full category name (e.g. "Fall · KN") instead of just "KN".
       if (chart._categoryNames && params.dataIndex != null && params.dataIndex < chart._categoryNames.length) {
         const fullCat = chart._categoryNames[params.dataIndex];
+        if (fullCat && fullCat.includes('spacer_')) {
+          return;
+        }
         if (fullCat) {
           xVal = fullCat;
         }
