@@ -765,12 +765,25 @@ def switch_role(request):
              if school_id == 'all':
                   if 'active_school_id' in request.session:
                        del request.session['active_school_id']
+                  prefs = request.user.preferences if isinstance(request.user.preferences, dict) else {}
+                  if 'active_school_id' in prefs:
+                       prefs.pop('active_school_id', None)
+                       request.user.preferences = prefs
+                       request.user.save(update_fields=['preferences'])
              elif school_id:
                   # Verify user has access to this school (check JSONField)
                   user_schools_list = request.user.schools if isinstance(request.user.schools, list) else []
-                  
-                  if school_id in user_schools_list:
+                  # Unrestricted roles can switch to any school
+                  unrestricted = (
+                       request.user.is_superuser
+                       or request.user.roles.filter(name__in=['Project Admin', 'District Admin']).exists()
+                  )
+                  if school_id in user_schools_list or unrestricted:
                        request.session['active_school_id'] = school_id
+                       prefs = request.user.preferences if isinstance(request.user.preferences, dict) else {}
+                       prefs['active_school_id'] = school_id
+                       request.user.preferences = prefs
+                       request.user.save(update_fields=['preferences'])
                   else:
                        messages.error(request, "You do not have access to this school.")
     

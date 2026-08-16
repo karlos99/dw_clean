@@ -41,8 +41,7 @@
             submenu_style: "{{ navbar_config.submenu_style }}",
         };
 
-        function navbarController() {
-            const cfg = window.NAVBAR_CONFIG || { sticky: true, label_case: "uppercase", submenu_style: "dropdown" };
+        function navbarController() {            const cfg = window.NAVBAR_CONFIG || { sticky: true, label_case: "uppercase", submenu_style: "dropdown" };
             return {
                 mobileOpen: false,
                 sticky: cfg.sticky,
@@ -71,6 +70,14 @@
                 },
             };
         }
+
+        // Dragging a chart from the User Charts panel (works on any page;
+        // only the home dashboard accepts the drop).
+        window.dragChartFromMenu = function (chartId, evt) {
+            evt.dataTransfer.setData("text/chart-id", String(chartId));
+            evt.dataTransfer.setData("text/plain", String(chartId));
+            evt.dataTransfer.effectAllowed = "copy";
+        };
     </script>
 
     <!-- HTMX -->

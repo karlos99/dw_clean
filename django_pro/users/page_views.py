@@ -487,6 +487,8 @@ def manage_default_columns(request):
         return HttpResponseForbidden("You don't have permission to manage default columns.")
 
     test_structure = get_test_columns()
+    from dataexploration.column_utils import get_ap_columns
+    ap_structure = get_ap_columns()
     
     # Get saved default columns or fall back to constants
     selection = DefaultColumnSelection.objects.order_by('-updated_at', '-id').first()
@@ -494,6 +496,9 @@ def manage_default_columns(request):
         default_columns = selection.columns
     else:
         default_columns = DEFAULT_COLUMNS
+
+    from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+    _all_years = list(test_structure.keys()) + list(ap_structure.keys())
 
     if request.method == 'POST':
         import json
@@ -511,36 +516,36 @@ def manage_default_columns(request):
                 defaults={'columns': columns}
             )
             messages.success(request, 'Default columns updated successfully.')
-            from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
             return render(request, 'users/manage_default_columns.html', {
                 'column_categories': COLUMN_CATEGORIES,
                 'column_definitions': COLUMN_DEFINITIONS,
                 'test_structure': test_structure,
+                'ap_structure': ap_structure,
                 'selected_columns': columns,
-                'year_labels': get_year_labels_map(list(test_structure.keys())),
+                'year_labels': get_year_labels_map(_all_years),
                 'year_to_alias': get_year_alias_map(),
                 'success': True,
             })
         except Exception as e:
             messages.error(request, f'Error saving default columns: {str(e)}')
-            from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
             return render(request, 'users/manage_default_columns.html', {
                 'column_categories': COLUMN_CATEGORIES,
                 'column_definitions': COLUMN_DEFINITIONS,
                 'test_structure': test_structure,
+                'ap_structure': ap_structure,
                 'selected_columns': default_columns,
-                'year_labels': get_year_labels_map(list(test_structure.keys())),
+                'year_labels': get_year_labels_map(_all_years),
                 'year_to_alias': get_year_alias_map(),
                 'error': str(e),
             })
 
-    from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
     context = {
         'column_categories': COLUMN_CATEGORIES,
         'column_definitions': COLUMN_DEFINITIONS,
         'test_structure': test_structure,
+        'ap_structure': ap_structure,
         'selected_columns': default_columns,
-        'year_labels': get_year_labels_map(list(test_structure.keys())),
+        'year_labels': get_year_labels_map(_all_years),
         'year_to_alias': get_year_alias_map(),
     }
 

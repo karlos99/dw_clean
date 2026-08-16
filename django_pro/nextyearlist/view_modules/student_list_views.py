@@ -21,7 +21,7 @@ import json
 from users.decorators import page_access_required
 
 from dataexploration.models import SavedQuery, StudentList
-from dataexploration.column_utils import get_test_columns, get_mark_columns
+from dataexploration.column_utils import get_test_columns, get_mark_columns, get_ap_columns
 from dataexploration.school_year_utils import get_year_labels_map
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
@@ -84,6 +84,7 @@ class NextYearListView(LoginRequiredMixin, ListView):
 
         test_structure = get_test_columns()
         marks_structure = get_mark_columns()
+        ap_structure = get_ap_columns()
 
         school_years_key = "nyl:school_years"
         school_years = cache.get(school_years_key)
@@ -96,9 +97,28 @@ class NextYearListView(LoginRequiredMixin, ListView):
                 school_years = [row[0] for row in cursor.fetchall()]
                 cache.set(school_years_key, school_years, 3600)
 
+        # Hide school years disabled via Project Settings
+        try:
+            from landing.utils import get_disabled_school_years
+            _disabled_years = get_disabled_school_years()
+            if _disabled_years:
+                school_years = [sy for sy in school_years if sy not in _disabled_years]
+        except Exception:
+            pass
+
         is_unres = _is_unrestricted(self.request.user)
         grade_filter_clauses = ["cs.grade IS NOT NULL"]
         grade_filter_params = []
+
+        # Hide school years disabled via Project Settings
+        try:
+            from landing.utils import get_disabled_school_years
+            _disabled_years = get_disabled_school_years()
+            if _disabled_years:
+                grade_filter_clauses.append("cs.school_year NOT IN (%s)")
+                grade_filter_params.append(_disabled_years)
+        except Exception:
+            pass
 
         if hasattr(self.request.user, 'active_school') and self.request.user.active_school:
             grade_filter_clauses.append("cs.school_state_id = %s")
@@ -142,6 +162,7 @@ class NextYearListView(LoginRequiredMixin, ListView):
         context['grades'] = grades
         context['test_structure'] = test_structure
         context['marks_structure'] = marks_structure
+        context['ap_structure'] = ap_structure
         context['column_categories'] = COLUMN_CATEGORIES
         context['column_definitions'] = COLUMN_DEFINITIONS
         default_columns = get_saved_default_columns()
@@ -679,6 +700,15 @@ def load_students(request):
 
         where_clauses = list(base_where_clauses)
         params = list(base_params)
+        # Hide school years disabled via Project Settings
+        try:
+            from landing.utils import get_disabled_school_years
+            _disabled_years = get_disabled_school_years()
+            if _disabled_years:
+                where_clauses.append("cs.school_year NOT IN (%s)")
+                params.append(_disabled_years)
+        except Exception:
+            pass
         _apply_column_filters(where_clauses, params, filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
         where_sql = " AND ".join(where_clauses)
 

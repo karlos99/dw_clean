@@ -37,4 +37,5 @@ urlpatterns = [
     path('ap/import/<int:pk>/status/', views.ap_import_status, name='ap_import_status'),
     path('ap/import/<int:pk>/progress/', views.APImportProgressView.as_view(), name='ap_import_progress'),
     path('ap/import/<int:pk>/delete/', views.ap_delete_import, name='ap_delete_import'),
+    path('ap/import/<int:pk>/publish/', views.ap_toggle_publish, name='ap_toggle_publish'),
 ]

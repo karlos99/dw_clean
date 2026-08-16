@@ -228,6 +228,12 @@ def auto_describe_chart(cfg: dict, column_defs: dict | None = None) -> str:
                 parts.append('for Last School Year')
             elif sy == '__sy_prev2__':
                 parts.append('for Two Years Prior')
+            elif sy == '__sy_prev3__':
+                parts.append('for Three Years Prior')
+            elif sy == '__sy_prev4__':
+                parts.append('for Four Years Prior')
+            elif sy == '__sy_prev5__':
+                parts.append('for Five Years Prior')
             elif isinstance(sy, str) and sy:
                 parts.append(f'for {sy}')
 

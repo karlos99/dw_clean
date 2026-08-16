@@ -5,8 +5,8 @@ from .models import SavedChart, Dashboard, DashboardChart, DataVizPage, DataVizP
 
 @admin.register(SavedChart)
 class SavedChartAdmin(admin.ModelAdmin):
-    list_display  = ('name', 'chart_type', 'owner', 'updated_at')
-    list_filter   = ('chart_type',)
+    list_display  = ('name', 'chart_type', 'owner', 'is_user_menu', 'user_menu_order', 'updated_at')
+    list_filter   = ('chart_type', 'is_user_menu')
     search_fields = ('title', 'owner__username')
     readonly_fields = ('created_at', 'updated_at')
 

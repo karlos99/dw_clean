@@ -50,6 +50,22 @@ class ProjectConfig(models.Model):
         ),
     )
 
+    # ── Home dashboard ──────────────────────────────────────────────────────
+    enable_home_charts = models.BooleanField(
+        default=True,
+        help_text="Allow users to build a personalized charts dashboard on the home page (drag charts from the User Charts panel).",
+    )
+
+    # ── Available school years ──────────────────────────────────────────────
+    disabled_school_years = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "School years to hide from the Data Explorer. Students enrolled in these "
+            "years will not be available. Empty means all school years are available."
+        ),
+    )
+
     # ── Audit ──────────────────────────────────────────────────────────────────
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -99,6 +115,24 @@ class ProjectConfig(models.Model):
                         'offset': -2,
                         'alias': '__sy_prev2__',
                         'label': 'Two Years Prior',
+                        'is_current': False
+                    },
+                    {
+                        'offset': -3,
+                        'alias': '__sy_prev3__',
+                        'label': 'Three Years Prior',
+                        'is_current': False
+                    },
+                    {
+                        'offset': -4,
+                        'alias': '__sy_prev4__',
+                        'label': 'Four Years Prior',
+                        'is_current': False
+                    },
+                    {
+                        'offset': -5,
+                        'alias': '__sy_prev5__',
+                        'label': 'Five Years Prior',
                         'is_current': False
                     }
                 ]

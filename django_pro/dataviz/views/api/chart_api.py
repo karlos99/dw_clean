@@ -566,6 +566,8 @@ def chart_save_api(request):
         drill_columns  = body.get('drill_through_columns', [])
         drill_fm       = body.get('drill_through_filter_map', {})
         school_filter_mode = body.get('school_filter_mode', 'enrolled')
+        is_user_menu   = bool(body.get('is_user_menu', False))
+        user_menu_order = body.get('user_menu_order', 0) or 0
     else:
         name           = request.POST.get('name', '').strip()
         chart_id       = request.POST.get('chart_id') or None
@@ -584,6 +586,11 @@ def chart_save_api(request):
         drill_columns  = [c.strip() for c in dt_str.split(',') if c.strip()] if dt_str else []
         drill_fm       = {}
         school_filter_mode = request.POST.get('school_filter_mode', 'enrolled')
+        is_user_menu   = request.POST.get('is_user_menu') == 'on'
+        try:
+            user_menu_order = int(request.POST.get('user_menu_order', 0) or 0)
+        except (TypeError, ValueError):
+            user_menu_order = 0
 
     if not name:
         msg = 'Chart name is required'
@@ -607,6 +614,8 @@ def chart_save_api(request):
     chart.school_filter_mode       = school_filter_mode
     chart.drill_through_columns    = drill_columns
     chart.drill_through_filter_map = drill_fm
+    chart.is_user_menu             = is_user_menu
+    chart.user_menu_order          = user_menu_order
 
     # For Column Picker source, store selected columns inside config
     if source_type == 'columns':
@@ -706,6 +715,22 @@ def chart_duplicate_api(request, chart_id):
     chart.save()
     
     return JsonResponse({'chart': chart.to_dict(), 'success': True})
+
+
+def _can_render_chart(user, chart):
+    """Project Admins can render any chart. Other users may only render charts
+    exposed in the 'User Charts' menu or already placed on their home dashboard."""
+    from ..mixins import is_project_admin
+    if user.is_authenticated and is_project_admin(user):
+        return True
+    if chart.is_user_menu:
+        return True
+    if user.is_authenticated:
+        from dataviz.models import Dashboard
+        home = Dashboard.objects.filter(owner=user, is_home=True).first()
+        if home and home.chart_slots.filter(chart_id=chart.pk).exists():
+            return True
+    return False
 
 
 def _parse_pf_filters(get_params) -> dict:
@@ -963,6 +988,12 @@ def chart_render_api(request, chart_id):
     is_embed = request.GET.get('source') in ('page', 'dashboard')
     pf_filters = _parse_pf_filters(request.GET)
 
+    chart = get_object_or_404(SavedChart, pk=chart_id)
+    # Restrict the per-user home dashboard to charts the user is allowed to see;
+    # all other render contexts (project-admin pages/dashboards, drill) are unaffected.
+    if request.GET.get('source_id') == 'home' and not _can_render_chart(request.user, chart):
+        return FORBIDDEN
+
     result = _render_saved_chart(
         chart_id, pf_filters,
         drill_source=request.GET.get('source', ''),
@@ -1020,10 +1051,29 @@ def chart_batch_render_api(request):
     is_embed = source in ('page', 'dashboard')
     pf_filters = body.get('filters') or {}
 
+    # Non-admins may only batch-render their own home-dashboard charts
+    permitted = set(chart_ids)
+    if source_id == 'home' and not is_project_admin(request.user):
+        from django.db.models import Q as _Q
+        allowed = set(
+            SavedChart.objects
+            .filter(pk__in=chart_ids)
+            .filter(
+                _Q(is_user_menu=True) |
+                _Q(dashboard_slots__dashboard__owner=request.user,
+                   dashboard_slots__dashboard__is_home=True)
+            )
+            .distinct()
+            .values_list('pk', flat=True)
+        )
+        permitted = allowed
+
     from clickhouse_utils.thread_pool import get_io_pool
     pool = get_io_pool()
 
     def _one(cid):
+        if cid not in permitted:
+            return cid, {'html': '', 'error': 'Not permitted'}
         try:
             res = _render_saved_chart(
                 cid, pf_filters,
@@ -1086,6 +1136,8 @@ def chart_save_and_attach_api(request):
     drill_columns = body.get('drill_through_columns', [])
     drill_fm = body.get('drill_through_filter_map', {})
     school_filter_mode = body.get('school_filter_mode', 'enrolled')
+    is_user_menu = bool(body.get('is_user_menu', False))
+    user_menu_order = body.get('user_menu_order', 0) or 0
 
     if not name:
         return JsonResponse({'error': 'Chart name is required'}, status=400)
@@ -1106,6 +1158,8 @@ def chart_save_and_attach_api(request):
     chart.school_filter_mode = school_filter_mode
     chart.drill_through_columns = drill_columns
     chart.drill_through_filter_map = drill_fm
+    chart.is_user_menu = is_user_menu
+    chart.user_menu_order = user_menu_order
 
     if source_type == 'columns':
         sel_cols = body.get('selected_columns', [])

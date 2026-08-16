@@ -40,6 +40,9 @@ class SavedChart(models.Model):
     # Drill-through config
     drill_through_columns    = models.JSONField(default=list, blank=True)  # column keys to show in drill table
     drill_through_filter_map = models.JSONField(default=dict, blank=True)  # {x_col: 'grade', series_col: 'race'}
+    # "User Charts" menu: admins can expose charts to all users via the navbar menu
+    is_user_menu    = models.BooleanField(default=False, help_text="Show this chart in the 'User Charts' navbar menu so any user can add it to their home dashboard")
+    user_menu_order = models.IntegerField(default=0, help_text="Order within the User Charts menu (lower first)")
     owner        = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -69,6 +72,8 @@ class SavedChart(models.Model):
             'school_filter_mode': self.school_filter_mode,
             'drill_through_columns':    self.drill_through_columns,
             'drill_through_filter_map': self.drill_through_filter_map,
+            'is_user_menu':    self.is_user_menu,
+            'user_menu_order': self.user_menu_order,
             'created_at':  self.created_at.isoformat(),
             'updated_at':  self.updated_at.isoformat(),
         }
@@ -79,6 +84,10 @@ class Dashboard(models.Model):
 
     name        = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    is_home     = models.BooleanField(
+        default=False,
+        help_text="Private per-user home dashboard shown on the landing page",
+    )
     owner       = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -92,6 +101,12 @@ class Dashboard(models.Model):
 
     def __str__(self):
         return self.name
+
+    @classmethod
+    def get_home(cls, user):
+        """Return the user's private home dashboard, creating it if needed."""
+        dash, _ = cls.objects.get_or_create(owner=user, is_home=True, defaults={'name': 'My Home Dashboard'})
+        return dash
 
     def to_dict(self, include_charts=False):
         d = {

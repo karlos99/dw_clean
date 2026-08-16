@@ -58,6 +58,20 @@ def _navbar_config():
         return NavbarConfig()
 
 
+def _user_charts():
+    """Charts exposed in the 'User Charts' navbar menu."""
+    try:
+        from dataviz.models import SavedChart
+        return list(
+            SavedChart.objects
+            .filter(is_user_menu=True)
+            .order_by('user_menu_order', 'name')
+            .values('id', 'name', 'chart_type', 'description')
+        )
+    except Exception:
+        return []
+
+
 def _menu_target_allows(user, page, user_roles: set[str]) -> bool:
     if not user.is_authenticated:
         return False
@@ -209,6 +223,7 @@ def navigation_pages(request):
             'placement_cards_access': False,
             'default_school_year': default_school_year,
             'navbar_config': _navbar_config(),
+            'user_charts': _user_charts(),
         }
 
     user_roles = _user_roles(request.user)
@@ -275,6 +290,7 @@ def navigation_pages(request):
         'placement_cards_access': placement_cards_access,
         'default_school_year': default_school_year,
         'navbar_config': _navbar_config(),
+        'user_charts': _user_charts(),
     }
 
 

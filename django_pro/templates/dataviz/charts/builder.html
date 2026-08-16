@@ -89,6 +89,10 @@
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 4v16m8-8H4"/></svg>
         <span>Save &amp; Add to Page</span>
       </button>
+      <label class="inline-flex items-center gap-2 px-2 py-2 text-xs font-medium text-slate-600 cursor-pointer select-none" title="Show this chart in the 'User Charts' navbar menu so any user can add it to their home dashboard">
+        <input type="checkbox" x-model="isUserMenu" class="h-3.5 w-3.5 text-blue-600 border-slate-300 rounded">
+        <span>User Charts</span>
+      </label>
     </div>
   </header>
 
@@ -140,6 +144,9 @@
                 <option value="{{ sy_this_year }}" x-text="aliasResolvedLabels['{{ sy_this_year }}'] || 'This School Year'"></option>
                 <option value="{{ sy_last_year }}" x-text="aliasResolvedLabels['{{ sy_last_year }}'] || 'Last School Year'"></option>
                 <option value="{{ sy_two_prior }}" x-text="aliasResolvedLabels['{{ sy_two_prior }}'] || 'Two Years Prior'"></option>
+                <option value="{{ sy_three_prior }}" x-text="aliasResolvedLabels['{{ sy_three_prior }}'] || 'Three Years Prior'"></option>
+                <option value="{{ sy_four_prior }}" x-text="aliasResolvedLabels['{{ sy_four_prior }}'] || 'Four Years Prior'"></option>
+                <option value="{{ sy_five_prior }}" x-text="aliasResolvedLabels['{{ sy_five_prior }}'] || 'Five Years Prior'"></option>
                 <option disabled>──────────────</option>
                 <option value="">Custom selection…</option>
               </select>
@@ -3060,6 +3067,8 @@
   <form id="chart-form" class="hidden">
     {% csrf_token %}
     <input type="hidden" name="chart_id"       x-bind:value="chartId">
+    <input type="hidden" name="is_user_menu"   x-bind:value="isUserMenu ? 'on' : ''">
+    <input type="hidden" name="user_menu_order" x-bind:value="isUserMenu ? 0 : 0">
     <input type="hidden" name="name"           x-bind:value="name">
     <input type="hidden" name="chart_title"    x-bind:value="chartTitle">
     <input type="hidden" name="title_font_size" x-model="titleFontSize">
@@ -3559,6 +3568,7 @@ function chartBuilder() {
     saveAndAttachOpen: false,
     targetPageId:      '',
     availablePages:    JSON.parse('{{ available_pages_json|escapejs }}'),
+    isUserMenu:        !!(existing && existing.is_user_menu),
     // Guided mode
     guidedMode:        localStorage.getItem('datavizGuidedMode') === 'true',
     guidedStep:        1,              // 1=Source, 2=Type, 3=Map, 4=Preview

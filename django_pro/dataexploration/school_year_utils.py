@@ -9,6 +9,9 @@ from .constants import (
     SY_THIS_YEAR,
     SY_LAST_YEAR,
     SY_TWO_PRIOR,
+    SY_THREE_PRIOR,
+    SY_FOUR_PRIOR,
+    SY_FIVE_PRIOR,
     SCHOOL_YEAR_ALIASES,
 )
 
@@ -16,6 +19,9 @@ _ALIAS_OFFSETS = {
     SY_THIS_YEAR: 0,
     SY_LAST_YEAR: -1,
     SY_TWO_PRIOR: -2,
+    SY_THREE_PRIOR: -3,
+    SY_FOUR_PRIOR: -4,
+    SY_FIVE_PRIOR: -5,
 }
 
 
@@ -112,6 +118,9 @@ _ALIAS_LABELS = {
     SY_THIS_YEAR: "This School Year",
     SY_LAST_YEAR: "Last School Year",
     SY_TWO_PRIOR: "Two Years Prior",
+    SY_THREE_PRIOR: "Three Years Prior",
+    SY_FOUR_PRIOR: "Four Years Prior",
+    SY_FIVE_PRIOR: "Five Years Prior",
 }
 
 
