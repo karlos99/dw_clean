@@ -194,7 +194,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const aliasLabelMap = {
         '__sy_this__': 'This School Year',
         '__sy_prev1__': 'Last School Year',
-        '__sy_prev2__': 'Two Years Prior'
+        '__sy_prev2__': 'Two Years Prior',
+        '__sy_prev3__': 'Three Years Prior',
+        '__sy_prev4__': 'Four Years Prior',
+        '__sy_prev5__': 'Five Years Prior'
     };
 
     /** Convert a column key with a real year segment to its relative alias equivalent. */
@@ -526,6 +529,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const syncCheckboxes = () => {
         document.querySelectorAll('input[data-column]').forEach((checkbox) => {
             const col = checkbox.dataset.column;
+            // "All Marks" umbrella: checked if the umbrella OR any expanded pair is selected
+            if (checkbox.dataset.markall === '1') {
+                const yr = (checkbox.dataset.markallYear || '').replace('-', '_');
+                const subj = (checkbox.dataset.markallSubject || '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+                const prefix = `markall_${yr}_${subj}_`;
+                checkbox.checked = selectedColumns.some(sc =>
+                    normaliseKey(sc) === normaliseKey(col)
+                    || normaliseKey(sc).startsWith(prefix)
+                    || toRelativeKey(normaliseKey(col)) === toRelativeKey(normaliseKey(sc))
+                );
+                return;
+            }
+            // "All Results" AP umbrella: checked if the umbrella OR any expanded pair is selected
+            if (checkbox.dataset.apall === '1') {
+                const yr = (checkbox.dataset.apallYear || '').replace('-', '_');
+                const prefix = `apall_${yr}_`;
+                checkbox.checked = selectedColumns.some(sc =>
+                    normaliseKey(sc) === normaliseKey(col)
+                    || normaliseKey(sc).startsWith(prefix)
+                    || toRelativeKey(normaliseKey(col)) === toRelativeKey(normaliseKey(sc))
+                );
+                return;
+            }
             // Match regardless of whether stored as specific or relative key
             const matches = selectedColumns.includes(col)
                 || selectedColumns.includes(normaliseKey(col))
@@ -826,7 +852,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     const chip = document.createElement('span');
                     chip.className = 'inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200';
 
-                    let valText = vals.map(v => (v === '' || v === null) ? '(Blank)' : String(v)).join(', ');
+                    let valText = vals.map(v => {
+                        if (v === '' || v === null) return '(Blank)';
+                        const s = String(v);
+                        if (s.startsWith('period:')) return s.slice('period:'.length);
+                        if (s.startsWith('mark:')) return s.slice('mark:'.length);
+                        return s;
+                    }).join(', ');
                     if (valText.length > 20) valText = `${vals.length} selected`;
 
                     chip.innerHTML = `<span class="font-semibold">${escapeHtml(colLabel)}:</span> ${escapeHtml(valText)} <button type="button" data-action="clear-filter" data-column="${escapeHtml(col)}" class="ml-1 text-blue-500 hover:text-blue-900 font-bold focus:outline-none">×</button>`;
@@ -935,19 +967,50 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (optionsForCol.length === 0) {
                     html += `<div class="text-xs text-slate-500">No options available.</div>`;
                 } else {
-                    optionsForCol.forEach((value) => {
-                        const checked = filters[col]?.includes(value) ? 'checked' : '';
-                        let labelValue = String(value);
-                        if (value === '' || value === null) {
-                            labelValue = '(Blank)';
-                        } else if (DATE_COLUMNS.has(col)) {
-                            labelValue = formatDateForDisplay(labelValue);
+                    // "All Marks" MARKS columns offer marking-period and mark as
+                    // separate individual selections; render them as two groups.
+                    const isMarkallMarks = /^markall_.*_MARKS$/.test(col);
+                    if (isMarkallMarks && optionsForCol.some(v => String(v).startsWith('period:') || String(v).startsWith('mark:'))) {
+                        const periodOpts = optionsForCol.filter(v => String(v).startsWith('period:'));
+                        const markOpts = optionsForCol.filter(v => String(v).startsWith('mark:'));
+
+                        if (periodOpts.length) {
+                            html += `<div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 pt-1">Marking Period</div>`;
+                            periodOpts.forEach((value) => {
+                                const checked = filters[col]?.includes(value) ? 'checked' : '';
+                                const labelValue = String(value).replace(/^period:/, '');
+                                html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
+                                html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">`;
+                                html += `<span>${escapeHtml(labelValue)}</span>`;
+                                html += `</label>`;
+                            });
                         }
-                        html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
-                        html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
-                        html += `<span>${escapeHtml(labelValue)}</span>`;
-                        html += `</label>`;
-                    });
+                        if (markOpts.length) {
+                            html += `<div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 pt-1 mt-1">Mark</div>`;
+                            markOpts.forEach((value) => {
+                                const checked = filters[col]?.includes(value) ? 'checked' : '';
+                                const labelValue = String(value).replace(/^mark:/, '');
+                                html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
+                                html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">`;
+                                html += `<span>${escapeHtml(labelValue)}</span>`;
+                                html += `</label>`;
+                            });
+                        }
+                    } else {
+                        optionsForCol.forEach((value) => {
+                            const checked = filters[col]?.includes(value) ? 'checked' : '';
+                            let labelValue = String(value);
+                            if (value === '' || value === null) {
+                                labelValue = '(Blank)';
+                            } else if (DATE_COLUMNS.has(col)) {
+                                labelValue = formatDateForDisplay(labelValue);
+                            }
+                            html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
+                            html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
+                            html += `<span>${escapeHtml(labelValue)}</span>`;
+                            html += `</label>`;
+                        });
+                    }
                 }
                 html += `</div>`;
                 html += `<div class="flex items-center justify-between border-t border-slate-200 px-2 py-1 text-xs">`;
@@ -1221,11 +1284,81 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const updateColumnSelection = (col) => {
         const key = storageKey(col);
+        const normKey = normaliseKey(key);
+
+        // "All Marks" AP mark umbrella handling
+        if (normKey.startsWith('markall_')) {
+            // Parse year + subject from markall_<year>_<subject>
+            const rest = normKey.slice('markall_'.length);
+            const parts = rest.split('_');
+            const yrKey = `${parts[0]}_${parts[1]}`;
+            const yr = yrKey.replace('_', '-');
+            const isSelected = selectedColumns.some(sc => normaliseKey(sc) === normKey
+                || normaliseKey(sc).startsWith(`${normKey}_`));
+            if (isSelected) {
+                // Uncheck: remove umbrella + expanded pairs
+                selectedColumns = selectedColumns.filter(sc => {
+                    const n = normaliseKey(sc);
+                    return n !== normKey && !n.startsWith(`${normKey}_`);
+                });
+            } else {
+                // Check: unselect individual mark_<year>_<subject>_* columns for this subject
+                selectedColumns = selectedColumns.filter(sc => {
+                    const n = normaliseKey(sc);
+                    if (!n.startsWith('mark_') || n.startsWith('markall_')) return true;
+                    const tail = n.slice('mark_'.length);
+                    const tp = tail.split('_');
+                    if (tp.length >= 2 && /^\d{4}$/.test(tp[0]) && /^\d{4}$/.test(tp[1])) {
+                        return `${tp[0]}-${tp[1]}` !== yr;
+                    }
+                    return true;
+                });
+                selectedColumns.push(key);
+            }
+            page = 1;
+            renderSelectedColumns();
+            triggerLoadData();
+            return;
+        }
+
+        // "All Results" AP umbrella handling
+        if (normKey.startsWith('apall_')) {
+            const yr = normKey.slice('apall_'.length, 'apall_'.length + 9).replace('_', '-');
+            const yrKey = yr.replace('-', '_');
+            const isSelected = selectedColumns.some(sc => normaliseKey(sc) === normKey
+                || normaliseKey(sc).startsWith(`apall_${yrKey}_`));
+            if (isSelected) {
+                // Uncheck: remove umbrella + expanded pairs
+                selectedColumns = selectedColumns.filter(sc => {
+                    const n = normaliseKey(sc);
+                    return n !== normKey && !n.startsWith(`apall_${yrKey}_`);
+                });
+            } else {
+                // Check: unselect individual AP subject PLs for this year, then add umbrella
+                selectedColumns = selectedColumns.filter(sc => {
+                    const n = normaliseKey(sc);
+                    if (!n.startsWith('ap_') || n.startsWith('apaward_') || n.startsWith('apawards_all_') || n.startsWith('apall_')) {
+                        return true;
+                    }
+                    const tail = n.slice('ap_'.length);
+                    const parts = tail.split('_');
+                    if (parts.length >= 2 && /^\d{4}$/.test(parts[0]) && /^\d{4}$/.test(parts[1])) {
+                        return `${parts[0]}-${parts[1]}` !== yr;
+                    }
+                    return true;
+                });
+                selectedColumns.push(key);
+            }
+            page = 1;
+            renderSelectedColumns();
+            triggerLoadData();
+            return;
+        }
+
         // Check against all forms of the key
-        const isSelected = selectedColumns.some(c => normaliseKey(c) === normaliseKey(key));
+        const isSelected = selectedColumns.some(c => normaliseKey(c) === normKey);
         if (isSelected) {
             if (selectedColumns.length <= 1) return;
-            const normKey = normaliseKey(key);
             selectedColumns = selectedColumns.filter(c => normaliseKey(c) !== normKey);
             if (filters[key]) delete filters[key];
         } else {

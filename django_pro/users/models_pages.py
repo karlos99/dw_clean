@@ -87,3 +87,61 @@ class Page(models.Model):
     
     def get_absolute_url(self):
         return self.url_path
+
+
+class NavbarConfig(models.Model):
+    """Singleton navbar settings managed from Page Management."""
+
+    LABEL_CASE_CHOICES = [
+        ('uppercase', 'Uppercase'),
+        ('normal', 'Normal Case'),
+    ]
+
+    SUBMENU_STYLE_CHOICES = [
+        ('dropdown', 'Classic Dropdown'),
+        ('megamenu', 'Mega Menu'),
+    ]
+
+    sticky = models.BooleanField(_("Sticky Navbar"), default=True, help_text="Keep the navbar fixed to the top of the viewport while scrolling")
+    label_case = models.CharField(
+        _("Label Case"),
+        max_length=20,
+        choices=LABEL_CASE_CHOICES,
+        default='uppercase',
+        help_text="Uppercase matches the classic site look; Normal Case is the cleaner, inspiration-based style",
+    )
+    submenu_style = models.CharField(
+        _("Submenu Style"),
+        max_length=20,
+        choices=SUBMENU_STYLE_CHOICES,
+        default='dropdown',
+        help_text="Classic Dropdown shows a small menu below the item; Mega Menu shows a full-width panel with descriptions",
+    )
+
+    updated_by = models.ForeignKey(
+        'User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='navbar_config_updates',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Navbar Configuration")
+        verbose_name_plural = _("Navbar Configuration")
+
+    def __str__(self):
+        return f'Navbar Config — {"sticky" if self.sticky else "static"} / {self.get_label_case_display()} / {self.get_submenu_style_display()}'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1  # enforce singleton
+        super().save(*args, **kwargs)
+        from django.core.cache import cache
+        cache.delete('landing:navbar_config')
+
+    @classmethod
+    def get(cls):
+        """Return the singleton, creating it (with defaults) if it doesn't exist yet."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj

@@ -136,6 +136,106 @@ def dashboard_slots_api(request, dashboard_id):
 
 
 @login_required
+def home_dashboard_api(request):
+    """Per-user private home dashboard used on the landing page.
+
+    Any authenticated user has their own home Dashboard (is_home=True).
+
+    GET  → {dashboard, slots}
+    POST actions (JSON body):
+      add_chart: {action, chart_id, gs_w?, gs_h?}
+      remove:    {action, slot_id}
+      reorder:   {action, layout: [{slot_id, gs_x, gs_y, gs_w, gs_h}]}
+    """
+    from dataviz.models import Dashboard, DashboardChart, SavedChart
+
+    try:
+        from landing.utils import get_project_config
+        cfg = get_project_config()
+        charts_enabled = bool(getattr(cfg, 'enable_home_charts', True))
+    except Exception:
+        charts_enabled = True
+
+    if not charts_enabled:
+        if request.method == 'GET':
+            return JsonResponse({'dashboard': None, 'slots': [], 'success': True, 'disabled': True})
+        return JsonResponse(
+            {'error': 'Home dashboard charts are disabled by project settings.', 'success': False},
+            status=403,
+        )
+
+    dash = Dashboard.get_home(request.user)
+
+    if request.method == 'GET':
+        slots = list(dash.chart_slots.select_related('chart').order_by('position'))
+        return JsonResponse({
+            'dashboard': dash.to_dict(),
+            'slots': [s.to_dict() for s in slots],
+            'success': True,
+        })
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    action = body.get('action', 'add_chart')
+
+    if action == 'add_chart':
+        chart_id = body.get('chart_id')
+        if not chart_id:
+            return JsonResponse({'error': 'chart_id is required'}, status=400)
+        chart = get_object_or_404(SavedChart, pk=chart_id)
+        # Only charts exposed in the User Charts menu can be added, unless admin
+        if not (chart.is_user_menu or is_project_admin(request.user)):
+            return JsonResponse({'error': 'This chart is not available in User Charts.'}, status=403)
+
+        existing = dash.chart_slots.filter(chart_id=chart.pk).exists()
+        if existing:
+            return JsonResponse({'error': 'This chart is already on your home dashboard.'}, status=400)
+
+        slot = DashboardChart.objects.create(
+            dashboard=dash,
+            chart=chart,
+            position=dash.chart_slots.count(),
+            gs_w=int(body.get('gs_w') or 8),
+            gs_h=int(body.get('gs_h') or 5),
+        )
+        return JsonResponse({'slot': slot.to_dict(), 'success': True})
+
+    if action == 'remove':
+        try:
+            slot_id = int(body.get('slot_id'))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'Invalid slot_id'}, status=400)
+        deleted = DashboardChart.objects.filter(pk=slot_id, dashboard=dash).delete()[0]
+        if not deleted:
+            return JsonResponse({'error': 'Slot not found'}, status=404)
+        return JsonResponse({'success': True})
+
+    if action == 'reorder':
+        layout = body.get('layout') or []
+        for item in layout:
+            try:
+                slot_id = int(item.get('slot_id'))
+            except (TypeError, ValueError):
+                continue
+            DashboardChart.objects.filter(pk=slot_id, dashboard=dash).update(
+                gs_x=int(item.get('gs_x', 0)),
+                gs_y=int(item.get('gs_y', 0)),
+                gs_w=int(item.get('gs_w', 8)),
+                gs_h=int(item.get('gs_h', 5)),
+                position=int(item.get('position', 0)),
+            )
+        return JsonResponse({'success': True})
+
+    return JsonResponse({'error': 'Invalid action'}, status=400)
+
+
+@login_required
 def slot_detail_api(request, slot_id):
     """PUT to update slot properties; DELETE to remove."""
     if not is_project_admin(request.user):

@@ -7,7 +7,7 @@ from django.views.decorators.http import require_POST
 
 from ..models import DefaultColumnSelection
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
-from ..column_utils import get_test_columns, get_mark_columns
+from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns
 from ..survey_utils import get_survey_columns
 from ..utils import get_user_roles
 
@@ -219,14 +219,16 @@ def load_column_structures(request):
         extra_params=params
     )
     survey_structure = get_survey_columns()
+    ap_structure = get_ap_columns()
     
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
 
-    all_years = list(test_structure.keys()) + list(marks_structure.keys())
+    all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys())
     context = {
         'test_structure': test_structure,
         'marks_structure': marks_structure,
         'survey_structure': survey_structure.get('structure', {}),
+        'ap_structure': ap_structure,
         'column_definitions': COLUMN_DEFINITIONS,
         'year_labels': get_year_labels_map(all_years),
         'year_to_alias': get_year_alias_map(),

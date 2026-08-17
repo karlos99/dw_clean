@@ -21,3 +21,13 @@ def get_project_config():
     obj = ProjectConfig.get()
     cache.set(CACHE_KEY, obj, CACHE_TTL)
     return obj
+
+
+def get_disabled_school_years():
+    """Return the list of school years hidden from the Data Explorer."""
+    try:
+        cfg = get_project_config()
+        vals = getattr(cfg, 'disabled_school_years', None) or []
+        return [str(v).strip() for v in vals if str(v).strip()]
+    except Exception:
+        return []

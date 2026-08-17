@@ -12,6 +12,8 @@ import re
 from django.core.cache import cache
 from django.db import connections
 
+from dataexploration.column_utils import ap_column_key
+
 
 # ── SQL safety guards (copied verbatim from original views.py) ────────────────
 
@@ -286,6 +288,238 @@ def _build_mark_columns_from_db(cursor, selected_mark_cols: list[str]) -> tuple[
     return result
 
 
+def _build_ap_exam_columns_from_db(cursor, selected_ap_cols: list[str]) -> tuple[list[dict], dict]:
+    """Map ``ap_*_PL`` column keys to AP exam metadata (year + subject).
+
+    Returns ``(infos_list, col_map_dict)``.  Uses a 10-minute cache.
+    """
+    if not selected_ap_cols:
+        return [], {}
+
+    cache_key = f"dv_ap_exam_cols:{hashlib.md5(json.dumps(sorted(selected_ap_cols)).encode()).hexdigest()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    normalized_to_original = {c.replace('-', '_'): c for c in selected_ap_cols}
+    years = sorted({y for y in (_parse_year(c, 'ap_') for c in selected_ap_cols) if y})
+    if not years:
+        return [], {}
+
+    cursor.execute(
+        """
+        SELECT DISTINCT r.admin_year, e.name
+        FROM "dataLoader_apexamresult" r
+        JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+        JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+        WHERE r.admin_year = ANY(%s) AND r.admin_year IS NOT NULL
+          AND il.is_published = true
+        """,
+        [years],
+    )
+
+    infos: list[dict] = []
+    col_map: dict[str, dict] = {}
+
+    for year, subject in cursor.fetchall():
+        year_val = (year or '').strip() or 'Unknown'
+        subject_val = (subject or '').strip() or 'Unknown'
+        ap_norm = ap_column_key(year_val, subject_val, 'exam').replace('-', '_')
+
+        original_key = normalized_to_original.get(ap_norm)
+        if not original_key:
+            continue
+        info = {
+            'col_name': original_key,
+            'year': year_val,
+            'subject': subject_val,
+        }
+        infos.append(info)
+        col_map[original_key] = info
+        col_map[original_key.replace('-', '_')] = info
+
+    result = (infos, col_map)
+    cache.set(cache_key, result, 600)
+    return result
+
+
+def _build_ap_award_columns_from_db(cursor, selected_award_cols: list[str]) -> tuple[list[dict], dict]:
+    """Map ``apaward_*`` / ``apawards_all_*`` column keys to AP award metadata.
+
+    ``apaward_{year}_{award}`` → individual award.
+    ``apawards_all_{year}``    → combined column listing every award that year.
+    Returns ``(infos_list, col_map_dict)``.  Uses a 10-minute cache.
+    """
+    if not selected_award_cols:
+        return [], {}
+
+    cache_key = f"dv_ap_award_cols:{hashlib.md5(json.dumps(sorted(selected_award_cols)).encode()).hexdigest()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    normalized_to_original = {c.replace('-', '_'): c for c in selected_award_cols}
+    years = set()
+    for c in selected_award_cols:
+        if c.startswith('apawards_all_'):
+            years.add(c[len('apawards_all_'):].replace('_', '-'))
+        else:
+            y = _parse_year(c, 'apaward_')
+            if y:
+                years.add(y)
+    years = sorted(years)
+    if not years:
+        return [], {}
+
+    cursor.execute(
+        """
+        SELECT DISTINCT a.award_year, t.description
+        FROM "dataLoader_apstudentaward" a
+        JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+        JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+        WHERE a.award_year = ANY(%s) AND a.award_year IS NOT NULL
+          AND il.is_published = true
+        """,
+        [years],
+    )
+
+    infos: list[dict] = []
+    col_map: dict[str, dict] = {}
+
+    for year, award in cursor.fetchall():
+        year_val = (year or '').strip() or 'Unknown'
+        award_val = (award or '').strip() or 'Unknown'
+
+        # Individual award column
+        ap_norm = ap_column_key(year_val, award_val, 'award').replace('-', '_')
+        original_key = normalized_to_original.get(ap_norm)
+        if original_key:
+            info = {
+                'col_name': original_key,
+                'year': year_val,
+                'award': award_val,
+            }
+            infos.append(info)
+            col_map[original_key] = info
+            col_map[original_key.replace('-', '_')] = info
+
+        # Combined "all awards" column for this year
+        all_norm = f"apawards_all_{year_val.replace('-', '_')}"
+        original_all = normalized_to_original.get(all_norm)
+        if original_all:
+            info_all = {
+                'col_name': original_all,
+                'year': year_val,
+                'award': '__ALL__',
+            }
+            infos.append(info_all)
+            col_map[original_all] = info_all
+            col_map[original_all.replace('-', '_')] = info_all
+
+    result = (infos, col_map)
+    cache.set(cache_key, result, 600)
+    return result
+
+
+def _fetch_ap_exam_data(students: list[dict], ap_exam_infos: list[dict]):
+    """Bulk-fetch AP exam grades from Postgres and merge into *students* in-place."""
+    if not students or not ap_exam_infos:
+        return
+    ssids = list({str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()})
+    if not ssids:
+        return
+
+    student_map = {}
+    for s in students:
+        ssid = str(s.get('ssid') or '').strip()
+        if ssid:
+            student_map[ssid] = s
+
+    infos_by_year: dict = {}
+    for info in ap_exam_infos:
+        infos_by_year.setdefault(info['year'], []).append(info)
+
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT r.ssid, r.admin_year, e.name, r.exam_grade
+                FROM "dataLoader_apexamresult" r
+                JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                WHERE r.ssid = ANY(%s) AND il.is_published = true
+                """,
+                [ssids],
+            )
+            for ssid, year, subject, grade in cursor.fetchall():
+                s_obj = student_map.get(str(ssid).strip())
+                if not s_obj:
+                    continue
+                year_val = (year or '').strip() or 'Unknown'
+                for info in infos_by_year.get(year_val, ()):
+                    if info['subject'].lower() == (subject or '').strip().lower():
+                        s_obj[info['col_name']] = str(grade).strip() if grade else '\u2014'
+    except Exception:
+        pass
+
+
+def _fetch_ap_award_data(students: list[dict], award_infos: list[dict]):
+    """Bulk-fetch AP awards from Postgres and merge into *students* in-place.
+
+    Individual columns get the award description; the combined ``apawards_all_{year}``
+    column gets a comma-separated list of every award earned that year.
+    """
+    if not students or not award_infos:
+        return
+    ssids = list({str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()})
+    if not ssids:
+        return
+
+    student_map = {}
+    for s in students:
+        ssid = str(s.get('ssid') or '').strip()
+        if ssid:
+            student_map[ssid] = s
+
+    infos_by_year: dict = {}
+    for info in award_infos:
+        infos_by_year.setdefault(info['year'], []).append(info)
+
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.ssid, a.award_year, t.description
+                FROM "dataLoader_apstudentaward" a
+                JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+                JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                WHERE a.ssid = ANY(%s) AND il.is_published = true
+                """,
+                [ssids],
+            )
+            all_by_year: dict = {}
+            for ssid, year, award in cursor.fetchall():
+                s_obj = student_map.get(str(ssid).strip())
+                if not s_obj:
+                    continue
+                year_val = (year or '').strip() or 'Unknown'
+                for info in infos_by_year.get(year_val, ()):
+                    if info['award'] == '__ALL__':
+                        all_by_year.setdefault((str(ssid).strip(), year_val), set()).add(award)
+                    elif info['award'].lower() == (award or '').strip().lower():
+                        s_obj[info['col_name']] = award or '\u2014'
+
+            for (ssid, year_val), awards in all_by_year.items():
+                s_obj = student_map.get(ssid)
+                if not s_obj:
+                    continue
+                for info in infos_by_year.get(year_val, ()):
+                    if info['award'] == '__ALL__':
+                        s_obj[info['col_name']] = ', '.join(sorted(awards))
+    except Exception:
+        pass
+
+
 def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict],
                      tested_school_codes: list[str] | None = None):
     """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place).
@@ -537,13 +771,19 @@ def _enrich_rows_test_mark(
     test_cols: list[str],
     mark_cols: list[str],
     filters: dict,
+    ap_cols: list[str] | None = None,
+    award_cols: list[str] | None = None,
 ) -> str | None:
-    """Bulk-fetch test/mark columns and merge into rows in-place."""
-    if not rows or (not test_cols and not mark_cols):
+    """Bulk-fetch test/mark/AP columns and merge into rows in-place."""
+    ap_cols = ap_cols or []
+    award_cols = award_cols or []
+    if not rows or (not test_cols and not mark_cols and not ap_cols and not award_cols):
         return None
 
     need_test = bool(test_cols)
     need_mark = bool(mark_cols)
+    need_ap = bool(ap_cols)
+    need_award = bool(award_cols)
     tested_school_filter = filters.get('tested_school')
     if tested_school_filter and not isinstance(tested_school_filter, list):
         tested_school_filter = [tested_school_filter]
@@ -555,7 +795,7 @@ def _enrich_rows_test_mark(
                 if isinstance(filters.get('school_year'), list) and len(filters.get('school_year', [])) > 1
                 else None
             )
-            test_infos = mark_infos = None
+            test_infos = mark_infos = ap_exam_infos = award_infos = None
             student_ids = student_keys = None
 
             if need_test:
@@ -598,6 +838,11 @@ def _enrich_rows_test_mark(
                     mark_infos = _expanded
                 student_keys = [r.get('stu_annual_key') for r in rows if r.get('stu_annual_key')]
 
+            if need_ap:
+                ap_exam_infos, _ = _build_ap_exam_columns_from_db(cursor, ap_cols)
+            if need_award:
+                award_infos, _ = _build_ap_award_columns_from_db(cursor, award_cols)
+
             from clickhouse_utils.executor import QueryExecutor
             from clickhouse_utils.thread_pool import get_io_pool
 
@@ -621,6 +866,12 @@ def _enrich_rows_test_mark(
                 )
             elif need_mark:
                 _fetch_mark_data(QueryExecutor().cursor(), mark_infos, student_keys, rows)
+
+        # AP data lives in Postgres (Django models), fetched separately from ClickHouse.
+        if need_ap:
+            _fetch_ap_exam_data(rows, ap_exam_infos)
+        if need_award:
+            _fetch_ap_award_data(rows, award_infos)
     except Exception as exc:
         return str(exc)
     return None
@@ -669,13 +920,19 @@ def enrich_drill_rows(
     missing_base: list[str] = []
     test_cols: list[str] = []
     mark_cols: list[str] = []
+    ap_cols: list[str] = []
+    award_cols: list[str] = []
 
     for c, rc in zip(needed_columns, resolved_needed):
         bare = c.split('.')[-1]
         cn = _norm_col_key(bare)
         if cn in row_keys_norm:
             continue
-        if rc.startswith('test_'):
+        if rc.startswith('apawards_all_') or rc.startswith('apaward_'):
+            award_cols.append(rc)
+        elif rc.startswith('ap_'):
+            ap_cols.append(rc)
+        elif rc.startswith('test_'):
             test_cols.append(rc)
         elif rc.startswith('mark_'):
             mark_cols.append(rc)
@@ -685,8 +942,10 @@ def enrich_drill_rows(
 
     need_test = bool(test_cols)
     need_mark = bool(mark_cols)
+    need_ap = bool(ap_cols)
+    need_award = bool(award_cols)
 
-    if not missing_base and not need_test and not need_mark:
+    if not missing_base and not need_test and not need_mark and not need_ap and not need_award:
         return rows, _build_enriched_column_list(rows, needed_columns), None
 
     if need_test:
@@ -696,14 +955,17 @@ def enrich_drill_rows(
     if need_mark:
         if not _rows_have_value(rows, 'stu_annual_key') and 'stu_annual_key' not in missing_base:
             missing_base.append('stu_annual_key')
+    if (need_ap or need_award):
+        if not _rows_have_value(rows, 'ssid') and 'ssid' not in missing_base:
+            missing_base.append('ssid')
 
     if missing_base:
         rows, err = _fetch_base_columns_for_rows(rows, missing_base, filters, user=user)
         if err:
             return rows, [], err
 
-    if need_test or need_mark:
-        err = _enrich_rows_test_mark(rows, test_cols, mark_cols, filters)
+    if need_test or need_mark or need_ap or need_award:
+        err = _enrich_rows_test_mark(rows, test_cols, mark_cols, filters, ap_cols=ap_cols, award_cols=award_cols)
         if err:
             return rows, [], err
 
@@ -914,9 +1176,15 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
     base_cols:  list[str] = []
     test_cols:  list[str] = []
     mark_cols:  list[str] = []
+    ap_cols:    list[str] = []
+    award_cols: list[str] = []
     for c in requested:
         if (c in _CS_COLUMNS or c in _ENROLL_FIELDS) and _SAFE_IDENT_RE.match(c):
             base_cols.append(c)
+        elif c.startswith('apawards_all_') or c.startswith('apaward_'):
+            award_cols.append(c)
+        elif c.startswith('ap_'):
+            ap_cols.append(c)
         elif c.startswith('test_'):
             test_cols.append(c)
         elif c.startswith('mark_'):
@@ -928,18 +1196,24 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         from dataexploration.school_year_utils import resolve_relative_column_key
         test_cols = [resolve_relative_column_key(c) for c in test_cols]
         mark_cols = [resolve_relative_column_key(c) for c in mark_cols]
+        ap_cols = [resolve_relative_column_key(c) for c in ap_cols]
+        award_cols = [resolve_relative_column_key(c) for c in award_cols]
     except Exception:
         pass
 
     # Ensure we always have join keys so we can do bulk fetches
     need_test = bool(test_cols)
     need_mark = bool(mark_cols)
+    need_ap = bool(ap_cols)
+    need_award = bool(award_cols)
     if need_test and 'student_id' not in base_cols:
         base_cols.append('student_id')
     if need_test and 'school_year' not in base_cols:
         base_cols.append('school_year')
     if need_mark and 'stu_annual_key' not in base_cols:
         base_cols.append('stu_annual_key')
+    if (need_ap or need_award) and 'ssid' not in base_cols:
+        base_cols.append('ssid')
 
     if not base_cols:
         base_cols = ['student_id', 'student_name', 'grade', 'school', 'school_year']
@@ -1135,6 +1409,16 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         else:
             select_exprs.append(f'cs.{c}')
 
+    # Hide school years disabled via Project Settings
+    try:
+        from landing.utils import get_disabled_school_years
+        _disabled_years = get_disabled_school_years()
+        if _disabled_years:
+            where_parts.append("cs.school_year NOT IN (%s)")
+            params.append(_disabled_years)
+    except Exception:
+        pass
+
     where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
     col_sql   = ', '.join(select_exprs)
     from_sql  = f'FROM current_student cs{join_sql}'
@@ -1196,12 +1480,12 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             cache.set(cache_key, res, 1800)
             return res
 
-        # Phase 2: test/mark bulk fetch
-        if rows and (need_test or need_mark):
+        # Phase 2: test/mark/AP bulk fetch
+        if rows and (need_test or need_mark or need_ap or need_award):
             enrich_filters = dict(filters)
             if tested_school_filter:
                 enrich_filters['tested_school'] = tested_school_filter
-            err = _enrich_rows_test_mark(rows, test_cols, mark_cols, enrich_filters)
+            err = _enrich_rows_test_mark(rows, test_cols, mark_cols, enrich_filters, ap_cols=ap_cols, award_cols=award_cols)
             if err:
                 return {'error': err, 'rows': [], 'columns': []}
 
@@ -1211,7 +1495,7 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
                     if all(_matches_dynamic_filter(row.get(filter_key), filter_value) for filter_key, filter_value in dynamic_filters.items())
                 ]
 
-        # Build final ordered column list (base + test + mark)
+        # Build final ordered column list (base + test + mark + AP)
         all_cols = list(db_cols)
         for tc in test_cols:
             if tc not in all_cols:
@@ -1219,6 +1503,9 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         for mc in mark_cols:
             if mc not in all_cols:
                 all_cols.append(mc)
+        for ac in ap_cols + award_cols:
+            if ac not in all_cols:
+                all_cols.append(ac)
 
         col_types: dict = {}
         for col in all_cols:

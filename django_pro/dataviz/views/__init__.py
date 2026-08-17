@@ -45,6 +45,7 @@ from .dataset_views import (
 from .api.colormap_api import (
     colormap_preset_save_api, colormap_preset_detail_api, colormap_preset_list_api,
 )
+from .api.dashboard_api import home_dashboard_api
 
 __all__ = [
     'chart_index', 'chart_builder',
@@ -62,4 +63,5 @@ __all__ = [
     'drill_export_csv_api', 'drill_available_columns_api',
     'dataset_save_api', 'dataset_detail_api', 'dataset_list_api', 'dataset_preview_api', 'api_column_unique_values', 'dataset_filter_options_api', 'dataset_duplicate_api', 'dataset_export_csv_api',
     'colormap_preset_save_api', 'colormap_preset_detail_api', 'colormap_preset_list_api',
+    'home_dashboard_api',
 ]

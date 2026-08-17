@@ -161,11 +161,29 @@
     {% endif %}
 
     <!-- Actions -->
-    <div class="flex justify-between">
-        <a href="{% url 'dataLoader:ap_delete_import' import_log.pk %}"
-           class="px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50 transition duration-200">
-            Delete Import
-        </a>
+    <div class="flex justify-between items-center gap-3">
+        <div class="flex items-center gap-3">
+            <a href="{% url 'dataLoader:ap_delete_import' import_log.pk %}"
+               class="px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50 transition duration-200">
+                Delete Import
+            </a>
+            {% if import_log.status == 'COMPLETED' %}
+            <form method="post" action="{% url 'dataLoader:ap_toggle_publish' import_log.pk %}" class="inline">
+                {% csrf_token %}
+                <button type="submit"
+                        class="inline-flex items-center gap-2 px-4 py-2 rounded-md border transition duration-200
+                               {% if import_log.is_published %}bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700
+                               {% else %}bg-white border-slate-300 text-slate-700 hover:bg-slate-50{% endif %}">
+                    <span class="relative inline-flex h-4 w-7 items-center rounded-full transition-colors
+                                 {% if import_log.is_published %}bg-emerald-500{% else %}bg-slate-300{% endif %}">
+                        <span class="inline-block h-3 w-3 transform rounded-full bg-white transition
+                                     {% if import_log.is_published %}translate-x-3.5{% else %}translate-x-0.5{% endif %}"></span>
+                    </span>
+                    {% if import_log.is_published %}Published — available in Data Exploration{% else %}Publish to Data Exploration{% endif %}
+                </button>
+            </form>
+            {% endif %}
+        </div>
         <a href="{% url 'dataLoader:dashboard' %}"
            class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition duration-200">
             Back to Dashboard

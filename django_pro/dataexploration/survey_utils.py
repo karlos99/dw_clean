@@ -85,7 +85,7 @@ def get_survey_columns(column_filters=None):
         }
     }
     """
-    cache_key = f"survey_columns_v7_{hashlib.md5(json.dumps(column_filters or {}, sort_keys=True).encode()).hexdigest()}"
+    cache_key = f"survey_columns_v8_{hashlib.md5(json.dumps(column_filters or {}, sort_keys=True).encode()).hexdigest()}"
     cached_data = cache.get(cache_key)
     
     if cached_data:
@@ -116,7 +116,7 @@ def get_survey_columns(column_filters=None):
             INNER JOIN "dataLoader_surveyquestion" sq ON sq.survey_definition_id = sd.id
             LEFT JOIN "dataLoader_surveytopic" st ON st.id = sq.topic_id
             INNER JOIN "dataLoader_importlog" il ON il.survey_definition_id = sd.id
-            WHERE (il.ready_for_exploration = true OR sd.ready_for_exploration = true)
+            WHERE il.ready_for_exploration = true
               AND il.status = 'COMPLETED'
               AND sd.is_active = true
               AND sq.is_active = true
@@ -255,7 +255,7 @@ def get_survey_data_for_students(student_ids, school_year=None):
             params.append(school_year)
         
         # Only get data from published imports
-        where_clauses.append("(il.ready_for_exploration = true OR sd.ready_for_exploration = true)")
+        where_clauses.append("il.ready_for_exploration = true")
         where_clauses.append("il.status = 'COMPLETED'")
         where_clauses.append("sd.is_active = true")
         

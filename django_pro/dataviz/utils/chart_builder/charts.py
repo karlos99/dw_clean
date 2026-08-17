@@ -131,6 +131,8 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         categories = _ordered_categories(categories, cfg, cat_totals)
 
         series = []
+        total_label = str(cfg.get('group_total_label', '') or 'Total')
+        show_total = bool(cfg.get('show_group_total', False))
         for grp in groups:
             for sv in reversed(stacks):
                 if show_percent:
@@ -143,6 +145,19 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
                     data = [raw_vals.get((xv, grp, sv), 0) for xv in categories]
                 s = make_series(f'{grp} — {sv}', data)
                 s['stack'] = grp  # distinct per group → stacked within group, grouped across groups
+                series.append(s)
+
+            # Optional "Total" bar for this group: a separate full-height column
+            # right next to the group's stacked bar, aggregating every stack
+            # value (e.g. all grades) for that group (e.g. that school year).
+            if show_total:
+                if show_percent:
+                    data = [100.0 if cat_totals_per_group.get((xv, grp), 0) > 0 else 0.0 for xv in categories]
+                else:
+                    data = [cat_totals_per_group.get((xv, grp), 0) for xv in categories]
+                s = make_series(f'{total_label} — {grp}', data)
+                s['stack'] = f'__group_total__{grp}'  # distinct stack → own column, kept beside this group
+                s['__is_group_total__'] = True
                 series.append(s)
 
         y_axis_name = '%' if show_percent else (labels['y'] or 'Count')
@@ -177,6 +192,29 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         # Compute totals per category — always, so tooltip shows count + % regardless of show_percent
         cat_totals = {xv: sum(raw_vals.get((xv, sv), 0) for sv in stacks) for xv in categories}
         categories = _ordered_categories(categories, cfg, cat_totals)
+
+        # Optional "Total": add a synthetic value to the FIRST x dimension that
+        # aggregates across it while keeping the other dimensions — e.g. on a
+        # "grade · school_year" axis this adds one "Total" bar per school year
+        # (a new grade-equivalent group). On a single x column it adds one
+        # "Total" category that aggregates everything. The Total renders as
+        # regular stack categories (not a separate series).
+        if bool(cfg.get('show_group_total', False)):
+            total_label = str(cfg.get('group_total_label', '') or 'Total')
+            total_raw = {}
+            total_order = []
+            for xv in categories:
+                parts = str(xv).split(' · ')
+                total_cat = f'{total_label} · {" · ".join(parts[1:])}' if len(parts) > 1 else total_label
+                if total_cat not in total_order:
+                    total_order.append(total_cat)
+                for sv in stacks:
+                    total_raw[(total_cat, sv)] = total_raw.get((total_cat, sv), 0) + raw_vals.get((xv, sv), 0)
+            for tc in total_order:
+                categories.append(tc)
+                cat_totals[tc] = sum(total_raw.get((tc, sv), 0) for sv in stacks)
+                for sv in stacks:
+                    raw_vals[(tc, sv)] = total_raw.get((tc, sv), 0)
 
         series = []
         for sv in reversed(stacks):

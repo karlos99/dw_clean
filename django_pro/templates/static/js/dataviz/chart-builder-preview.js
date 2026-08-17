@@ -222,6 +222,8 @@ function chartBuilderPreviewMethods(urls) {
         series_col: seriesColStr,
         stack_col: seriesColStr,
         group_col: this.groupCol,
+        show_group_total: !!this.groupTotal,
+        group_total_label: this.groupTotalLabel,
         compare_pl_cols: this.comparePlCols,
         ac_include_cats: this.acIncludeCats,
         ac_include_pl: this.acIncludePl,

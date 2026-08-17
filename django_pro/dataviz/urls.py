@@ -25,6 +25,8 @@ from .views import (
     dataset_save_api, dataset_detail_api, dataset_list_api, dataset_preview_api, api_column_unique_values, dataset_filter_options_api, dataset_duplicate_api, dataset_export_csv_api,
     # Color-mapping preset API
     colormap_preset_save_api, colormap_preset_detail_api, colormap_preset_list_api,
+    # Home dashboard API
+    home_dashboard_api,
 )
 
 app_name = 'dataviz'
@@ -64,6 +66,9 @@ urlpatterns = [
     path('api/colormap-presets/save/',        colormap_preset_save_api,   name='colormap_preset_save'),
     path('api/colormap-presets/list/',        colormap_preset_list_api,   name='colormap_preset_list'),
     path('api/colormap-presets/<int:preset_id>/', colormap_preset_detail_api, name='colormap_preset_detail'),
+
+    # ── Home dashboard (per-user, landing page) ────────────────────────────
+    path('api/home-dashboard/', home_dashboard_api, name='home_dashboard'),
 
     # ── Dataset pages ─────────────────────────────────────────────────────
     path('datasets/',                   dataset_index,  name='dataset_index'),

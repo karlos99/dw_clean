@@ -1,0 +1,44 @@
+{% comment %}
+Recursive tree node for the Page Management structure sidebar.
+Expects `node` with `.page` and `.children`.
+Drag to reorder (before/after) or nest (drop on the middle) pages.
+{% endcomment %}
+<div class="relative"
+     :class="{
+        'border-t-2 border-blue-500 rounded-sm': dragOverId === {{ node.page.id }} && dragZone === 'before',
+        'border-b-2 border-blue-500 rounded-sm': dragOverId === {{ node.page.id }} && dragZone === 'after',
+        'ring-2 ring-blue-400 ring-inset rounded-md': dragOverId === {{ node.page.id }} && dragZone === 'child',
+        'opacity-50': dragPageId === {{ node.page.id }}
+     }">
+    <div draggable="true"
+         @dragstart="dragStart({{ node.page.id }})"
+         @dragover.prevent.stop="dragOver({{ node.page.id }}, $event)"
+         @dragleave="dragLeave({{ node.page.id }}, $event)"
+         @drop.prevent.stop="dropPage({{ node.page.id }})"
+         @dragend="dragEnd()"
+         class="group flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-slate-50 transition cursor-grab active:cursor-grabbing">
+        <svg class="flex-shrink-0 w-3.5 h-3.5 text-slate-300 group-hover:text-slate-400" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
+        </svg>
+        <button @click="openEditModal({{ node.page.id }})"
+                class="flex-1 flex items-center gap-2 min-w-0 text-left">
+            <span class="flex-shrink-0 h-2 w-2 rounded-full
+                {% if node.page.status == 'active' %}bg-green-500
+                {% elif node.page.status == 'draft' %}bg-amber-400
+                {% else %}bg-slate-300{% endif %}"></span>
+            <span class="text-sm {% if not node.page.show_in_menu %}text-slate-400{% else %}text-slate-700{% endif %} truncate">
+                {{ node.page.name }}
+            </span>
+            {% if not node.page.show_in_menu %}
+            <span class="ml-auto flex-shrink-0 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">hidden</span>
+            {% endif %}
+        </button>
+    </div>
+    {% if node.children %}
+    <div class="ml-3 pl-2 border-l border-slate-100">
+        {% for child in node.children %}
+        {% include "users/partials/page_tree_node.html" with node=child %}
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>

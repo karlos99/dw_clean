@@ -107,6 +107,7 @@
                         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Exams</th>
                         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Match Rate</th>
                         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Uploaded</th>
+                        <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">Published</th>
                         <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
                     </tr>
                 </thead>
@@ -148,6 +149,20 @@
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
                             {{ ap_import.uploaded_at|date:"M d, Y H:i" }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-center">
+                            {% if ap_import.status == 'COMPLETED' %}
+                            <form method="post" action="{% url 'dataLoader:ap_toggle_publish' ap_import.pk %}" class="inline">
+                                {% csrf_token %}
+                                <button type="submit"
+                                        class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 {% if ap_import.is_published %}bg-purple-600{% else %}bg-slate-200{% endif %}"
+                                        title="{% if ap_import.is_published %}Click to unpublish from Data Exploration{% else %}Click to publish to Data Exploration{% endif %}">
+                                    <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {% if ap_import.is_published %}translate-x-5{% else %}translate-x-0{% endif %}"></span>
+                                </button>
+                            </form>
+                            {% else %}
+                            <span class="text-xs text-slate-400">—</span>
+                            {% endif %}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm">
                             {% if ap_import.status == 'PROCESSING' %}

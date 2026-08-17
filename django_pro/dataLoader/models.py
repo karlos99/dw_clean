@@ -485,6 +485,20 @@ class APImportLog(models.Model):
     error_log = models.JSONField(default=list, help_text="List of error messages")
     warnings = models.JSONField(default=list, help_text="List of warning messages")
 
+    # Publishing: only published imports are available in the Data Explorer
+    is_published = models.BooleanField(
+        default=False,
+        help_text="When enabled, this import's AP results and awards are available in the Data Explorer",
+    )
+    published_at = models.DateTimeField(null=True, blank=True, help_text="When this import was published")
+    published_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='published_ap_imports',
+    )
+
     class Meta:
         ordering = ['-uploaded_at']
         verbose_name = 'AP Import Log'

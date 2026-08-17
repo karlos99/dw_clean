@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from .models import User, Role, School
-from .models_pages import Page
+from .models_pages import Page, NavbarConfig
 
 class CustomUserAdmin(UserAdmin):
     model = User
@@ -53,3 +53,15 @@ admin.site.register(User, CustomUserAdmin)
 admin.site.register(Role)
 admin.site.register(School)
 admin.site.register(Page, PageAdmin)
+
+
+@admin.register(NavbarConfig)
+class NavbarConfigAdmin(admin.ModelAdmin):
+    list_display = ('pk', 'sticky', 'label_case', 'submenu_style', 'updated_by', 'updated_at')
+    readonly_fields = ('updated_at',)
+
+    def has_add_permission(self, request):
+        return not NavbarConfig.objects.filter(pk=1).exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False

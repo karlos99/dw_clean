@@ -15,6 +15,8 @@ urlpatterns = [
     
     # Page management
     path('pages/', page_views.manage_pages, name='manage_pages'),
+    path('pages/navbar-settings/', page_views.navbar_settings, name='navbar_settings'),
+    path('pages/reorder/', page_views.reorder_page, name='reorder_page'),
     path('pages/add/', page_views.add_page, name='add_page'),
     path('pages/<int:page_id>/edit/', page_views.edit_page, name='edit_page'),
     path('pages/<int:page_id>/delete/', page_views.delete_page, name='delete_page'),

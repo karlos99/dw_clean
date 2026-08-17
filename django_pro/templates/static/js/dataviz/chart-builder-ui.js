@@ -255,7 +255,7 @@ function chartBuilderUIMethods() {
       if (this.sourceType === 'columns') this.loadExplorerStructure();
       this._recomputeFilterCols();
 
-      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','lineLayout','lineFill','xCols','xCol','yCol','seriesCols','seriesCol','groupCol','comparePlCols','aggFunc','aggDecimals',
+      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','lineLayout','lineFill','xCols','xCol','yCol','seriesCols','seriesCol','groupCol','groupTotal','groupTotalLabel','comparePlCols','aggFunc','aggDecimals',
                          'sortCol','sortDir','categoryOrder','limit','palette','showPercent','showPercentSymbol','percentDecimals','stackOrder',
                          'stRowCol','stColCol','stRowCols','stColCols','stAggFunc','stValueCol','stAggDecimals','explorerSelected',
                          'acIncludeCats','acIncludePl','acColFilters',

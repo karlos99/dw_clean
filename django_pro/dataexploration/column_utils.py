@@ -107,6 +107,143 @@ def _generate_cache_key(prefix, filters, extra_hash_str=""):
     return f"{prefix}_{key_hash}"
 
 
+def ap_column_key(year, subject, kind):
+    """Build a stable column key for AP exam results / awards.
+
+    kind is ``'exam'`` (Performance Level) or ``'award'``.
+    Used both when building the column tree and when enriching query rows so the
+    keys always match.
+    """
+    year_key = re.sub(r'[^A-Za-z0-9_]+', '_', (year or '')).strip('_') or 'Unknown'
+    part = re.sub(r'[^A-Za-z0-9_]+', '_', (subject or '')).strip('_') or 'Unknown'
+    if kind == 'exam':
+        return f"ap_{year_key}_{part}_PL"
+    return f"apaward_{year_key}_{part}"
+
+
+def markall_key(year, subject):
+    """Build the 'All Marks' umbrella column key for a subject/year.
+
+    e.g. markall_2025_2026_Math, markall_2025_2026_Physical_Education
+    """
+    year_key = re.sub(r'[^A-Za-z0-9_]+', '_', (year or '')).strip('_') or 'Unknown'
+    subj_key = re.sub(r'[^A-Za-z0-9_]+', '_', (subject or '')).strip('_') or 'Unknown'
+    return f"markall_{year_key}_{subj_key}"
+
+
+def parse_markall_key(col_key):
+    """Resolve a ``markall_`` umbrella/expanded key to (year, subject_norm, idx, kind).
+
+    Kind is 'COURSE', 'MARKS', or None for the umbrella key.
+    Returns None if not a markall_ key.
+    """
+    if not isinstance(col_key, str) or not col_key.startswith('markall_'):
+        return None
+    tail = col_key[len('markall_'):]
+    parts = tail.split('_')
+    if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    year = f"{parts[0]}-{parts[1]}"
+    # Remaining tokens: subject(s) then optional _<idx>_<COURSE|MARKS>
+    rest = parts[2:]
+    idx = None
+    kind = None
+    if len(rest) >= 2 and rest[-2].isdigit() and rest[-1] in ('COURSE', 'MARKS'):
+        idx = int(rest[-2])
+        kind = rest[-1]
+        rest = rest[:-2]
+    subject_norm = '_'.join(rest)
+    return {'year': year, 'subject_norm': subject_norm, 'idx': idx, 'kind': kind}
+
+
+def get_ap_columns(column_filters=None):
+    """Get dynamic AP exam + award columns organized by year.
+
+    Returns structure:
+        {
+            year: {
+                'subjects': { subject: {'PL': column_key} },
+                'awards':   { award_description: column_key },
+            }
+        }
+    Data comes from the College Board AP tables loaded by the Data Loader app
+    (``dataLoader_apexamresult`` / ``dataLoader_apstudentaward``).
+    """
+    cache_key = _generate_cache_key("ap_columns", column_filters, "")
+    cached_data = cache.get(cache_key)
+
+    if cached_data:
+        columns, definitions = cached_data
+        COLUMN_DEFINITIONS.update(definitions)
+        return columns
+
+    new_definitions = {}
+    columns = {}
+
+    with connections['default'].cursor() as cursor:
+        # AP exam performance levels (subject = exam name) — only published imports
+        cursor.execute(
+            """
+            SELECT DISTINCT r.admin_year, e.name
+            FROM "dataLoader_apexamresult" r
+            JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+            JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+            WHERE r.exam_grade IS NOT NULL AND r.exam_grade <> ''
+              AND il.is_published = true
+            ORDER BY r.admin_year DESC, e.name
+            """
+        )
+        for year, subject in cursor.fetchall():
+            year_val = (year or '').strip() or 'Unknown'
+            subject_val = (subject or '').strip() or 'Unknown'
+            col_key = ap_column_key(year_val, subject_val, 'exam')
+            label = f"{subject_val}\nPerformance Level\n{year_val}"
+            COLUMN_DEFINITIONS[col_key] = label
+            new_definitions[col_key] = label
+            bucket = columns.setdefault(year_val, {'subjects': {}, 'awards': {}})
+            bucket['subjects'][subject_val] = {'PL': col_key}
+
+        # AP awards — only published imports
+        cursor.execute(
+            """
+            SELECT DISTINCT a.award_year, t.description
+            FROM "dataLoader_apstudentaward" a
+            JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+            JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+            WHERE il.is_published = true
+            ORDER BY a.award_year DESC, t.description
+            """
+        )
+        for year, award in cursor.fetchall():
+            year_val = (year or '').strip() or 'Unknown'
+            award_val = (award or '').strip() or 'Unknown'
+            col_key = ap_column_key(year_val, award_val, 'award')
+            label = f"{award_val}\n{year_val}"
+            COLUMN_DEFINITIONS[col_key] = label
+            new_definitions[col_key] = label
+            bucket = columns.setdefault(year_val, {'subjects': {}, 'awards': {}})
+            bucket['awards'][award_val] = col_key
+
+        # Combined "All Awards" column per year (lists every award the student earned)
+        for year_val in columns:
+            all_key = f"apawards_all_{year_val.replace('-', '_')}"
+            label = f"All Awards\n{year_val}"
+            COLUMN_DEFINITIONS[all_key] = label
+            new_definitions[all_key] = label
+            columns[year_val]['all_awards'] = all_key
+
+        # "All Results" option per year — expands into wide subject/PL pairs
+        for year_val in columns:
+            all_results_key = f"apall_{year_val.replace('-', '_')}"
+            label = f"All Results\n{year_val}"
+            COLUMN_DEFINITIONS[all_results_key] = label
+            new_definitions[all_results_key] = label
+            columns[year_val]['all_results'] = all_results_key
+
+    cache.set(cache_key, (columns, new_definitions), timeout=3600)
+    return columns
+
+
 def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses=None, extra_params=None):
     """Get dynamic test columns from database organized by year and test.
     
@@ -536,6 +673,18 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
                 columns[year_val][subject_val][course_val] = {}
 
             columns[year_val][subject_val][course_val][period_val] = mark_key
+
+        # "All Marks" umbrella per subject — expands into course/marks wide pairs.
+        # Keys are deterministic (markall_<year>_<subject>) so they can be
+        # recomputed by callers; definitions are exposed for label resolution.
+        for year_val, subjects in columns.items():
+            year_key = year_val.replace(' ', '_').replace('-', '_')
+            for subject_val in subjects:
+                subj_key = subject_val.replace(' ', '_').replace('-', '_')
+                umbrella = f"markall_{year_key}_{subj_key}"
+                label = f"All Marks\n{subject_val}\n{year_val}"
+                COLUMN_DEFINITIONS[umbrella] = label
+                new_definitions[umbrella] = label
 
         cache.set(cache_key, (columns, new_definitions), timeout=3600)
         return columns

@@ -168,6 +168,13 @@
                     </button>
 
                     <div data-category="marks_{{ year|slugify }}_{{ subject|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                        <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors"
+                               data-markall-year="{{ year }}" data-markall-subject="{{ subject }}">
+                            <input type="checkbox" data-column="{{ year|markall_key:subject }}" data-markall="1"
+                                data-markall-year="{{ year }}" data-markall-subject="{{ subject }}"
+                                class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4">
+                            <span class="text-sm font-semibold text-slate-800">All Marks</span>
+                        </label>
                         {% for course, periods in courses.items %}
                         <div class="pl-2 border-l border-slate-200">
                             <button data-toggle-category="marks_{{ year|slugify }}_{{ subject|slugify }}_{{ course|slugify }}"
@@ -197,3 +204,96 @@
         {% endfor %}
     </div>
 </div>
+
+{% if ap_structure %}
+<!-- College Assessments Tree Category (AP) -->
+<div class="border-b border-slate-100 pb-2 mt-3">
+    <button data-toggle-category="college"
+        class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded transition-colors border-l-2 border-indigo-500">
+        <span class="text-xs font-semibold uppercase tracking-wider text-slate-700">College Assessments</span>
+        <span data-caret="closed" class="text-slate-400">▶</span>
+        <span data-caret="open" class="hidden text-slate-400">▼</span>
+    </button>
+
+    <div data-category="college" class="ml-4 mt-1 space-y-1 pl-3 border-l-2 border-indigo-200 hidden">
+        {% for year, bucket in ap_structure.items %}
+        {% with alias=year_to_alias|get_item:year|default:'' %}
+        <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
+            <button data-toggle-category="ap_{{ year|slugify }}"
+                class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
+                <span class="text-sm font-medium text-slate-700"
+                      data-year-header-label="{{ year }}"
+                      data-specific-label="{{ year }}"
+                      data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                    {{ year_labels|get_item:year|default:year }}
+                </span>
+                <span data-caret="closed" class="text-slate-400">▶</span>
+                <span data-caret="open" class="hidden text-slate-400">▼</span>
+            </button>
+
+            <div data-category="ap_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                {% if bucket.all_results %}
+                <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors"
+                       data-apall-year="{{ year }}">
+                    <input type="checkbox" data-column="{{ bucket.all_results }}" data-apall="1" data-apall-year="{{ year }}"
+                        class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                    <span class="text-sm font-semibold text-slate-800">All Results</span>
+                </label>
+                {% endif %}
+                {% for subject, metrics in bucket.subjects.items %}
+                <div class="pl-2 border-l border-slate-200">
+                    <button data-toggle-category="ap_{{ year|slugify }}_{{ subject|slugify }}"
+                        class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left transition-colors">
+                        <span class="text-xs font-semibold text-slate-700">{{ subject }}</span>
+                        <span data-caret="closed" class="text-slate-400">▶</span>
+                        <span data-caret="open" class="hidden text-slate-400">▼</span>
+                    </button>
+
+                    <div data-category="ap_{{ year|slugify }}_{{ subject|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                        {% for metric, col_key in metrics.items %}
+                        <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                            <input type="checkbox" data-column="{{ col_key }}"
+                                class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <span class="text-sm text-slate-700">{{ metric }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+
+                {% if bucket.awards %}
+                <div class="pl-2 border-l border-slate-200">
+                    <button data-toggle-category="ap_awards_{{ year|slugify }}"
+                        class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left transition-colors">
+                        <span class="text-xs font-semibold text-slate-700">Awards</span>
+                        <span data-caret="closed" class="text-slate-400">▶</span>
+                        <span data-caret="open" class="hidden text-slate-400">▼</span>
+                    </button>
+
+                    <div data-category="ap_awards_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                        {% if bucket.all_awards %}
+                        <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                            <input type="checkbox" data-column="{{ bucket.all_awards }}"
+                                class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <span class="text-sm font-semibold text-slate-800">All Awards</span>
+                        </label>
+                        {% endif %}
+                        {% for award, col_key in bucket.awards.items %}
+                        <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                            <input type="checkbox" data-column="{{ col_key }}"
+                                class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <span class="text-sm text-slate-700">{{ award }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endwith %}
+        {% empty %}
+        <div class="text-xs text-slate-500 italic p-2">No College Board data available</div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
