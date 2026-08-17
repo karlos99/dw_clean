@@ -1720,6 +1720,150 @@ class GroupGapOptionTests(SimpleTestCase):
         self.assertTrue(any(raw_lookup[s].get(real_cat, 0) > 0 for s in raw_lookup))
 
 
+class GroupTotalOptionTests(SimpleTestCase):
+    def test_grouped_stacked_total_adds_per_group_total_columns(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school': 'A', 'school_year': '2024-2025', 'grade': 'K'},
+            {'school': 'A', 'school_year': '2024-2025', 'grade': 'K'},
+            {'school': 'A', 'school_year': '2024-2025', 'grade': '1'},
+            {'school': 'A', 'school_year': '2025-2026', 'grade': 'K'},
+            {'school': 'A', 'school_year': '2025-2026', 'grade': '1'},
+            {'school': 'A', 'school_year': '2025-2026', 'grade': '1'},
+            {'school': 'A', 'school_year': '2025-2026', 'grade': '2'},
+            {'school': 'B', 'school_year': '2024-2025', 'grade': 'K'},
+            {'school': 'B', 'school_year': '2025-2026', 'grade': '1'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'school',
+            'group_col': 'school_year',
+            'stack_col': 'grade',
+            'agg': 'count',
+            'show_group_total': True,
+            'group_total_label': 'Total',
+        }
+        opt = build_option(rows, {}, cfg)
+        series = {s['name']: s for s in opt['series']}
+
+        total_names = [n for n in series if n.startswith('Total — ')]
+        self.assertEqual(sorted(total_names), ['Total — 2024-2025', 'Total — 2025-2026'])
+
+        # A: 2024 → K(2)+1(1)=3, 2025 → K(1)+1(2)+2(1)=4; B: 2024 → 1, 2025 → 1
+        self.assertEqual(series['Total — 2024-2025']['data'], [3.0, 1.0])
+        self.assertEqual(series['Total — 2025-2026']['data'], [4.0, 1.0])
+        # Each total is its own column (distinct stack) and sits immediately
+        # after its group's stacked bar so it renders beside it, not grouped
+        # together at the end.
+        names = [s['name'] for s in opt['series']]
+        self.assertNotEqual(
+            series['Total — 2024-2025']['stack'],
+            series['Total — 2025-2026']['stack'],
+        )
+        self.assertEqual(names, [
+            '2024-2025 — K', '2024-2025 — 2', '2024-2025 — 1', 'Total — 2024-2025',
+            '2025-2026 — K', '2025-2026 — 2', '2025-2026 — 1', 'Total — 2025-2026',
+        ])
+        # Regular stacked series are untouched.
+        self.assertIn('2024-2025 — K', series)
+
+    def test_grouped_stacked_without_total_has_no_total_series(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school': 'A', 'school_year': '2024-2025', 'grade': 'K'},
+            {'school': 'B', 'school_year': '2025-2026', 'grade': '1'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'school',
+            'group_col': 'school_year',
+            'stack_col': 'grade',
+            'agg': 'count',
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertFalse(any(s['name'].startswith('Total') for s in opt['series']))
+
+    def test_single_x_stacked_total_adds_total_category(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school': 'A', 'grade': 'K'},
+            {'school': 'A', 'grade': 'K'},
+            {'school': 'A', 'grade': '1'},
+            {'school': 'B', 'grade': 'K'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'school',
+            'stack_col': 'grade',
+            'agg': 'count',
+            'show_group_total': True,
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertEqual(opt['__category_names__'], ['A', 'B', 'Total'])
+        series = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(series['K'], [2.0, 1.0, 3.0])  # A=2, B=1, Total=all schools
+        self.assertEqual(series['1'], [1.0, 0.0, 1.0])
+
+    def test_composite_x_stacked_total_adds_one_bar_per_leaf(self):
+        from dataviz.utils.chart_builder import build_option
+
+        # Chart 108 pattern: x = grade · school_year, stacked by pl. The Total
+        # becomes a new "grade"-equivalent group — one bar per school year,
+        # NOT one bar per grade · year combination.
+        rows = [
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '2'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '2'},
+            {'grade': '03', 'school_year': '2025-2026', 'pl': '3'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '04', 'school_year': '2025-2026', 'pl': '2'},
+            {'grade': '04', 'school_year': '2025-2026', 'pl': '2'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': '__x_comp__',
+            'x_cols': ['grade', 'school_year'],
+            'stack_col': 'pl',
+            'agg': 'count',
+            'show_percent': True,
+            'show_group_total': True,
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertEqual(
+            opt['__category_names__'],
+            ['03 · 2024-2025', '03 · 2025-2026', '04 · 2024-2025', '04 · 2025-2026',
+             'Total · 2024-2025', 'Total · 2025-2026'],
+        )
+        # Only two new bars (one per year), each still 100% stacked by pl.
+        series = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(series['1'], [33.3, 0.0, 50.0, 0.0, 40.0, 0.0])
+        self.assertEqual(series['2'], [66.7, 0.0, 0.0, 100.0, 40.0, 66.7])
+        self.assertEqual(series['4'], [0.0, 0.0, 50.0, 0.0, 20.0, 0.0])
+        # Total group appears on the secondary category axis.
+        bands = opt.get('__group_label_bands__') or []
+        self.assertIn('Total', [b['label'] for b in bands])
+
+    def test_plain_stacked_without_total_has_no_total_category(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school': 'A', 'grade': 'K'},
+            {'school': 'B', 'grade': '1'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'school',
+            'stack_col': 'grade',
+            'agg': 'count',
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertNotIn('Total', opt['__category_names__'])
+
+
 class DateSeriesOptionTests(SimpleTestCase):
     def test_basic_count_line_per_date(self):
         from dataviz.utils.chart_builder import build_option

@@ -342,8 +342,16 @@ def build_drill_filter(chart, params: dict) -> dict:
         if len(x_cols_list) > 1:
             parts = split_composite_value(x_val, len(x_cols_list))
             if len(parts) == len(x_cols_list):
-                for col_name, part_val in zip(x_cols_list, parts):
+                cfg = chart.config or {}
+                total_label = str(cfg.get('group_total_label', '') or 'Total')
+                is_total = bool(cfg.get('show_group_total')) and parts[0] == total_label
+                for i, (col_name, part_val) in enumerate(zip(x_cols_list, parts)):
                     if col_name:
+                        # A Total category aggregates across the first x column —
+                        # only the remaining dimension filters apply (e.g. the
+                        # school year is kept, the grade is not).
+                        if is_total and i == 0:
+                            continue
                         filters[col_name] = part_val
             else:
                 # ECharts did not concatenate or splitting didn't match (single value clicked)
@@ -410,8 +418,16 @@ def build_drill_filter(chart, params: dict) -> dict:
         if group_col and series_col:
             parts = split_composite_value(series_val, 2)
             if len(parts) == 2:
-                filters[group_col] = parts[0]
-                filters[series_col] = parts[1]
+                cfg = chart.config or {}
+                total_label = str(cfg.get('group_total_label', '') or 'Total')
+                if cfg.get('show_group_total') and parts[0] == total_label:
+                    # Total group aggregates across the stack column — drill into
+                    # every stack value for the clicked group value (e.g. all
+                    # grades for the clicked school year).
+                    filters[group_col] = parts[1]
+                else:
+                    filters[group_col] = parts[0]
+                    filters[series_col] = parts[1]
                 split_success = True
         
         if not split_success and series_col:

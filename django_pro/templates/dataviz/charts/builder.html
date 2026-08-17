@@ -2386,6 +2386,10 @@
               <span class="text-[10px] text-slate-600">100% stacked</span>
             </label>
           </template>
+          <label x-show="chartType === 'bar' && seriesCols.length > 0" class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" x-model="groupTotal" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+            <span class="text-[10px] text-slate-600">Add a <span class="font-semibold text-indigo-700">Total</span> group — a new category (e.g. per school year) counting all students across the stacks (e.g. all grades)</span>
+          </label>
         </div>
       </template>
 
@@ -3082,6 +3086,8 @@
     <input type="hidden" name="y_col"          x-bind:value="yCol">
     <input type="hidden" name="series_col"     x-bind:value="seriesCols.join(',')">
     <input type="hidden" name="group_col"      x-bind:value="groupCol">
+    <input type="hidden" name="show_group_total" x-bind:value="groupTotal ? '1' : ''">
+    <input type="hidden" name="group_total_label" x-bind:value="groupTotalLabel">
     <input type="hidden" name="compare_pl_cols"  x-bind:value="JSON.stringify(comparePlCols)">
     <input type="hidden" name="ac_include_cats"  x-bind:value="JSON.stringify(acIncludeCats)">
     <input type="hidden" name="ac_include_pl"    x-bind:value="JSON.stringify(acIncludePl)">
@@ -3365,6 +3371,8 @@ function chartBuilder() {
     seriesCol:    existing?.config?.stack_col ?? existing?.config?.series_col ?? '',
     seriesCols:   ((existing?.config?.stack_col ?? existing?.config?.series_col) || '').split(',').map(s => s.trim()).filter(Boolean) || [],
     groupCol:     existing?.config?.group_col ?? '',
+    groupTotal:   existing ? existing.config?.show_group_total === true : false,
+    groupTotalLabel: existing?.config?.group_total_label || 'Total',
     comparePlCols: existing?.config?.compare_pl_cols ?? [],
     /* Progress Growth */
     pgBeforeCol:      existing?.config?.pg_before_col ?? '',

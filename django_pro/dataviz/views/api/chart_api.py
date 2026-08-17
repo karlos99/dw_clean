@@ -206,6 +206,8 @@ def _cfg_from_post(post):
         'series_col':        post.get('series_col', ''),
         'stack_col':         post.get('series_col', ''),
         'group_col':         post.get('group_col', ''),
+        'show_group_total':  post.get('show_group_total', '') in ('1', 'true', 'True', 'on', True),
+        'group_total_label': post.get('group_total_label') or None,
         'compare_pl_cols':   compare_pl_cols,
         'ac_include_cats':   ac_include_cats,
         'ac_include_pl':     ac_include_pl,
