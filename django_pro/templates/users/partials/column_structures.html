@@ -216,7 +216,17 @@
     </button>
 
     <div data-category="college" class="ml-4 mt-1 space-y-1 pl-3 border-l-2 border-indigo-200 hidden">
-        {% for year, bucket in ap_structure.items %}
+        {# AP group — all College Board data loaded by Data Loader lives under this node #}
+        <div class="border-b border-slate-100 pb-1">
+            <button data-toggle-category="ap_group"
+                class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
+                <span class="text-xs font-semibold text-slate-700">AP</span>
+                <span data-caret="closed" class="text-slate-400">▶</span>
+                <span data-caret="open" class="hidden text-slate-400">▼</span>
+            </button>
+
+            <div data-category="ap_group" class="ml-3 mt-1 space-y-1 pl-3 border-l-2 border-indigo-100 hidden">
+                {% for year, bucket in ap_structure.items %}
         {% with alias=year_to_alias|get_item:year|default:'' %}
         <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
             <button data-toggle-category="ap_{{ year|slugify }}"
@@ -294,6 +304,8 @@
         {% empty %}
         <div class="text-xs text-slate-500 italic p-2">No College Board data available</div>
         {% endfor %}
+            </div>
+        </div>
     </div>
 </div>
 {% endif %}
