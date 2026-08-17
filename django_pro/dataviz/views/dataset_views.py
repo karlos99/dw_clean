@@ -599,6 +599,16 @@ def dataset_filter_options_api(request, dataset_id):
                     pass
 
         filter_labels = {k: k for k in filter_options}
+        # Expose the relative school-year aliases (This/Last/Two Years Prior…)
+        # as filter options, matching the query/columns sources. These resolve
+        # against the admin's current school year when the filter is applied.
+        from dataviz.views.api.query_api import (
+            _inject_school_year_aliases, _inject_relative_year_labels,
+        )
+        _inject_school_year_aliases(filter_options, filter_labels)
+        # Always offer every relative-year label, even for years with no data
+        # yet, so the options survive a data rollover to a new current year.
+        _inject_relative_year_labels(filter_options)
         result = {'filter_options': filter_options, 'filter_labels': filter_labels}
         try:
             cache.set(cache_key, result, 300)
