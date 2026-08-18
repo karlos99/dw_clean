@@ -747,12 +747,18 @@ def _parse_pf_filters(get_params) -> dict:
 
 
 def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_source_id='',
-                         drill_source_name='', is_embed=False, request=None, if_none_match=None):
+                         drill_source_name='', is_embed=False, request=None, if_none_match=None,
+                         school_id=None):
     """
     Core chart-render pipeline: runs the chart's query (or reuses the 2-layer
     Redis cache), builds the ECharts option, and renders the chart_preview
     partial to HTML. Shared by the single-chart (chart_render_api) and
     batch (chart_batch_render_api) endpoints so both stay in sync.
+
+    ``school_id`` (a studata School ``state_id``) narrows the visual to a
+    single school on demand. It is injected as a ``school_state_id`` column
+    filter so it flows through every source type exactly like a page-level
+    filter. Omit it (or pass ''/'all') to show the default view: all students.
 
     Safe to call concurrently for different chart_ids from multiple threads:
     each chart's cache keys/queries are independent, Django's DB connections
@@ -766,6 +772,11 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     from dataviz.utils.data_loader import run_saved_query, run_raw_sql, run_column_query
 
     chart = get_object_or_404(SavedChart, pk=chart_id)
+
+    # ── School scope ────────────────────────────────────────────────
+    if school_id and school_id not in ('all', 'All', ''):
+        pf_filters = dict(pf_filters or {})
+        pf_filters.setdefault('school_state_id', school_id)
 
     # ── Build cache key ────────────────────────────────────────────
     pf_params = sorted(pf_filters.items())
@@ -862,22 +873,14 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     },
                     sort_keys=True, default=str,
                 ).encode()).hexdigest()[:12]
-                user = getattr(request, 'user', None)
-                user_part = ""
-                if user and getattr(user, 'is_authenticated', False):
-                    user_role = getattr(user, 'active_role', None)
-                    role_name = user_role.name if user_role else 'None'
-                    active_school = getattr(user, 'active_school', None)
-                    school_id = active_school.state_id if active_school else 'All'
-                    user_part = f":u{user.pk}:r{role_name}:s{school_id}"
-                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}{user_part}'
+                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}'
                 ds_cached = cache.get(ds_cache_key)
                 if ds_cached is not None:
                     result = ds_cached
                     chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
                 else:
                     sql, params = compile_dataset_to_sql(
-                        ds, user=user, interactive_filters=resolved_filters,
+                        ds, user=None, interactive_filters=resolved_filters,
                         limit=limit_val, status_filter=status_val,
                         one_row_per_stu_annual_key=one_per_sak,
                     )
@@ -917,7 +920,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             result = run_saved_query(
                 chart.source_id, merged_filters, user,
                 extra_columns=pg_extra or None,
-                apply_user_filters=True,
+                apply_user_filters=False,
             )
             result = _augment_chart_result_rows(
                 chart.chart_type, chart_cfg, {}, result,
@@ -1003,6 +1006,7 @@ def chart_render_api(request, chart_id):
         drill_source_name=request.GET.get('source_name', ''),
         is_embed=is_embed, request=request,
         if_none_match=request.headers.get('If-None-Match'),
+        school_id=request.GET.get('school_id', ''),
     )
 
     if result.get('not_modified'):
@@ -1052,6 +1056,7 @@ def chart_batch_render_api(request):
     source_name = body.get('source_name', '')
     is_embed = source in ('page', 'dashboard')
     pf_filters = body.get('filters') or {}
+    school_id = body.get('school_id') or ''
 
     # Non-admins may only batch-render their own home-dashboard charts
     permitted = set(chart_ids)
@@ -1081,6 +1086,7 @@ def chart_batch_render_api(request):
                 cid, pf_filters,
                 drill_source=source, drill_source_id=source_id, drill_source_name=source_name,
                 is_embed=is_embed, request=request,
+                school_id=school_id,
             )
             return cid, {'html': res.get('html', ''), 'error': res.get('error')}
         except Exception as exc:

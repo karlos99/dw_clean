@@ -111,6 +111,18 @@
   </div>
   {% endif %}
 
+  {% if active_school_id %}
+  <!-- School scope: default view shows all students; toggle narrows to the active school -->
+  <div class="flex items-center gap-2 mb-4">
+    <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">View:</span>
+    <div id="scope-toggle" class="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm"
+         data-school-id="{{ active_school_id }}" data-school-name="{{ active_school_name }}">
+      <button type="button" data-scope="all" class="scope-btn px-3 py-1.5 text-xs font-medium rounded-md transition bg-blue-600 text-white">All Students</button>
+      <button type="button" data-scope="school" class="scope-btn px-3 py-1.5 text-xs font-medium rounded-md transition text-slate-600 hover:bg-slate-50">{{ active_school_name }}</button>
+    </div>
+  </div>
+  {% endif %}
+
   {% if page.page_filters %}
   <!-- Active filter tags -->
   <div class="flex flex-wrap items-center gap-2 mb-4 min-h-[2rem]" x-show="tags.some(t => !t.hidden)" x-cloak>
@@ -360,6 +372,66 @@
 
 <script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
 <script>
+(function () {
+  // School scope toggle: "All Students" (default) vs the active school.
+  // Runs synchronously so the eager batch + htmx below already carry the
+  // persisted school_id in their chart URLs.
+  var SCOPE_KEY = 'page_chart_school_scope';
+  var toggle = document.getElementById('scope-toggle');
+  if (!toggle) return;
+  var schoolId = toggle.dataset.schoolId || '';
+
+  var saved = 'all';
+  try { saved = sessionStorage.getItem(SCOPE_KEY) || 'all'; } catch (_) {}
+  if (saved !== 'school') saved = 'all';
+  var activeId = (saved === 'school' && schoolId) ? schoolId : '';
+
+  function withSchool(url, id) {
+    var u = new URL(url, window.location.origin);
+    if (id) u.searchParams.set('school_id', id);
+    else u.searchParams.delete('school_id');
+    return u.pathname + u.search + u.hash;
+  }
+
+  function applyToSlots(id) {
+    document.querySelectorAll('.page-chart-slot').forEach(function (el) {
+      var base = el.getAttribute('data-chart-base-url');
+      if (!base) return;
+      var current = el.getAttribute('hx-get') || base;
+      el.setAttribute('data-chart-base-url', withSchool(base, id));
+      el.setAttribute('hx-get', withSchool(current, id));
+    });
+  }
+
+  function setButtons(active) {
+    toggle.querySelectorAll('.scope-btn').forEach(function (b) {
+      var on = b.dataset.scope === active;
+      b.className = 'scope-btn px-3 py-1.5 text-xs font-medium rounded-md transition ' +
+        (on ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50');
+    });
+  }
+
+  applyToSlots(activeId);
+  setButtons(saved);
+
+  toggle.querySelectorAll('.scope-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var scope = btn.dataset.scope === 'school' ? 'school' : 'all';
+      try { sessionStorage.setItem(SCOPE_KEY, scope); } catch (_) {}
+      var id = (scope === 'school' && schoolId) ? schoolId : '';
+      setButtons(scope);
+      applyToSlots(id);
+      document.querySelectorAll('.page-chart-slot').forEach(function (el) {
+        if (!window.htmx) return;
+        el.innerHTML = '<div class="flex items-center justify-center h-full text-slate-300 text-sm">Loading\u2026</div>';
+        htmx.process(el);
+        htmx.trigger(el, 'reload');
+      });
+    });
+  });
+})();
+</script>
+<script>
 (function() {
   // Render the initial (likely above-the-fold) burst of charts concurrently
   // via one batch request instead of each tile firing its own sequential /
@@ -378,6 +450,7 @@
   const source = firstUrl.searchParams.get('source') || '';
   const sourceId = firstUrl.searchParams.get('source_id') || '';
   const sourceName = firstUrl.searchParams.get('source_name') || '';
+  const schoolId = firstUrl.searchParams.get('school_id') || '';
   const filters = {};
   for (const [key, val] of firstUrl.searchParams.entries()) {
     if (key.startsWith('pf_') && val) {
@@ -412,7 +485,7 @@
   fetch('/dataviz/api/charts/batch-render/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: JSON.stringify({ chart_ids: chartIds, source, source_id: sourceId, source_name: sourceName, filters }),
+    body: JSON.stringify({ chart_ids: chartIds, source, source_id: sourceId, source_name: sourceName, filters, school_id: schoolId }),
   })
     .then(r => r.json())
     .then(data => {

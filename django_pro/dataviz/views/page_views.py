@@ -182,6 +182,8 @@ def page_view(request, slug):
     from django.utils.http import urlencode
     default_qs = urlencode([('pf_' + t['col'], t['value']) for t in default_filter_tags])
 
+    active_school = getattr(request.user, 'active_school', None)
+
     return render(request, 'dataviz/pages/view.html', {
         'page':         dv_page,
         'dv_page':      dv_page,
@@ -196,4 +198,6 @@ def page_view(request, slug):
         'page_filter_cols': page_filter_cols,
         'page_filter_cols_json': json.dumps(page_filter_cols),
         'section_filter_cols_map': section_filter_cols_map,
+        'active_school_id': active_school.state_id if active_school else '',
+        'active_school_name': active_school.school_name if active_school else '',
     })

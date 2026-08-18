@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import login
 from django.contrib import messages
@@ -744,7 +745,22 @@ def user_detail(request, user_id):
 def switch_role(request):
     """
     Switch the user's active role and school context.
+
+    Returns a JSON payload for AJAX requests (fetch/htmx) so the caller can
+    show a confirmation notification without a full-page reload; standard form
+    POSTs still redirect back to the referring page.
     """
+    is_ajax = (
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.headers.get('HX-Request') == 'true'
+        or 'application/json' in (request.headers.get('Accept') or '')
+    )
+
+    role_name = None
+    school_name = None
+    school_id = None
+    error = None
+
     if request.method == 'POST':
         # Handle Role Switch
         role_id = request.POST.get('role_id')
@@ -756,8 +772,9 @@ def switch_role(request):
                 # Verify user has this role
                 if request.user.roles.filter(id=role_id).exists():
                     request.session['active_role_id'] = role_id
+                    role_name = request.user.roles.filter(id=role_id).values_list('name', flat=True).first()
                 else:
-                    messages.error(request, "You do not have this role.")
+                    error = "You do not have this role."
 
         # Handle School Switch
         school_id = request.POST.get('school_id') # This is state_id
@@ -770,6 +787,7 @@ def switch_role(request):
                        prefs.pop('active_school_id', None)
                        request.user.preferences = prefs
                        request.user.save(update_fields=['preferences'])
+                  school_name = 'All schools'
              elif school_id:
                   # Verify user has access to this school (check JSONField)
                   user_schools_list = request.user.schools if isinstance(request.user.schools, list) else []
@@ -784,9 +802,23 @@ def switch_role(request):
                        prefs['active_school_id'] = school_id
                        request.user.preferences = prefs
                        request.user.save(update_fields=['preferences'])
+                       school_name = StudataSchool.objects.filter(state_id=school_id).values_list('school_name', flat=True).first()
                   else:
-                       messages.error(request, "You do not have access to this school.")
-    
+                       error = "You do not have access to this school."
+
+    if is_ajax:
+        return JsonResponse({
+            'success': not error,
+            'error': error,
+            'role_name': role_name,
+            'school_id': school_id,
+            'school_name': school_name,
+        })
+
+    if error:
+        messages.error(request, error)
+    elif school_name is not None:
+        messages.success(request, f"School saved: {school_name}")
     return redirect(request.META.get('HTTP_REFERER', '/'))
 
 @login_required
