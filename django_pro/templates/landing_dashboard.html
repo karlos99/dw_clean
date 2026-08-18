@@ -37,10 +37,26 @@
 {% endblock %}
 
 {% block content %}
+{% if messages %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+    {% for message in messages %}
+    <div class="flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium shadow-sm
+                {% if message.tags == 'success' %}bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200
+                {% elif message.tags == 'error' %}bg-red-50 text-red-800 ring-1 ring-red-200
+                {% else %}bg-blue-50 text-blue-800 ring-1 ring-blue-200{% endif %}">
+        {% if message.tags == 'success' %}
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+        {% else %}
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        {% endif %}
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
 <div id="home-dash-app" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
      data-dashboard-url="{% url 'dataviz:home_dashboard' %}"
      data-render-url-template="{% url 'dataviz:chart_render' 999999999 %}"
-     data-switch-school-url="{% url 'users:switch_role' %}"
      data-csrf="{{ csrf_token }}">
 
     <!-- Header (compact) -->
@@ -60,15 +76,20 @@
             {% endif %}
         </div>
         {% if user_schools %}
-        <div class="flex items-center gap-2">
+        <form method="POST" action="{% url 'users:switch_role' %}" class="flex items-center gap-2">
+            {% csrf_token %}
             <label for="home-school-filter" class="text-xs font-medium text-slate-500 whitespace-nowrap">School:</label>
-            <select id="home-school-filter" class="px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:ring-blue-500 focus:border-blue-500">
-                <option value="">All schools</option>
+            <select name="school_id" id="home-school-filter" class="px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:ring-blue-500 focus:border-blue-500">
+                <option value="all">All schools</option>
                 {% for s in user_schools %}
                 <option value="{{ s.state_id }}" {% if s.state_id == active_school_id %}selected{% endif %}>{{ s.school_name }}</option>
                 {% endfor %}
             </select>
-        </div>
+            <button type="submit" id="home-school-save"
+                    class="px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 transition disabled:opacity-50">
+                Save
+            </button>
+        </form>
         {% endif %}
     </header>
 

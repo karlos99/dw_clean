@@ -16,13 +16,16 @@ def index(request):
         home_dashboard_json = 'null'
         home_slots_json = '[]'
         slots = []
+        active_school = getattr(request.user, 'active_school', None)
+        active_school_id = active_school.state_id if active_school else ''
         if home_charts_enabled:
             from dataviz.models import Dashboard
             home_dashboard = Dashboard.get_home(request.user)
             slots = list(home_dashboard.chart_slots.select_related('chart').order_by('position'))
 
             # Pre-render each chart via the shared (cached) pipeline so the home
-            # page renders charts exactly like the dataviz pages do.
+            # page renders charts exactly like the dataviz pages do. The user's
+            # saved school (if any) narrows the visuals to that school.
             from dataviz.views.api.chart_api import _render_saved_chart
             for slot in slots:
                 slot.rendered_html = ''
@@ -37,6 +40,7 @@ def index(request):
                         drill_source_name='My Charts',
                         is_embed=True,
                         request=request,
+                        school_id=active_school_id,
                     )
                     slot.rendered_html = res.get('html', '')
                     slot.render_error = res.get('error')
@@ -70,7 +74,6 @@ def index(request):
                     .order_by('school_name')
                     .values('state_id', 'school_name', 'short_name')
                 )
-        active_school = getattr(request.user, 'active_school', None)
 
         context = {
             'saved_queries': SavedQuery.objects.filter(owner=request.user).order_by('-updated_at')[:5],
@@ -81,7 +84,8 @@ def index(request):
             'home_slots_json': home_slots_json,
             'home_slots': slots,
             'user_schools': user_schools,
-            'active_school_id': active_school.state_id if active_school else '',
+            'active_school_id': active_school_id,
+            'active_school_name': active_school.school_name if active_school else '',
         }
         return render(request, 'landing_dashboard.html', context)
 

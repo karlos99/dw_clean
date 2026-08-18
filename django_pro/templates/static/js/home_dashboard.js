@@ -15,7 +15,6 @@
 
     var dashUrl         = app.dataset.dashboardUrl;
     var renderUrlTpl    = app.dataset.renderUrlTemplate;    // .../999999999/render/
-    var switchSchoolUrl = app.dataset.switchSchoolUrl;
     var csrf            = app.dataset.csrf;
     var gridEl          = document.getElementById('home-grid');
     var emptyEl         = document.getElementById('home-grid-empty');
@@ -342,28 +341,12 @@
         }
     }
 
-    /* ── School filter ─────────────────────────────────────────── */
-    function wireSchoolFilter() {
-        var sel = document.getElementById('home-school-filter');
-        if (!sel) return;
-        sel.addEventListener('change', function () {
-            var fd = new FormData();
-            fd.append('school_id', sel.value || 'all');
-            fetch(switchSchoolUrl, {
-                method: 'POST',
-                body: fd,
-                headers: { 'X-CSRFToken': csrf },
-                credentials: 'same-origin',
-            }).then(function () { window.location.reload(); });
-        });
-    }
-
+    /* ── School selector (Save + notification) ─────────────────── */
     document.addEventListener('DOMContentLoaded', function () {
         initGrid();
         wireExisting();
         wireDrag();
         wireDock();
         wirePreview();
-        wireSchoolFilter();
     });
 })();
