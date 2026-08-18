@@ -148,6 +148,36 @@ class ProjectConfig(models.Model):
                         offset_years=m['offset'],
                         is_current=m['is_current']
                     )
+                # Keep the ClickHouse relative_year mirror in sync — dataset
+                # charts resolve relative-year filters against it, so a stale
+                # mirror would leave charts on the old current-year mapping.
+                # Push rows directly from Django (not the postgresql() table
+                # function) so both databases update in the same save().
+                try:
+                    from clickhouse_utils.client import get_clickhouse_client
+                    from dataviz.models import RelativeYear as _RelYear
+                    _ch = get_clickhouse_client()
+                    if _ch is not None:
+                        from django.conf import settings as _settings
+                        _ch_db = getattr(_settings, 'CLICKHOUSE_DB', 'fastapi_clickhouse_db')
+                        _ch.command(f"TRUNCATE TABLE {_ch_db}.relative_year")
+                        _rows = [
+                            (r.school_year, r.relative_alias, r.relative_label,
+                             r.offset_years, r.is_current)
+                            for r in _RelYear.objects.order_by('offset_years')
+                        ]
+                        if _rows:
+                            _ch.insert(
+                                f"{_ch_db}.relative_year",
+                                _rows,
+                                column_names=['school_year', 'relative_alias',
+                                              'relative_label', 'offset_years', 'is_current'],
+                            )
+                except Exception:
+                    import logging
+                    logging.getLogger('landing').exception(
+                        'Failed to sync relative_year to ClickHouse'
+                    )
         except Exception:
             # Prevent failure during initial migrations/schema changes before table exists
             pass

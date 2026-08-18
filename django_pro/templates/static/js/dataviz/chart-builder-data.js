@@ -70,10 +70,14 @@ function chartBuilderDataMethods() {
                                { headers: { 'X-CSRFToken': getCsrf() } });
         const d = await r.json();
         this.filterOptions = d.filter_options || {};
-        this.filterLabels = d.filter_labels || {};
+        const labels = d.filter_labels || {};
+        this.yearAliasLabels = labels.__school_year_alias_labels__ || {};
+        delete labels.__school_year_alias_labels__;
+        this.filterLabels = labels;
         Object.keys(this.filterOptions).forEach(col => {
           this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
         });
+        this._preserveSelectedFilterValues();
         this._recomputeFilterCols();
       } catch (e) { console.error('Dataset filter options:', e); this.filterOptions = {}; this.filterLabels = {}; this._recomputeFilterCols(); }
       this.filtersLoading = false;
@@ -101,12 +105,34 @@ function chartBuilderDataMethods() {
         Object.keys(this.filterOptions).forEach(col => {
           this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
         });
+        this._preserveSelectedFilterValues();
         this._recomputeFilterCols();
       } catch (e) { console.error('Filter options:', e); this.filterOptions = {}; this.filterLabels = {}; this._recomputeFilterCols(); }
       this.filtersLoading = false;
       if (this.chartType === 'progress_growth' && this.pgBeforeCol && this.pgAfterCol) {
         this._pgAutoScale();
       }
+    },
+
+    /* Keep any currently-selected filter values in the options list even when
+       the data no longer contains them (e.g. a relative year that resolves to
+       a year with no rows yet). Without this the checked chip disappears after
+       a data rollover to a new current year. */
+    _preserveSelectedFilterValues() {
+      if (!this.chartFilters || typeof this.chartFilters !== 'object') return;
+      let changed = false;
+      const opts = { ...this.filterOptions };
+      Object.entries(this.chartFilters).forEach(([col, vals]) => {
+        if (!Array.isArray(vals) || !vals.length) return;
+        const existing = Array.isArray(opts[col]) ? opts[col] : [];
+        const merged = existing.slice();
+        vals.forEach(v => { if (!merged.includes(v)) merged.push(v); });
+        if (merged.length !== existing.length) {
+          opts[col] = merged;
+          changed = true;
+        }
+      });
+      if (changed) this.filterOptions = opts;
     },
 
     async runSql() {

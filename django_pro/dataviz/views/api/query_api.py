@@ -298,7 +298,12 @@ def _full_mark_label(info: dict) -> str:
 
 def _inject_school_year_aliases(options: dict, labels: dict) -> None:
     """Prepend relative alias options to the school_year filter if present."""
-    if 'school_year' not in options:
+    sy_key = None
+    for k in options:
+        if k == 'school_year' or (isinstance(k, str) and k.lower().endswith('.school_year')):
+            sy_key = k
+            break
+    if sy_key is None:
         return
     from dataexploration.constants import (
         SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR,
@@ -313,10 +318,33 @@ def _inject_school_year_aliases(options: dict, labels: dict) -> None:
         (SY_FIVE_PRIOR, 'Five Years Prior'),
     ]
     # Prepend aliases so they appear at the top of the list
-    existing = options['school_year']
-    options['school_year'] = [a for a, _ in alias_entries] + [y for y in existing if y not in {a for a, _ in alias_entries}]
+    existing = options[sy_key]
+    alias_set = {a for a, _ in alias_entries}
+    options[sy_key] = [a for a, _ in alias_entries] + [y for y in existing if y not in alias_set]
     # Store per-value labels under a special key for the frontend
     labels['__school_year_alias_labels__'] = {a: lbl for a, lbl in alias_entries}
+
+
+_RELATIVE_YEAR_LABELS = [
+    'This School Year', 'Last School Year', 'Two Years Prior',
+    'Three Years Prior', 'Four Years Prior', 'Five Years Prior',
+]
+
+
+def _inject_relative_year_labels(options: dict) -> None:
+    """Ensure all six relative-year labels are available as filter options.
+
+    Dataset charts filter by a ``relative_label`` column (from the
+    relative_year table). Only the labels for years that actually have data
+    appear from the query, so inject the full set to future-proof the options
+    when the data rolls over to a different current year.
+    """
+    for key in list(options):
+        if key == 'relative_label' or (isinstance(key, str) and key.endswith('.relative_label')):
+            existing = options[key]
+            merged = _RELATIVE_YEAR_LABELS + [v for v in existing if v not in _RELATIVE_YEAR_LABELS]
+            options[key] = merged
+    return
 
 
 def _build_where_clause(filters_dict: dict, exclude_col: str = None) -> tuple[list[str], list]:
