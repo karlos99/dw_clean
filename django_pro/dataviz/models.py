@@ -402,9 +402,22 @@ class DataVizPageSection(models.Model):
 
 
 class Dataset(models.Model):
-    """A visual dataset built by joining tables and applying filter rules."""
+    """A dataset from visual joins or a read-only custom SQL query."""
+
+    SOURCE_VISUAL = 'visual'
+    SOURCE_SQL = 'sql'
+    SOURCE_TYPE_CHOICES = [
+        (SOURCE_VISUAL, 'Visual Join'),
+        (SOURCE_SQL, 'Custom SQL'),
+    ]
 
     name = models.CharField(max_length=200)
+    source_type = models.CharField(
+        max_length=20,
+        choices=SOURCE_TYPE_CHOICES,
+        default=SOURCE_VISUAL,
+    )
+    source_sql = models.TextField(blank=True)
     description = models.TextField(blank=True)
     base_table = models.CharField(max_length=100, default='current_student')  # E.g. 'current_student'
     distinct = models.BooleanField(default=True)
@@ -451,6 +464,8 @@ class Dataset(models.Model):
         return {
             'id': self.pk,
             'name': self.name,
+            'source_type': self.source_type or self.SOURCE_VISUAL,
+            'source_sql': self.source_sql or '',
             'description': self.description,
             'base_table': self.base_table,
             'distinct': self.distinct,

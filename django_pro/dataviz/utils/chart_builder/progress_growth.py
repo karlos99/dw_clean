@@ -57,26 +57,21 @@ def _record_pg_val(row: dict, col: str, val) -> None:
 
 def _resolve_row_column(row_keys, col):
     """Map a config column name to the actual key present in row dicts."""
-    if not col or not row_keys:
+    if not col:
         return col
     from dataexploration.school_year_utils import resolve_relative_column_key
 
     def _norm_col(c):
         return str(c).replace('-', '_').lower()
 
-    key_map = {_norm_col(k): k for k in row_keys}
-    norm = _norm_col(col)
-    if norm in key_map:
-        return key_map[norm]
     resolved = resolve_relative_column_key(col)
-    norm_res = _norm_col(resolved)
-    if norm_res in key_map:
-        return key_map[norm_res]
-    clean = col.split('.')[-1]
-    norm_clean = _norm_col(clean)
-    if norm_clean in key_map:
-        return key_map[norm_clean]
-    return col
+    if row_keys:
+        key_map = {_norm_col(k): k for k in row_keys}
+        for candidate in (col, resolved, col.split('.')[-1]):
+            norm = _norm_col(candidate)
+            if norm in key_map:
+                return key_map[norm]
+    return resolved or col
 
 
 def _find_student_id_key(row_keys):

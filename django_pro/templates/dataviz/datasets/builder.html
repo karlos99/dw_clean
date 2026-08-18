@@ -25,7 +25,8 @@
     <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-6">
         <div>
             <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">
-                {% if dataset %}Edit Dataset: {{ dataset.name }}{% else %}Visual Dataset Designer{% endif %}
+                <span x-show="sourceMode === 'visual'">{% if dataset %}Edit Dataset: {{ dataset.name }}{% else %}Visual Dataset Designer{% endif %}</span>
+                <span x-show="sourceMode === 'sql'">{% if dataset %}Edit SQL Dataset: {{ dataset.name }}{% else %}SQL Dataset Designer{% endif %}</span>
             </h1>
         
         </div>
@@ -34,7 +35,7 @@
                 Cancel
             </a>
             <button @click="aliasPanelOpen = true"
-                    :disabled="columns.length === 0"
+                    :disabled="sourceMode === 'visual' ? columns.length === 0 : sqlColumns.length === 0"
                     class="inline-flex items-center px-4 py-2 border border-slate-400 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 focus:outline-none transition disabled:opacity-40 disabled:cursor-not-allowed">
                 <svg class="h-4 w-4 mr-1.5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
                 Column Aliases
@@ -83,17 +84,60 @@
                 <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Description</label>
                 <input type="text" x-model="description" class="w-full border-slate-300 rounded-none shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm py-2 px-3 border" placeholder="E.g., Combines student profile data with matching scale scores from test results.">
             </div>
-            <div class="flex items-center pt-5">
+            <div class="flex items-center pt-5" x-show="sourceMode === 'visual'">
                 <label class="inline-flex items-center cursor-pointer select-none">
                     <input type="checkbox" x-model="distinct" class="text-blue-600 focus:ring-blue-500 border-slate-300 rounded-none h-4.5 w-4.5">
                     <span class="ml-2 text-xs font-bold text-slate-700 uppercase tracking-wider">Distinct Records Only</span>
                 </label>
             </div>
         </div>
+
+        <!-- Source mode toggle -->
+        <div class="mt-6 pt-4 border-t border-slate-100">
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Dataset Source</label>
+            <div class="inline-flex rounded-none border border-slate-300 overflow-hidden text-xs font-bold uppercase tracking-wider">
+                <button type="button" @click="sourceMode = 'visual'"
+                        :class="sourceMode === 'visual' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'"
+                        class="px-4 py-2 transition">Visual Join</button>
+                <button type="button" @click="sourceMode = 'sql'"
+                        :class="sourceMode === 'sql' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'"
+                        class="px-4 py-2 transition border-l border-slate-300">Custom SQL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom SQL workspace -->
+    <div x-show="sourceMode === 'sql'" class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8">
+        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-widest mb-3 border-b border-slate-100 pb-2">SQL Query</h3>
+        <p class="text-xs text-slate-500 mb-3">Write a read-only <code class="bg-slate-100 px-1">SELECT</code> or <code class="bg-slate-100 px-1">WITH</code> query. Results become the dataset columns charts can use.</p>
+        <textarea x-model="sourceSql" rows="12"
+                  class="w-full text-xs font-mono border border-slate-300 rounded-none px-3 py-2 bg-white resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="SELECT cs.ssid, cs.student_name&#10;FROM current_student cs&#10;WHERE cs.school_year = '{{This School Year}}'"></textarea>
+        <p class="text-[10px] text-slate-400 mt-2">
+          School years: <code class="bg-slate-100 px-1">{% verbatim %}{{Last School Year}}{% endverbatim %}</code>,
+          <code class="bg-slate-100 px-1">{% verbatim %}{{This School Year}}{% endverbatim %}</code> — resolved at run time.
+        </p>
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button @click="runPreview()" :disabled="previewLoading || !sourceSql.trim()"
+                    class="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-widest transition rounded-none disabled:opacity-40">
+                <span x-text="previewLoading ? 'Running…' : 'Run & Preview'"></span>
+            </button>
+            <span x-show="sqlColumns.length" class="text-xs text-emerald-700 font-semibold" x-text="sqlColumns.length + ' column(s) detected'"></span>
+        </div>
+        <template x-if="sqlColumns.length">
+            <div class="mt-4 border border-slate-200 bg-slate-50 p-3">
+                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Detected Columns</p>
+                <div class="flex flex-wrap gap-1.5">
+                    <template x-for="col in sqlColumns" :key="col">
+                        <span class="text-[10px] font-mono bg-white border border-slate-200 px-2 py-0.5 text-slate-700" x-text="col"></span>
+                    </template>
+                </div>
+            </div>
+        </template>
     </div>
 
     <!-- Visual Canvas Workspace -->
-    <div class="grid grid-cols-1 lg:grid-cols-4 gap-8 mb-8">
+    <div x-show="sourceMode === 'visual'" class="grid grid-cols-1 lg:grid-cols-4 gap-8 mb-8">
         <!-- Sidebar Table Toolbox -->
         <div class="lg:col-span-1 space-y-6">
             <div class="bg-white border border-slate-200 shadow p-6 rounded-none sticky top-6">
@@ -341,7 +385,7 @@
     </div>
 
     <!-- Filters Section -->
-    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="sourceMode === 'visual' && nodes.length > 0">
         <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
             <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Visual Query Filters (WHERE)</h3>
             <div class="flex space-x-4">
@@ -438,7 +482,7 @@
     </div>
 
     <!-- Order By Section -->
-    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="sourceMode === 'visual' && nodes.length > 0">
         <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
             <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Order By</h3>
             <div class="flex space-x-4">
@@ -502,11 +546,12 @@
     </div>
 
     <!-- Preview Panel -->
-    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8" x-show="nodes.length > 0">
+    <div class="bg-white border border-slate-200 shadow p-6 rounded-none mb-8"
+         x-show="(sourceMode === 'visual' && nodes.length > 0) || (sourceMode === 'sql' && sourceSql.trim())">
         <div class="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
-            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Live SQL & Preview Results</h3>
+            <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Preview Results</h3>
             <div class="flex space-x-2">
-                <button @click="runPreview()" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-widest transition rounded-none">
+                <button @click="runPreview()" class="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-widest transition rounded-none" x-show="sourceMode === 'visual'">
                     Run Query
                 </button>
                 <button @click="exportCSV()" class="px-3 py-1 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs uppercase tracking-widest transition rounded-none disabled:opacity-40" :disabled="previewLoading">
@@ -523,7 +568,8 @@
         <!-- Tab Data -->
         <div x-show="previewTab === 'data'">
             <div x-show="previewLoading" class="text-center py-12 text-sm text-slate-500 font-sans">
-                Compiling visual layout and querying PostgreSQL...
+                <span x-show="sourceMode === 'sql'">Running SQL query…</span>
+                <span x-show="sourceMode === 'visual'">Compiling visual layout and querying PostgreSQL…</span>
             </div>
             <div x-show="!previewLoading" id="preview-result-container">
                 <div class="text-center py-12 text-sm text-slate-400 font-sans">
@@ -534,7 +580,8 @@
         
         <!-- Tab SQL -->
         <div x-show="previewTab === 'sql'">
-            <pre class="bg-slate-50 p-4 border border-slate-200 text-xs font-mono overflow-x-auto text-slate-700 whitespace-pre-wrap select-all" x-text="compiledSQL || 'SQL will be displayed here once query runs.'"></pre>
+            <pre class="bg-slate-50 p-4 border border-slate-200 text-xs font-mono overflow-x-auto text-slate-700 whitespace-pre-wrap select-all"
+                 x-text="sourceMode === 'sql' ? (sourceSql || 'SQL will be displayed here once you enter a query.') : (compiledSQL || 'SQL will be displayed here once query runs.')"></pre>
         </div>
     </div>
 
@@ -648,6 +695,8 @@
 {{ dataset.order_by|json_script:"order_by-data" }}
 {{ dataset.column_mappings|json_script:"mappings-data" }}
 {{ dataset.sql_preview|json_script:"sql_preview-data" }}
+{{ dataset.source_type|json_script:"source_type-data" }}
+{% if dataset.source_sql %}{{ dataset.source_sql|json_script:"source_sql-data" }}{% else %}{{ ""|json_script:"source_sql-data" }}{% endif %}
 {% endif %}
 
 <!-- ── Column Alias Mapper Panel ─────────────────────────────────────────── -->
@@ -723,13 +772,14 @@
 
     <!-- Rows (scrollable) -->
     <div class="flex-1 overflow-y-auto divide-y divide-slate-100">
-        <template x-if="columns.length === 0">
+        <template x-if="effectiveColumns.length === 0">
             <div class="px-6 py-16 text-center text-xs text-slate-400">
-                No columns selected yet. Check columns on the canvas first.
+                <span x-show="sourceMode === 'sql'">Run preview to detect SQL columns first.</span>
+                <span x-show="sourceMode === 'visual'">No columns selected yet. Check columns on the canvas first.</span>
             </div>
         </template>
 
-        <template x-for="col in columns" :key="col">
+        <template x-for="col in effectiveColumns" :key="col">
             <div class="px-6 py-4 hover:bg-slate-50/60 transition">
                 <!-- Source column label -->
                 <div class="flex items-start mb-2.5">
@@ -863,14 +913,22 @@
             previewLoading: false,
             errorMessage: '',
             compiledSQL: '',
+            sourceMode: '{{ initial_source_mode|default:"visual"|escapejs }}',
+            sourceSql: '',
+            sqlColumns: [],
 
             // Metadata whitelists
             schema: {{ schema_json|safe }},
             tablesList: {{ tables|safe }},
 
             // Computed: how many columns have a user-set alias
+            get effectiveColumns() {
+                return this.sourceMode === 'sql' ? this.sqlColumns : this.columns;
+            },
+
             get mappedCount() {
-                return Object.keys(this.columnMappings).filter(k => this.columns.includes(k) && this.columnMappings[k]).length;
+                const cols = this.effectiveColumns;
+                return Object.keys(this.columnMappings).filter(k => cols.includes(k) && this.columnMappings[k]).length;
             },
 
             init() {
@@ -899,6 +957,16 @@
                 }
                 if (document.getElementById('mappings-data')) {
                     this.columnMappings = JSON.parse(document.getElementById('mappings-data').textContent) || {};
+                }
+                if (document.getElementById('source_type-data')) {
+                    const st = JSON.parse(document.getElementById('source_type-data').textContent);
+                    if (st === 'sql') this.sourceMode = 'sql';
+                }
+                if (document.getElementById('source_sql-data')) {
+                    this.sourceSql = JSON.parse(document.getElementById('source_sql-data').textContent) || '';
+                }
+                if (this.sourceMode === 'sql' && document.getElementById('columns-data')) {
+                    this.sqlColumns = JSON.parse(document.getElementById('columns-data').textContent) || [];
                 }
                 
                 // Normalize loaded joins to include the new conditions array
@@ -1592,6 +1660,46 @@
             },
             
             runPreview() {
+                if (this.sourceMode === 'sql') {
+                    if (!this.sourceSql.trim()) {
+                        this.errorMessage = 'Enter a SQL query first.';
+                        return;
+                    }
+                    this.errorMessage = '';
+                    this.previewLoading = true;
+                    this.previewTab = 'data';
+                    const payload = {
+                        source_type: 'sql',
+                        source_sql: this.sourceSql,
+                    };
+                    fetch("{% url 'dataviz:dataset_preview' %}", {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': '{{ csrf_token }}'
+                        },
+                        body: JSON.stringify(payload)
+                    })
+                    .then(res => res.text())
+                    .then(html => {
+                        document.getElementById('preview-result-container').innerHTML = html;
+                        const table = document.querySelector('#preview-result-container th');
+                        const headers = Array.from(document.querySelectorAll('#preview-result-container thead th')).map(th => th.textContent.trim());
+                        if (headers.length) {
+                            this.sqlColumns = headers;
+                            this.columns = headers;
+                        }
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        this.errorMessage = 'Error running preview: ' + err;
+                    })
+                    .finally(() => {
+                        this.previewLoading = false;
+                    });
+                    return;
+                }
+
                 if (this.nodes.length === 0 || this.columns.length === 0) {
                     this.errorMessage = "Please drag at least one table onto the canvas and select columns.";
                     return;
@@ -1600,6 +1708,7 @@
                 this.previewLoading = true;
                 
                 const payload = {
+                    source_type: 'visual',
                     base_table: this.baseTable,
                     distinct: this.distinct,
                     joins: this.joins,
@@ -1693,6 +1802,39 @@
             },
 
             exportCSV() {
+                if (this.sourceMode === 'sql') {
+                    if (!this.sourceSql.trim()) {
+                        this.errorMessage = 'Enter a SQL query first.';
+                        return;
+                    }
+                    this.previewLoading = true;
+                    fetch("{% url 'dataviz:dataset_export_csv' %}", {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': '{{ csrf_token }}'
+                        },
+                        body: JSON.stringify({ source_type: 'sql', source_sql: this.sourceSql }),
+                    })
+                    .then(res => {
+                        if (!res.ok) return res.text().then(t => { throw new Error(t); });
+                        return res.blob();
+                    })
+                    .then(blob => {
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'dataset_export.csv';
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                    })
+                    .catch(err => {
+                        this.errorMessage = 'Export failed: ' + err.message;
+                    })
+                    .finally(() => { this.previewLoading = false; });
+                    return;
+                }
+
                 if (this.nodes.length === 0 || this.columns.length === 0) {
                     this.errorMessage = "Please drag at least one table onto the canvas and select columns.";
                     return;
@@ -1701,6 +1843,7 @@
                 this.previewLoading = true;
 
                 const payload = {
+                    source_type: 'visual',
                     base_table: this.baseTable,
                     distinct: this.distinct,
                     joins: this.joins,
@@ -1765,7 +1908,7 @@
             _computeAutoAliasMap() {
                 const natural = {};
                 const counts = {};
-                for (const col of this.columns) {
+                for (const col of this.effectiveColumns) {
                     const alias = this.computeNaturalAlias(col);
                     natural[col] = alias;
                     counts[alias] = (counts[alias] || 0) + 1;
@@ -1844,6 +1987,34 @@
                     window.scrollTo({top: 0, behavior: 'smooth'});
                     return;
                 }
+
+                if (this.sourceMode === 'sql') {
+                    if (!this.sourceSql.trim()) {
+                        this.errorMessage = 'Enter a SQL query before saving.';
+                        window.scrollTo({top: 0, behavior: 'smooth'});
+                        return;
+                    }
+                    if (!this.sqlColumns.length) {
+                        this.errorMessage = 'Run preview first so column names are detected.';
+                        window.scrollTo({top: 0, behavior: 'smooth'});
+                        return;
+                    }
+                    const activeMappings = {};
+                    for (const col of this.sqlColumns) {
+                        if (this.columnMappings[col]) activeMappings[col] = this.columnMappings[col];
+                    }
+                    const payload = {
+                        source_type: 'sql',
+                        source_sql: this.sourceSql,
+                        name: this.name,
+                        description: this.description,
+                        columns: this.sqlColumns,
+                        column_mappings: activeMappings,
+                    };
+                    this._postSave(payload);
+                    return;
+                }
+
                 if (this.nodes.length === 0 || this.columns.length === 0) {
                     this.errorMessage = "Please configure a Base Table on the canvas and select columns.";
                     window.scrollTo({top: 0, behavior: 'smooth'});
@@ -1857,6 +2028,7 @@
                 }
 
                 const payload = {
+                    source_type: 'visual',
                     name: this.name,
                     description: this.description,
                     base_table: this.baseTable,
@@ -1868,9 +2040,13 @@
                     order_by: this.orderBy,
                     column_mappings: activeMappings,
                 };
-                
+
+                this._postSave(payload);
+            },
+
+            _postSave(payload) {
                 const url = "{% if dataset %}{% url 'dataviz:dataset_detail' dataset.pk %}{% else %}{% url 'dataviz:dataset_save' %}{% endif %}";
-                
+
                 fetch(url, {
                     method: 'POST',
                     headers: {

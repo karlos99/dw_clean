@@ -695,189 +695,201 @@ def execute_drill_query(
             cols = []
             error = 'Dataset not found'
         else:
-            merged_filters = dict(chart.source_filters or {})
-            merged_filters.update(drill_filters)
-
-            # Map standard keys in merged_filters to "table.column" format for compile_dataset_to_sql
-            active_tables = {ds.base_table}
-            for j in (ds.joins or []):
-                if j.get('table'):
-                    active_tables.add(j['table'])
-
-            def _allowed_columns(tbl: str) -> set:
-                return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
-
-            # Resolve all filter keys (bare exploration names, JSONB key suffixes,
-            # clean aliases from column_mappings, or already-qualified table.column)
-            # into the table.column format required by compile_dataset_to_sql.
-            from dataviz.utils.compiler import resolve_dataset_filters as _resolve_filters
-            from dataviz.utils.status_filter import prepare_interactive_filters
-            dataset_filters, status_val = prepare_interactive_filters(merged_filters, ds, active_tables)
-
-            # Extract school_year for the explorer fallback (used below when yr_col
-            # is absent from the dataset columns).
-            school_year = None
-            for fk, fval in merged_filters.items():
-                if fk.split('.')[-1] == 'school_year':
-                    school_year = fval
-                    break
-            
-            # Find the best student identifier, year, and annual key columns whitelisted in active tables
-            student_identifier_col = None
-            for tbl in ['current_student', 'student_enroll', 'results', 'student_marks_list', 'schedule_list']:
-                if tbl in active_tables and 'ssid' in COLUMN_WHITELIST.get(tbl, {}):
-                    student_identifier_col = f"{tbl}.ssid"
-                    break
-            if not student_identifier_col and 'ssid' in COLUMN_WHITELIST.get(ds.base_table, {}):
-                student_identifier_col = f"{ds.base_table}.ssid"
-            
-            if not student_identifier_col:
-                for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list', 'results']:
-                    if tbl in active_tables and 'student_id' in COLUMN_WHITELIST.get(tbl, {}):
-                        student_identifier_col = f"{tbl}.student_id"
-                        break
-                if not student_identifier_col and 'student_id' in COLUMN_WHITELIST.get(ds.base_table, {}):
-                    student_identifier_col = f"{ds.base_table}.student_id"
-
-            if not student_identifier_col:
-                student_identifier_col = f"{ds.base_table}.ssid"
-
-            key_col = None
-            for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list']:
-                if tbl in active_tables and 'stu_annual_key' in COLUMN_WHITELIST.get(tbl, {}):
-                    key_col = f"{tbl}.stu_annual_key"
-                    break
-            if not key_col and 'stu_annual_key' in COLUMN_WHITELIST.get(ds.base_table, {}):
-                key_col = f"{ds.base_table}.stu_annual_key"
-
-            yr_col = None
-            for tbl in ['current_student', 'student_enroll', 'results', 'schedule_list', 'student_marks_list', 'tests']:
-                if tbl in active_tables and 'school_year' in COLUMN_WHITELIST.get(tbl, {}):
-                    yr_col = f"{tbl}.school_year"
-                    break
-            if not yr_col and 'school_year' in COLUMN_WHITELIST.get(ds.base_table, {}):
-                yr_col = f"{ds.base_table}.school_year"
-
-            dataset_columns = list(ds.columns or [])
-            if student_identifier_col not in dataset_columns:
-                dataset_columns.append(student_identifier_col)
-            if key_col and key_col not in dataset_columns:
-                dataset_columns.append(key_col)
-            if yr_col and yr_col not in dataset_columns:
-                dataset_columns.append(yr_col)
-            
-            # Dynamically select any filtered dataset columns so they are returned in the rows
-            for fk in dataset_filters:
-                if fk not in dataset_columns:
-                    parts = fk.split('.', 1)
-                    if len(parts) == 2:
-                        tbl, col = parts
-                        if tbl in active_tables and (col in _allowed_columns(tbl) or col.split('->', 1)[0] in _allowed_columns(tbl)):
-                            dataset_columns.append(fk)
-            
-            class MockDataset:
-                def __init__(self, original, columns):
-                    self.base_table = original.base_table
-                    self.distinct = original.distinct
-                    self.joins = original.joins
-                    self.filters = original.filters
-                    self.status_filter = getattr(original, 'status_filter', None)
-                    self.columns = columns
-                    self.column_mappings = getattr(original, 'column_mappings', None) or {}
-                    self.updated_at = getattr(original, 'updated_at', None)
-            
-            mock_ds = MockDataset(ds, dataset_columns)
             one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
-            sql, params = compile_dataset_to_sql(
-                mock_ds, user=user, interactive_filters=dataset_filters,
-                limit=None, status_filter=status_val,
-                one_row_per_stu_annual_key=one_per_sak,
-            )
-            # Use aliased executor so column_mappings are applied to result keys
-            _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
-            ds_result = execute_compiled_query_aliased(sql, params, _col_mappings)
-            if one_per_sak and not ds_result.get('error') and ds_result.get('rows'):
-                from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
-                ds_result = dict(ds_result)
-                ds_result['rows'] = dedupe_rows_by_stu_annual_key(ds_result['rows'])
-                ds_result['row_count'] = len(ds_result['rows'])
-            
-            error = ds_result.get('error')
-            if error:
-                rows = []
-                cols = []
-            else:
-                ds_rows = ds_result.get('rows', [])
-                keys = []
-                if key_col:
-                    _key_alias = _col_mappings.get(key_col, key_col.split('.')[-1])
-                    keys = list(set(str(r.get(_key_alias) or '').strip() for r in ds_rows))
-                    keys = [k for k in keys if k]
-                
-                ssids = []
-                if student_identifier_col:
-                    _sid_alias = _col_mappings.get(student_identifier_col, student_identifier_col.split('.')[-1])
-                    ssids = list(set(str(r.get(_sid_alias) or '').strip() for r in ds_rows))
-                    ssids = [s for s in ssids if s]
-
-                # Determine default columns from the dataset columns if none are requested
-                if not extra_columns:
-                    ds_cols = []
-                    for c in (ds.columns or []):
-                        col_name = _col_mappings.get(c, c.split('.')[-1])
-                        if col_name not in ds_cols:
-                            ds_cols.append(col_name)
-                    for base_col in ['student_id', 'student_name', 'grade', 'school', 'school_year']:
-                        if base_col not in ds_cols:
-                            ds_cols.append(base_col)
-                    # Include all column_mappings aliases so the explorer
-                    # fetches assessment scores via its results/tests join logic.
-                    for alias in (ds.column_mappings or {}).values():
-                        if alias and alias not in ds_cols:
-                            ds_cols.append(alias)
-                    extra_columns = ds_cols
-                else:
-                    # Map any prefixed columns in extra_columns to clean column names
-                    clean_extra_cols = []
-                    for c in extra_columns:
-                        clean_col = c.split('.')[-1]
-                        if clean_col not in clean_extra_cols:
-                            clean_extra_cols.append(clean_col)
-                    extra_columns = clean_extra_cols
-                
-                if not ssids and not keys:
+            if getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL:
+                from dataviz.utils.compiler import load_dataset_result
+                ds_result = load_dataset_result(ds, apply_aliases=True, one_per_sak=one_per_sak)
+                error = ds_result.get('error')
+                if error:
                     rows = []
-                    cols = extra_columns or []
+                    cols = []
                 else:
-                    explorer_filters = {}
-                    if status_val is None:
-                        explorer_filters['status'] = []
-                    elif status_val != 'Active':
-                        explorer_filters['status'] = status_val
+                    rows = ds_result.get('rows', [])
+                    cols = list(rows[0].keys()) if rows else (ds_result.get('columns') or [])
+            else:
+                merged_filters = dict(chart.source_filters or {})
+                merged_filters.update(drill_filters)
 
-                    if yr_col:
-                        _yr_alias = _col_mappings.get(yr_col, yr_col.split('.')[-1])
-                        years = list(set(str(r.get(_yr_alias) or '').strip() for r in ds_rows))
-                        years = [y for y in years if y]
-                        if years:
-                            explorer_filters['school_year'] = years
-                    elif school_year:
-                        explorer_filters['school_year'] = school_year
+                # Map standard keys in merged_filters to "table.column" format for compile_dataset_to_sql
+                active_tables = {ds.base_table}
+                for j in (ds.joins or []):
+                    if j.get('table'):
+                        active_tables.add(j['table'])
 
-                    rows = [dict(r) for r in ds_rows]
-                    rows, cols, error = _enrich_drill_rows(
-                        rows, extra_columns or [], explorer_filters, user=user,
-                    )
-                    if not error:
-                        ordered_cols = []
-                        for c in dataset_columns:
-                            clean_c = _col_mappings.get(c, c.split('.')[-1])
-                            if clean_c not in ordered_cols:
-                                ordered_cols.append(clean_c)
-                        for c in cols:
-                            if c not in ordered_cols:
-                                ordered_cols.append(c)
-                        cols = ordered_cols
+                def _allowed_columns(tbl: str) -> set:
+                    return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
+
+                # Resolve all filter keys (bare exploration names, JSONB key suffixes,
+                # clean aliases from column_mappings, or already-qualified table.column)
+                # into the table.column format required by compile_dataset_to_sql.
+                from dataviz.utils.compiler import resolve_dataset_filters as _resolve_filters
+                from dataviz.utils.status_filter import prepare_interactive_filters
+                dataset_filters, status_val = prepare_interactive_filters(merged_filters, ds, active_tables)
+
+                # Extract school_year for the explorer fallback (used below when yr_col
+                # is absent from the dataset columns).
+                school_year = None
+                for fk, fval in merged_filters.items():
+                    if fk.split('.')[-1] == 'school_year':
+                        school_year = fval
+                        break
+            
+                # Find the best student identifier, year, and annual key columns whitelisted in active tables
+                student_identifier_col = None
+                for tbl in ['current_student', 'student_enroll', 'results', 'student_marks_list', 'schedule_list']:
+                    if tbl in active_tables and 'ssid' in COLUMN_WHITELIST.get(tbl, {}):
+                        student_identifier_col = f"{tbl}.ssid"
+                        break
+                if not student_identifier_col and 'ssid' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                    student_identifier_col = f"{ds.base_table}.ssid"
+            
+                if not student_identifier_col:
+                    for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list', 'results']:
+                        if tbl in active_tables and 'student_id' in COLUMN_WHITELIST.get(tbl, {}):
+                            student_identifier_col = f"{tbl}.student_id"
+                            break
+                    if not student_identifier_col and 'student_id' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                        student_identifier_col = f"{ds.base_table}.student_id"
+
+                if not student_identifier_col:
+                    student_identifier_col = f"{ds.base_table}.ssid"
+
+                key_col = None
+                for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list']:
+                    if tbl in active_tables and 'stu_annual_key' in COLUMN_WHITELIST.get(tbl, {}):
+                        key_col = f"{tbl}.stu_annual_key"
+                        break
+                if not key_col and 'stu_annual_key' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                    key_col = f"{ds.base_table}.stu_annual_key"
+
+                yr_col = None
+                for tbl in ['current_student', 'student_enroll', 'results', 'schedule_list', 'student_marks_list', 'tests']:
+                    if tbl in active_tables and 'school_year' in COLUMN_WHITELIST.get(tbl, {}):
+                        yr_col = f"{tbl}.school_year"
+                        break
+                if not yr_col and 'school_year' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                    yr_col = f"{ds.base_table}.school_year"
+
+                dataset_columns = list(ds.columns or [])
+                if student_identifier_col not in dataset_columns:
+                    dataset_columns.append(student_identifier_col)
+                if key_col and key_col not in dataset_columns:
+                    dataset_columns.append(key_col)
+                if yr_col and yr_col not in dataset_columns:
+                    dataset_columns.append(yr_col)
+            
+                # Dynamically select any filtered dataset columns so they are returned in the rows
+                for fk in dataset_filters:
+                    if fk not in dataset_columns:
+                        parts = fk.split('.', 1)
+                        if len(parts) == 2:
+                            tbl, col = parts
+                            if tbl in active_tables and (col in _allowed_columns(tbl) or col.split('->', 1)[0] in _allowed_columns(tbl)):
+                                dataset_columns.append(fk)
+            
+                class MockDataset:
+                    def __init__(self, original, columns):
+                        self.base_table = original.base_table
+                        self.distinct = original.distinct
+                        self.joins = original.joins
+                        self.filters = original.filters
+                        self.status_filter = getattr(original, 'status_filter', None)
+                        self.columns = columns
+                        self.column_mappings = getattr(original, 'column_mappings', None) or {}
+                        self.updated_at = getattr(original, 'updated_at', None)
+            
+                mock_ds = MockDataset(ds, dataset_columns)
+                one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
+                sql, params = compile_dataset_to_sql(
+                    mock_ds, user=user, interactive_filters=dataset_filters,
+                    limit=None, status_filter=status_val,
+                    one_row_per_stu_annual_key=one_per_sak,
+                )
+                # Use aliased executor so column_mappings are applied to result keys
+                _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
+                ds_result = execute_compiled_query_aliased(sql, params, _col_mappings)
+                if one_per_sak and not ds_result.get('error') and ds_result.get('rows'):
+                    from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
+                    ds_result = dict(ds_result)
+                    ds_result['rows'] = dedupe_rows_by_stu_annual_key(ds_result['rows'])
+                    ds_result['row_count'] = len(ds_result['rows'])
+            
+                error = ds_result.get('error')
+                if error:
+                    rows = []
+                    cols = []
+                else:
+                    ds_rows = ds_result.get('rows', [])
+                    keys = []
+                    if key_col:
+                        _key_alias = _col_mappings.get(key_col, key_col.split('.')[-1])
+                        keys = list(set(str(r.get(_key_alias) or '').strip() for r in ds_rows))
+                        keys = [k for k in keys if k]
+                
+                    ssids = []
+                    if student_identifier_col:
+                        _sid_alias = _col_mappings.get(student_identifier_col, student_identifier_col.split('.')[-1])
+                        ssids = list(set(str(r.get(_sid_alias) or '').strip() for r in ds_rows))
+                        ssids = [s for s in ssids if s]
+
+                    # Determine default columns from the dataset columns if none are requested
+                    if not extra_columns:
+                        ds_cols = []
+                        for c in (ds.columns or []):
+                            col_name = _col_mappings.get(c, c.split('.')[-1])
+                            if col_name not in ds_cols:
+                                ds_cols.append(col_name)
+                        for base_col in ['student_id', 'student_name', 'grade', 'school', 'school_year']:
+                            if base_col not in ds_cols:
+                                ds_cols.append(base_col)
+                        # Include all column_mappings aliases so the explorer
+                        # fetches assessment scores via its results/tests join logic.
+                        for alias in (ds.column_mappings or {}).values():
+                            if alias and alias not in ds_cols:
+                                ds_cols.append(alias)
+                        extra_columns = ds_cols
+                    else:
+                        # Map any prefixed columns in extra_columns to clean column names
+                        clean_extra_cols = []
+                        for c in extra_columns:
+                            clean_col = c.split('.')[-1]
+                            if clean_col not in clean_extra_cols:
+                                clean_extra_cols.append(clean_col)
+                        extra_columns = clean_extra_cols
+                
+                    if not ssids and not keys:
+                        rows = []
+                        cols = extra_columns or []
+                    else:
+                        explorer_filters = {}
+                        if status_val is None:
+                            explorer_filters['status'] = []
+                        elif status_val != 'Active':
+                            explorer_filters['status'] = status_val
+
+                        if yr_col:
+                            _yr_alias = _col_mappings.get(yr_col, yr_col.split('.')[-1])
+                            years = list(set(str(r.get(_yr_alias) or '').strip() for r in ds_rows))
+                            years = [y for y in years if y]
+                            if years:
+                                explorer_filters['school_year'] = years
+                        elif school_year:
+                            explorer_filters['school_year'] = school_year
+
+                        rows = [dict(r) for r in ds_rows]
+                        rows, cols, error = _enrich_drill_rows(
+                            rows, extra_columns or [], explorer_filters, user=user,
+                        )
+                        if not error:
+                            ordered_cols = []
+                            for c in dataset_columns:
+                                clean_c = _col_mappings.get(c, c.split('.')[-1])
+                                if clean_c not in ordered_cols:
+                                    ordered_cols.append(clean_c)
+                            for c in cols:
+                                if c not in ordered_cols:
+                                    ordered_cols.append(c)
+                            cols = ordered_cols
     else:
         # Merge saved source_filters with the click-derived drill_filters
         merged_filters = dict(chart.source_filters or {})
