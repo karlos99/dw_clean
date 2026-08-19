@@ -23,7 +23,6 @@ function chartBuilderDataMethods() {
       this.columnsLoading = false;
       // Load filter options in parallel (non-blocking)
       this.loadFilterOptions();
-      this.fetchRecommendations();
     },
 
     async loadDatasetColumns() {
@@ -54,7 +53,6 @@ function chartBuilderDataMethods() {
       } catch (e) { console.error('Dataset load:', e); this.columns = []; }
       this.columnsLoading = false;
       this._loadDatasetFilterOptions();
-      this.fetchRecommendations();
     },
 
     async _loadDatasetFilterOptions() {

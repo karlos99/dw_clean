@@ -164,7 +164,6 @@ function chartBuilderUIMethods() {
       this.schoolFilterMode = schoolMode;
       if (type === 'columns' && !Object.keys(this.explorerStructure?.definitions || {}).length) this.loadExplorerStructure();
       if (type === 'dataset' && this.datasetSourceId) this.loadDatasetColumns();
-      if (this.guidedMode) this.guidedStep = 1;
     },
 
     /* ─── Drag & Drop ────────────────────────────────────────── */

@@ -207,7 +207,6 @@ function chartBuilderExplorerMethods() {
       clearTimeout(this._explorerSyncTimer);
       this._explorerSyncTimer = setTimeout(() => {
         this._loadExplorerFilterOptions();
-        this.fetchRecommendations();
       }, 350);
     },
 
