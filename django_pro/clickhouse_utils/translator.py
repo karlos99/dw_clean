@@ -49,18 +49,16 @@ def translate_pg_to_clickhouse(sql, params):
     # from grouped OR clauses like "(cs.name ILIKE %s OR cs.ssid ILIKE %s)".
     if 'ILIKE' in sql.upper():
         _ilike_col = r'[\w.]+'
+        _ilike_col_group = rf'({_ilike_col}(?:\s+(?:IS\s+NOT\s+NULL|IS\s+NULL))?)'
         sql = re.sub(
-            rf'({_ilike_col}(?:\s+(?:IS\s+NOT\s+NULL|IS\s+NULL))?)\s+ILIKE\s+(%s)',
+            rf'{_ilike_col_group}\s+ILIKE\s+(%s)',
             r'lower(\1) LIKE LOWER(\2)', sql, flags=re.IGNORECASE,
         )
-        def _replace_ilike(m):
-            expr = m.group(1)
-            return f'lower({expr}) LIKE'
+        # String literals — must lower both sides (custom SQL uses ILIKE 'ELPAC', etc.)
         sql = re.sub(
-            rf'({_ilike_col}(?:\s+(?:IS\s+NOT\s+NULL|IS\s+NULL))?)\s+ILIKE\b',
-            _replace_ilike, sql, flags=re.IGNORECASE,
+            rf'{_ilike_col_group}\s+ILIKE\s+(\'[^\']*\')',
+            r'lower(\1) LIKE lower(\2)', sql, flags=re.IGNORECASE,
         )
-
         sql = re.sub(r'\bILIKE\b', 'LIKE', sql, flags=re.IGNORECASE)
 
     # ── JSON operators ─────────────────────────────────────────────────

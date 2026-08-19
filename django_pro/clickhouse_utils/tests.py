@@ -74,6 +74,12 @@ class SQLTranslatorTests(SimpleTestCase):
         self.assertEqual(ch_params['p0'], ['04', '05'])
         self.assertEqual(sorted(ch_params['p1']), ['school_a', 'school_b'])
 
+    def test_translate_ilike_string_literal(self):
+        sql = "SELECT 1 WHERE t.test_name ILIKE 'ELPAC' AND t.subject ILIKE 'summative'"
+        translated_sql, _params = translate_pg_to_clickhouse(sql, [])
+        self.assertIn("lower(t.test_name) LIKE lower('ELPAC')", translated_sql)
+        self.assertIn("lower(t.subject) LIKE lower('summative')", translated_sql)
+
     def test_translate_ilike_or_group_does_not_wrap_boolean(self):
         sql = (
             "SELECT cs.student_name FROM current_student cs "

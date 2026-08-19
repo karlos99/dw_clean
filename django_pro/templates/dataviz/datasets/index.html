@@ -8,11 +8,14 @@
     <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
             <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">Visual Datasets</h1>
-            <p class="mt-1 text-sm text-slate-500">Configure visual joins and database queries to feed chart visuals.</p>
+            <p class="mt-1 text-sm text-slate-500">Build datasets from visual joins or custom SQL queries to feed chart visuals.</p>
         </div>
-        <div class="mt-4 sm:mt-0">
+        <div class="mt-4 sm:mt-0 flex flex-wrap gap-2">
+            <a href="{% url 'dataviz:dataset_new' %}?mode=sql" class="inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-semibold rounded-none shadow-sm text-slate-700 bg-white hover:bg-slate-50 focus:outline-none transition duration-300">
+                + SQL Dataset
+            </a>
             <a href="{% url 'dataviz:dataset_new' %}" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-none shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-300">
-                + Build Dataset
+                + Visual Dataset
             </a>
         </div>
     </div>
@@ -46,12 +49,12 @@
                         </div>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap">
-                        <span class="inline-flex items-center px-2 py-0.5 rounded-none text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200">
-                            {{ ds.base_table }}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-none text-xs font-semibold border {% if ds.source_type == 'sql' %}bg-indigo-50 text-indigo-800 border-indigo-200{% else %}bg-slate-100 text-slate-800 border-slate-200{% endif %}">
+                            {% if ds.source_type == 'sql' %}Custom SQL{% else %}{{ ds.base_table }}{% endif %}
                         </span>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                        {{ ds.joins|length }} Joins
+                        {% if ds.source_type == 'sql' %}—{% else %}{{ ds.joins|length }} Joins{% endif %}
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
                         {{ ds.owner.name|default:ds.owner.email }}

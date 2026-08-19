@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import patch
+import json
 from django.test import SimpleTestCase, TestCase
 from django.contrib.auth import get_user_model
 from dataviz.models import (
@@ -2692,6 +2693,77 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(lines[1], '"123","Alice","5"')
 
 
+class SqlDatasetTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='sqladmin', password='password', is_superuser=True)
+
+class SqlYearPlaceholderTests(SimpleTestCase):
+    @patch('dataviz.models.RelativeYear')
+    def test_resolve_sql_year_placeholders_from_relative_year_table(self, mock_rel_model):
+        from dataviz.utils.data_loader import resolve_sql_year_placeholders
+
+        mock_rel_model.objects.all.return_value = [
+            SimpleNamespace(relative_label='Last School Year', school_year='2024-2025'),
+            SimpleNamespace(relative_label='This School Year', school_year='2025-2026'),
+        ]
+        sql = (
+            "SELECT * FROM t WHERE yr = '{{Last School Year}}' "
+            "OR yr = '{{This School Year}}'"
+        )
+        resolved, err = resolve_sql_year_placeholders(sql)
+        self.assertIsNone(err)
+        self.assertIn("'2024-2025'", resolved)
+        self.assertIn("'2025-2026'", resolved)
+        self.assertNotIn('{{', resolved)
+
+
+class SqlDatasetTests(TestCase):
+    def test_dataset_sql_preview_api(self, mock_execute):
+        mock_execute.return_value = {
+            'columns': ['ssid', 'grade'],
+            'rows': [{'ssid': '1', 'grade': '5'}],
+            'total_rows': 1,
+            'has_more': False,
+            'error': None,
+        }
+        self.client.force_login(self.user)
+        response = self.client.post(
+            '/dataviz/api/datasets/preview/',
+            data=json.dumps({'source_type': 'sql', 'source_sql': 'SELECT 1'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ssid')
+        mock_execute.assert_called_once()
+
+    @patch('dataviz.views.dataset_views.execute_sql_dataset')
+    def test_dataset_sql_save_api(self, mock_execute):
+        mock_execute.return_value = {
+            'columns': ['ssid'],
+            'rows': [{'ssid': '1'}],
+            'total_rows': 1,
+            'has_more': False,
+            'error': None,
+        }
+        self.client.force_login(self.user)
+        response = self.client.post(
+            '/dataviz/api/datasets/save/',
+            data=json.dumps({
+                'source_type': 'sql',
+                'source_sql': 'SELECT ssid FROM current_student LIMIT 1',
+                'name': 'SQL Test Dataset',
+                'columns': ['ssid'],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        ds = Dataset.objects.get(pk=data['id'])
+        self.assertEqual(ds.source_type, Dataset.SOURCE_SQL)
+        self.assertIn('SELECT', ds.source_sql)
+
+
 class AssessmentEnrichmentRegressionTests(TestCase):
     def test_augment_passes_school_year_from_rows_and_column_keys(self):
         from unittest.mock import patch
@@ -2786,6 +2858,37 @@ class AssessmentEnrichmentRegressionTests(TestCase):
             _fetch_test_data(None, test_infos, [], students)
 
         self.assertEqual(students[0]['test_2024_2025_CAASPP_ELA_PL'], '3')
+
+    @patch('dataviz.utils.chart_builder._record_pg_val')
+    def test_fetch_test_data_attaches_pl_on_all_enrollment_rows(self, mock_record):
+        from unittest.mock import MagicMock, patch
+        from dataviz.utils.data_loader import _fetch_test_data
+
+        students = [
+            {'ssid': '123', 'student_id': 'loc1', 'school_year': '2025-2026', 'grade': '6'},
+            {'ssid': '123', 'student_id': 'loc1', 'school_year': '2024-2025', 'grade': '5'},
+        ]
+        test_infos = [{
+            'year': '2024-2025',
+            'test_name': 'ELPAC',
+            'subject': 'summative',
+            'test_window': 'Regular',
+            'metric': 'pl',
+            'col_name': 'test_2024_2025_ELPAC_summative_Regular_PL',
+        }]
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('loc1', '123', None, '2', None, '2024-2025', 'ELPAC', 'summative', 'Regular'),
+        ]
+        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
+            mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+            mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+            _fetch_test_data(None, test_infos, [], students)
+
+        col = 'test_2024_2025_ELPAC_summative_Regular_PL'
+        self.assertEqual(students[0][col], '2')
+        self.assertEqual(students[1][col], '2')
+        self.assertEqual(mock_record.call_count, 2)
 
     def test_stack_same_as_y_uses_count_not_avg(self):
         import polars as pl

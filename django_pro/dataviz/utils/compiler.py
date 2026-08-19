@@ -1052,3 +1052,53 @@ def execute_compiled_query_aliased(sql, params, column_mappings):
         result['rows'] = aliased_rows
 
     return result
+
+
+def load_dataset_result(
+    dataset,
+    *,
+    user=None,
+    interactive_filters=None,
+    limit=None,
+    status_filter=_UNSET,
+    one_per_sak=False,
+    apply_aliases=True,
+):
+    """Execute a Dataset (visual join or custom SQL) and return row dicts."""
+    from dataviz.models import Dataset as DatasetModel
+    from dataviz.utils.data_loader import execute_sql_dataset
+    from dataviz.utils.status_filter import dataset_status_value
+
+    source_type = getattr(dataset, 'source_type', None) or DatasetModel.SOURCE_VISUAL
+    col_mappings = dataset.column_mappings or generate_column_aliases(dataset.columns or [], {})
+
+    if source_type == DatasetModel.SOURCE_SQL:
+        res = execute_sql_dataset(dataset.source_sql or '', limit=limit)
+        if res.get('error'):
+            return res
+        rows = res.get('rows') or []
+        if apply_aliases and col_mappings:
+            rows = apply_column_aliases(rows, col_mappings)
+        if one_per_sak:
+            rows = dedupe_rows_by_stu_annual_key(rows)
+        columns = list(rows[0].keys()) if rows else (res.get('columns') or [])
+        return {
+            'columns': columns,
+            'rows': rows,
+            'row_count': len(rows),
+            'error': None,
+        }
+
+    if status_filter is _UNSET:
+        status_filter = dataset_status_value(dataset)
+    sql, params = compile_dataset_to_sql(
+        dataset,
+        user=user,
+        interactive_filters=interactive_filters or {},
+        limit=limit,
+        status_filter=status_filter,
+        one_row_per_stu_annual_key=one_per_sak,
+    )
+    if apply_aliases:
+        return execute_compiled_query_aliased(sql, params, col_mappings)
+    return execute_compiled_query(sql, params)

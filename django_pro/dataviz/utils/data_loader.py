@@ -26,6 +26,57 @@ _SQL_DANGER_RE = re.compile(
     re.IGNORECASE,
 )
 MAX_SQL_ROWS       = 2000   # safety cap for run_raw_sql (SQL Lab)
+DATASET_SQL_PREVIEW_ROWS = 50
+
+_YEAR_PLACEHOLDER_RE = re.compile(r'\{\{([^}]+)\}\}')
+
+
+def resolve_sql_year_placeholders(sql: str) -> tuple[str, str | None]:
+    """Replace ``{{This School Year}}`` / ``{{Last School Year}}`` style tokens.
+
+    Resolution order for each label:
+      1. ``relative_year.relative_label`` (DB table)
+      2. ProjectConfig via ``resolve_school_year()`` alias map
+
+    Returns (resolved_sql, error_or_none).
+    """
+    if not sql or '{{' not in sql:
+        return sql, None
+
+    from dataexploration.constants import SCHOOL_YEAR_ALIASES
+    from dataexploration.school_year_utils import resolve_school_year
+
+    label_to_year: dict[str, str] = {}
+
+    try:
+        from dataviz.models import RelativeYear
+        for row in RelativeYear.objects.all():
+            if row.relative_label and row.school_year:
+                label_to_year[row.relative_label.strip()] = row.school_year.strip()
+    except Exception:
+        pass
+
+    alias_by_label = {label: alias for alias, label in SCHOOL_YEAR_ALIASES.items()}
+    for label, alias in alias_by_label.items():
+        if label in label_to_year:
+            continue
+        resolved = resolve_school_year(alias)
+        if resolved and resolved != alias:
+            label_to_year[label] = resolved
+
+    resolved = sql
+    for match in _YEAR_PLACEHOLDER_RE.finditer(sql):
+        label = match.group(1).strip()
+        year = label_to_year.get(label)
+        if not year:
+            return sql, (
+                f"Unknown or unresolved school year '{{{{{label}}}}}'. "
+                f"Use labels like 'This School Year' or 'Last School Year', "
+                f"and ensure Project Settings has a default school year."
+            )
+        resolved = resolved.replace(match.group(0), year)
+
+    return resolved, None
 
 
 def run_raw_sql(sql: str) -> dict:
@@ -41,6 +92,10 @@ def run_raw_sql(sql: str) -> dict:
         return {'error': 'Only SELECT / WITH queries are allowed.'}
     if _SQL_DANGER_RE.search(sql):
         return {'error': 'Query contains disallowed keywords.'}
+
+    sql, placeholder_err = resolve_sql_year_placeholders(sql)
+    if placeholder_err:
+        return {'error': placeholder_err}
 
     cache_key = f"dv_raw_sql:{hashlib.md5(sql.encode()).hexdigest()}"
     cached = cache.get(cache_key)
@@ -78,6 +133,32 @@ def run_raw_sql(sql: str) -> dict:
     except Exception as exc:
         return {'error': str(exc)}
 
+
+def execute_sql_dataset(source_sql: str, limit: int | None = DATASET_SQL_PREVIEW_ROWS) -> dict:
+    """Run a read-only SQL dataset query; optionally truncate rows for preview."""
+    sql = (source_sql or '').strip()
+    if not sql:
+        return {'error': 'No SQL provided', 'columns': [], 'rows': [], 'row_count': 0}
+
+    result = run_raw_sql(sql)
+    if result.get('error'):
+        return result
+
+    rows = result.get('rows') or []
+    total_rows = len(rows)
+    has_more = bool(result.get('has_more')) or (limit is not None and total_rows > limit)
+    if limit is not None:
+        rows = rows[:limit]
+
+    return {
+        'columns': result.get('columns') or [],
+        'col_types': result.get('col_types') or {},
+        'rows': rows,
+        'row_count': len(rows),
+        'total_rows': total_rows,
+        'has_more': has_more,
+        'error': None,
+    }
 
 
 # All columns that exist directly in the current_student table
@@ -638,9 +719,9 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                 else:
                     continue
                 for s_obj in s_objs:
-                    row_year = str(_get_row_val(s_obj, 'school_year') or '').strip()
-                    if row_year and result_year and row_year != result_year:
-                        continue
+                    # Attach at student level on every enrollment row — matches data
+                    # exploration EXISTS filters (student has result), not only when
+                    # enrollment.school_year equals result.school_year.
                     s_obj[col_name] = val
                     _record_pg_val(s_obj, col_name, val)
 
@@ -1358,7 +1439,11 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         if fkey == 'search':
             continue  # handled separately below
         if fkey.startswith(('test_', 'mark_')):
-            dynamic_filters[fkey] = fval
+            try:
+                from dataexploration.school_year_utils import resolve_relative_column_key
+                dynamic_filters[resolve_relative_column_key(fkey)] = fval
+            except Exception:
+                dynamic_filters[fkey] = fval
             continue  # dynamic columns are filtered after enrichment below
         if fkey in _ENROLL_FIELDS:
             needs_enroll = True
