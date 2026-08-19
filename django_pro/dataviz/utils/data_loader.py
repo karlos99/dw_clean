@@ -662,8 +662,8 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
         FROM results r
         INNER JOIN tests t ON r.test_group_key = t.test_group_key
         WHERE (
-            (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s))
-            OR ((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = ANY(%s))
+            (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND r.ssid = ANY(%s))
+            OR ((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = ANY(%s))
           )
           AND ({" OR ".join(where_parts)})
           {tested_school_clause}
