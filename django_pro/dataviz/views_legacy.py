@@ -32,7 +32,7 @@ _FORBIDDEN = JsonResponse({'error': 'Forbidden'}, status=403)
 from dataexploration.column_utils import get_mark_columns, get_test_columns
 from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS
 from dataexploration.models import SavedQuery
-from dataexploration.utils import can_user_view_query
+from dataexploration.utils import can_user_view_query, is_unrestricted as _is_user_unrestricted
 from dataexploration.view_modules.column_management import get_saved_default_columns
 
 # ── Test / Mark meta-column helpers ────────────────────────────────────────
@@ -1024,14 +1024,7 @@ class DataVizBuilderView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
 
         # Grade list (role-/school-scoped)
         user = self.request.user
-        is_unrestricted = (
-            user.is_superuser
-            or getattr(user, 'is_project_admin', False)
-            or (
-                hasattr(user, 'active_role') and user.active_role
-                and 'District' in user.active_role.name
-            )
-        )
+        is_unrestricted = _is_user_unrestricted(user)
 
         grade_filter_clauses = ["grade IS NOT NULL"]
         grade_filter_params = []

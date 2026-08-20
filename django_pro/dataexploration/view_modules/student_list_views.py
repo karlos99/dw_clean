@@ -22,7 +22,7 @@ from ..column_utils import (
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
-from ..utils import can_user_view_query, get_user_folders
+from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -119,13 +119,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
             pass
 
         # Apply role-based restrictions for grade filter options
-        is_unrestricted = False
-        if self.request.user.is_superuser:
-            is_unrestricted = True
-        elif getattr(self.request.user, 'is_project_admin', False):
-            is_unrestricted = True
-        elif hasattr(self.request.user, 'active_role') and self.request.user.active_role and 'District' in self.request.user.active_role.name:
-            is_unrestricted = True
+        is_unrestricted = _is_user_unrestricted(self.request.user)
 
         grade_filter_clauses = ["grade IS NOT NULL"]
         grade_filter_params = []
@@ -1195,13 +1189,7 @@ def load_students(request):
                 base_params.append(status)
 
         # Check if user is unrestricted (Project Admin OR District Role)
-        is_unrestricted = False
-        if request.user.is_superuser:
-            is_unrestricted = True
-        elif getattr(request.user, 'is_project_admin', False):
-            is_unrestricted = True
-        elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
-            is_unrestricted = True
+        is_unrestricted = _is_user_unrestricted(request.user)
 
         # Apply active school context or enforce school permissions
         if hasattr(request.user, 'active_school') and request.user.active_school:

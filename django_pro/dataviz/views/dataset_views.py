@@ -18,6 +18,7 @@ from dataviz.utils.compiler import (
     generate_column_aliases, apply_column_aliases,
 )
 from dataviz.utils.data_loader import execute_sql_dataset
+from dataexploration.column_utils import export_cell
 from .mixins import ProjectAdminMixin, is_project_admin
 
 logger = logging.getLogger(__name__)
@@ -451,7 +452,7 @@ def dataset_export_csv_api(request):
             for row in rows:
                 buffer.seek(0)
                 buffer.truncate(0)
-                writer.writerow([row.get(c) for c in columns])
+                writer.writerow([export_cell(row.get(c)) for c in columns])
                 yield buffer.getvalue()
 
         response = StreamingHttpResponse(stream_csv(), content_type='text/csv')

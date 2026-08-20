@@ -218,19 +218,59 @@ def build_drill_filter(chart, params: dict) -> dict:
         # calculation definition and, for non-count aggregates, restrict the
         # drill to students who actually contributed a value — otherwise the
         # drill list shows every student in the row group instead of just
-        # the ones the calculation was computed over.
+        # the ones the calculation was computed over.  Derived columns (built
+        # by arithmetic over other calculation columns) have no value column of
+        # their own, so resolve through to the base column they ultimately
+        # aggregate, carrying along any threshold filters on the way.
         if chart.config.get('dyn_col_mode') == 'calculations' and col_val:
             col_defs = chart.column_defs or {}
+            calc_by_id = {}
+            for _idx, _c in enumerate(chart.config.get('dyn_calculations', [])):
+                if isinstance(_c, dict):
+                    calc_by_id[str(_c.get('id') or f'c{_idx}')] = _c
+
+            def _calc_label(_c):
+                _fn = _c.get('agg_func', 'count')
+                _vc = _c.get('value_col', '')
+                _lbl = (_c.get('label') or '').strip()
+                if not _lbl:
+                    _vc_lbl = col_defs.get(_vc, _vc) if _vc else _vc
+                    _lbl = f"{_fn.capitalize()} of {_vc_lbl}" if _vc else _fn.capitalize()
+                return _lbl
+
+            def _resolve_underlying(_c, _seen=None):
+                """Return (value_col, thresholds) for a calc — the base value
+                column it ultimately aggregates plus the threshold filters on
+                the base columns it is built from (if any)."""
+                _seen = _seen or set()
+                _cid = str(_c.get('id') or '')
+                if _cid in _seen:
+                    return '', []
+                _seen.add(_cid)
+                _vc = _c.get('value_col', '')
+                _f = _c.get('filter')
+                _thresholds = []
+                if isinstance(_f, dict) and _f.get('col') and _f.get('op'):
+                    _thresholds.append({'col': _f['col'], 'op': _f['op'], 'val': _f.get('val')})
+                if _vc:
+                    return _vc, _thresholds
+                for _ref in (_c.get('ref_a'), _c.get('ref_b')):
+                    _refc = calc_by_id.get(str(_ref or ''))
+                    if _refc:
+                        _rvc, _rth = _resolve_underlying(_refc, _seen)
+                        if _rvc:
+                            return _rvc, _rth + _thresholds
+                return '', _thresholds
+
             for calc in chart.config.get('dyn_calculations', []):
-                fn = calc.get('agg_func', 'count')
-                vc = calc.get('value_col', '')
-                lbl = (calc.get('label') or '').strip()
-                if not lbl:
-                    vc_lbl = col_defs.get(vc, vc) if vc else vc
-                    lbl = f"{fn.capitalize()} of {vc_lbl}" if vc else fn.capitalize()
-                if lbl == col_val:
+                if not isinstance(calc, dict):
+                    continue
+                if _calc_label(calc) == col_val:
+                    vc, thresholds = _resolve_underlying(calc)
                     if vc:
                         filters['dyn_calc_value_col'] = vc
+                    if thresholds:
+                        filters['dyn_calc_thresholds'] = thresholds
                     break
             if row_val and row_cols:
                 parts = row_val.split(_SEP)
@@ -576,12 +616,19 @@ def execute_drill_query(
     # fetched so we can restrict the drill to students who actually
     # contributed a value to the aggregate.
     dyn_calc_value_col = None
+    dyn_calc_thresholds = None
     if 'dyn_calc_value_col' in drill_filters and chart.chart_type == 'dynamic_summary_table':
         drill_filters = dict(drill_filters)
         dyn_calc_value_col = drill_filters.pop('dyn_calc_value_col')
+        dyn_calc_thresholds = drill_filters.pop('dyn_calc_thresholds', None)
         extra_columns = list(extra_columns or [])
         if dyn_calc_value_col not in extra_columns:
             extra_columns.append(dyn_calc_value_col)
+        if isinstance(dyn_calc_thresholds, list):
+            for _t in dyn_calc_thresholds:
+                _tc = _t.get('col') if isinstance(_t, dict) else None
+                if _tc and _tc not in extra_columns:
+                    extra_columns.append(_tc)
 
     # date_series (Dates chart): extract the bucketed-date + value-col /
     # active-range sentinels before they leak into SQL filters, and ensure
@@ -988,6 +1035,61 @@ def execute_drill_query(
                 return True
 
             rows = [r for r in rows if _has_calc_value(r.get(calc_target_col))]
+
+        # A calculation column can carry numeric threshold filters (e.g.
+        # "count of students with attendance_rate < 85").  Those rows were
+        # already restricted by the row-group filter above; apply the
+        # thresholds in Python so the drill matches exactly what the cell
+        # counted, not the whole row group.
+        if dyn_calc_thresholds and rows:
+            row_keys = list(rows[0].keys())
+            from dataexploration.school_year_utils import resolve_relative_column_key
+
+            def _norm_th_col(c):
+                return str(c).replace('-', '_').lower()
+
+            _th_key_map = {_norm_th_col(k): k for k in row_keys}
+
+            def _resolve_th_col(col):
+                if not col:
+                    return col
+                norm = _norm_th_col(col)
+                if norm in _th_key_map:
+                    return _th_key_map[norm]
+                resolved = resolve_relative_column_key(col)
+                norm_res = _norm_th_col(resolved)
+                if norm_res in _th_key_map:
+                    return _th_key_map[norm_res]
+                clean = col.split('.')[-1]
+                norm_clean = _norm_th_col(clean)
+                if norm_clean in _th_key_map:
+                    return _th_key_map[norm_clean]
+                return col
+
+            def _th_num(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            _th_cmp = {
+                'lt': lambda a, b: a < b,
+                'lte': lambda a, b: a <= b,
+                'gt': lambda a, b: a > b,
+                'gte': lambda a, b: a >= b,
+            }
+            for _t in dyn_calc_thresholds:
+                if not isinstance(_t, dict):
+                    continue
+                _tcol = _resolve_th_col(_t.get('col', ''))
+                _top = _t.get('op')
+                _tval = _th_num(_t.get('val'))
+                if not _tcol or _top not in _th_cmp or _tval is None:
+                    continue
+                rows = [
+                    r for r in rows
+                    if (lambda v: v is not None and _th_cmp[_top](v, _tval))(_th_num(r.get(_tcol)))
+                ]
 
         if rows and chart.chart_type == 'date_series' and (ds_date_val or ds_value_col_required or ds_active_enter_col):
             row_keys = list(rows[0].keys())

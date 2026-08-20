@@ -39,9 +39,11 @@ def _is_unrestricted(user):
         return True
     if getattr(user, 'is_project_admin', False):
         return True
-    if hasattr(user, 'active_role') and user.active_role and 'District' in user.active_role.name:
+    from ..utils import get_user_roles
+    user_roles = get_user_roles(user)
+    if user_roles & {'Project Admin', 'District Admin', 'District View'}:
         return True
-    return False
+    return any('District' in r for r in user_roles)
 
 
 def _apply_nyl_school_filter(where_clauses, params, user):

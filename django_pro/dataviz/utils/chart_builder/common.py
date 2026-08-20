@@ -115,7 +115,15 @@ def cross_tab_lookup(
 
 
 def pivot_cell(lookup: dict, row_key, col_val, default=0.0) -> float:
-    return float(lookup.get((row_key, col_val), default) or default)
+    if lookup is None:
+        return default
+    value = lookup.get((row_key, col_val))
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def blank_filter_expr(cols: list[str], blank_values) -> pl.Expr:

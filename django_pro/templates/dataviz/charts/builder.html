@@ -1497,7 +1497,7 @@
             </div>
             <p class="text-[9px] text-slate-400">
               <span x-show="dynColMode==='pivot'">Pivots unique values of selected columns as table/chart categories.</span>
-              <span x-show="dynColMode==='calculations'">Configure different calculations (averages, counts, sums) side-by-side.</span>
+              <span x-show="dynColMode==='calculations'">Build columns with aggregates (counts, averages, sums) — optionally restricted to rows meeting a threshold — then combine any columns into derived ones (+/−/×/÷, e.g. a below-threshold count ÷ total).</span>
             </p>
 
             {# Pivot Mode (dynColMode === 'pivot') #}
@@ -1567,55 +1567,144 @@
 
               <div class="space-y-3">
                 <template x-for="(calc, idx) in dynCalculations" :key="'dyncalc_'+idx">
-                  <div class="border border-slate-200 rounded-lg p-2.5 bg-slate-50/50 space-y-2 relative">
+                  <div class="border border-slate-200 rounded-lg p-2.5 bg-slate-50/50 space-y-2 relative"
+                       :class="calc.calc_type === 'derived' ? 'border-violet-200 bg-violet-50/30' : 'border-slate-200'">
                     <button type="button" @click="removeDynCalculation(idx)"
                             class="absolute top-2 right-2 text-slate-400 hover:text-red-500 font-bold text-lg leading-none"
                             title="Remove calculation">&times;</button>
-                    
-                    <div class="grid grid-cols-2 gap-2 pr-4">
-                      {# Func #}
+
+                    <div class="grid grid-cols-2 gap-2 pr-4 items-center">
+                      {# Type #}
                       <div>
-                        <label class="text-[10px] font-semibold text-slate-500">Function</label>
-                        <select x-model="calc.agg_func" @change="_schedulePreview()"
+                        <label class="text-[10px] font-semibold text-slate-500">Type</label>
+                        <select x-model="calc.calc_type" @change="_schedulePreview()"
                                 class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
-                          <option value="count">Count</option>
-                          <option value="sum">Sum</option>
-                          <option value="avg">Average</option>
-                          <option value="min">Min</option>
-                          <option value="max">Max</option>
-                          <option value="median">Median</option>
+                          <option value="base">Base (aggregate a column)</option>
+                          <option value="derived">Derived (combine columns)</option>
                         </select>
                       </div>
-
-                      {# Value Col #}
-                      <div x-show="calc.agg_func !== 'count'">
-                        <label class="text-[10px] font-semibold text-slate-500">Value Column</label>
-                        <select x-model="calc.value_col" @change="_schedulePreview()"
-                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
-                          <option value="">— choose —</option>
-                          <template x-for="c in activeCols" :key="'stv_calc_'+c">
-                            <option :value="c" x-text="colLabel(c)"></option>
-                          </template>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2">
                       {# Label #}
                       <div>
                         <label class="text-[10px] font-semibold text-slate-500">Custom Label</label>
                         <input type="text" x-model="calc.label" @input="_schedulePreview()" placeholder="Auto-label if blank"
                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
                       </div>
-
-                      {# Decimals #}
-                      <div x-show="['avg','median'].includes(calc.agg_func) && calc.value_col">
-                        <label class="text-[10px] font-semibold text-slate-500">Decimal Places</label>
-                        <input type="number" min="0" max="10" placeholder="1"
-                               x-model.number="calc.decimals" @change="_schedulePreview()"
-                               class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
-                      </div>
                     </div>
+
+                    {# ── Derived column: combine two other calculation columns ── #}
+                    <template x-if="calc.calc_type === 'derived'">
+                      <div class="space-y-2">
+                        <div class="grid grid-cols-3 gap-2 items-end">
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Column A</label>
+                            <select x-model="calc.ref_a" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                              <option value="">— choose —</option>
+                              <template x-for="o in dynCalcRefOptions(idx)" :key="'dcA_'+idx+'_'+o.id">
+                                <option :value="o.id" x-text="o.label"></option>
+                              </template>
+                            </select>
+                          </div>
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Operator</label>
+                            <select x-model="calc.op" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                              <option value="add">+ Add</option>
+                              <option value="subtract">− Subtract</option>
+                              <option value="multiply">× Multiply</option>
+                              <option value="divide">÷ Divide</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Column B</label>
+                            <select x-model="calc.ref_b" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                              <option value="">— choose —</option>
+                              <template x-for="o in dynCalcRefOptions(idx)" :key="'dcB_'+idx+'_'+o.id">
+                                <option :value="o.id" x-text="o.label"></option>
+                              </template>
+                            </select>
+                          </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 items-end">
+                          <label class="flex items-center gap-1.5 text-[10px] text-slate-600 cursor-pointer" x-show="calc.op === 'divide'">
+                            <input type="checkbox" x-model="calc.as_percent" @change="_schedulePreview()"
+                                   class="rounded text-violet-600 w-3 h-3 border-slate-300 focus:ring-violet-200">
+                            Display as % (e.g. a rate: Below ÷ Total)
+                          </label>
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Decimal Places</label>
+                            <input type="number" min="0" max="10" placeholder="1"
+                                   x-model.number="calc.decimals" @change="_schedulePreview()"
+                                   class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+
+                    {# ── Base column: aggregate a value column, optionally filtered ── #}
+                    <template x-if="calc.calc_type === 'base'">
+                      <div class="space-y-2">
+                        <div class="grid grid-cols-2 gap-2">
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Function</label>
+                            <select x-model="calc.agg_func" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                              <option value="count">Count</option>
+                              <option value="sum">Sum</option>
+                              <option value="avg">Average</option>
+                              <option value="min">Min</option>
+                              <option value="max">Max</option>
+                              <option value="median">Median</option>
+                            </select>
+                          </div>
+                          <div x-show="calc.agg_func !== 'count'">
+                            <label class="text-[10px] font-semibold text-slate-500">Value Column</label>
+                            <select x-model="calc.value_col" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                              <option value="">— choose —</option>
+                              <template x-for="c in activeCols" :key="'stv_calc_'+c">
+                                <option :value="c" x-text="colLabel(c)"></option>
+                              </template>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label class="flex items-center gap-1.5 text-[10px] text-slate-600 cursor-pointer">
+                            <input type="checkbox" :checked="calc.filter && calc.filter.op" @change="toggleDynCalcFilter(calc)"
+                                   class="rounded text-amber-600 w-3 h-3 border-slate-300 focus:ring-amber-200">
+                            Only include rows where… (e.g. count students below a threshold)
+                          </label>
+                          <div x-show="calc.filter && calc.filter.op" class="grid grid-cols-[1fr_92px_110px] gap-2 mt-1.5">
+                            <select x-model="calc.filter.col" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                              <option value="">— choose column —</option>
+                              <template x-for="c in activeCols" :key="'dcf_'+idx+'_'+c">
+                                <option :value="c" x-text="colLabel(c)"></option>
+                              </template>
+                            </select>
+                            <select x-model="calc.filter.op" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                              <option value="lt">&lt; below</option>
+                              <option value="lte">≤ at most</option>
+                              <option value="gt">&gt; above</option>
+                              <option value="gte">≥ at least</option>
+                            </select>
+                            <input type="number" step="any" x-model.number="calc.filter.val" @change="_schedulePreview()"
+                                   placeholder="value"
+                                   class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                          </div>
+                        </div>
+
+                        <div x-show="['avg','median'].includes(calc.agg_func) && calc.value_col">
+                          <label class="text-[10px] font-semibold text-slate-500">Decimal Places</label>
+                          <input type="number" min="0" max="10" placeholder="1"
+                                 x-model.number="calc.decimals" @change="_schedulePreview()"
+                                 class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                        </div>
+                      </div>
+                    </template>
                   </div>
                 </template>
                 <p x-show="!dynCalculations.length" class="text-[10px] text-slate-400 py-3 text-center border border-dashed border-slate-200 rounded-lg bg-white">
@@ -3576,6 +3665,17 @@ function chartBuilder() {
         return !!l.agg_func && !!l.value_col;
       });
     },
+    get _dynCalcsValid() {
+      if (!this.dynCalculations.length) return false;
+      return this.dynCalculations.every(calc => {
+        if (calc.calc_type === 'derived') return !!calc.op && !!calc.ref_a && !!calc.ref_b;
+        if (calc.filter && calc.filter.op) {
+          const f = calc.filter;
+          return (calc.agg_func === 'count' || !!calc.value_col) && !!f.col && f.val !== '' && f.val !== null && f.val !== undefined;
+        }
+        return calc.agg_func === 'count' || !!calc.value_col;
+      });
+    },
     get canPreview() {
       if (!this.hasData || !this.chartType) return false;
       if (this.chartType === 'assessment_compare' && this.comparePlCols.length < 2) return false;
@@ -3589,10 +3689,7 @@ function chartBuilder() {
       }
       if (this.chartType === 'dynamic_summary_table') {
         if (this.dynColMode === 'calculations') {
-          const hasRows = this.dynRowCols.length > 0;
-          const hasCalcs = this.dynCalculations.length > 0;
-          const calcsValid = this.dynCalculations.every(calc => calc.agg_func === 'count' || !!calc.value_col);
-          return hasRows && hasCalcs && calcsValid;
+          return this.dynRowCols.length > 0 && this._dynCalcsValid;
         } else {
           const hasAxes = this.dynRowCols.length > 0 && this.dynColCols.length > 0;
           const needsVal = !['count'].includes(this.dynAggFunc);
@@ -3621,7 +3718,7 @@ function chartBuilder() {
           : (!!this.stRowCol && !!this.stColCol);
       } else if (this.chartType === 'dynamic_summary_table') {
         if (this.dynColMode === 'calculations') {
-          colsDone = this.dynRowCols.length > 0 && this.dynCalculations.length > 0 && this.dynCalculations.every(calc => calc.agg_func === 'count' || !!calc.value_col);
+          colsDone = this.dynRowCols.length > 0 && this._dynCalcsValid;
         } else {
           const hasAxes = this.dynRowCols.length > 0 && this.dynColCols.length > 0;
           const needsVal = !['count'].includes(this.dynAggFunc);

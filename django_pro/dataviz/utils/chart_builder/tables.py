@@ -14,6 +14,37 @@ except Exception:  # pragma: no cover
 from .constants import *  # noqa: F401,F403
 from .common import *  # noqa: F401,F403
 
+# Numeric comparison operators available to a dynamic-summary-table calculation
+# column's optional threshold filter (e.g. "count students with attendance_rate < 85").
+_DYN_FILTER_OPS = frozenset({'lt', 'lte', 'gt', 'gte'})
+
+
+def _dyn_filter_expr(col: str, op: str, val: float):
+    """Polars expression for a numeric threshold comparison on ``col``.
+
+    Rows whose value is non-numeric or null compare as null and are excluded,
+    matching how non-count aggregations skip invalid values elsewhere.
+    """
+    x = pl.col(col).cast(pl.Float64, strict=False)
+    if op == 'lt':
+        return x < val
+    if op == 'lte':
+        return x <= val
+    if op == 'gt':
+        return x > val
+    if op == 'gte':
+        return x >= val
+    return None
+
+
+_DYN_CALC_OPS = {
+    'add':      lambda a, b: a + b,
+    'subtract': lambda a, b: a - b,
+    'multiply': lambda a, b: a * b,
+    'divide':   lambda a, b: (a / b) if b else 0.0,
+}
+
+
 def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     """Return a special __type__=table option: count cross-tabulation.
 
@@ -374,10 +405,42 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         if not valid_row:
             return _message_option('Dynamic Summary Table: no valid Row columns in data', cfg)
 
-        mask = blank_filter_expr(valid_row, _BLANK)
-        calc_value_cols = [calc.get('value_col') for calc in dyn_calculations if calc.get('value_col') and calc.get('value_col') in df.columns]
-        keep_cols = list(dict.fromkeys(valid_row + calc_value_cols + ([_dup_key] if _dup_key else [])))
-        work = df.filter(mask).select(keep_cols)
+        # Normalize each calculation: assign a stable id (charts saved before ids
+        # fall back to positional c0/c1/…) and classify as 'base' — an aggregate
+        # of a value column, optionally restricted by a numeric threshold filter
+        # (e.g. "count of students with attendance_rate < 85") — or 'derived',
+        # arithmetic combining two other calculation columns (e.g. below ÷ total).
+        parsed_calcs = []
+        for idx, calc in enumerate(dyn_calculations):
+            if not isinstance(calc, dict):
+                continue
+            cid = str(calc.get('id') or f'c{idx}')
+            ctype = calc.get('calc_type')
+            if ctype not in ('base', 'derived'):
+                ctype = ('derived'
+                         if calc.get('op') and (calc.get('ref_a') is not None or calc.get('ref_b') is not None)
+                         else 'base')
+            parsed = dict(calc)
+            parsed['id'] = cid
+            parsed['calc_type'] = ctype
+            parsed_calcs.append(parsed)
+
+        if not parsed_calcs:
+            return _message_option('Dynamic Summary Table: add at least one calculation column', cfg)
+
+        def _calc_decimals(calc):
+            dec = calc.get('decimals')
+            try:
+                return int(dec) if dec is not None and str(dec).strip() != '' else None
+            except (ValueError, TypeError):
+                return None
+
+        calc_value_cols = [c.get('value_col') for c in parsed_calcs
+                           if c.get('calc_type') == 'base' and c.get('value_col') and c.get('value_col') in df.columns]
+        filter_cols = [f.get('col') for c in parsed_calcs if c.get('calc_type') == 'base'
+                       for f in [c.get('filter')] if isinstance(f, dict) and f.get('col') and f.get('col') in df.columns]
+        keep_cols = list(dict.fromkeys(valid_row + calc_value_cols + filter_cols + ([_dup_key] if _dup_key else [])))
+        work = df.filter(blank_filter_expr(valid_row, _BLANK)).select(keep_cols)
         work = strip_str_cols(work, valid_row)
 
         if work.is_empty():
@@ -389,49 +452,66 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         row_combos = _build_row_combos(row_val_lists, valid_row)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
+        base_ids = [c['id'] for c in parsed_calcs if c['calc_type'] == 'base']
 
         col_headers = []
-        for idx, calc in enumerate(dyn_calculations):
+        for idx, calc in enumerate(parsed_calcs):
             lbl = calc.get('label', '').strip()
             if not lbl:
-                fn = calc.get('agg_func', 'count')
-                vc = calc.get('value_col', '')
-                vc_lbl = _label(vc, col_defs) if (col_defs and vc) else vc
-                lbl = f"{fn.capitalize()} of {vc_lbl}" if vc else fn.capitalize()
+                if calc['calc_type'] == 'derived':
+                    lbl = f"Calc #{idx + 1}"
+                else:
+                    fn = calc.get('agg_func', 'count')
+                    vc = calc.get('value_col', '')
+                    vc_lbl = _label(vc, col_defs) if (col_defs and vc) else vc
+                    lbl = f"{fn.capitalize()} of {vc_lbl}" if vc else fn.capitalize()
             col_headers.append(lbl)
 
         rows_data = []
-        col_totals = [0.0] * len(dyn_calculations)
+        col_totals = {cid: 0.0 for cid in base_ids}
 
         for combo in row_combos:
             sub = work
             for r_col, r_val in zip(valid_row, combo):
                 sub = sub.filter(pl.col(r_col) == r_val)
 
-            cell_vals = []
-            row_cells = []
-            for ci, calc in enumerate(dyn_calculations):
+            # Base columns: aggregate (optionally filtered) and keep the raw
+            # numeric value for arithmetic/totals alongside the display cell.
+            base_raw = {}
+            base_display = {}
+            for calc in parsed_calcs:
+                if calc['calc_type'] != 'base':
+                    continue
+                cid = calc['id']
                 fn = calc.get('agg_func', 'count')
                 vc = calc.get('value_col', '')
-                dec = calc.get('decimals')
-                try:
-                    dec = int(dec) if dec is not None and str(dec).strip() != '' else None
-                except ValueError:
-                    dec = None
+                dec = _calc_decimals(calc)
+
+                csub = sub
+                f = calc.get('filter')
+                if isinstance(f, dict) and f.get('col') and f.get('op') in _DYN_FILTER_OPS:
+                    try:
+                        fval = float(f['val'])
+                    except (TypeError, ValueError):
+                        fval = None
+                    if fval is not None and f['col'] in csub.columns:
+                        expr = _dyn_filter_expr(f['col'], f['op'], fval)
+                        if expr is not None:
+                            csub = csub.filter(expr)
 
                 if fn == 'count':
                     if _dup_key:
-                        raw = float(sub.unique(subset=[_dup_key] + valid_row, keep='first').height)
+                        raw = float(csub.unique(subset=[_dup_key] + valid_row, keep='first').height)
                     else:
-                        raw = float(sub.height)
-                    if vc and vc in sub.columns:
-                        num_data = to_numeric_series(sub[vc]).drop_nulls()
+                        raw = float(csub.height)
+                    if vc and vc in csub.columns:
+                        num_data = to_numeric_series(csub[vc]).drop_nulls()
                         alt_raw = float(num_data.mean()) if num_data.len() > 0 else None
                     else:
                         alt_raw = None
                 else:
-                    if vc and vc in sub.columns:
-                        num_data = to_numeric_series(sub[vc]).drop_nulls()
+                    if vc and vc in csub.columns:
+                        num_data = to_numeric_series(csub[vc]).drop_nulls()
                         if num_data.len() == 0:
                             raw = 0.0
                         else:
@@ -439,37 +519,94 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                     else:
                         raw = 0.0
                     if _dup_key:
-                        valid_sub = sub
+                        valid_sub = csub
                         if vc and vc in valid_sub.columns:
                             valid_sub = valid_sub.with_columns(to_numeric_expr(vc).alias(vc)).drop_nulls(subset=[vc])
                         alt_raw = float(valid_sub.select(pl.col(_dup_key).n_unique()).item())
                     else:
-                        alt_raw = float(sub.height)
+                        alt_raw = float(csub.height)
 
                 if dec is not None:
                     raw = round(raw, dec)
-                col_totals[ci] += raw
-                cell_vals.append(raw)
+                base_raw[cid] = raw
+                col_totals[cid] += raw
+                base_display[cid] = _format_cell_with_tooltip(raw, alt_raw, fn, show_tooltips, dec)
 
-                formatted = _format_cell_with_tooltip(raw, alt_raw, fn, show_tooltips, dec)
-                row_cells.append(formatted)
+            # Derived columns may reference other derived columns (e.g. first
+            # Present = Total − Absent, then Rate = Present ÷ Total), so resolve
+            # in repeated passes until nothing more can progress — any dangling
+            # reference or cycle renders as 0.0, matching the date-series lines.
+            derived_vals = {}
+            pending = {c['id']: c for c in parsed_calcs if c['calc_type'] == 'derived'}
+            for _ in range(len(pending) + 1):
+                if not pending:
+                    break
+                progressed = False
+                pool = {**base_raw, **derived_vals}
+                for cid, calc in list(pending.items()):
+                    ra = str(calc.get('ref_a') or '')
+                    rb = str(calc.get('ref_b') or '')
+                    if ra in pool and rb in pool:
+                        fn = _DYN_CALC_OPS.get(calc.get('op', 'add'), _DYN_CALC_OPS['add'])
+                        v = fn(pool[ra], pool[rb])
+                        if calc.get('as_percent'):
+                            v = v * 100
+                        derived_vals[cid] = v
+                        del pending[cid]
+                        progressed = True
+                if not progressed:
+                    break
+            for cid in pending:
+                derived_vals[cid] = 0.0
+
+            row_cells = []
+            for calc in parsed_calcs:
+                if calc['calc_type'] == 'base':
+                    row_cells.append(base_display[calc['id']])
+                else:
+                    v = derived_vals.get(calc['id'], 0.0)
+                    dec = _calc_decimals(calc)
+                    if dec is not None:
+                        v = round(v, dec)
+                    row_cells.append(v)
 
             if st_show_row_totals:
-                rows_data.append(list(combo) + row_cells + [sum(cell_vals)])
+                # Row total sums only base columns — a sum of derived values
+                # (rates/percentages) would be meaningless.
+                row_total = sum(base_raw[cid] for cid in base_ids)
+                rows_data.append(list(combo) + row_cells + [row_total])
             else:
                 rows_data.append(list(combo) + row_cells)
 
-        for ci, calc in enumerate(dyn_calculations):
-            dec = calc.get('decimals')
-            try:
-                dec = int(dec) if dec is not None and str(dec).strip() != '' else None
-            except ValueError:
-                dec = None
-            if dec is not None:
-                col_totals[ci] = round(col_totals[ci], dec)
+        # Round base column totals, then recompute derived column totals from
+        # their input totals so a rate column's Total is the rate of the totals
+        # (e.g. Total below ÷ Total students), not a sum of per-row percentages.
+        col_total_display = {}
+        for calc in parsed_calcs:
+            cid = calc['id']
+            dec = _calc_decimals(calc)
+            if calc['calc_type'] == 'base':
+                v = col_totals[cid]
+                if dec is not None:
+                    v = round(v, dec)
+                col_total_display[cid] = v
+            else:
+                ra = str(calc.get('ref_a') or '')
+                rb = str(calc.get('ref_b') or '')
+                if ra in col_total_display and rb in col_total_display:
+                    fn = _DYN_CALC_OPS.get(calc.get('op', 'add'), _DYN_CALC_OPS['add'])
+                    v = fn(col_total_display[ra], col_total_display[rb])
+                    if calc.get('as_percent'):
+                        v = v * 100
+                else:
+                    v = 0.0
+                if dec is not None:
+                    v = round(v, dec)
+                col_total_display[cid] = v
 
-        grand_total = sum(col_totals)
-        total_row = (['Total'] + [''] * (len(valid_row) - 1) + col_totals + [grand_total]) if st_show_col_totals else []
+        ordered_totals = [col_total_display[c['id']] for c in parsed_calcs]
+        grand_total = sum(col_total_display[cid] for cid in base_ids)
+        total_row = (['Total'] + [''] * (len(valid_row) - 1) + ordered_totals + [grand_total]) if st_show_col_totals else []
         row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
 
         result = {

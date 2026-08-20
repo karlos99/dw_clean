@@ -68,6 +68,9 @@ def _remap_config_cols(config: dict, column_mappings: dict | None) -> dict:
                     new_item = dict(item)
                     if 'value_col' in new_item and isinstance(new_item['value_col'], str):
                         new_item['value_col'] = column_mappings.get(new_item['value_col'], new_item['value_col'])
+                    f = new_item.get('filter')
+                    if isinstance(f, dict) and f.get('col') and isinstance(f['col'], str):
+                        new_item['filter'] = {**f, 'col': column_mappings.get(f['col'], f['col'])}
                     new_calcs.append(new_item)
                 else:
                     new_calcs.append(item)

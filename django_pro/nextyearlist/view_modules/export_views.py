@@ -9,7 +9,7 @@ import logging
 
 from dataexploration.models import SavedQuery
 from dataexploration.view_modules.student_data_utils import get_current_student_columns, get_student_enroll_columns
-from dataexploration.column_utils import _get_display_name
+from dataexploration.column_utils import _get_display_name, export_cell
 from ..constants import COLUMN_DEFINITIONS
 from ..utils import can_user_view_query
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
@@ -607,7 +607,7 @@ def export_students_csv(request):
                 row_count = 0
                 for row in cursor:
                     row_count += 1
-                    yield [row[p] if p is not None else '' for p in col_positions]
+                    yield [export_cell(row[p]) if p is not None else '\u2014' for p in col_positions]
 
                 logger.info("NYL CSV Export: completed, %d rows", row_count)
 

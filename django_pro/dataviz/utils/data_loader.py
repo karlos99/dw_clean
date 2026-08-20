@@ -611,7 +611,7 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     if not test_cols_info:
         return
 
-    from dataexploration.column_utils import test_metadata_matches
+    from dataexploration.column_utils import test_metadata_matches, normalize_score_value
     from dataviz.utils.chart_builder import _record_pg_val
 
     # Compound key: (student_id, school_year) — a student may appear in
@@ -698,9 +698,9 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                 metric = info['metric']
                 col_name = info['col_name']
                 if metric == 'ss':
-                    val = str(ss).strip() if ss is not None else '\u2014'
+                    val = normalize_score_value(ss) or '\u2014'
                 elif metric == 'pl':
-                    val = str(pl).strip() if pl else '\u2014'
+                    val = normalize_score_value(pl) or '\u2014'
                 elif metric == 'oi' or metric == 'dfp':
                     oi_key = info.get('other_info_key')
                     if oi_key:
@@ -711,7 +711,7 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                                 oi = None
                         if isinstance(oi, dict):
                             v = oi.get(oi_key)
-                            val = str(v).strip() if v is not None else '\u2014'
+                            val = normalize_score_value(v) or '\u2014'
                         else:
                             val = '\u2014'
                     else:

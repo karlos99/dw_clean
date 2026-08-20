@@ -101,7 +101,7 @@ class ActiveRoleMiddleware:
 
         # Define priority (index 0 is highest)
         # Assuming typical hierarchy. Adjust as needed.
-        PRIORITY = ['Project Admin', 'District Admin', 'School Admin', 'Teacher']
+        PRIORITY = ['Project Admin', 'District Admin', 'District View', 'School Admin', 'Teacher']
         
         best_role = None
         best_idx = 999
@@ -125,10 +125,12 @@ class ActiveRoleMiddleware:
 
     @staticmethod
     def _is_unrestricted(user):
-        """Superusers and Project/District Admins can act across all schools."""
+        """Superusers and District/Project-level roles can act across all schools."""
         if user.is_superuser:
             return True
-        return user.roles.filter(name__in=['Project Admin', 'District Admin']).exists()
+        return user.roles.filter(
+            name__in=['Project Admin', 'District Admin', 'District View']
+        ).exists() or user.roles.filter(name__icontains='District').exists()
 
 
 class UsageTrackingMiddleware:
