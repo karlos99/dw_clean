@@ -15,7 +15,7 @@ import statistics
 from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
 from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL
-from ..utils import can_user_view_query, get_user_folders
+from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted
 from ..survey_utils import get_survey_columns
 from .student_data_utils import (
     get_current_student_columns,
@@ -647,13 +647,7 @@ def get_column_statistics(request):
             base_params.append(status)
 
         # Check if user is unrestricted (Project Admin OR District Role)
-        is_unrestricted = False
-        if request.user.is_superuser:
-            is_unrestricted = True
-        elif getattr(request.user, 'is_project_admin', False):
-            is_unrestricted = True
-        elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
-            is_unrestricted = True
+        is_unrestricted = _is_user_unrestricted(request.user)
 
         # Apply active school context or enforce school permissions
         if hasattr(request.user, 'active_school') and request.user.active_school:

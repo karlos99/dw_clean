@@ -230,10 +230,12 @@ def _get_student_list_context(request):
     if school_filter_id and not active_school:
         user_schools = getattr(request.user, 'schools', None)
         if not user_schools or school_filter_id in user_schools:
-            try:
-                active_school = StudataSchool.objects.get(state_id=school_filter_id)
-            except StudataSchool.DoesNotExist:
-                pass
+            active_school = (
+                StudataSchool.objects
+                .filter(state_id=school_filter_id)
+                .order_by('school_name', 'dw_schoolkey')
+                .first()
+            )
 
     students_qs = get_visible_students(request.user, active_school=active_school)
     students_qs = students_qs.filter(school_year=school_year)

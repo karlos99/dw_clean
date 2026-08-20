@@ -15,6 +15,7 @@ from dataviz.utils.drill_through import (
     _drill_user_part, _drill_fetch_hash, _drill_post_hash,
 )
 from dataviz.views.drill_views import _col_label, _parse_column_filters
+from dataexploration.column_utils import export_cell
 
 MAX_PER_PAGE = 5000
 
@@ -252,7 +253,7 @@ def drill_export_csv_api(request, chart_id):
             yield ','.join([_col_label(c) for c in cols]) + '\n'
             for row in all_rows:
                 yield ','.join(
-                    f'"{str(row.get(c, "")).replace(chr(34), chr(34)+chr(34))}"'
+                    f'"{str(export_cell(row.get(c))).replace(chr(34), chr(34)+chr(34))}"'
                     for c in cols
                 ) + '\n'
         elif cached and cached[1]:

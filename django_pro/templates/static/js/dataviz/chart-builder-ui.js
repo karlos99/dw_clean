@@ -66,17 +66,65 @@ function chartBuilderUIMethods() {
       this._schedulePreview(true);
     },
     addDynCalculation() {
+      this._dynCalcSeq = (this._dynCalcSeq || 0) + 1;
       this.dynCalculations.push({
+        id: 'c' + this._dynCalcSeq,
+        calc_type: 'base',
         value_col: '',
         agg_func: 'count',
         label: '',
-        decimals: null
+        decimals: null,
+        filter: null,
+        op: 'divide',
+        ref_a: '',
+        ref_b: '',
+        as_percent: false
       });
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
     },
     removeDynCalculation(idx) {
+      const removedId = this.dynCalculations[idx]?.id;
       this.dynCalculations.splice(idx, 1);
+      // Drop derived columns that referenced the removed column — a dangling
+      // reference would silently resolve to zero, more confusing than clearing
+      // the reference so the user re-picks.
+      this.dynCalculations.forEach(c => {
+        if (c.calc_type === 'derived') {
+          if (c.ref_a === removedId) c.ref_a = '';
+          if (c.ref_b === removedId) c.ref_b = '';
+        }
+      });
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    dynCalcLabel(calc) {
+      if (!calc) return '';
+      const lbl = (calc.label || '').trim();
+      if (lbl) return lbl;
+      if (calc.calc_type === 'derived') {
+        return 'Calc ' + String(calc.id || '').toUpperCase();
+      }
+      const fn = calc.agg_func || 'count';
+      const vc = calc.value_col || '';
+      if (!vc) return fn.charAt(0).toUpperCase() + fn.slice(1);
+      return fn.charAt(0).toUpperCase() + fn.slice(1) + ' of ' + this.colLabel(vc);
+    },
+    dynCalcRefOptions(idx) {
+      // Calculation columns a derived column at *idx* can reference — every
+      // other calculation column (base or derived), in display order.
+      return this.dynCalculations
+        .map((c, i) => ({ c, i }))
+        .filter(o => o.i !== idx && this.dynCalcLabel(o.c))
+        .map(o => ({ id: o.c.id, label: this.dynCalcLabel(o.c) }));
+    },
+    toggleDynCalcFilter(calc) {
+      // Threshold filter ("only include rows where value col < 85").
+      if (calc.filter && typeof calc.filter === 'object') {
+        calc.filter = null;
+      } else {
+        calc.filter = { col: calc.value_col || '', op: 'lt', val: '' };
+      }
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
     },

@@ -2589,6 +2589,219 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res_dyn['rows'][0][1], {'val': 2.0, 'tooltip': 'Average: 400.0'})
         self.assertEqual(res_dyn['rows'][0][2], {'val': 400.0, 'tooltip': 'Count: 2'})
 
+    def test_dynamic_summary_table_derived_ratio_with_threshold_filter(self):
+        """A derived column dividing a threshold-filtered count by a total count,
+        displayed as a percentage. Row total must exclude derived columns and the
+        total row must recompute the derived value from the input column totals."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'att_rate': 90.0},
+            {'grade': '5', 'ssid': '456', 'att_rate': 80.0},
+            {'grade': '5', 'ssid': '999', 'att_rate': 70.0},
+            {'grade': '6', 'ssid': '789', 'att_rate': 95.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'c1', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Total Students'},
+                {'id': 'c2', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Below 85',
+                 'filter': {'col': 'att_rate', 'op': 'lt', 'val': 85}},
+                {'id': 'c3', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'c2', 'ref_b': 'c1',
+                 'label': 'Pct Below', 'as_percent': True, 'decimals': 1},
+            ],
+            'dyn_show_row_totals': True,
+            'dyn_show_col_totals': True,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['col_headers'], ['Total Students', 'Below 85', 'Pct Below'])
+        # Grade 5: 3 students, 2 below 85 (80, 70) → 66.7%; row total = 3 + 2 = 5
+        self.assertEqual(res['rows'][0], ['5', 3.0, 2.0, 66.7, 5.0])
+        # Grade 6: 1 student, none below → 0.0%
+        self.assertEqual(res['rows'][1], ['6', 1.0, 0.0, 0.0, 1.0])
+        # Total row: derived recomputed from totals → 2 / 4 = 50.0%; grand total = 4 + 2 = 6
+        self.assertEqual(res['total_row'], ['Total', 4.0, 2.0, 50.0, 6.0])
+
+    def test_dynamic_summary_table_derived_chain(self):
+        """Derived columns may reference other derived columns (e.g. first compute
+        At/Above = Total − Below, then Pct = At/Above ÷ Total)."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'att_rate': 90.0},
+            {'grade': '5', 'ssid': '456', 'att_rate': 80.0},
+            {'grade': '5', 'ssid': '999', 'att_rate': 70.0},
+            {'grade': '6', 'ssid': '789', 'att_rate': 95.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'c1', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Total'},
+                {'id': 'c2', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Below',
+                 'filter': {'col': 'att_rate', 'op': 'lt', 'val': 85}},
+                {'id': 'c3', 'calc_type': 'derived', 'op': 'subtract', 'ref_a': 'c1', 'ref_b': 'c2', 'label': 'At/Above'},
+                {'id': 'c4', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'c3', 'ref_b': 'c1',
+                 'label': 'Pct At/Above', 'as_percent': True, 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['col_headers'], ['Total', 'Below', 'At/Above', 'Pct At/Above'])
+        self.assertEqual(res['rows'][0], ['5', 3.0, 2.0, 1.0, 33.3])
+        self.assertEqual(res['rows'][1], ['6', 1.0, 0.0, 1.0, 100.0])
+
+    def test_dynamic_summary_table_derived_other_ops(self):
+        """Add/subtract/multiply derived columns combine base values correctly."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'males': 10.0},
+            {'grade': '5', 'ssid': '2', 'males': 20.0},
+            {'grade': '6', 'ssid': '3', 'males': 30.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'a', 'calc_type': 'base', 'agg_func': 'count', 'label': 'Count'},
+                {'id': 'm', 'calc_type': 'base', 'agg_func': 'sum', 'value_col': 'males', 'label': 'Male Sum'},
+                {'id': 'add', 'calc_type': 'derived', 'op': 'add', 'ref_a': 'a', 'ref_b': 'm', 'label': 'A+M'},
+                {'id': 'mul', 'calc_type': 'derived', 'op': 'multiply', 'ref_a': 'a', 'ref_b': 'm', 'label': 'A*M'},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        # Grade 5: Count=2, Male Sum=30, A+M=32, A*M=60
+        self.assertEqual(res['rows'][0], ['5', 2.0, 30.0, 32.0, 60.0])
+        self.assertEqual(res['rows'][1], ['6', 1.0, 30.0, 31.0, 30.0])
+
+    def test_dynamic_summary_table_threshold_filter_other_ops(self):
+        """Threshold filters support gt/lte and apply to sum/avg aggregations."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'score': 100.0},
+            {'grade': '5', 'ssid': '2', 'score': 200.0},
+            {'grade': '5', 'ssid': '3', 'score': 300.0},
+            {'grade': '6', 'ssid': '4', 'score': 400.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'hi', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Above 150',
+                 'filter': {'col': 'score', 'op': 'gt', 'val': 150}},
+                {'id': 'sumhi', 'calc_type': 'base', 'agg_func': 'sum', 'value_col': 'score', 'label': 'Sum Above 150',
+                 'filter': {'col': 'score', 'op': 'gt', 'val': 150}},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        # Grade 5: scores 100,200,300 → above 150 = 2 students, sum = 500
+        self.assertEqual(res['rows'][0], ['5', 2.0, 500.0])
+        # Grade 6: 400 → 1 student, sum 400
+        self.assertEqual(res['rows'][1], ['6', 1.0, 400.0])
+
+    def test_dynamic_summary_table_legacy_calculations_backcompat(self):
+        """Calculation entries saved before this feature (no id/calc_type) must
+        produce byte-identical output to the original behavior."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'scale_score': 300.0},
+            {'grade': '5', 'ssid': '456', 'scale_score': 400.0},
+            {'grade': '6', 'ssid': '789', 'scale_score': 500.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'agg_func': 'count', 'value_col': 'ssid', 'label': 'My Count', 'decimals': None},
+                {'agg_func': 'avg', 'value_col': 'scale_score', 'label': 'My Avg', 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['__type__'], 'table')
+        self.assertEqual(res['col_headers'], ['My Count', 'My Avg'])
+        self.assertEqual(res['rows'], [
+            ['5', 2.0, 350.0],
+            ['6', 1.0, 500.0],
+        ])
+
+    def test_dynamic_summary_table_derived_echarts_mode(self):
+        """Derived columns render correctly when the dynamic table is displayed
+        as a stacked bar chart."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'att_rate': 90.0},
+            {'grade': '5', 'ssid': '456', 'att_rate': 80.0},
+            {'grade': '6', 'ssid': '789', 'att_rate': 95.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'c1', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Total'},
+                {'id': 'c2', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Below',
+                 'filter': {'col': 'att_rate', 'op': 'lt', 'val': 85}},
+                {'id': 'c3', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'c2', 'ref_b': 'c1',
+                 'label': 'Pct Below', 'as_percent': True, 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'dyn_display_type': 'stacked_bar',
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertNotIn('__type__', res)
+        self.assertEqual(res['xAxis']['data'], ['5', '6'])
+        self.assertEqual([s['name'] for s in res['series']], ['Total', 'Below', 'Pct Below'])
+        self.assertEqual(res['series'][0]['stack'], 'total')
+        self.assertEqual([s['data'] for s in res['series']], [[2.0, 1.0], [1.0, 0.0], [50.0, 0.0]])
+
 
 class PageDuplicateTests(TestCase):
     def setUp(self):
@@ -2889,6 +3102,47 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         self.assertEqual(students[0][col], '2')
         self.assertEqual(students[1][col], '2')
         self.assertEqual(mock_record.call_count, 2)
+
+    @patch('clickhouse_utils.executor.QueryExecutor.pg_cursor')
+    @patch('dataviz.utils.chart_builder._record_pg_val')
+    def test_fetch_test_data_blank_sentinel_scores(self, _mock_pg, mock_record):
+        from unittest.mock import MagicMock, patch
+        from dataviz.utils.data_loader import _fetch_test_data
+
+        students = [
+            {'ssid': '123', 'student_id': 'loc1', 'school_year': '2024-2025', 'grade': '6'},
+        ]
+        test_infos = [
+            {
+                'year': '2024-2025',
+                'test_name': 'CAASPP',
+                'subject': 'ELA',
+                'test_window': None,
+                'metric': 'pl',
+                'col_name': 'test_2024_2025_CAASPP_ELA_PL',
+            },
+            {
+                'year': '2024-2025',
+                'test_name': 'CAASPP',
+                'subject': 'Math',
+                'test_window': None,
+                'metric': 'ss',
+                'col_name': 'test_2024_2025_CAASPP_Math_SS',
+            },
+        ]
+        # NaN / NS sentinel values must never surface as raw strings.
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('loc1', '123', None, 'NaN', None, '2024-2025', 'CAASPP', 'ELA', ''),
+            ('loc1', '123', 'NS', None, None, '2024-2025', 'CAASPP', 'Math', ''),
+        ]
+        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
+            mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+            mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+            _fetch_test_data(None, test_infos, [], students)
+
+        self.assertEqual(students[0]['test_2024_2025_CAASPP_ELA_PL'], '\u2014')
+        self.assertEqual(students[0]['test_2024_2025_CAASPP_Math_SS'], '\u2014')
 
     def test_stack_same_as_y_uses_count_not_avg(self):
         import polars as pl

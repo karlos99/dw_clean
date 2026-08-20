@@ -113,6 +113,41 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertEqual(lookup_result_value(owner, by_id, by_ssid), '1')
 		self.assertEqual(lookup_result_value(orphan, by_id, by_ssid), '4')
 
+	def test_normalize_score_value_blank_sentinels(self):
+		from dataexploration.column_utils import normalize_score_value
+		for sentinel in ('NaN', 'nan', 'NAN', 'NS', 'ns', 'N/A', 'n/a', 'NA', 'na', 'null', 'None', '', '  '):
+			self.assertIsNone(normalize_score_value(sentinel), msg=f'{sentinel!r} should be blank')
+		self.assertEqual(normalize_score_value('3'), '3')
+		self.assertEqual(normalize_score_value('2461'), '2461')
+		self.assertEqual(normalize_score_value('At Benchmark'), 'At Benchmark')
+		self.assertEqual(normalize_score_value(0), '0')
+		self.assertIsNone(normalize_score_value(None))
+
+	def test_assign_result_value_maps_blank_sentinel_scores(self):
+		from dataexploration.column_utils import assign_result_value_maps, lookup_result_value
+		rows = [
+			('loc1', '3122440885', 'NaN'),
+			('loc2', None, 'NS'),
+			('loc3', '555', '2'),
+		]
+		by_id, by_ssid = assign_result_value_maps(rows)
+		self.assertEqual(lookup_result_value({'ssid': '3122440885'}, by_id, by_ssid), '—')
+		self.assertEqual(lookup_result_value({'student_id': 'loc2', 'ssid': ''}, by_id, by_ssid), '—')
+		self.assertEqual(lookup_result_value({'ssid': '555'}, by_id, by_ssid), '2')
+
+	def test_export_cell_uses_blank_marker_consistently(self):
+		from dataexploration.column_utils import export_cell
+		self.assertEqual(export_cell(None), '—')
+		self.assertEqual(export_cell(''), '—')
+		self.assertEqual(export_cell('NaN'), '—')
+		self.assertEqual(export_cell('NS'), '—')
+		self.assertEqual(export_cell('n/a'), '—')
+		self.assertEqual(export_cell('3'), '3')
+		self.assertEqual(export_cell('2461'), '2461')
+		self.assertEqual(export_cell('At Benchmark'), 'At Benchmark')
+		self.assertEqual(export_cell(0), '0')
+		self.assertEqual(export_cell('—'), '—')
+
 
 class SchoolYearUtilsTests(SimpleTestCase):
 	@patch("dataexploration.school_year_utils.resolve_school_year")

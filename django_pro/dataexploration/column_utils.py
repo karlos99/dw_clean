@@ -60,6 +60,35 @@ RESULTS_BULK_MATCH_SQL = (
 
 RESULTS_BLANK_SSID_SQL = "(r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN')"
 
+# Placeholder values produced by assessment data imports when a student has no
+# usable score (NaN, NS, N/A, ...). They must never surface on charts/tables as
+# raw strings, so ``normalize_score_value()`` maps them to ``None`` (blank).
+SCORE_SENTINELS = frozenset({
+    '', 'nan', 'ns', 'n/a', 'na', 'n/s', 'null', 'none',
+    'inf', '-inf', 'infinity', '-infinity',
+})
+
+
+def normalize_score_value(value):
+    """Return ``None`` for missing/placeholder score values, else the trimmed value."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() in SCORE_SENTINELS:
+        return None
+    return s
+
+
+def export_cell(value, blank='\u2014'):
+    """Return a CSV cell value with blank/sentinel values shown as the blank marker.
+
+    Maps ``None``, empty strings and sentinel score values (NaN/NS/N/A ...) to the
+    same ``\u2014`` marker used across charts and the data explorer, so exports stay
+    consistent instead of surfacing raw ``NaN`` / ``None`` strings.
+    """
+    v = normalize_score_value(value)
+    return blank if v is None else v
+
 
 def assign_result_value_maps(rows):
     """Build local-id / ssid maps from ``(local_student_id, ssid, value)`` rows.
@@ -73,9 +102,9 @@ def assign_result_value_maps(rows):
         local_id, ssid, val = row[0], row[1], row[2]
         ssid_s = str(ssid).strip() if ssid is not None else ''
         if ssid_s:
-            by_ssid[ssid_s] = val
+            by_ssid[ssid_s] = normalize_score_value(val)
         elif local_id:
-            by_id[str(local_id).strip()] = val
+            by_id[str(local_id).strip()] = normalize_score_value(val)
     return by_id, by_ssid
 
 
@@ -85,12 +114,12 @@ def lookup_result_value(student, by_id, by_ssid, blank='—'):
     if ssid is not None:
         ssid_s = str(ssid).strip()
         if ssid_s and ssid_s in by_ssid:
-            return by_ssid[ssid_s]
+            return by_ssid[ssid_s] or blank
     sid = student.get('student_id')
     if sid is not None:
         sid_s = str(sid).strip()
         if sid_s and sid_s in by_id:
-            return by_id[sid_s]
+            return by_id[sid_s] or blank
     return blank
 
 
