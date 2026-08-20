@@ -9,7 +9,7 @@ from ..models import DefaultColumnSelection
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
 from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns
 from ..survey_utils import get_survey_columns
-from ..utils import get_user_roles
+from ..utils import get_user_roles, _apply_de_school_filter
 
 
 def get_saved_default_columns():
@@ -193,20 +193,7 @@ def load_column_structures(request):
     params = []
     user = request.user
     
-    user_roles = get_user_roles(user)
-    unrestricted_roles = {'District Admin', 'Project Admin', 'District View'}
-    is_unrestricted = user.is_superuser or bool(user_roles & unrestricted_roles)
-    
-    if hasattr(user, 'active_school') and user.active_school:
-        where_clauses.append("cs.school_state_id = %s")
-        params.append(user.active_school.state_id)
-    else:
-        if not is_unrestricted:
-            if hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
-                where_clauses.append("cs.school_state_id = ANY(%s)")
-                params.append(user.schools)
-            else:
-                where_clauses.append("1=0")
+    _apply_de_school_filter(where_clauses, params, user)
 
     test_structure = get_test_columns(
         column_filters=column_filters,

@@ -15,7 +15,7 @@ from ..column_utils import (
     RESULTS_BULK_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
     assign_result_value_maps, lookup_result_value, export_cell,
 )
-from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted
+from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -571,22 +571,7 @@ def export_students_csv(request):
                     base_params.append(status_value)
 
                 # Apply active school context or enforce school permissions
-                if hasattr(request.user, 'active_school') and request.user.active_school:
-                     # User explicitly selected a school
-                     base_where_clauses.append("cs.school_state_id = %s")
-                     base_params.append(request.user.active_school.state_id)
-                else:
-                     # Check if user is unrestricted (Project Admin OR District Role)
-                     is_unrestricted = _is_user_unrestricted(request.user)
-                     
-                     if not is_unrestricted:
-                         # No specific school selected, so limit to ALL assigned schools
-                         if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
-                              base_where_clauses.append("cs.school_state_id = ANY(%s)")
-                              base_params.append(request.user.schools)
-                         else:
-                              # Non-admin user with no assigned schools sees nothing
-                              base_where_clauses.append("1=0")
+                _apply_de_school_filter(base_where_clauses, base_params, request.user)
 
                 # Apply specific row-level permissions (e.g. Teacher seeing only their students)
                 if hasattr(request.user, 'get_accessible_student_keys'):

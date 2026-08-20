@@ -1343,18 +1343,19 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
                 else:
                     where_parts.append("1=0")  # No students assigned
 
-        if hasattr(user, 'active_school') and user.active_school:
-            # Explicitly filtered to one school via the UI selector
-            where_parts.append("cs.school_state_id = %s")
-            params.append(user.active_school.state_id)
-        elif not is_unrestricted:
-            # Filter to the list of schools the user is permitted to see
-            user_schools = getattr(user, 'schools', [])
-            if isinstance(user_schools, list) and user_schools:
-                where_parts.append("cs.school_state_id = ANY(%s)")
-                params.append(user_schools)
+        if not is_unrestricted:
+            if hasattr(user, 'active_school') and user.active_school:
+                # Explicitly filtered to one school via the UI selector
+                where_parts.append("cs.school_state_id = %s")
+                params.append(user.active_school.state_id)
             else:
-                where_parts.append("1=0")  # Deny access if no schools assigned
+                # Filter to the list of schools the user is permitted to see
+                user_schools = getattr(user, 'schools', [])
+                if isinstance(user_schools, list) and user_schools:
+                    where_parts.append("cs.school_state_id = ANY(%s)")
+                    params.append(user_schools)
+                else:
+                    where_parts.append("1=0")  # Deny access if no schools assigned
 
     needs_enroll = False
 
