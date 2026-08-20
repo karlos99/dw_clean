@@ -1,7 +1,7 @@
-/* chart-builder-preview.js — Alpine component methods: preview, save, save-and-attach, recommendations, describe, config builder, flash */
+/* chart-builder-preview.js — Alpine component methods: preview, save, save-and-attach, describe, config builder, flash */
 
 function chartBuilderPreviewMethods(urls) {
-  // urls injected from the template: { preview, save, saveAndAttach, recommend, describe }
+  // urls injected from the template: { preview, save, saveAndAttach, describe }
   function getCsrf() {
     return document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
   }
@@ -176,22 +176,7 @@ function chartBuilderPreviewMethods(urls) {
       this.saving = false;
     },
 
-    /* ─── Recommendations & Auto Description ─────────────── */
-    async fetchRecommendations() {
-      if (!this.hasData) return;
-      this.recommendationsLoading = true;
-      try {
-        const r = await fetch(urls.recommend, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrf() },
-          body: JSON.stringify({ columns: this.activeCols, column_definitions: {} }),
-        });
-        const data = await r.json();
-        if (data.success) this.recommendedCharts = data.recommendations || [];
-      } catch (_) {}
-      this.recommendationsLoading = false;
-    },
-
+    /* ─── Auto Description ───────────────────────────────── */
     async fetchAutoDescription() {
       if (!this.chartType) return;
       // Throttle: only re-fetch description every 30 seconds

@@ -87,7 +87,7 @@ def _draw_assessments_full(pdf: Any, ssid: str, x: float, y: float, width: float
             row_type = row.get('type', '')
             if row_type == 'iReady':
                 iready_groups[(row.get('year', '—'), row.get('subject', '—'))].append(row)
-            elif row_type == 'DIBELS':
+            elif row_type == 'Dibels':
                 dibels_groups[row.get('year', '—')].append(row)
             elif row_type in {'ELPAC Summative', 'ELPAC Summative (Regular)', 'CAASPP'}:
                 state_groups[(row.get('year', '—'), row.get('test_name', row_type))].append(row)
@@ -100,7 +100,7 @@ def _draw_assessments_full(pdf: Any, ssid: str, x: float, y: float, width: float
         for year in sorted(dibels_groups.keys(), reverse=True):
             rows = sorted(dibels_groups[year], key=lambda item: item.get('window', ''))
             lines = [f"{(item.get('window', '—') or '—')}: {item.get('pl', '—')}" for item in rows]
-            blocks.append((f"DIBELS {year}", lines or ['—']))
+            blocks.append((f"Dibels {year}", lines or ['—']))
 
         for (year, test_name) in sorted(state_groups.keys(), reverse=True):
             rows = state_groups[(year, test_name)]

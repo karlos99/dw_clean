@@ -402,7 +402,7 @@ def build_drill_filter(chart, params: dict) -> dict:
                 filters[col_name] = x_val
 
     # assessment_compare: drill_col is the specific PL column (e.g.
-    # test_2025_2026_DIBELS_Reading_BOY_PL).  The series_val is the PL value
+    # test_2025_2026_Dibels_Reading_BOY_PL).  The series_val is the PL value
     # ("Above Benchmark").  Filter that column directly — it already encodes
     # the test, subject, window, and year so no extra filters are needed.
     drill_col = params.get('drill_col', '')

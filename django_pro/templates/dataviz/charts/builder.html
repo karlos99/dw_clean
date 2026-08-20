@@ -126,7 +126,7 @@
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Data Source</p>
           </div>
           <div class="flex items-center gap-1.5">
-            <span class="step-dot" :class="guidedStep === 1 ? 'current' : (hasData ? 'done' : 'pending')" x-text="hasData ? '✓' : '1'"></span>
+            <span class="step-dot" :class="hasData ? 'done' : 'pending'" x-text="hasData ? '✓' : '1'"></span>
             <span x-show="!srcOpen" class="text-[9px] font-semibold text-blue-600 uppercase tracking-wide" x-text="sourceType === 'query' ? 'Saved Query' : sourceType === 'sql' ? 'SQL' : sourceType === 'columns' ? 'Explorer' : sourceType === 'dataset' ? 'Dataset' : ''"></span>
             <svg class="w-3 h-3 text-slate-400 transition-transform" :class="srcOpen && 'rotate-180'"
                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -1281,7 +1281,7 @@
             </template>
           </div>
           <p class="text-[9px] text-slate-400 mt-1 leading-snug">
-            Select 2+ PL columns from the same assessment (e.g. DIBELS BOY PL &amp; MOY PL). Window/year is auto-detected.
+            Select 2+ PL columns from the same assessment (e.g. Dibels BOY PL &amp; MOY PL). Window/year is auto-detected.
           </p>
         </div>
 
@@ -1755,7 +1755,7 @@
               <span class="text-[9px] text-slate-400 italic w-full">Presets:</span>
               <button type="button"
                       @click="pgScaleText='Well Below Benchmark, Below Benchmark, At Benchmark, Above Benchmark'; _pgLastAutoScale=''; _schedulePreview();"
-                      class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">DIBELS</button>
+                      class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">Dibels</button>
               <button type="button"
                       @click="pgScaleText='Not Met, Nearly Met, Met, Exceeded'; _pgLastAutoScale=''; _schedulePreview();"
                       class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">CAASPP</button>
@@ -3235,45 +3235,6 @@
     </div>
   </div>
 
-  {# ── Guided Mode banner ── #}
-  <div x-show="!guidedMode" x-transition
-       class="fixed bottom-4 right-4 z-40 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl shadow-xl p-4 max-w-xs"
-       x-cloak>
-    <div class="flex items-start gap-2">
-      <svg class="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-      <div>
-        <p class="text-xs font-bold">New to charts?</p>
-        <p class="text-[10px] opacity-90 mt-0.5">Guided mode walks you through each step.</p>
-        <button @click="guidedMode = true; localStorage.setItem('datavizGuidedMode','true'); guidedStep=1"
-                class="mt-2 text-[9px] font-bold bg-white/20 hover:bg-white/30 rounded-lg px-2.5 py-1 transition">
-          Start Guided Mode
-        </button>
-      </div>
-      <button @click="guidedMode = true; localStorage.setItem('datavizGuidedMode','true')" class="text-white/60 hover:text-white">&times;</button>
-    </div>
-  </div>
-
-  {# ── Chart Recommendations panel (shown after column load) ── #}
-  <div x-show="recommendedCharts.length > 0 && centerTab === 'type'" x-transition
-       class="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-indigo-50">
-    <p class="text-[9px] font-bold text-blue-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-      <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
-      Recommended for your data
-    </p>
-    <div class="flex flex-wrap gap-1">
-      <template x-for="rec in recommendedCharts" :key="rec.chart_type">
-        <button @click="chartType = rec.chart_type; centerTab = 'map'"
-                class="text-[10px] font-semibold px-2 py-1 rounded-full border transition whitespace-nowrap"
-                :class="chartType === rec.chart_type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-100'"
-                :title="rec.reason">
-          <span x-text="rec.label"></span>
-          <span class="text-[8px] ml-0.5 opacity-60" x-text="'(' + rec.score + ')'"></span>
-        </button>
-      </template>
-    </div>
-    <p x-show="recommendedCharts.length === 0 && recommendationsLoading" class="text-[9px] text-slate-400">Analyzing columns…</p>
-  </div>
-
   {# ── Auto Description (below chart preview) ── #}
   <div x-show="autoDescription && previewHtml" x-transition
        class="px-4 py-2 text-[10px] text-slate-500 italic bg-slate-50 border-t border-slate-200">
@@ -3577,12 +3538,6 @@ function chartBuilder() {
     targetPageId:      '',
     availablePages:    JSON.parse('{{ available_pages_json|escapejs }}'),
     isUserMenu:        !!(existing && existing.is_user_menu),
-    // Guided mode
-    guidedMode:        localStorage.getItem('datavizGuidedMode') === 'true',
-    guidedStep:        1,              // 1=Source, 2=Type, 3=Map, 4=Preview
-    // Chart recommendations
-    recommendedCharts: [],
-    recommendationsLoading: false,
     // Auto description
     autoDescription:   '',
     // Cross-nav
@@ -3716,7 +3671,6 @@ function chartBuilder() {
       preview:       '{% url "dataviz:chart_preview" %}',
       save:          '{% url "dataviz:chart_save" %}',
       saveAndAttach: '{% url "dataviz:chart_save_and_attach" %}',
-      recommend:     '{% url "dataviz:chart_recommend" %}',
       describe:      '{% url "dataviz:chart_describe" %}',
     }),
   };

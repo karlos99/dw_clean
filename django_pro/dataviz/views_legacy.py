@@ -73,8 +73,10 @@ def _parse_col_meta(col: str, col_defs: dict) -> dict:
             m2 = re.match(r'\d{4}_\d{4}_(.+)', inner)
             if m2:
                 last = m2.group(1).split('_')[-1].lower()
-                if last in {'fall', 'winter', 'spring', 'summer', 'eoy', 'moy', 'boy', 'baseline', 'midyear'}:
+                if last in {'fall', 'winter', 'spring', 'summer', 'baseline', 'midyear'}:
                     window = last.capitalize()
+                elif last in {'eoy', 'moy', 'boy'}:
+                    window = last.upper()
 
         year_match = re.search(r'\((\d{4}-\d{4})\)', first)
         year = year_match.group(1) if year_match else _parse_col_year(col)

@@ -24,6 +24,7 @@ from .column_management import (
     get_saved_default_columns,
     get_column_expression,
 )
+from dataexploration.school_year_utils import resolve_relative_column_key
 
 @login_required
 def export_students_csv(request):
@@ -56,6 +57,9 @@ def export_students_csv(request):
         selected_columns = saved_config.get('columns')
     else:
         selected_columns = get_saved_default_columns()
+    
+    # Resolve any relative column keys (e.g. test___sy_this___...) to real year keys
+    selected_columns = [resolve_relative_column_key(c) for c in selected_columns]
     
     # Extract saved filters (they may be nested under 'filters' key or at top level)
     saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
@@ -112,6 +116,11 @@ def export_students_csv(request):
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
 
+    if sort_by:
+        sort_by = resolve_relative_column_key(sort_by)
+    if isinstance(filters, dict):
+        filters = {resolve_relative_column_key(k): v for k, v in filters.items()}
+
     # Helper for column filters (Duplicated from load_students to avoid refactoring risk)
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
         if not isinstance(filters_to_apply, dict): return
@@ -144,7 +153,7 @@ def export_students_csv(request):
                 ssid_subquery_base = (
                     "SELECT r.ssid FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' "
+                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' "
                     "AND r.school_year = %s "
                     "AND LOWER(t.test_name) = LOWER(%s) "
                     "AND LOWER(t.subject) = LOWER(%s) "

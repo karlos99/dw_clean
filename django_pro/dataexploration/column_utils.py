@@ -9,12 +9,12 @@ from .constants import COLUMN_DEFINITIONS
 
 
 def _get_display_name(name):
-    """Normalize test names for display (e.g. Dibbles -> Dibles)."""
+    """Normalize test names for display (e.g. Dibbles -> Dibels)."""
     if not name:
         return name
     name = str(name)
-    if 'Dibbles' in name:
-        name = name.replace('Dibbles', 'Dibels')
+    if 'Dibbles' in name or 'dibels' in name.lower():
+        name = re.sub(r'(?i)(?:Dibbles|Dibels)', 'Dibels', name)
     if 'iready' in name.lower():
         name = re.sub(r'(?i)iready', 'iReady', name)
     return name
@@ -43,22 +43,22 @@ def test_metadata_matches(info: dict, row_test_name, row_subject, row_window=Non
 # students, so matching on local_student_id alone attaches the wrong scores.
 RESULTS_STUDENT_MATCH_SQL = (
     "("
-    "(r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)"
+    "(r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)"
     " OR "
-    "((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = cs.student_id)"
+    "((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = cs.student_id)"
     ")"
 )
 
 # Bulk fetch: params are (student_ssids, student_ids) in that order.
 RESULTS_BULK_MATCH_SQL = (
     "("
-    "(r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s))"
+    "(r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND r.ssid = ANY(%s))"
     " OR "
-    "((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = ANY(%s))"
+    "((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = ANY(%s))"
     ")"
 )
 
-RESULTS_BLANK_SSID_SQL = "(r.ssid IS NULL OR r.ssid = '')"
+RESULTS_BLANK_SSID_SQL = "(r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN')"
 
 
 def assign_result_value_maps(rows):
