@@ -677,11 +677,11 @@ def compile_dataset_to_sql(
                 is_unrestricted = True
                 
         # Inject context filter on current_student if present
-        if 'current_student' in active_tables:
+        if 'current_student' in active_tables and not is_unrestricted:
             if hasattr(user, 'active_school') and user.active_school:
                 where_parts.append('"current_student"."school_state_id" = %s')
                 params.append(user.active_school.state_id)
-            elif not is_unrestricted:
+            else:
                 user_schools = getattr(user, 'schools', [])
                 if isinstance(user_schools, list) and user_schools:
                     where_parts.append('"current_student"."school_state_id" = ANY(%s)')
@@ -690,11 +690,11 @@ def compile_dataset_to_sql(
                     where_parts.append("1=0")
                     
         # Inject context filter on student_enroll if present and current_student not present
-        elif 'student_enroll' in active_tables:
+        elif 'student_enroll' in active_tables and not is_unrestricted:
             if hasattr(user, 'active_school') and user.active_school:
                 where_parts.append('"student_enroll"."state_school_code" = %s')
                 params.append(user.active_school.state_id)
-            elif not is_unrestricted:
+            else:
                 user_schools = getattr(user, 'schools', [])
                 if isinstance(user_schools, list) and user_schools:
                     where_parts.append('"student_enroll"."state_school_code" = ANY(%s)')
@@ -958,22 +958,22 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
             unrestricted_names = {'Project Admin', 'District Admin', 'District View'}
             if any(name in unrestricted_names or 'District' in name for name in user_roles):
                 is_unrestricted = True
-        if 'current_student' in active_tables:
+        if 'current_student' in active_tables and not is_unrestricted:
             if hasattr(user, 'active_school') and user.active_school:
                 where_parts.append('"current_student"."school_state_id" = %s')
                 params.append(user.active_school.state_id)
-            elif not is_unrestricted:
+            else:
                 user_schools = getattr(user, 'schools', [])
                 if isinstance(user_schools, list) and user_schools:
                     where_parts.append('"current_student"."school_state_id" = ANY(%s)')
                     params.append(user_schools)
                 else:
                     where_parts.append("1=0")
-        elif 'student_enroll' in active_tables:
+        elif 'student_enroll' in active_tables and not is_unrestricted:
             if hasattr(user, 'active_school') and user.active_school:
                 where_parts.append('"student_enroll"."state_school_code" = %s')
                 params.append(user.active_school.state_id)
-            elif not is_unrestricted:
+            else:
                 user_schools = getattr(user, 'schools', [])
                 if isinstance(user_schools, list) and user_schools:
                     where_parts.append('"student_enroll"."state_school_code" = ANY(%s)')

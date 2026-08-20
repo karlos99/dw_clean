@@ -311,14 +311,19 @@ def can_user_manage_list(user, student_list):
     return can_user_edit_folder(user, student_list.folder)
 
 def _apply_de_school_filter(where_clauses, params, user):
-    """Apply the active school context or enforce school permissions."""
+    """Apply the active school context or enforce school permissions.
+
+    District/Project-level roles see all students regardless of assigned
+    schools or navbar school selection.
+    """
+    if is_unrestricted(user):
+        return
+
     if hasattr(user, 'active_school') and user.active_school:
         where_clauses.append("cs.school_state_id = %s")
         params.append(user.active_school.state_id)
+    elif hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
+        where_clauses.append("cs.school_state_id = ANY(%s)")
+        params.append(user.schools)
     else:
-        if not is_unrestricted(user):
-            if hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
-                where_clauses.append("cs.school_state_id = ANY(%s)")
-                params.append(user.schools)
-            else:
-                where_clauses.append("1=0")
+        where_clauses.append("1=0")

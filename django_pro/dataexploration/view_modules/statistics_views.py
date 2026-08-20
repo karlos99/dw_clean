@@ -15,7 +15,7 @@ import statistics
 from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
 from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL
-from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted
+from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from ..survey_utils import get_survey_columns
 from .student_data_utils import (
     get_current_student_columns,
@@ -650,16 +650,7 @@ def get_column_statistics(request):
         is_unrestricted = _is_user_unrestricted(request.user)
 
         # Apply active school context or enforce school permissions
-        if hasattr(request.user, 'active_school') and request.user.active_school:
-            base_where_clauses.append("cs.school_state_id = %s")
-            base_params.append(request.user.active_school.state_id)
-        else:
-            if not is_unrestricted:
-                if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
-                    base_where_clauses.append("cs.school_state_id = ANY(%s)")
-                    base_params.append(request.user.schools)
-                else:
-                    base_where_clauses.append("1=0")
+        _apply_de_school_filter(base_where_clauses, base_params, request.user)
 
         # Apply grade level restrictions for specific roles
         if not is_unrestricted and hasattr(request.user, 'grade_levels'):

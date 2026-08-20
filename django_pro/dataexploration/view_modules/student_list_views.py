@@ -22,7 +22,7 @@ from ..column_utils import (
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
-from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted
+from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -1188,23 +1188,8 @@ def load_students(request):
                 base_where_clauses.append("cs.status = %s")
                 base_params.append(status)
 
-        # Check if user is unrestricted (Project Admin OR District Role)
-        is_unrestricted = _is_user_unrestricted(request.user)
-
         # Apply active school context or enforce school permissions
-        if hasattr(request.user, 'active_school') and request.user.active_school:
-             # User explicitly selected a school (which is validated by middleware to be in their allowed list)
-             base_where_clauses.append("cs.school_state_id = %s")
-             base_params.append(request.user.active_school.state_id)
-        else:
-             if not is_unrestricted:
-                 # No specific school selected, so limit to ALL assigned schools
-                 if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
-                      base_where_clauses.append("cs.school_state_id = ANY(%s)")
-                      base_params.append(request.user.schools)
-                 else:
-                      # Non-admin user with no assigned schools sees nothing
-                      base_where_clauses.append("1=0")
+        _apply_de_school_filter(base_where_clauses, base_params, request.user)
 
         active_role_name = getattr(getattr(request.user, 'active_role', None), 'name', None)
         if active_role_name == 'School Gr View':

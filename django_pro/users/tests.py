@@ -122,4 +122,30 @@ class DistrictRoleVisibilityTests(TestCase):
         admin_user.active_role = self.district_admin
         self.assertIsNone(admin_user.get_accessible_student_keys())
 
+    def test_district_admin_bypasses_school_filter(self):
+        from dataexploration.utils import _apply_de_school_filter
+        from types import SimpleNamespace
+
+        admin = self._user('u_da_school', [self.district_admin], schools=['Unknown'])
+        admin.active_role = self.district_admin
+        admin.active_school = SimpleNamespace(state_id='Unknown')
+
+        where, params = [], []
+        _apply_de_school_filter(where, params, admin)
+        self.assertEqual(where, [])
+        self.assertEqual(params, [])
+
+    def test_teacher_with_active_school_gets_school_filter(self):
+        from dataexploration.utils import _apply_de_school_filter
+        from types import SimpleNamespace
+
+        teacher = self._user('u_teacher_school', [self.teacher], schools=['0110791'])
+        teacher.active_role = self.teacher
+        teacher.active_school = SimpleNamespace(state_id='0110791')
+
+        where, params = [], []
+        _apply_de_school_filter(where, params, teacher)
+        self.assertEqual(where, ['cs.school_state_id = %s'])
+        self.assertEqual(params, ['0110791'])
+
 
