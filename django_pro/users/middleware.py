@@ -68,7 +68,14 @@ class ActiveRoleMiddleware:
                           # We can find it from the prefetched queryset to save a DB hit if we iterate users.available_schools
                           # But simple filter is fine.
                           try:
-                              request.user.active_school = StudataSchool.objects.get(state_id=active_school_id)
+                              request.user.active_school = (
+                                  StudataSchool.objects
+                                  .filter(state_id=active_school_id)
+                                  .order_by('school_name', 'dw_schoolkey')
+                                  .first()
+                              )
+                              if request.user.active_school is None:
+                                  raise StudataSchool.DoesNotExist
                           except StudataSchool.DoesNotExist:
                               request.session.pop('active_school_id', None)
                               request.user.active_school = None

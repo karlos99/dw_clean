@@ -119,6 +119,21 @@ class User(AbstractUser):
 
         return self.roles.filter(name='Project Admin').exists()
 
+    _school_cache = {}
+
+    @property
+    def first_school_name(self):
+        if not self.schools or not isinstance(self.schools, list):
+            return '-'
+        first_school_id = self.schools[0]
+        if not first_school_id:
+            return '-'
+        if first_school_id not in User._school_cache:
+            from studata.models import School as StudataSchool
+            school_obj = StudataSchool.objects.filter(state_id=first_school_id).first()
+            User._school_cache[first_school_id] = school_obj.school_name if school_obj else '-'
+        return User._school_cache[first_school_id]
+
     @property
     def is_district_admin(self):
         if hasattr(self, 'active_role') and self.active_role:
