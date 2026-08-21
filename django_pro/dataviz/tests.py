@@ -2731,6 +2731,77 @@ class DynamicSummaryTableOptionTests(TestCase):
         # Grade 6: 400 → 1 student, sum 400
         self.assertEqual(res['rows'][1], ['6', 1.0, 400.0])
 
+    def test_dynamic_summary_table_equality_filter(self):
+        """eq/neq operators match a specific value (categorical and numeric),
+        and derived columns can build on those counts."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'gender': 'F', 'att_rate': 85.0},
+            {'grade': '5', 'ssid': '2', 'gender': 'M', 'att_rate': 80.0},
+            {'grade': '5', 'ssid': '3', 'gender': 'F', 'att_rate': 90.0},
+            {'grade': '6', 'ssid': '4', 'gender': 'M', 'att_rate': 95.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'fem', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Females',
+                 'filter': {'col': 'gender', 'op': 'eq', 'val': 'F'}},
+                {'id': 'males', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Not Females',
+                 'filter': {'col': 'gender', 'op': 'neq', 'val': 'F'}},
+                {'id': 'exact85', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Rate = 85',
+                 'filter': {'col': 'att_rate', 'op': 'eq', 'val': '85.0'}},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['col_headers'], ['Females', 'Not Females', 'Rate = 85'])
+        # Grade 5: F=2, not F=1, att_rate exactly 85.0=1
+        self.assertEqual(res['rows'][0], ['5', 2.0, 1.0, 1.0])
+        # Grade 6: F=0, not F=1, none exactly 85.0
+        self.assertEqual(res['rows'][1], ['6', 0.0, 1.0, 0.0])
+
+    def test_dynamic_summary_table_equality_derived(self):
+        """Equals/not-equals filtered counts compose into a derived ratio."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'gender': 'F'},
+            {'grade': '5', 'ssid': '2', 'gender': 'M'},
+            {'grade': '5', 'ssid': '3', 'gender': 'F'},
+            {'grade': '6', 'ssid': '4', 'gender': 'M'},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'fem', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Females',
+                 'filter': {'col': 'gender', 'op': 'eq', 'val': 'F'}},
+                {'id': 'tot', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Total'},
+                {'id': 'pct', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'fem', 'ref_b': 'tot',
+                 'label': '% Female', 'as_percent': True, 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['rows'][0], ['5', 2.0, 3.0, 66.7])
+        self.assertEqual(res['rows'][1], ['6', 0.0, 1.0, 0.0])
+
     def test_dynamic_summary_table_legacy_calculations_backcompat(self):
         """Calculation entries saved before this feature (no id/calc_type) must
         produce byte-identical output to the original behavior."""

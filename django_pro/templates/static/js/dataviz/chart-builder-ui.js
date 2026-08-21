@@ -128,6 +128,35 @@ function chartBuilderUIMethods() {
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
     },
+    dynFilterValueOptions(col) {
+      // Distinct values for the calc filter column, used to prepopulate the
+      // "equals / not equals" dropdown.  Lazy-fetched when not already loaded.
+      if (!col) return [];
+      if (!this.filterOptions[col]) this._loadCalcFilterOptions(col);
+      return this.filterOptions[col] || [];
+    },
+    _loadCalcFilterOptions(col) {
+      if (this._calcFilterLoading && this._calcFilterLoading[col]) return;
+      this._calcFilterLoading = { ...(this._calcFilterLoading || {}), [col]: true };
+      const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+      fetch('/dataviz/api/columns/filter-options/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        body: JSON.stringify({ columns: [col], filters: this.cleanSourceFilters ? this.cleanSourceFilters() : {} })
+      })
+        .then(r => r.json())
+        .then(d => {
+          if (d.filter_options) {
+            this.filterOptions = { ...this.filterOptions, ...d.filter_options };
+          }
+        })
+        .catch(e => console.error('Fetch calc filter options:', e))
+        .finally(() => {
+          const l = { ...(this._calcFilterLoading || {}) };
+          delete l[col];
+          this._calcFilterLoading = l;
+        });
+    },
     addDsLine(lineType) {
       this._dsLineSeq = (this._dsLineSeq || 0) + 1;
       const id = 'l' + this._dsLineSeq;

@@ -92,6 +92,11 @@ class Page(models.Model):
 class NavbarConfig(models.Model):
     """Singleton navbar settings managed from Page Management."""
 
+    NAVBAR_STYLE_CHOICES = [
+        ('classic', 'Classic Dark'),
+        ('meter', 'Meter.com Inspired'),
+    ]
+
     LABEL_CASE_CHOICES = [
         ('uppercase', 'Uppercase'),
         ('normal', 'Normal Case'),
@@ -103,6 +108,13 @@ class NavbarConfig(models.Model):
     ]
 
     sticky = models.BooleanField(_("Sticky Navbar"), default=True, help_text="Keep the navbar fixed to the top of the viewport while scrolling")
+    navbar_style = models.CharField(
+        _("Navbar Style"),
+        max_length=20,
+        choices=NAVBAR_STYLE_CHOICES,
+        default='classic',
+        help_text="Classic Dark matches the current site look; Meter.com Inspired uses a clean light bar whose submenus toggle open/closed when you click their parent item",
+    )
     label_case = models.CharField(
         _("Label Case"),
         max_length=20,
@@ -132,7 +144,7 @@ class NavbarConfig(models.Model):
         verbose_name_plural = _("Navbar Configuration")
 
     def __str__(self):
-        return f'Navbar Config — {"sticky" if self.sticky else "static"} / {self.get_label_case_display()} / {self.get_submenu_style_display()}'
+        return f'Navbar Config — {self.get_navbar_style_display()} / {"sticky" if self.sticky else "static"} / {self.get_label_case_display()} / {self.get_submenu_style_display()}'
 
     def save(self, *args, **kwargs):
         self.pk = 1  # enforce singleton

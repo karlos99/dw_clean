@@ -61,7 +61,7 @@ admin.site.register(Page, PageAdmin)
 
 @admin.register(NavbarConfig)
 class NavbarConfigAdmin(admin.ModelAdmin):
-    list_display = ('pk', 'sticky', 'label_case', 'submenu_style', 'updated_by', 'updated_at')
+    list_display = ('pk', 'navbar_style', 'sticky', 'label_case', 'submenu_style', 'updated_by', 'updated_at')
     readonly_fields = ('updated_at',)
 
     def has_add_permission(self, request):

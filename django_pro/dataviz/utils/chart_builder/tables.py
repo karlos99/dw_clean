@@ -14,17 +14,25 @@ except Exception:  # pragma: no cover
 from .constants import *  # noqa: F401,F403
 from .common import *  # noqa: F401,F403
 
-# Numeric comparison operators available to a dynamic-summary-table calculation
-# column's optional threshold filter (e.g. "count students with attendance_rate < 85").
-_DYN_FILTER_OPS = frozenset({'lt', 'lte', 'gt', 'gte'})
+# Comparison operators available to a dynamic-summary-table calculation
+# column's optional threshold filter.  lt/lte/gt/gte are numeric ranges
+# (e.g. "count students with attendance_rate < 85"); eq/neq match a specific
+# value (e.g. gender == "F"), whose options are prepopulated from the column.
+_DYN_FILTER_OPS = frozenset({'lt', 'lte', 'gt', 'gte', 'eq', 'neq'})
 
 
-def _dyn_filter_expr(col: str, op: str, val: float):
-    """Polars expression for a numeric threshold comparison on ``col``.
+def _dyn_filter_expr(col: str, op: str, val):
+    """Polars expression for a threshold comparison on ``col``.
 
-    Rows whose value is non-numeric or null compare as null and are excluded,
-    matching how non-count aggregations skip invalid values elsewhere.
+    Numeric ranges cast the column to float — rows whose value is non-numeric
+    or null compare as null and are excluded, matching how non-count
+    aggregations skip invalid values elsewhere.  Equality compares the raw
+    (stripped) string value so categorical columns like gender work too.
     """
+    if op == 'eq':
+        return pl.col(col).cast(pl.Utf8).str.strip_chars() == str(val).strip()
+    if op == 'neq':
+        return pl.col(col).cast(pl.Utf8).str.strip_chars() != str(val).strip()
     x = pl.col(col).cast(pl.Float64, strict=False)
     if op == 'lt':
         return x < val
@@ -490,14 +498,23 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 csub = sub
                 f = calc.get('filter')
                 if isinstance(f, dict) and f.get('col') and f.get('op') in _DYN_FILTER_OPS:
-                    try:
-                        fval = float(f['val'])
-                    except (TypeError, ValueError):
-                        fval = None
-                    if fval is not None and f['col'] in csub.columns:
-                        expr = _dyn_filter_expr(f['col'], f['op'], fval)
-                        if expr is not None:
-                            csub = csub.filter(expr)
+                    fop = f['op']
+                    fcol = f['col']
+                    if fop in ('lt', 'lte', 'gt', 'gte'):
+                        try:
+                            fval = float(f['val'])
+                        except (TypeError, ValueError):
+                            fval = None
+                        if fval is not None and fcol in csub.columns:
+                            expr = _dyn_filter_expr(fcol, fop, fval)
+                            if expr is not None:
+                                csub = csub.filter(expr)
+                    else:  # eq / neq
+                        fval = f.get('val')
+                        if fval is not None and str(fval).strip() != '' and fcol in csub.columns:
+                            expr = _dyn_filter_expr(fcol, fop, fval)
+                            if expr is not None:
+                                csub = csub.filter(expr)
 
                 if fn == 'count':
                     if _dup_key:
