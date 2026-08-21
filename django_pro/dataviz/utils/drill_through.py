@@ -1072,6 +1072,13 @@ def execute_drill_query(
                 except (TypeError, ValueError):
                     return None
 
+            _DRILL_THRESH_OPS = {'lt', 'lte', 'gt', 'gte', 'eq', 'neq'}
+
+            def _strip_th(v):
+                if v is None:
+                    return ''
+                return str(v).strip()
+
             _th_cmp = {
                 'lt': lambda a, b: a < b,
                 'lte': lambda a, b: a <= b,
@@ -1083,8 +1090,21 @@ def execute_drill_query(
                     continue
                 _tcol = _resolve_th_col(_t.get('col', ''))
                 _top = _t.get('op')
+                if not _tcol or _top not in _DRILL_THRESH_OPS:
+                    continue
+                if _top in ('eq', 'neq'):
+                    _tval = str(_t.get('val') or '').strip()
+                    if _tval == '':
+                        continue
+                    _raw_vals = [r.get(_tcol) for r in rows]
+                    _norms = [_strip_th(v) for v in _raw_vals]
+                    if _top == 'eq':
+                        rows = [r for r, n in zip(rows, _norms) if n == _tval]
+                    else:
+                        rows = [r for r, n in zip(rows, _norms) if n != _tval]
+                    continue
                 _tval = _th_num(_t.get('val'))
-                if not _tcol or _top not in _th_cmp or _tval is None:
+                if _tval is None:
                     continue
                 rows = [
                     r for r in rows

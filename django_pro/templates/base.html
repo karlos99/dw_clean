@@ -37,17 +37,20 @@
 
         window.NAVBAR_CONFIG = {
             sticky: {{ navbar_config.sticky|yesno:"true,false" }},
+            navbar_style: "{{ navbar_config.navbar_style }}",
             label_case: "{{ navbar_config.label_case }}",
             submenu_style: "{{ navbar_config.submenu_style }}",
         };
 
-        function navbarController() {            const cfg = window.NAVBAR_CONFIG || { sticky: true, label_case: "uppercase", submenu_style: "dropdown" };
+        function navbarController() {            const cfg = window.NAVBAR_CONFIG || { sticky: true, navbar_style: "classic", label_case: "uppercase", submenu_style: "dropdown" };
             return {
                 mobileOpen: false,
                 sticky: cfg.sticky,
+                navbarStyle: cfg.navbar_style,
                 labelCase: cfg.label_case,
                 submenuStyle: cfg.submenu_style,
                 activeMega: null,
+                meterOpen: null,
                 _megaTimer: null,
                 toggleMobile() {
                     this.mobileOpen = !this.mobileOpen;
@@ -59,6 +62,9 @@
                 closeMega() {
                     clearTimeout(this._megaTimer);
                     this._megaTimer = setTimeout(() => { this.activeMega = null; }, 150);
+                },
+                toggleMeter(slug) {
+                    this.meterOpen = this.meterOpen === slug ? null : slug;
                 },
                 navWrapClass() {
                     return this.sticky ? "sticky top-0 z-40" : "relative";

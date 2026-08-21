@@ -179,6 +179,10 @@ def navbar_settings(request):
     if request.method == 'POST':
         config = NavbarConfig.get()
         config.sticky = request.POST.get('sticky') == 'on'
+        navbar_style = request.POST.get('navbar_style', 'classic')
+        if navbar_style not in dict(NavbarConfig.NAVBAR_STYLE_CHOICES):
+            navbar_style = 'classic'
+        config.navbar_style = navbar_style
         label_case = request.POST.get('label_case', 'uppercase')
         if label_case not in {'uppercase', 'normal'}:
             label_case = 'uppercase'

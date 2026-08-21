@@ -1676,7 +1676,7 @@
                                    class="rounded text-amber-600 w-3 h-3 border-slate-300 focus:ring-amber-200">
                             Only include rows where… (e.g. count students below a threshold)
                           </label>
-                          <div x-show="calc.filter && calc.filter.op" class="grid grid-cols-[1fr_92px_110px] gap-2 mt-1.5">
+                          <div x-show="calc.filter && calc.filter.op" class="grid grid-cols-[1fr_118px_1fr] gap-2 mt-1.5">
                             <select x-model="calc.filter.col" @change="_schedulePreview()"
                                     class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
                               <option value="">— choose column —</option>
@@ -1690,10 +1690,23 @@
                               <option value="lte">≤ at most</option>
                               <option value="gt">&gt; above</option>
                               <option value="gte">≥ at least</option>
+                              <option value="eq">= equals</option>
+                              <option value="neq">≠ not equals</option>
                             </select>
-                            <input type="number" step="any" x-model.number="calc.filter.val" @change="_schedulePreview()"
-                                   placeholder="value"
+                            {# Range operators: numeric input #}
+                            <input x-show="['lt','lte','gt','gte'].includes(calc.filter.op)" type="number" step="any"
+                                   x-model.number="calc.filter.val" @change="_schedulePreview()" placeholder="value"
                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                            {# Equals / not equals: text input with prepopulated value options #}
+                            <input x-show="['eq','neq'].includes(calc.filter.op)" type="text"
+                                   x-model="calc.filter.val" @change="_schedulePreview()" placeholder="value"
+                                   :list="'dyncalc_vals_'+idx"
+                                   class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                            <datalist :id="'dyncalc_vals_'+idx">
+                              <template x-for="opt in dynFilterValueOptions(calc.filter.col)" :key="'dcfo_'+idx+'_'+opt">
+                                <option :value="opt" x-text="opt"></option>
+                              </template>
+                            </datalist>
                           </div>
                         </div>
 
@@ -3671,7 +3684,12 @@ function chartBuilder() {
         if (calc.calc_type === 'derived') return !!calc.op && !!calc.ref_a && !!calc.ref_b;
         if (calc.filter && calc.filter.op) {
           const f = calc.filter;
-          return (calc.agg_func === 'count' || !!calc.value_col) && !!f.col && f.val !== '' && f.val !== null && f.val !== undefined;
+          const baseOk = calc.agg_func === 'count' || !!calc.value_col;
+          if (!baseOk || !f.col) return false;
+          const v = f.val;
+          if (v === '' || v === null || v === undefined) return false;
+          if (['lt', 'lte', 'gt', 'gte'].includes(f.op)) return !Number.isNaN(Number(v));
+          return true;
         }
         return calc.agg_func === 'count' || !!calc.value_col;
       });

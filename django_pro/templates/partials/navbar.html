@@ -6,7 +6,7 @@
   Alpine scope: `navbarController()` in base.html, or `pageManager()` on the
   admin preview frame. Both expose the same method names.
 -->
-<nav class="bg-slate-900 text-white border-b border-slate-800" :class="navWrapClass()">
+<nav x-cloak x-show="navbarStyle !== 'meter'" class="bg-slate-900 text-white border-b border-slate-800" :class="navWrapClass()">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between gap-4 h-20">
             <!-- Logo -->
@@ -271,6 +271,326 @@
                 <form method="POST" action="{% url 'users:switch_role' %}">
                     {% csrf_token %}
                     <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left py-2 text-xs uppercase tracking-wider text-slate-400 hover:text-blue-400 {% if user.active_role.id == role.id %}text-blue-400 font-bold{% endif %}">
+                        {{ role.name }}
+                    </button>
+                </form>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="pt-2 mt-2 border-t border-slate-800 flex items-center gap-3">
+                {% if user.avatar %}
+                <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full border border-slate-600">
+                {% else %}
+                <div class="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white">
+                    {{ user.email|first|upper }}
+                </div>
+                {% endif %}
+                <form method="post" action="{% url 'account_logout' %}" class="ml-auto">
+                    {% csrf_token %}
+                    <button type="submit" class="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400 hover:text-white">
+                        Logout
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</nav>
+
+<!--
+  Meter.com-inspired navbar — keeps the site's dark theme; submenus toggle
+  open/closed when you click their parent item (only one open at a time).
+  Clicking a different top-level item switches the open submenu.
+-->
+<nav x-cloak x-show="navbarStyle === 'meter'" class="bg-slate-900 text-white border-b border-slate-800" :class="navWrapClass()">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex items-center justify-between gap-4 h-16">
+            <!-- Logo -->
+            <div class="flex-shrink-0 flex items-center">
+                <a href="/" class="flex items-center" aria-label="DS Data home">
+                    <img src="{% static 'images/logo.svg' %}" alt="DS Data" class="h-9 w-auto">
+                </a>
+            </div>
+
+            {% if user.is_authenticated %}
+            <!-- Desktop Menu -->
+            <div class="hidden md:flex items-center gap-1">
+                {% for page in navigation_pages %}
+                {% if page.accessible_children %}
+                <div class="relative">
+                    <button @click="toggleMeter('{{ page.slug }}')" :class="navLabelClass()"
+                            class="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-blue-400 transition rounded-md focus:outline-none"
+                            :class="meterOpen === '{{ page.slug }}' && 'text-white bg-slate-800'">
+                        {% if page.icon %}<i class="{{ page.icon }}"></i>{% endif %}
+                        <span>{{ page.name }}</span>
+                        <svg class="h-3 w-3 transition-transform duration-200" :class="meterOpen === '{{ page.slug }}' && 'rotate-180'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                    <div class="absolute left-0 top-full pt-2 z-50" x-show="meterOpen === '{{ page.slug }}' && submenuStyle === 'dropdown'" x-transition style="display: none;">
+                        <div class="rounded-xl border border-slate-100 shadow-lg bg-white overflow-hidden flex"
+                             x-data="{ activeCat: null }"
+                             x-init="const _first = $el.querySelector('.meter-cat'); if (_first) activeCat = _first.dataset.cat;">
+                            <!-- Left: submenu categories -->
+                            <div class="py-1.5 w-56 border-r border-slate-100 max-h-[70vh] overflow-y-auto">
+                                {% for child in page.accessible_children %}
+                                {% if child.accessible_children %}
+                                <button type="button" data-cat="{{ child.slug }}"
+                                        class="meter-cat w-full flex items-center justify-between px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition"
+                                        @mouseenter="activeCat = '{{ child.slug }}'" @click="activeCat = '{{ child.slug }}'"
+                                        :class="activeCat === '{{ child.slug }}' && 'bg-slate-50 text-slate-900'">
+                                    <span class="flex items-center">
+                                        {% if child.icon %}<i class="{{ child.icon }} mr-2 text-slate-400"></i>{% endif %}
+                                        {{ child.name }}
+                                    </span>
+                                    <svg class="h-3.5 w-3.5 text-slate-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" /></svg>
+                                </button>
+                                {% else %}
+                                <a href="{{ child.url_path }}" class="w-full flex items-center px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition">
+                                    {% if child.icon %}<i class="{{ child.icon }} mr-2 text-slate-400"></i>{% endif %}
+                                    {{ child.name }}
+                                </a>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                            <!-- Right: dependent pages of the selected category -->
+                            <div class="py-2.5 w-80 max-h-[70vh] overflow-y-auto">
+                                {% for child in page.accessible_children %}
+                                {% if child.accessible_children %}
+                                <div x-show="activeCat === '{{ child.slug }}'" style="display: none;">
+                                    <p class="px-4 pb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">{{ child.name }}</p>
+                                    {% for grandchild in child.accessible_children %}
+                                    <a href="{{ grandchild.url_path }}" class="flex items-center px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition">
+                                        {% if grandchild.icon %}<i class="{{ grandchild.icon }} mr-2 text-slate-400"></i>{% endif %}
+                                        {{ grandchild.name }}
+                                    </a>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% else %}
+                <a href="{{ page.url_path }}" :class="navLabelClass()" class="px-3 py-2 text-slate-300 hover:text-blue-400 transition rounded-md">{{ page.name }}</a>
+                {% endif %}
+                {% endfor %}
+
+                <!-- Admin -->
+                {% if user.is_staff or user.active_role and user.active_role.name == 'Project Admin' or user.active_role and user.active_role.name == 'School Admin' or not user.active_role and user.is_project_admin %}
+                <div class="relative" x-data="{ open: false }">
+                    <button @click="open = !open" :class="navLabelClass()" class="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-blue-400 transition rounded-md focus:outline-none">
+                        Admin
+                        <svg class="h-3 w-3 transition-transform duration-200" :class="open && 'rotate-180'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                    <div class="absolute right-0 top-full pt-2 w-52 z-50" x-show="open" x-transition style="display: none;">
+                        <div class="rounded-xl border border-slate-100 shadow-lg py-1.5 bg-white">
+                            <a href="{% url 'users:manage_users' %}" class="block px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900">Users</a>
+                            {% if user.is_superuser or user.active_role and user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
+                            <a href="{% url 'users:manage_pages' %}" class="block px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900">Pages</a>
+                            <a href="{% url 'landing:project_settings' %}" class="block px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900">Project Settings</a>
+                            <a href="{% url 'dataviz:index' %}" class="block px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900">Data Vis</a>
+                            <a href="{% url 'dataLoader:dashboard' %}" class="block px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900">Data Loader</a>
+                            {% endif %}
+                            {% if usage_page_access %}
+                            <a href="{{ usage_page_url }}" class="block px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900">Usage</a>
+                            {% endif %}
+                            {% if user.is_staff %}
+                            <a href="/admin/" class="block px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900">Django Admin</a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Context Switcher -->
+                {% if user.roles.count >= 2 %}
+                <div class="h-4 w-px bg-slate-700"></div>
+                <div class="relative" x-data="{ open: false }">
+                    <button @click="open = !open" :class="navLabelClass()" class="flex items-center gap-1 px-3 py-2 text-slate-400 hover:text-white transition rounded-md focus:outline-none">
+                        <span class="truncate max-w-[200px]">
+                            {% if user.active_role %}{{ user.active_role.name }}{% else %}{{ user.roles.first.name }}{% endif %}
+                        </span>
+                        <svg class="h-3 w-3 transition-transform duration-200" :class="open && 'rotate-180'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                    <div class="absolute right-0 top-full pt-2 w-64 z-50" x-show="open" x-transition style="display: none;">
+                        <div class="bg-white rounded-xl border border-slate-100 shadow-lg max-h-[80vh] overflow-y-auto">
+                            <div class="px-4 py-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-50 border-b border-slate-100 rounded-t-xl">
+                                Switch Role
+                            </div>
+                            {% for role in user.roles.all %}
+                            <form method="POST" action="{% url 'users:switch_role' %}">
+                                {% csrf_token %}
+                                <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition {% if user.active_role.id == role.id %}font-bold text-blue-600{% endif %}">
+                                    {{ role.name }}
+                                </button>
+                            </form>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Right: user cluster (desktop) -->
+            <div class="hidden md:flex items-center gap-4 pl-4 border-l border-slate-700">
+                {% if user.avatar %}
+                <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full border border-slate-600">
+                {% else %}
+                <div class="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white">
+                    {{ user.email|first|upper }}
+                </div>
+                {% endif %}
+                <form method="post" action="{% url 'account_logout' %}">
+                    {% csrf_token %}
+                    <button type="submit" class="text-xs font-semibold uppercase tracking-[0.15em] text-slate-400 hover:text-white transition duration-300">
+                        Logout
+                    </button>
+                </form>
+            </div>
+
+            <!-- Mobile hamburger -->
+            <div class="flex md:hidden items-center">
+                <button @click="toggleMobile()" aria-label="Toggle menu" class="text-slate-300 hover:text-white transition p-2">
+                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path x-show="!mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        <path x-show="mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" style="display: none;"/>
+                    </svg>
+                </button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if user.is_authenticated %}
+    <!-- Meter Mega Menu (full-width, click-toggled) -->
+    <div class="hidden md:block absolute inset-x-0 top-full z-50" x-show="submenuStyle === 'megamenu' && meterOpen" x-transition style="display: none;">
+        {% for page in navigation_pages %}
+        {% if page.accessible_children %}
+        <div x-show="meterOpen === '{{ page.slug }}'" style="display: none;">
+            <div class="bg-white border-t border-slate-100 shadow-xl">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex" x-data="{ activeCat: null }"
+                     x-init="const _first = $el.querySelector('.meter-mega-cat'); if (_first) activeCat = _first.dataset.cat;">
+                    <!-- Left: submenu categories -->
+                    <div class="w-64 shrink-0 border-r border-slate-100 pr-2 max-h-[70vh] overflow-y-auto">
+                        {% for child in page.accessible_children %}
+                        {% if child.accessible_children %}
+                        <button type="button" data-cat="{{ child.slug }}"
+                                class="meter-mega-cat w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition rounded-md"
+                                @mouseenter="activeCat = '{{ child.slug }}'" @click="activeCat = '{{ child.slug }}'"
+                                :class="activeCat === '{{ child.slug }}' && 'bg-slate-50 text-slate-900'">
+                            <span class="flex items-center">
+                                {% if child.icon %}<i class="{{ child.icon }} mr-2 text-slate-400"></i>{% endif %}
+                                {{ child.name }}
+                            </span>
+                            <svg class="h-3.5 w-3.5 text-slate-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" /></svg>
+                        </button>
+                        {% else %}
+                        <a href="{{ child.url_path }}" class="flex items-center px-3 py-2.5 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition rounded-md">
+                            {% if child.icon %}<i class="{{ child.icon }} mr-2 text-slate-400"></i>{% endif %}
+                            {{ child.name }}
+                        </a>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    <!-- Right: dependent pages of the selected category -->
+                    <div class="flex-1 pl-6 max-h-[70vh] overflow-y-auto">
+                        {% for child in page.accessible_children %}
+                        {% if child.accessible_children %}
+                        <div x-show="activeCat === '{{ child.slug }}'" style="display: none;">
+                            <p class="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">{{ child.name }}</p>
+                            <div class="grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-1">
+                                {% for grandchild in child.accessible_children %}
+                                <a href="{{ grandchild.url_path }}" class="flex items-center py-1.5 px-2 text-sm text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition rounded-md">
+                                    {% if grandchild.icon %}<i class="{{ grandchild.icon }} mr-2 text-slate-400"></i>{% endif %}
+                                    {{ grandchild.name }}
+                                </a>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <!-- Meter Mobile Menu -->
+    <div class="md:hidden bg-slate-900 border-t border-slate-800" x-show="mobileOpen" x-collapse x-transition style="display: none;">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 space-y-1">
+            {% for page in navigation_pages %}
+            {% if page.accessible_children %}
+            <div x-data="{ open: false }">
+                <button @click="open = !open" class="w-full flex items-center justify-between py-2.5 text-sm font-semibold text-slate-300">
+                    <span class="flex items-center">
+                        {% if page.icon %}<i class="{{ page.icon }} mr-2"></i>{% endif %}
+                        {{ page.name }}
+                    </span>
+                    <svg class="h-3 w-3 transition-transform duration-200" :class="open && 'rotate-180'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+                <div x-show="open" x-collapse style="display: none;">
+                    <div class="pl-4 space-y-1 py-1">
+                        {% for child in page.accessible_children %}
+                        {% if child.accessible_children %}
+                        {% for grandchild in child.accessible_children %}
+                        <a href="{{ grandchild.url_path }}" class="block py-2 text-sm text-slate-400 hover:text-blue-400 pl-4">
+                            {{ grandchild.name }}
+                        </a>
+                        {% endfor %}
+                        {% else %}
+                        <a href="{{ child.url_path }}" class="block py-2 text-sm text-slate-400 hover:text-blue-400">
+                            {{ child.name }}
+                        </a>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <a href="{{ page.url_path }}" class="block py-2.5 text-sm font-semibold text-slate-300 hover:text-blue-400">
+                {% if page.icon %}<i class="{{ page.icon }} mr-2"></i>{% endif %}
+                {{ page.name }}
+            </a>
+            {% endif %}
+            {% endfor %}
+
+            {% if user.is_staff or user.active_role and user.active_role.name == 'Project Admin' or user.active_role and user.active_role.name == 'School Admin' or not user.active_role and user.is_project_admin %}
+            <div class="pt-2 mt-2 border-t border-slate-800">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1 px-1">Admin</p>
+                <a href="{% url 'users:manage_users' %}" class="block py-2 text-sm text-slate-400 hover:text-blue-400">Users</a>
+                {% if user.is_superuser or user.active_role and user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
+                <a href="{% url 'users:manage_pages' %}" class="block py-2 text-sm text-slate-400 hover:text-blue-400">Pages</a>
+                <a href="{% url 'landing:project_settings' %}" class="block py-2 text-sm text-slate-400 hover:text-blue-400">Project Settings</a>
+                <a href="{% url 'dataviz:index' %}" class="block py-2 text-sm text-slate-400 hover:text-blue-400">Data Vis</a>
+                <a href="{% url 'dataLoader:dashboard' %}" class="block py-2 text-sm text-slate-400 hover:text-blue-400">Data Loader</a>
+                {% endif %}
+                {% if usage_page_access %}
+                <a href="{{ usage_page_url }}" class="block py-2 text-sm text-slate-400 hover:text-blue-400">Usage</a>
+                {% endif %}
+                {% if user.is_staff %}
+                <a href="/admin/" class="block py-2 text-sm text-slate-400 hover:text-blue-400">Django Admin</a>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if user.roles.count >= 2 %}
+            <div class="pt-2 mt-2 border-t border-slate-800">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1 px-1">Switch Role</p>
+                {% for role in user.roles.all %}
+                <form method="POST" action="{% url 'users:switch_role' %}">
+                    {% csrf_token %}
+                    <button type="submit" name="role_id" value="{{ role.id }}" class="w-full text-left py-2 text-sm text-slate-400 hover:text-blue-400 {% if user.active_role.id == role.id %}text-blue-400 font-bold{% endif %}">
                         {{ role.name }}
                     </button>
                 </form>
