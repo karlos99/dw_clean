@@ -111,6 +111,19 @@
   </div>
   {% endif %}
 
+  {% if tabs %}
+  <nav class="mb-6 flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm" data-page-tabs>
+    {% for tab in tabs %}
+    <button type="button" data-tab-target="{{ tab.id }}" class="dv-page-tab rounded-lg px-4 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-800">
+      {{ tab.name }}
+    </button>
+    {% endfor %}
+    {% if has_unassigned_rows %}
+    <button type="button" data-tab-target="unassigned" class="dv-page-tab rounded-lg px-4 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-800">Other</button>
+    {% endif %}
+  </nav>
+  {% endif %}
+
   {% if active_school_id %}
   <!-- School scope: default view shows all students; toggle narrows to the active school -->
   <div class="flex items-center gap-2 mb-4">
@@ -233,7 +246,7 @@
   <!-- Rows (layout sections) -->
   <div class="space-y-6">
     {% for row in rows %}
-    <section class="{% if row.bg_color %}{{ row.bg_color }}{% endif %} rounded-xl {% if row.bg_color %}p-4 -mx-2{% endif %}">
+    <section data-tab-content="{% if row.tab_id %}{{ row.tab_id }}{% else %}unassigned{% endif %}" class="dv-tab-content {% if row.bg_color %}{{ row.bg_color }}{% endif %} rounded-xl {% if row.bg_color %}p-4 -mx-2{% endif %}">
       {% if row.label %}
       <h2 class="text-lg font-semibold text-slate-700 mb-3">{{ row.label }}</h2>
       {% endif %}
@@ -751,5 +764,31 @@
       }
     });
   })();
+</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const nav = document.querySelector('[data-page-tabs]');
+  if (!nav) return;
+  const buttons = [...nav.querySelectorAll('[data-tab-target]')];
+  const panels = [...document.querySelectorAll('[data-tab-content]')];
+  function activate(id) {
+    buttons.forEach(btn => {
+      const active = btn.dataset.tabTarget === id;
+      btn.classList.toggle('bg-blue-600', active);
+      btn.classList.toggle('text-white', active);
+      btn.classList.toggle('shadow-sm', active);
+      btn.classList.toggle('text-slate-500', !active);
+    });
+    panels.forEach(panel => { panel.hidden = panel.dataset.tabContent !== id; });
+    document.querySelectorAll('[data-tab-content="' + id + '"] .page-chart-slot').forEach(slot => {
+      if (window.htmx && !slot.dataset.tabLoaded) htmx.trigger(slot, 'reload');
+    });
+  }
+  buttons.forEach(btn => btn.addEventListener('click', () => activate(btn.dataset.tabTarget)));
+  activate(buttons[0]?.dataset.tabTarget);
+});
 </script>
 {% endblock %}

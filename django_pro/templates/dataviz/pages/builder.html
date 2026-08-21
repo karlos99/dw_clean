@@ -82,6 +82,7 @@
   const _PAGE_SHOW_HEADER     = {{ page.show_header|default:True|yesno:"true,false" }};
   const _PAGE_FILTERS         = JSON.parse('{{ filters_json|escapejs }}');
   const _ROWS_JSON            = JSON.parse('{{ rows_json|escapejs }}');
+  const _TABS_JSON            = JSON.parse('{{ tabs_json|escapejs }}');
   const _SECTIONS_JSON        = JSON.parse('{{ sections_json|escapejs }}');
   const _SAVE_URL             = "{% url 'dataviz:page_save' %}";
   const _SECTIONS_URL         = "{% url 'dataviz:page_sections' '__slug__' %}";
@@ -389,7 +390,43 @@
         </div>
       </div>
 
-      <!-- ── 3. Layout (row/section tree) ─────────────────────── -->
+      <!-- ── 3. Page tabs ──────────────────────────────────────── -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header" @click="sidebarSections.tabs = !sidebarSections.tabs">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold uppercase tracking-widest text-slate-700">Page tabs</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-indigo-50 text-indigo-600" x-text="tabs.length"></span>
+          </div>
+          <svg class="w-3.5 h-3.5 text-slate-400" :class="{'rotate-180': sidebarSections.tabs}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+        </div>
+        <div x-show="sidebarSections.tabs" x-cloak class="px-3 pb-4 space-y-2">
+          <p class="text-[10px] leading-4 text-slate-500">Create tabs at the top of the published page, then assign each row to a tab.</p>
+          <template x-for="tab in tabs" :key="tab.id">
+            <div class="flex items-center gap-1">
+              <input x-model="tab.name" @change="updateTab(tab)" class="min-w-0 flex-1 text-[10px] border border-slate-200 rounded px-2 py-1.5 focus:ring-1 focus:ring-indigo-500">
+              <button @click="removeTab(tab.id)" class="text-slate-300 hover:text-red-500 text-sm">&times;</button>
+            </div>
+          </template>
+          <div class="flex gap-1">
+            <input x-model="newTabName" @keydown.enter.prevent="addTab()" placeholder="New tab name…" class="min-w-0 flex-1 text-[10px] border border-slate-300 rounded px-2 py-1.5">
+            <button @click="addTab()" class="px-2 py-1.5 text-[9px] font-bold uppercase text-indigo-700 bg-indigo-50 border border-indigo-200 rounded">Add</button>
+          </div>
+          <div x-show="tabs.length > 0" class="pt-1 border-t border-slate-100">
+            <p class="mb-1 text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Assign rows</p>
+            <template x-for="row in rows" :key="'tab-row-' + row.id">
+              <label class="flex items-center gap-1.5 py-1 text-[10px] text-slate-600">
+                <span class="truncate flex-1" x-text="row.label || ('Row ' + (rows.indexOf(row) + 1))"></span>
+                <select :value="row.tab_id || ''" @change="assignRowTab(row, $event.target.value)" class="w-28 text-[9px] border border-slate-200 rounded px-1 py-1 bg-white">
+                  <option value="">Unassigned</option>
+                  <template x-for="tab in tabs" :key="tab.id"><option :value="tab.id" x-text="tab.name"></option></template>
+                </select>
+              </label>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 4. Layout (row/section tree) ─────────────────────── -->
       <div class="sidebar-section flex-1">
         <div class="sidebar-section-header" @click="sidebarSections.layout = !sidebarSections.layout">
           <div class="flex items-center gap-2">

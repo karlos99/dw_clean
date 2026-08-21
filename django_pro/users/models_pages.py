@@ -21,7 +21,12 @@ class Page(models.Model):
         help_text="Primary Django app this page belongs to (e.g., placementcards, dataexploration)",
     )
     description = models.TextField(_("Description"), blank=True)
-    url_path = models.CharField(_("URL Path"), max_length=500, help_text="Internal URL path for this page")
+    url_path = models.CharField(
+        _("URL Path"),
+        max_length=500,
+        blank=True,
+        help_text="Internal URL path; optional when this page is only a menu category",
+    )
     icon = models.CharField(_("Icon Class"), max_length=100, blank=True, help_text="CSS class for icon (e.g., 'fa-dashboard')")
     
     status = models.CharField(_("Status"), max_length=20, choices=STATUS_CHOICES, default='active')
@@ -45,6 +50,11 @@ class Page(models.Model):
     
     # Display options
     show_in_menu = models.BooleanField(_("Show in Menu"), default=True)
+    is_menu_category = models.BooleanField(
+        _("Menu Category"),
+        default=False,
+        help_text="Use this page as a navigation category/container instead of a destination page",
+    )
     menu_order = models.IntegerField(_("Menu Order"), default=0, help_text="Lower numbers appear first")
     menu_roles = models.JSONField(
         _("Menu Roles"),

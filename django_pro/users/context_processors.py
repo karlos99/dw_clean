@@ -90,6 +90,8 @@ def _menu_target_allows(user, page, user_roles: set[str]) -> bool:
 
 
 def _is_placeholder_page(page) -> bool:
+    if getattr(page, 'is_menu_category', False):
+        return True
     target = (page.url_path or '').strip()
     return target in {'', '#'}
 
