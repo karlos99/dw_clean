@@ -1005,8 +1005,11 @@ def _axis_name(name: str, cfg: dict) -> str:
 
 
 def _percent_decimals(cfg: dict) -> int:
+    raw = cfg.get('percent_decimals', 1)
+    if raw is None or raw == '':
+        return 1
     try:
-        return max(0, min(6, int(cfg.get('percent_decimals', 1) or 1)))
+        return max(0, min(6, int(raw)))
     except (TypeError, ValueError):
         return 1
 
