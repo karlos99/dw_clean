@@ -29,6 +29,9 @@ Drag to reorder (before/after) or nest (drop on the middle) pages.
             <span class="text-sm {% if not node.page.show_in_menu %}text-slate-400{% else %}text-slate-700{% endif %} truncate">
                 {{ node.page.name }}
             </span>
+            {% if node.page.is_menu_category %}
+            <span class="flex-shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">category</span>
+            {% endif %}
             {% if not node.page.show_in_menu %}
             <span class="ml-auto flex-shrink-0 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">hidden</span>
             {% endif %}

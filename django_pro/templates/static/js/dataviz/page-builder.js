@@ -22,7 +22,9 @@ function pageBuilder() {
     filterCategories: [],
 
     /* Sidebar accordion open/closed state */
-    sidebarSections: { settings: true, filters: true, layout: true },
+    sidebarSections: { settings: true, filters: true, tabs: true, layout: true },
+    tabs: (_TABS_JSON || []).map(t => ({ ...t })),
+    newTabName: '',
 
     /* Filter modal */
     filterModalOpen: false,
@@ -57,6 +59,7 @@ function pageBuilder() {
       bg_color:  r.bg_color || '',
       collapsed: r.collapsed || false,
       col_guide: r.col_guide || 0,
+      tab_id: r.tab_id || null,
       sections:  (r.sections || []).map(s => _mapSection(s)),
     })),
 
@@ -525,6 +528,7 @@ function pageBuilder() {
         return {
           row_id: row.id,
           position: ri,
+          tab_id: row.tab_id || null,
           sections: sectionLayout,
         };
       });
@@ -573,12 +577,44 @@ function pageBuilder() {
         bg_color: '',
         collapsed: false,
         col_guide: 0,
+        tab_id: null,
         sections: [],
       };
       this.rows.push(row);
       this.activeRow = row.id;
       this.$nextTick(() => this._initRowGrid(row));
       this.showToast('Section added');
+    },
+
+    async addTab() {
+      const name = (this.newTabName || '').trim();
+      if (!name) return;
+      const pageId = await this._ensurePage();
+      if (!pageId) return;
+      const res = await this._post(this._sectionsUrl(), { action: 'add_tab', name });
+      if (res.error) { this.showToast(res.error, 'error'); return; }
+      this.tabs.push(res.tab);
+      this.newTabName = '';
+      this.showToast('Tab added');
+    },
+
+    async updateTab(tab) {
+      const res = await this._post(this._sectionsUrl(), { action: 'update_tab', tab_id: tab.id, name: tab.name, position: tab.position });
+      if (res.error) this.showToast(res.error, 'error');
+    },
+
+    async removeTab(tabId) {
+      if (!confirm('Delete this tab? Rows will become unassigned, not deleted.')) return;
+      const res = await this._post(this._sectionsUrl(), { action: 'delete_tab', tab_id: tabId });
+      if (res.error) { this.showToast(res.error, 'error'); return; }
+      this.tabs = this.tabs.filter(t => t.id !== tabId);
+      this.rows.forEach(row => { if (row.tab_id === tabId) row.tab_id = null; });
+    },
+
+    async assignRowTab(row, tabId) {
+      row.tab_id = tabId ? parseInt(tabId, 10) : null;
+      const res = await this._post(_ROW_URL_TPL.replace('ROWID', row.id), { tab_id: row.tab_id });
+      if (res.error) this.showToast(res.error, 'error');
     },
 
     async removeRow(rowId) {

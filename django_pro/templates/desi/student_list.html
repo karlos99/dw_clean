@@ -24,7 +24,7 @@
 
         <!-- Filters & Search Form -->
         <div class="p-4 border-b border-slate-200 bg-slate-50 shrink-0">
-            <form method="GET" action="{% url 'desi:student_list' %}" class="space-y-3">
+            <form id="desi-student-filter-form" method="GET" action="{% url 'desi:student_list' %}" class="space-y-3">
                 <!-- Search Input -->
                 <div>
                     <label for="search" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Search Student</label>
@@ -48,18 +48,31 @@
                     <div>
                         <label for="school" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">School</label>
                         {% if active_school %}
-                            <input type="text" value="{{ active_school.school_name|truncatechars:10 }}" disabled class="block w-full rounded border-slate-200 bg-slate-100 text-slate-500 text-xs py-1 px-2">
+                            <input type="text" value="{{ active_school.short_name|default:active_school.school_name }}" disabled class="block w-full rounded border-slate-200 bg-slate-100 text-slate-500 text-xs py-1 px-2">
                             <input type="hidden" name="school" value="{{ active_school.state_id }}">
                         {% else %}
                             <select name="school" id="school" class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1 px-2">
                                 <option value="">All</option>
                                 {% for sch in schools %}
-                                <option value="{{ sch.state_id }}" {% if school_filter == sch.state_id %}selected{% endif %}>{{ sch.school_name|truncatechars:10 }}</option>
+                                <option value="{{ sch.state_id }}" {% if school_filter == sch.state_id %}selected{% endif %}>{{ sch.short_name|default:sch.school_name }}</option>
                                 {% endfor %}
                             </select>
                         {% endif %}
                     </div>
                 </div>
+
+                {% if show_teacher_filter %}
+                    <!-- Teacher Dropdown -->
+                    <div>
+                        <label for="teacher" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Teacher</label>
+                        <select name="teacher" id="teacher" class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1 px-2">
+                            <option value="">All Teachers</option>
+                            {% for teacher in teachers %}
+                            <option value="{{ teacher }}" {% if teacher_filter == teacher %}selected{% endif %}>{{ teacher }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                {% endif %}
 
                 <!-- Submit / Clear Buttons -->
                 <div class="flex gap-2 justify-end pt-1">
@@ -119,6 +132,59 @@
     <!-- CLIENT-SIDE OPTION SYNCHRONIZATION AND SIDEBAR INTERACTION -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            const schoolSelect = document.getElementById('school');
+            const gradeSelect = document.getElementById('grade');
+            const filterForm = document.getElementById('desi-student-filter-form');
+            const gradesBySchool = {{ grade_options_by_school_json|default:'{}'|safe }};
+            const teachersByFilter = {{ teacher_options_by_filter_json|default:'{}'|safe }};
+            const activeSchoolId = "{{ active_school.state_id|default:''|escapejs }}";
+            const initialGrade = "{{ grade_filter|escapejs }}";
+            const initialTeacher = "{{ teacher_filter|escapejs }}";
+
+            function updateTeachers() {
+                if (!teacherSelect) return;
+                const selectedTeacher = teacherSelect.value || initialTeacher;
+                const school = schoolSelect ? schoolSelect.value : activeSchoolId;
+                const grade = gradeSelect ? gradeSelect.value : '';
+                const key = `${school || ''}::${grade || ''}`;
+                const schoolKey = `${school || ''}::`;
+                const gradeKey = `::${grade || ''}`;
+                const teachers = teachersByFilter[key]
+                    || (school ? teachersByFilter[schoolKey] : null)
+                    || (grade ? teachersByFilter[gradeKey] : null)
+                    || teachersByFilter['::']
+                    || [];
+                teacherSelect.innerHTML = '';
+                teacherSelect.add(new Option('All Teachers', ''));
+                teachers.forEach(teacher => teacherSelect.add(new Option(teacher, teacher)));
+                if (teachers.includes(selectedTeacher)) teacherSelect.value = selectedTeacher;
+            }
+
+            const teacherSelect = document.getElementById('teacher');
+            function submitFilters() {
+                if (filterForm) filterForm.requestSubmit();
+            }
+
+            function updateGrades() {
+                if (!schoolSelect || !gradeSelect) return;
+                const selectedGrade = gradeSelect.value || initialGrade;
+                const grades = schoolSelect.value ? (gradesBySchool[schoolSelect.value] || []) : Object.values(gradesBySchool).flat().filter((v, i, a) => a.indexOf(v) === i).sort();
+                gradeSelect.innerHTML = '<option value="">All</option>' + grades.map(g => `<option value="${String(g).replace(/"/g, '&quot;')}">Gr ${g}</option>`).join('');
+                if (grades.includes(selectedGrade)) gradeSelect.value = selectedGrade;
+                updateTeachers();
+            }
+            if (schoolSelect) schoolSelect.addEventListener('change', () => {
+                updateGrades();
+                submitFilters();
+            });
+            if (gradeSelect) gradeSelect.addEventListener('change', () => {
+                updateTeachers();
+                submitFilters();
+            });
+            if (teacherSelect) teacherSelect.addEventListener('change', submitFilters);
+            updateGrades();
+            updateTeachers();
+
             // 1. Highlight clicked student link client-side immediately
             document.body.addEventListener('click', (e) => {
                 const link = e.target.closest('.student-link');

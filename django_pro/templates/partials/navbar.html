@@ -329,9 +329,35 @@
                         </svg>
                     </button>
                     <div class="absolute left-0 top-full pt-2 z-50" x-show="meterOpen === '{{ page.slug }}' && submenuStyle === 'dropdown'" x-transition style="display: none;">
-                        <div class="rounded-xl border border-slate-100 shadow-lg bg-white overflow-hidden flex"
+                        <div class="w-[min(42rem,calc(100vw-2rem))] rounded-xl border border-slate-100 bg-white p-3 shadow-xl"
                              x-data="{ activeCat: null }"
                              x-init="const _first = $el.querySelector('.meter-cat'); if (_first) activeCat = _first.dataset.cat;">
+                            <div class="grid max-h-[70vh] grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
+                                {% for category in page.accessible_children %}
+                                <section class="rounded-lg p-2 hover:bg-slate-50">
+                                    {% if category.accessible_children %}
+                                    <h3 class="flex items-center gap-2 px-2 pb-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                                        {% if category.icon %}<i class="{{ category.icon }}"></i>{% endif %}
+                                        {{ category.name }}
+                                    </h3>
+                                    <div class="space-y-0.5">
+                                        {% for item in category.accessible_children %}
+                                        <a href="{{ item.url_path }}" class="flex items-center rounded-md px-2 py-2 text-sm text-slate-600 transition hover:bg-white hover:text-slate-900">
+                                            {% if item.icon %}<i class="{{ item.icon }} mr-2 text-slate-400"></i>{% endif %}
+                                            {{ item.name }}
+                                        </a>
+                                        {% endfor %}
+                                    </div>
+                                    {% else %}
+                                    <a href="{{ category.url_path }}" class="flex items-center rounded-md px-2 py-2 text-sm font-medium text-slate-700 transition hover:bg-white hover:text-slate-900">
+                                        {% if category.icon %}<i class="{{ category.icon }} mr-2 text-slate-400"></i>{% endif %}
+                                        {{ category.name }}
+                                    </a>
+                                    {% endif %}
+                                </section>
+                                {% endfor %}
+                            </div>
+                            <div class="hidden">
                             <!-- Left: submenu categories -->
                             <div class="py-1.5 w-56 border-r border-slate-100 max-h-[70vh] overflow-y-auto">
                                 {% for child in page.accessible_children %}
@@ -369,6 +395,7 @@
                                 </div>
                                 {% endif %}
                                 {% endfor %}
+                            </div>
                             </div>
                         </div>
                     </div>
@@ -543,6 +570,7 @@
                     <div class="pl-4 space-y-1 py-1">
                         {% for child in page.accessible_children %}
                         {% if child.accessible_children %}
+                        <p class="pt-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">{{ child.name }}</p>
                         {% for grandchild in child.accessible_children %}
                         <a href="{{ grandchild.url_path }}" class="block py-2 text-sm text-slate-400 hover:text-blue-400 pl-4">
                             {{ grandchild.name }}

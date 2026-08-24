@@ -74,7 +74,7 @@
                                 <span class="text-[9px] font-bold text-slate-400 uppercase tracking-wide mr-1 self-center">Applies to:</span>
                                 {% for ast in acc_item.applies_to %}
                                 <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-50 text-blue-800 border border-blue-100">
-                                    {{ ast.name }}
+                                    {{ ast.name }}{% if ast.subject %} — {{ ast.subject }}{% endif %}
                                 </span>
                                 {% endfor %}
                             </div>
@@ -87,7 +87,7 @@
                         <!-- Inputs -->
                         <div class="border-t border-slate-200/60 pt-3 mt-auto">
                             <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Select Option</label>
-                            <select name="student_options" 
+                            {% if opts %}<select name="student_options"
                                     class="block w-full rounded border-slate-300 text-xs py-1.5 px-3 focus:border-blue-500 focus:ring-blue-500 bg-white acc-option-select"
                                     data-accommodation-id="{{ acc.id }}">
                                 <option value="">-- None --</option>
@@ -96,7 +96,13 @@
                                     {{ opt.name }} {% if opt.code %}({{ opt.code }}){% endif %}
                                 </option>
                                 {% endfor %}
-                            </select>
+                            </select>{% else %}
+                            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                <input type="checkbox" name="student_supports" value="{{ acc.id }}" {% if acc_item.selected_direct %}checked{% endif %}
+                                       class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                <span>Student needs this support</span>
+                            </label>
+                            {% endif %}
                         </div>
 
                     </div>
@@ -121,7 +127,7 @@
                         <div class="flex items-stretch">
                             <div class="{{ assessment_color }} w-10 flex items-center justify-center px-1">
                                 <span class="[writing-mode:vertical-rl] rotate-180 text-xs font-bold tracking-wider text-white text-center">
-                                    {{ card.assessment.name }}
+                                    {{ card.assessment.name }}{% if card.assessment.subject %} — {{ card.assessment.subject }}{% endif %}
                                 </span>
                             </div>
                             <div class="flex-1 p-4">
@@ -180,7 +186,7 @@
 
                                             <div class="border-t border-slate-200/60 pt-2 mt-auto">
                                                 <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Select Option</label>
-                                                <select name="student_options" 
+                                                {% if opts %}<select name="student_options"
                                                         class="block w-full rounded border-slate-300 text-xs py-1.5 px-3 focus:border-blue-500 focus:ring-blue-500 bg-white acc-option-select"
                                                         data-accommodation-id="{{ acc.id }}">
                                                     <option value="">-- None --</option>
@@ -189,7 +195,13 @@
                                                         {{ opt.name }} {% if opt.code %}({{ opt.code }}){% endif %}
                                                     </option>
                                                     {% endfor %}
-                                                </select>
+                                                </select>{% else %}
+                                                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                    <input type="checkbox" name="student_supports" value="{{ acc.id }}" {% if acc_item.selected_direct %}checked{% endif %}
+                                                           class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                                    <span>Student needs this support</span>
+                                                </label>
+                                                {% endif %}
                                             </div>
 
                                         </div>

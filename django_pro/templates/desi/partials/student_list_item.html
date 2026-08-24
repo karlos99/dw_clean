@@ -6,38 +6,42 @@
    hx-push-url="true"
    {% if swap_oob %}hx-swap-oob="true"{% endif %}
    class="student-link block p-4 transition-all duration-150 border-l-4 {% if student.stu_annual_key == selected_student_key %}bg-blue-50/70 border-blue-600{% else %}border-transparent hover:bg-slate-50{% endif %}">
-    <div class="flex justify-between items-start gap-2">
-        <div class="flex items-center gap-2 min-w-0">
-            <div class="font-bold text-slate-800 text-sm leading-tight truncate">{{ student.student_name }}</div>
+    <div class="font-bold text-slate-800 text-sm leading-tight truncate" title="{{ student.student_name }}">
+        {{ student.student_name }}
+    </div>
+    <div class="text-[10px] text-slate-500 mt-1">ID: {{ student.student_id }} | SSID: {{ student.ssid }}</div>
+    {% if has_multiple_schools and student.school_display %}
+    <div class="text-[10px] text-slate-500 mt-0.5">School: {{ student.school_display }}</div>
+    {% endif %}
+    <div class="flex items-center justify-between gap-2 mt-1">
+        <div class="flex flex-wrap items-center gap-1.5">
             <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold {% if student.ell == 'Y' or student.ell == '1' %}bg-orange-100 text-orange-800 border border-orange-200{% else %}bg-slate-100 text-slate-500 border border-slate-200{% endif %}">
                 ELL: {{ student.ell|default:"No" }}
             </span>
-        </div>
-        <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">Gr {{ student.grade }}</span>
-    </div>
-    <div class="text-[10px] text-slate-500 mt-1">ID: {{ student.student_id }} | SSID: {{ student.ssid }}</div>
-    {% if has_multiple_schools and student.school %}
-    <div class="text-[10px] text-slate-500 mt-0.5">School: {{ student.school }}</div>
-    {% endif %}
-    {% if student.teachers %}
-    <div class="text-[10px] text-slate-500 mt-0.5">Teachers: {{ student.teachers }}</div>
-    {% endif %}
-
-    <div class="flex items-center gap-2 mt-2">
-        {% if student.eligible_count > 0 %}
-            {% if student.completed_count == student.eligible_count %}
-                <span class="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
-                    ✅ Completed ({{ student.completed_count }}/{{ student.eligible_count }})
-                </span>
-            {% else %}
-                <span class="text-[9px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
-                    ⚠️ In Progress ({{ student.completed_count }}/{{ student.eligible_count }})
-                </span>
-            {% endif %}
-        {% else %}
-            <span class="text-[9px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                No eligible tests
+            <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold {% if student.sped == 'Y' or student.sped == '1' %}bg-purple-100 text-purple-800 border border-purple-200{% else %}bg-slate-100 text-slate-500 border border-slate-200{% endif %}">
+                SPED: {{ student.sped|default:"No" }}
             </span>
+        </div>
+        <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600 shrink-0">Gr {{ student.grade }}</span>
+    </div>
+    <div class="mt-2 space-y-1">
+        {% if student.assessment_statuses %}
+            {% for status in student.assessment_statuses %}
+                {% cycle 'bg-blue-700' 'bg-emerald-700' 'bg-violet-700' 'bg-amber-700' 'bg-rose-700' 'bg-cyan-700' as assessment_color silent %}
+                <div class="flex items-center gap-1.5 min-w-0 text-[10px]">
+                    <span class="{{ assessment_color }} w-1.5 h-3.5 rounded-sm shrink-0" aria-hidden="true"></span>
+                    <span class="truncate text-slate-600" title="{{ status.assessment.name }}{% if status.assessment.subject %} — {{ status.assessment.subject }}{% endif %}">
+                        {{ status.assessment.name }}{% if status.assessment.subject %} — {{ status.assessment.subject }}{% endif %}
+                    </span>
+                    {% if status.is_completed %}
+                    <span class="ml-auto text-[9px] font-semibold text-emerald-700 shrink-0">Completed</span>
+                    {% else %}
+                    <span class="ml-auto text-[9px] font-semibold text-amber-700 shrink-0">Pending</span>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="text-[9px] font-semibold text-slate-500">No eligible tests</div>
         {% endif %}
     </div>
 </a>

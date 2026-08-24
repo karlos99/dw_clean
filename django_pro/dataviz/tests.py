@@ -3244,6 +3244,35 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         self.assertAlmostEqual(pl1['1'], 66.7, places=1)
         self.assertAlmostEqual(pl4['4'], 100.0, places=1)
 
+    def test_stacked_percent_honors_zero_decimals(self):
+        from dataviz.utils.chart_builder import build_option
+        from dataviz.utils.chart_builder.common import _percent_decimals
+
+        self.assertEqual(_percent_decimals({'percent_decimals': 0}), 0)
+        self.assertEqual(_percent_decimals({'percent_decimals': '0'}), 0)
+        self.assertEqual(_percent_decimals({}), 1)
+
+        rows = [
+            {'grade': '03', 'pl': '1'},
+            {'grade': '03', 'pl': '1'},
+            {'grade': '03', 'pl': '4'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'grade',
+            'y_col': 'pl',
+            'stack_col': 'pl',
+            'agg': 'count',
+            'show_percent': True,
+            'percent_decimals': 0,
+            'stack_order': ['1', '4'],
+        }
+        opt = build_option(rows, {}, cfg)
+        pl1 = next(s for s in opt['series'] if s['name'] == '1')
+        self.assertEqual(pl1['data'][0], 67)
+        self.assertIn('toFixed(0)', opt['series'][0]['label']['__formatter_js__'])
+        self.assertIn('toFixed(0)', opt['tooltip']['__formatter_js__'])
+
     def test_bar_chart_keeps_students_after_test_pl_enrichment(self):
         from unittest.mock import patch
         from dataviz.utils.chart_builder import build_option

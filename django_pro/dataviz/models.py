@@ -286,6 +286,7 @@ class DataVizPageRow(models.Model):
     """
 
     page     = models.ForeignKey(DataVizPage, on_delete=models.CASCADE, related_name='rows')
+    tab      = models.ForeignKey('DataVizPageTab', on_delete=models.SET_NULL, null=True, blank=True, related_name='rows')
     label    = models.CharField(max_length=200, blank=True, default='')
     position = models.IntegerField(default=0)
     bg_color  = models.CharField(max_length=30, blank=True, default='')  # e.g. '#f8fafc', 'bg-slate-50'
@@ -306,8 +307,23 @@ class DataVizPageRow(models.Model):
             'bg_color':  self.bg_color,
             'collapsed': self.collapsed,
             'col_guide': self.col_guide,
+            'tab_id':    self.tab_id,
             'sections':  [s.to_dict() for s in self.sections.select_related('chart', 'dashboard').all()],
         }
+
+
+class DataVizPageTab(models.Model):
+    """A tab at the top of a page used to group layout rows."""
+
+    page     = models.ForeignKey(DataVizPage, on_delete=models.CASCADE, related_name='tabs')
+    name     = models.CharField(max_length=120)
+    position = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['position', 'name']
+
+    def __str__(self):
+        return f"{self.page.title} — {self.name}"
 
 
 class DataVizPageSection(models.Model):

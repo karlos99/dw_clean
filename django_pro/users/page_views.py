@@ -30,7 +30,7 @@ def _build_parent_page_options():
                 continue
             options.append({
                 'id': item.id,
-                'label': f"{'— ' * depth}{item.name}",
+                'label': f"Level {depth + 1} · {item.name}",
             })
             walk(item.id, depth + 1, path_ids | {item.id})
 
@@ -43,7 +43,7 @@ def _build_admin_tree():
     (including inactive/draft), ordered for the admin tree + menu preview."""
     pages = list(Page.objects.all().only(
         'id', 'name', 'slug', 'icon', 'status', 'is_public', 'show_in_menu',
-        'menu_order', 'url_path', 'parent_page_id',
+        'menu_order', 'url_path', 'is_menu_category', 'parent_page_id',
     ).order_by('menu_order', 'name', 'id'))
     children_by_parent = {}
     for page in pages:
@@ -278,6 +278,9 @@ def add_page(request):
         status = request.POST.get('status', 'active')
         is_public = request.POST.get('is_public') == 'on'
         show_in_menu = request.POST.get('show_in_menu') == 'on'
+        is_menu_category = request.POST.get('is_menu_category') == 'on'
+        if is_menu_category:
+            show_in_menu = True
         menu_order = int(request.POST.get('menu_order', 0))
         parent_id = request.POST.get('parent_page')
         
@@ -298,7 +301,7 @@ def add_page(request):
             messages.error(request, 'Page name is required.')
             return redirect('users:manage_pages')
         
-        if not url_path:
+        if not url_path and not is_menu_category:
             messages.error(request, 'URL path is required.')
             return redirect('users:manage_pages')
         
@@ -325,6 +328,7 @@ def add_page(request):
             status=status,
             is_public=is_public,
             show_in_menu=show_in_menu,
+            is_menu_category=is_menu_category,
             menu_order=menu_order,
             parent_page=parent_page,
             required_roles=required_roles,
@@ -370,6 +374,9 @@ def edit_page(request, page_id):
         page.status = request.POST.get('status', 'active')
         page.is_public = request.POST.get('is_public') == 'on'
         page.show_in_menu = request.POST.get('show_in_menu') == 'on'
+        page.is_menu_category = request.POST.get('is_menu_category') == 'on'
+        if page.is_menu_category:
+            page.show_in_menu = True
         page.menu_order = int(request.POST.get('menu_order', 0))
         
         parent_id = request.POST.get('parent_page')
@@ -398,7 +405,7 @@ def edit_page(request, page_id):
             messages.error(request, 'Page name is required.')
             return redirect('users:manage_pages')
         
-        if not page.url_path:
+        if not page.url_path and not page.is_menu_category:
             messages.error(request, 'URL path is required.')
             return redirect('users:manage_pages')
         
@@ -468,6 +475,7 @@ def get_page_detail(request, page_id):
             'app_reference': page.app_reference,
             'description': page.description,
             'url_path': page.url_path,
+            'is_menu_category': page.is_menu_category,
             'icon': page.icon,
             'status': page.status,
             'is_public': page.is_public,

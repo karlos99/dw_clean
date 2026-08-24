@@ -137,7 +137,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
             for sv in reversed(stacks):
                 if show_percent:
                     data = [
-                        round(raw_vals.get((xv, grp, sv), 0) / cat_totals_per_group.get((xv, grp), 1) * 100, 1)
+                        round(raw_vals.get((xv, grp, sv), 0) / cat_totals_per_group.get((xv, grp), 1) * 100, percent_decimals)
                         if cat_totals_per_group.get((xv, grp), 0) > 0 else 0.0
                         for xv in categories
                     ]
@@ -219,7 +219,7 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
         series = []
         for sv in reversed(stacks):
             if show_percent:
-                data = [round(raw_vals.get((xv, sv), 0) / cat_totals[xv] * 100, 1)
+                data = [round(raw_vals.get((xv, sv), 0) / cat_totals[xv] * 100, percent_decimals)
                         if cat_totals.get(xv, 0) > 0 else 0.0
                         for xv in categories]
             else:
@@ -855,6 +855,8 @@ def _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs):
     opacity = float(cfg.get('opacity', 0.9) or 0.9)
     show_labels = bool(cfg.get('data_labels', False))
 
+    percent_decimals = _percent_decimals(cfg)
+    percent_suffix = _percent_suffix(cfg)
     series = []
     line_labels_ordered = []
     percent_names = []
@@ -871,7 +873,9 @@ def _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs):
         label_cfg = {'show': show_labels, 'position': cfg.get('label_position', 'top') or 'top',
                      'fontSize': int(cfg.get('label_font_size', 10) or 10)}
         if is_pct:
-            label_cfg['__formatter_js__'] = "function(p){var v=Number(p.value||0);return v.toFixed(1)+'%';}"
+            label_cfg['__formatter_js__'] = (
+                f"function(p){{var v=Number(p.value||0);return v.toFixed({percent_decimals})+'{percent_suffix}';}}"
+            )
         series.append({
             'name': meta['label'],
             'type': 'line',
@@ -890,12 +894,14 @@ def _date_series_option(df, ds_date_col, ds_lines, cfg, labels, col_defs):
         "function(params) {"
         "  if (!Array.isArray(params)) params = [params];"
         f"  var pctNames = {json.dumps(percent_names)};"
+        f"  var pctDec = {percent_decimals};"
+        f"  var pctSuffix = {json.dumps(percent_suffix)};"
         "  var html = '<b>' + ((params[0] && params[0].axisValueLabel) || (params[0] && params[0].axisValue) || '') + '</b>';"
         "  for (var i = 0; i < params.length; i++) {"
         "    var p = params[i];"
         "    var v = Number(p.value);"
         "    var isPct = pctNames.indexOf(p.seriesName) !== -1;"
-        "    var vDisp = isPct ? v.toFixed(1) + '%' : (Number.isInteger(v) ? v : v.toFixed(1));"
+        "    var vDisp = isPct ? v.toFixed(pctDec) + pctSuffix : (Number.isInteger(v) ? v : v.toFixed(1));"
         "    html += '<br/>' + p.marker + ' ' + p.seriesName + ': <b>' + vDisp + '</b>';"
         "  }"
         "  return html;"

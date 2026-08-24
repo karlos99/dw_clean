@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404, render
 from django.utils.text import slugify
 from django.views.decorators.http import require_GET
 
-from dataviz.models import Dashboard, DataVizPage, DataVizPageSection, DataVizPageRow, SavedChart
+from dataviz.models import Dashboard, DataVizPage, DataVizPageSection, DataVizPageRow, DataVizPageTab, SavedChart
 from dataviz.utils.page_publish import publish_page, unpublish_page
 
 from ..mixins import is_project_admin, FORBIDDEN
@@ -92,9 +92,15 @@ def page_duplicate_api(request, slug):
         )
 
         row_map = {}
+        tab_map = {}
+        for source_tab in source.tabs.all():
+            tab_map[source_tab.pk] = DataVizPageTab.objects.create(
+                page=page, name=source_tab.name, position=source_tab.position,
+            )
         for source_row in source.rows.all():
             row_map[source_row.pk] = DataVizPageRow.objects.create(
                 page=page,
+                tab=tab_map.get(source_row.tab_id),
                 label=source_row.label,
                 position=source_row.position,
                 bg_color=source_row.bg_color,
@@ -159,6 +165,7 @@ def page_sections_api(request, slug):
         orphan_sections = page.sections.filter(row__isnull=True).select_related('chart', 'dashboard').order_by('position')
         return JsonResponse({
             'rows': [r.to_dict() for r in rows],
+            'tabs': [{'id': t.id, 'name': t.name, 'position': t.position} for t in page.tabs.all()],
             'orphan_sections': [s.to_dict() for s in orphan_sections],
         })
 
@@ -172,12 +179,35 @@ def page_sections_api(request, slug):
 
     action = body.get('action', '')
 
+    if action == 'add_tab':
+        name = (body.get('name') or '').strip()
+        if not name:
+            return JsonResponse({'error': 'Tab name is required'}, status=400)
+        tab = DataVizPageTab.objects.create(page=page, name=name, position=page.tabs.count())
+        return JsonResponse({'tab': {'id': tab.id, 'name': tab.name, 'position': tab.position}, 'success': True})
+
+    if action == 'update_tab':
+        tab = get_object_or_404(DataVizPageTab, pk=body.get('tab_id'), page=page)
+        name = (body.get('name') or '').strip()
+        if not name:
+            return JsonResponse({'error': 'Tab name is required'}, status=400)
+        tab.name = name
+        tab.position = int(body.get('position', tab.position))
+        tab.save(update_fields=['name', 'position'])
+        return JsonResponse({'success': True})
+
+    if action == 'delete_tab':
+        tab = get_object_or_404(DataVizPageTab, pk=body.get('tab_id'), page=page)
+        tab.delete()
+        return JsonResponse({'success': True})
+
     if action == 'add_row':
         pos = page.rows.count()
         row = DataVizPageRow.objects.create(
             page=page,
             label=body.get('label', ''),
             position=pos,
+            tab_id=body.get('tab_id') or None,
         )
         return JsonResponse({'row': row.to_dict(), 'success': True})
 
@@ -219,6 +249,7 @@ def page_sections_api(request, slug):
         for row_data in body.get('rows', []):
             DataVizPageRow.objects.filter(pk=row_data['row_id'], page=page).update(
                 position=row_data.get('position', 0),
+                tab_id=row_data.get('tab_id') or None,
             )
             for item in row_data.get('sections', []):
                 DataVizPageSection.objects.filter(pk=item['section_id'], page=page).update(
@@ -379,6 +410,8 @@ def row_detail_api(request, row_id):
             row.label = body['label']
         if 'position' in body:
             row.position = int(body['position'])
+        if 'tab_id' in body:
+            row.tab = DataVizPageTab.objects.filter(pk=body.get('tab_id'), page=row.page).first() if body.get('tab_id') else None
         if 'bg_color' in body:
             row.bg_color = body['bg_color']
         if 'collapsed' in body:

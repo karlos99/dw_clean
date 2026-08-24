@@ -4,7 +4,7 @@ import json
 from django.shortcuts import get_object_or_404, render
 from django.views.generic import TemplateView
 
-from dataviz.models import DataVizPage, Dashboard, SavedChart, DataVizPageRow
+from dataviz.models import DataVizPage, Dashboard, SavedChart, DataVizPageRow, DataVizPageTab
 
 from .mixins import ProjectAdminMixin, is_project_admin
 
@@ -36,6 +36,7 @@ class PageBuilderView(ProjectAdminMixin, TemplateView):
         rows_json = '[]'
         sections = []
         filters_json = '[]'
+        tabs_json = '[]'
         if page_slug:
             dv_page = get_object_or_404(DataVizPage, slug=page_slug)
             sections = list(dv_page.sections.select_related('dashboard', 'chart').all())
@@ -43,6 +44,7 @@ class PageBuilderView(ProjectAdminMixin, TemplateView):
             rows = list(dv_page.rows.prefetch_related('sections__chart', 'sections__dashboard').all())
             rows_json = json.dumps([r.to_dict() for r in rows])
             filters_json = json.dumps(dv_page.page_filters or [])
+            tabs_json = json.dumps([{'id': t.id, 'name': t.name, 'position': t.position} for t in dv_page.tabs.all()])
 
         # Charts available to add (same as dashboard builder)
         available_charts = SavedChart.objects.all().order_by('name')[:200]
@@ -56,6 +58,7 @@ class PageBuilderView(ProjectAdminMixin, TemplateView):
             'sections_json':    sections_json,
             'rows_json':        rows_json,
             'filters_json':     filters_json,
+            'tabs_json':        tabs_json,
             'available_charts': available_charts,
         })
         return context
@@ -112,9 +115,11 @@ def page_view(request, slug):
         'dashboard__chart_slots__chart'
     ).all()
 
+    tabs = list(dv_page.tabs.all())
     rows = dv_page.rows.prefetch_related(
         'sections__chart', 'sections__dashboard'
     ).all()
+    has_unassigned_rows = bool(tabs) and any(row.tab_id is None for row in rows)
 
     # Legacy sections without a row
     orphan_sections = [s for s in sections if s.row_id is None and s.element_type in ('chart', 'html')]
@@ -188,6 +193,8 @@ def page_view(request, slug):
         'page':         dv_page,
         'dv_page':      dv_page,
         'rows':         rows,
+        'tabs':         tabs,
+        'has_unassigned_rows': has_unassigned_rows,
         'sections':     sections,
         'orphan_sections': orphan_sections,
         'default_filter_tags_json': json.dumps(default_filter_tags),
