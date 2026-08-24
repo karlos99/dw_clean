@@ -4,7 +4,7 @@ import json
 from django.test import SimpleTestCase, TestCase
 from django.contrib.auth import get_user_model
 from dataviz.models import (
-    SavedChart, Dataset, DataVizPage, DataVizPageRow, DataVizPageSection,
+    SavedChart, Dataset, DataVizPage, DataVizPageRow, DataVizPageSection, DataVizPageFolder,
 )
 from dataviz.utils.compiler import compile_dataset_to_sql
 from dataviz.utils.drill_through import execute_drill_query
@@ -755,14 +755,98 @@ class DatasetDrillThroughTests(TestCase):
 
         sql, params = compile_dataset_to_sql(self.dataset, user=self.user)
         
-        # Verify compiled SQL structure
-        self.assertIn('"results"."other_info"->>\'lexile\' AS "results.other_info->\'lexile\'"', sql)
+        # Verify compiled SQL structure — results.other_info->'key' columns are
+        # aggregated with MAX so duplicate results rows (one with the JSON key,
+        # one without) collapse to a single row instead of appearing twice.
+        self.assertIn('MAX(NULLIF("results"."other_info"->>\'lexile\', \'\')) AS "results.other_info->\'lexile\'"', sql)
         self.assertIn('"results"."other_info"->>\'lexile\' = %s', sql)
         self.assertIn('450', params)
 
         # Clean up
         Result.objects.filter(test_id="T1").delete()
         cache.delete('dataviz:schema_json')
+
+    def test_dataset_results_json_column_dedupes_with_group_by(self):
+        from django.core.cache import cache
+        from dataviz.utils.compiler import compile_dataset_to_sql
+
+        cache.clear()  # avoid stale compiled-SQL from earlier runs
+
+        # A results dataset selecting other_info->'dfp' alongside student cols
+        # must collapse duplicate results rows (identical non-JSON cols, one row
+        # with dfp, one without) via GROUP BY + MAX — instead of relying on
+        # SELECT DISTINCT which cannot merge them.
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=[
+                "results.ssid",
+                "results.pl",
+                "results.other_info->'dfp'",
+            ],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            if '->' in col:
+                base_col, key = col.split('->', 1)
+                return f'"{tbl}"."{base_col}"->>\'{key.strip("\\\'\\\"")}\''
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'ssid', 'pl', 'other_info', 'school_year', 'test_group_key', 'ss'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(dataset, interactive_filters={}, user=None)
+
+        self.assertFalse(sql.startswith('SELECT DISTINCT'))
+        self.assertTrue(sql.startswith('SELECT '))
+        self.assertIn('MAX(NULLIF("results"."other_info"->>\'dfp\', \'\')) AS "results.other_info->\'dfp\'"', sql)
+        self.assertIn('"results"."ssid" AS "results.ssid"', sql)
+        self.assertIn('"results"."pl" AS "results.pl"', sql)
+        self.assertIn('GROUP BY "results"."ssid", "results"."pl"', sql)
+
+    def test_dataset_current_student_json_column_no_group_by(self):
+        from django.core.cache import cache
+        from dataviz.utils.compiler import compile_dataset_to_sql
+
+        cache.clear()  # avoid stale compiled-SQL from earlier runs
+
+        # current_student.add_data->'key' is not a results column, so the query
+        # keeps its normal DISTINCT form (no GROUP BY dedupe).
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=[
+                "current_student.ssid",
+                "current_student.add_data->'AVID'",
+            ],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'ssid', 'add_data', 'status', 'grade', 'school_year', 'stu_annual_key'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(dataset, interactive_filters={}, user=None)
+
+        self.assertTrue(sql.startswith('SELECT DISTINCT '))
+        self.assertNotIn('GROUP BY', sql)
 
     def test_dataset_student_add_data_json_column_compilation(self):
         from django.core.cache import cache
@@ -2931,6 +3015,176 @@ class PageDuplicateTests(TestCase):
         self.assertEqual(copied_chart_section.chart_id, self.chart.id)
         self.assertEqual(copied_chart_section.row_id, copied_row.id)
         self.assertEqual(copied_chart_section.slot_filters, [{'col': 'grade', 'value': '5'}])
+
+
+class PageSlugTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='slugadmin', password='password', is_superuser=True,
+        )
+        self.client.force_login(self.user)
+
+    def _save(self, payload):
+        import json
+        return self.client.post(
+            '/dataviz/api/pages/save/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+    def test_slug_with_spaces_is_normalized(self):
+        response = self._save({'title': 'My Page', 'slug': 'my page url', 'status': 'draft'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['page']['slug'], 'my-page-url')
+
+    def test_invalid_slug_is_rejected(self):
+        response = self._save({'title': 'Bad Slug', 'slug': '!!!', 'status': 'draft'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('URL slug', response.json()['error'])
+
+    def test_duplicate_slug_is_rejected(self):
+        DataVizPage.objects.create(title='Existing', slug='taken-slug', owner=self.user)
+        response = self._save({'title': 'Another Page', 'slug': 'taken-slug', 'status': 'draft'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('already exists', response.json()['error'])
+
+    def test_slug_change_on_published_page_updates_navbar(self):
+        from dataviz.utils.page_publish import publish_page
+        from users.models_pages import Page
+
+        page = DataVizPage.objects.create(
+            title='Navbar Page',
+            slug='old-slug',
+            owner=self.user,
+            status=DataVizPage.STATUS_ACTIVE,
+        )
+        publish_page(page, self.user)
+        page.refresh_from_db()
+        site_page_id = page.linked_site_page_id
+
+        response = self._save({
+            'id': page.id,
+            'title': 'Navbar Page',
+            'slug': 'new-slug',
+            'status': 'active',
+        })
+        self.assertEqual(response.status_code, 200)
+
+        page.refresh_from_db()
+        self.assertEqual(page.slug, 'new-slug')
+
+        site_page = Page.objects.get(pk=site_page_id)
+        self.assertEqual(site_page.url_path, '/dataviz/pages/new-slug/')
+        self.assertEqual(site_page.status, 'active')
+
+
+class PageFolderTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='folderadmin', password='password', is_superuser=True,
+        )
+        self.client.force_login(self.user)
+
+    def test_page_index_groups_by_folder(self):
+        DataVizPage.objects.create(title='A', slug='a', owner=self.user, folder='Reports / ELA')
+        DataVizPage.objects.create(title='B', slug='b', owner=self.user, folder='Reports / Math')
+        DataVizPage.objects.create(title='C', slug='c', owner=self.user, folder='')
+
+        response = self.client.get('/dataviz/pages/?folder=Reports')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ELA')
+        self.assertContains(response, 'Math')
+        self.assertNotContains(response, '>C<')
+
+    def test_status_filter_shows_only_published(self):
+        DataVizPage.objects.create(
+            title='Live', slug='live', owner=self.user, status=DataVizPage.STATUS_ACTIVE,
+        )
+        DataVizPage.objects.create(
+            title='Draft Page', slug='draft-page', owner=self.user, status=DataVizPage.STATUS_DRAFT,
+        )
+
+        response = self.client.get('/dataviz/pages/?status=active')
+        self.assertContains(response, 'Live')
+        self.assertNotContains(response, 'Draft Page')
+
+    def test_unpublish_api(self):
+        from dataviz.utils.page_publish import publish_page
+        from users.models_pages import Page
+
+        page = DataVizPage.objects.create(
+            title='To Unpublish', slug='to-unpublish', owner=self.user,
+            status=DataVizPage.STATUS_ACTIVE,
+        )
+        publish_page(page, self.user)
+        page.refresh_from_db()
+        site_page_id = page.linked_site_page_id
+
+        response = self.client.post('/dataviz/api/pages/to-unpublish/unpublish/')
+        self.assertEqual(response.status_code, 200)
+        page.refresh_from_db()
+        self.assertEqual(page.status, DataVizPage.STATUS_DRAFT)
+        self.assertEqual(Page.objects.get(pk=site_page_id).status, 'inactive')
+
+    def test_publish_api(self):
+        from users.models_pages import Page
+
+        page = DataVizPage.objects.create(
+            title='To Publish', slug='to-publish', owner=self.user,
+            status=DataVizPage.STATUS_DRAFT,
+        )
+        response = self.client.post('/dataviz/api/pages/to-publish/publish/')
+        self.assertEqual(response.status_code, 200)
+        page.refresh_from_db()
+        self.assertEqual(page.status, DataVizPage.STATUS_ACTIVE)
+        self.assertIsNotNone(page.linked_site_page_id)
+        self.assertEqual(Page.objects.get(pk=page.linked_site_page_id).status, 'active')
+
+    def test_move_api(self):
+        import json
+        page = DataVizPage.objects.create(title='Movable', slug='movable', owner=self.user)
+        response = self.client.post(
+            '/dataviz/api/pages/movable/move/',
+            data=json.dumps({'folder': 'Academics / Math'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        page.refresh_from_db()
+        self.assertEqual(page.folder, 'Academics / Math')
+
+    def test_create_empty_folder(self):
+        import json
+        response = self.client.post(
+            '/dataviz/api/pages/folders/create/',
+            data=json.dumps({'folder': 'Reports / ELA'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        response = self.client.get('/dataviz/pages/?folder=Reports')
+        self.assertContains(response, 'ELA')
+
+    def test_folders_list_api(self):
+        DataVizPage.objects.create(title='A', slug='a', owner=self.user, folder='Alpha / Beta')
+        DataVizPageFolder.objects.create(path='Gamma')
+        response = self.client.get('/dataviz/api/pages/folders/')
+        self.assertEqual(response.status_code, 200)
+        folders = response.json()['folders']
+        self.assertIn('Alpha / Beta', folders)
+        self.assertIn('Gamma', folders)
+
+    def test_batch_move_api(self):
+        import json
+        DataVizPage.objects.create(title='One', slug='one', owner=self.user, folder='Old')
+        DataVizPage.objects.create(title='Two', slug='two', owner=self.user, folder='Old')
+        response = self.client.post(
+            '/dataviz/api/pages/move-batch/',
+            data=json.dumps({'slugs': ['one', 'two'], 'folder': 'New / Home'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['moved'], 2)
+        self.assertEqual(DataVizPage.objects.get(slug='one').folder, 'New / Home')
+        self.assertEqual(DataVizPage.objects.get(slug='two').folder, 'New / Home')
 
 
 class DatasetExportCSVTests(TestCase):

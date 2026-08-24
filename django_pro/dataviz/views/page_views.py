@@ -4,13 +4,14 @@ import json
 from django.shortcuts import get_object_or_404, render
 from django.views.generic import TemplateView
 
-from dataviz.models import DataVizPage, Dashboard, SavedChart, DataVizPageRow, DataVizPageTab
+from dataviz.models import DataVizPage, Dashboard, SavedChart, DataVizPageRow, DataVizPageTab, DataVizPageFolder
+from dataviz.utils.page_publish import build_page_tree, folder_path_from_url, collect_folder_paths, all_page_folder_paths
 
 from .mixins import ProjectAdminMixin, is_project_admin
 
 
 def page_index(request):
-    """List all DataViz pages the user has built."""
+    """List DataViz pages in a folder tree with publish/draft filtering."""
     if not request.user.is_authenticated:
         from django.contrib.auth.views import redirect_to_login
         return redirect_to_login(request.get_full_path())
@@ -18,8 +19,71 @@ def page_index(request):
         from django.http import HttpResponseForbidden
         return HttpResponseForbidden('Project Admins only.')
 
-    pages = DataVizPage.objects.all().order_by('-updated_at')[:100]
-    return render(request, 'dataviz/pages/index.html', {'pages': pages})
+    status_filter = (request.GET.get('status') or 'all').strip().lower()
+    current_path = request.GET.get('folder', '').strip().strip('/')
+
+    pages_qs = DataVizPage.objects.all().order_by('-updated_at')
+    if status_filter == 'active':
+        pages_qs = pages_qs.filter(status=DataVizPage.STATUS_ACTIVE)
+    elif status_filter == 'draft':
+        pages_qs = pages_qs.filter(status=DataVizPage.STATUS_DRAFT)
+
+    total_count = pages_qs.count()
+    pages_list = list(pages_qs[:500])
+    extra_paths = list(DataVizPageFolder.objects.values_list('path', flat=True))
+    root = build_page_tree(pages_list, extra_folder_paths=extra_paths)
+
+    path_parts = [p for p in current_path.split('/') if p]
+    display_curr = root
+    breadcrumbs = []
+    running_path = []
+    for part in path_parts:
+        if part in display_curr['folders']:
+            running_path.append(part)
+            display_curr = display_curr['folders'][part]
+            breadcrumbs.append({'name': part, 'path': '/'.join(running_path)})
+        else:
+            display_curr = root
+            breadcrumbs = []
+            current_path = ''
+            break
+
+    subfolders = sorted(display_curr['folders'].keys())
+    folder_pages = display_curr['pages']
+    parent_folder = folder_path_from_url(current_path)
+    subfolder_items = []
+    for name in subfolders:
+        full_path = f"{parent_folder} / {name}".strip(' / ') if parent_folder else name
+        url_path = f"{current_path}/{name}" if current_path else name
+        subfolder_items.append({'name': name, 'full_path': full_path, 'url_path': url_path})
+
+    all_folders = sorted(set(collect_folder_paths(root)) | set(all_page_folder_paths()))
+
+    def _qs(extra=None):
+        params = []
+        if current_path:
+            params.append(f'folder={current_path}')
+        sf = extra if extra is not None else status_filter
+        if sf and sf != 'all':
+            params.append(f'status={sf}')
+        return ('?' + '&'.join(params)) if params else ''
+
+    return render(request, 'dataviz/pages/index.html', {
+        'subfolders': subfolders,
+        'subfolder_items': subfolder_items,
+        'pages': folder_pages,
+        'all_folders': all_folders,
+        'all_folders_json': json.dumps(all_folders),
+        'current_path': current_path,
+        'breadcrumbs': breadcrumbs,
+        'status_filter': status_filter,
+        'query_suffix': _qs(),
+        'query_suffix_all': _qs('all'),
+        'query_suffix_active': _qs('active'),
+        'query_suffix_draft': _qs('draft'),
+        'total_count': total_count,
+        'current_folder_label': folder_path_from_url(current_path),
+    })
 
 
 class PageBuilderView(ProjectAdminMixin, TemplateView):
@@ -53,6 +117,8 @@ class PageBuilderView(ProjectAdminMixin, TemplateView):
             'page':             dv_page,
             'dv_page':          dv_page,
             'page_id':          dv_page.pk if dv_page else None,
+            'default_folder':   folder_path_from_url(self.request.GET.get('folder', '')) if not dv_page else '',
+            'all_folders':      all_page_folder_paths(),
             'page_json':        json.dumps(dv_page.to_dict() if dv_page else None),
             'sections':         sections,
             'sections_json':    sections_json,

@@ -12,6 +12,7 @@ function pageBuilder() {
     /* ── State ──────────────────────────────────────────────────── */
     pageId:   _PAGE_ID,
     pageSlug: _PAGE_SLUG,
+    pageFolder: typeof _PAGE_FOLDER !== 'undefined' ? _PAGE_FOLDER : '',
     title:    _PAGE_TITLE,
     description: _PAGE_DESC,
     status:   _PAGE_STATUS,
@@ -73,6 +74,7 @@ function pageBuilder() {
     toast: '',
     toastType: 'success',
     lastSaved: '',
+    slugError: '',
 
     /* ── Computed: filtered categories for filter modal ─────────── */
     get filteredFilterCategories() {
@@ -380,6 +382,39 @@ function pageBuilder() {
     },
 
     /* ── Page CRUD ──────────────────────────────────────────────── */
+    normalizeSlug(value) {
+      return (value || '')
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9_-]/g, '')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 200);
+    },
+
+    onSlugInput() {
+      this.slugError = '';
+    },
+
+    onSlugBlur() {
+      const normalized = this.normalizeSlug(this.pageSlug);
+      if (normalized !== this.pageSlug) {
+        this.pageSlug = normalized;
+      }
+      this.autoSave();
+    },
+
+    _applySavedPage(page, previousSlug) {
+      if (!page) return;
+      const newSlug = page.slug || '';
+      if (newSlug && newSlug !== previousSlug) {
+        this.pageSlug = newSlug;
+        history.replaceState(null, '', '/dataviz/pages/' + newSlug + '/edit/');
+      }
+      this.status = page.status;
+    },
+
     _sectionsUrl() {
       return _SECTIONS_URL.replace('__slug__', this.pageSlug);
     },
@@ -392,6 +427,7 @@ function pageBuilder() {
       }
       const res = await this._post(_SAVE_URL, {
         title: this.title.trim(),
+        folder: this.pageFolder,
         description: this.description,
         status: 'draft',
         container_width: this.containerWidth,
@@ -465,17 +501,27 @@ function pageBuilder() {
 
     async autoSave() {
       if (!this.pageId || !this.title.trim()) return;
+      const previousSlug = this.pageSlug;
       this.saving = true;
-      await this._post(_SAVE_URL, {
+      const res = await this._post(_SAVE_URL, {
         id: this.pageId,
         title: this.title.trim(),
         slug: this.pageSlug,
+        folder: this.pageFolder,
         description: this.description,
         status: this.status,
         container_width: this.containerWidth,
         show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
+      if (res.error) {
+        this.slugError = res.error;
+        this.showToast(res.error, 'error');
+        this.saving = false;
+        return;
+      }
+      this.slugError = '';
+      this._applySavedPage(res.page, previousSlug);
       this.lastSaved = new Date().toLocaleTimeString();
       this.saving = false;
       this.refreshCharts();
@@ -485,22 +531,27 @@ function pageBuilder() {
       const pageId = await this._ensurePage();
       if (!pageId) return;
 
+      const previousSlug = this.pageSlug;
       this.saving = true;
       const res = await this._post(_SAVE_URL, {
         id: pageId,
         title: this.title.trim(),
         slug: this.pageSlug,
+        folder: this.pageFolder,
         description: this.description,
         status: status || this.status,
         container_width: this.containerWidth,
         show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
-      if (res.error) { this.showToast(res.error, 'error'); this.saving = false; return; }
-      if (res.page) {
-        this.pageSlug = res.page.slug;
-        this.status = res.page.status;
+      if (res.error) {
+        this.slugError = res.error;
+        this.showToast(res.error, 'error');
+        this.saving = false;
+        return;
       }
+      this.slugError = '';
+      this._applySavedPage(res.page, previousSlug);
 
       // Save row + grid layouts
       const rowsPayload = this.rows.map((row, ri) => {

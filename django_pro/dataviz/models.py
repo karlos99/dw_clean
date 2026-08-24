@@ -225,6 +225,7 @@ class DataVizPage(models.Model):
 
     title            = models.CharField(max_length=200)
     slug             = models.SlugField(max_length=200, unique=True, blank=True)
+    folder           = models.CharField(max_length=500, blank=True, default='')
     description      = models.TextField(blank=True)
     container_width  = models.CharField(max_length=10, default=CONTAINER_XL, choices=CONTAINER_CHOICES)
     show_header      = models.BooleanField(default=True)
@@ -264,6 +265,7 @@ class DataVizPage(models.Model):
             'id':               self.pk,
             'title':            self.title,
             'slug':             self.slug,
+            'folder':           self.folder or '',
             'description':      self.description,
             'status':           self.status,
             'container_width':  self.container_width,
@@ -275,6 +277,19 @@ class DataVizPage(models.Model):
         if include_sections:
             d['sections'] = [s.to_dict() for s in self.sections.select_related('dashboard').all()]
         return d
+
+
+class DataVizPageFolder(models.Model):
+    """Empty folder placeholder so folders appear before any page is placed in them."""
+
+    path = models.CharField(max_length=500, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['path']
+
+    def __str__(self):
+        return self.path
 
 
 class DataVizPageRow(models.Model):
