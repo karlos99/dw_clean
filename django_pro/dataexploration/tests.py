@@ -67,6 +67,64 @@ from dataexploration.school_year_utils import resolve_relative_column_key
 from dataexploration.column_utils import test_metadata_matches
 
 
+class StudentSummaryDedupeTests(SimpleTestCase):
+	def test_dedupe_merges_duplicate_results_with_dfp(self):
+		from dataexploration.view_modules.student_data_utils import _dedupe_test_records
+
+		base = {
+			'school_year': '2025-2026', 'test_name': 'CAASPP', 'subject': 'ELA',
+			'test_window': None, 'pl': '2', 'ss': '2499', 'school_code': 'S1',
+			'grade': '11', 'school': 'Amistad HS', 'school_short_name': 'Amistad HS',
+		}
+		rows = [
+			{**base, 'other_info': {'Genre': 'ARGU'}},
+			{**base, 'other_info': {'dfp': -84.0, 'Genre': 'ARGU'}},
+			{**base, 'other_info': {}},
+		]
+		out = _dedupe_test_records(rows)
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]['other_info'].get('dfp'), -84.0)
+		self.assertEqual(out[0]['other_info'].get('Genre'), 'ARGU')
+
+	def test_dedupe_collapses_school_join_fanout(self):
+		from dataexploration.view_modules.student_data_utils import _dedupe_test_records
+
+		base = {
+			'school_year': '2025-2026', 'test_name': 'CAASPP', 'subject': 'Math',
+			'test_window': None, 'pl': '1', 'ss': '2501', 'school_code': 'S2',
+			'grade': '11', 'school': 'Amistad HS',
+		}
+		rows = [
+			{**base, 'school_short_name': 'Amistad HS', 'other_info': {'dfp': -127.0}},
+			{**base, 'school_short_name': 'Amistad IS', 'other_info': {}},
+			{**base, 'school_short_name': 'Amistad ATP', 'other_info': {}},
+		]
+		out = _dedupe_test_records(rows)
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]['other_info'].get('dfp'), -127.0)
+
+	def test_dedupe_preserves_distinct_scores(self):
+		from dataexploration.view_modules.student_data_utils import _dedupe_test_records
+
+		base = {
+			'school_year': '2025-2026', 'test_name': 'iready', 'subject': 'Math',
+			'test_window': 'Spring', 'pl': '2 Grade Levels Below', 'school_code': 'S3',
+			'grade': '11', 'school': 'Amistad HS', 'school_short_name': 'Amistad HS',
+		}
+		rows = [
+			{**base, 'ss': '482.0', 'other_info': {'LQMeasure': '610Q'}},
+			{**base, 'ss': '485.0', 'other_info': {'LQMeasure': '620Q'}},
+			{**base, 'ss': '402.0', 'other_info': {'LQMeasure': '560Q'}},
+		]
+		out = _dedupe_test_records(rows)
+		self.assertEqual(len(out), 3)
+		self.assertEqual({r['ss'] for r in out}, {'482.0', '485.0', '402.0'})
+
+	def test_dedupe_empty(self):
+		from dataexploration.view_modules.student_data_utils import _dedupe_test_records
+		self.assertEqual(_dedupe_test_records([]), [])
+
+
 class TestMetadataMatchesTests(SimpleTestCase):
 	def test_caa_does_not_match_caaspp(self):
 		info = {'test_name': 'CAA', 'subject': 'ELA', 'test_window': None}
