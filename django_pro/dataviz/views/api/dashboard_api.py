@@ -201,8 +201,8 @@ def home_dashboard_api(request):
             dashboard=dash,
             chart=chart,
             position=dash.chart_slots.count(),
-            gs_w=int(body.get('gs_w') or 8),
-            gs_h=int(body.get('gs_h') or 5),
+            gs_w=int(body.get('gs_w') or 6),
+            gs_h=int(body.get('gs_h') or 4),
         )
         return JsonResponse({'slot': slot.to_dict(), 'success': True})
 
@@ -226,8 +226,8 @@ def home_dashboard_api(request):
             DashboardChart.objects.filter(pk=slot_id, dashboard=dash).update(
                 gs_x=int(item.get('gs_x', 0)),
                 gs_y=int(item.get('gs_y', 0)),
-                gs_w=int(item.get('gs_w', 8)),
-                gs_h=int(item.get('gs_h', 5)),
+                gs_w=int(item.get('gs_w', 6)),
+                gs_h=int(item.get('gs_h', 4)),
                 position=int(item.get('position', 0)),
             )
         return JsonResponse({'success': True})
