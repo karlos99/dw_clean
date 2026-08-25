@@ -447,6 +447,21 @@ def dedupe_rows_by_stu_annual_key(rows: list) -> list:
     return out
 
 
+def _is_results_json_column(col_str: str) -> bool:
+    """True for ``results.other_info`` / ``results.other_info->'key'`` selections.
+
+    The ``results`` table stores per-test additional info (DFP, writing domain
+    scores, etc.) in ``other_info``. That info is frequently loaded as a
+    *separate* ``results`` row from the one carrying ``ss``/``pl``, so the same
+    student/test can appear twice — once with the JSON key populated and once
+    without. ``SELECT DISTINCT`` cannot collapse those rows because the
+    extracted ``other_info->'key'`` value differs (blank vs populated).
+    """
+    if not col_str.startswith('results.'):
+        return False
+    return '->' in col_str or col_str == 'results.other_info'
+
+
 def compile_dataset_to_sql(
     dataset,
     user=None,
@@ -575,18 +590,37 @@ def compile_dataset_to_sql(
             sak_tbl, sak_name = validate_column_identifier(sak_col, active_tables)
             sak_expr = format_column_expr(sak_tbl, sak_name)
 
+    # Duplicate `results` rows (one `other_info` carries the DFP/additional-info
+    # JSON, one doesn't) survive `SELECT DISTINCT` because the extracted
+    # `results.other_info->'key'` value differs between them — the same student
+    # then shows up twice, once with data and once blank. When a results JSON
+    # column is selected, collapse each set of rows that are identical in every
+    # other selected column to one, keeping the non-blank JSON value via MAX.
+    results_json_cols = [c for c in columns_list if _is_results_json_column(c)]
+    dedupe_results = bool(results_json_cols) and not sak_expr
+
     select_clauses = []
+    group_by_exprs = []
     for col_str in columns_list:
         tbl, col = validate_column_identifier(col_str, active_tables)
         expr = format_column_expr(tbl, col)
-        select_clauses.append(f'{expr} AS "{tbl}.{col}"')
-        
+        alias = f'"{tbl}.{col}"'
+        if dedupe_results and col_str in results_json_cols:
+            agg_expr = f"MAX(NULLIF({expr}, ''))" if '->' in col_str else f"MAX({expr})"
+            select_clauses.append(f'{agg_expr} AS {alias}')
+        else:
+            select_clauses.append(f'{expr} AS {alias}')
+            group_by_exprs.append(expr)
+
     select_sql = ", ".join(select_clauses)
-    
+
     # Construct base query. DISTINCT ON (stu_annual_key) wins over row-level DISTINCT
-    # when the chart asks for one enrollment-year record.
+    # when the chart asks for one enrollment-year record; results-JSON dedupe uses
+    # GROUP BY (which also collapses the duplicates) and overrides row-level DISTINCT.
     if sak_expr:
         select_keyword = f"SELECT DISTINCT ON ({sak_expr})"
+    elif dedupe_results:
+        select_keyword = "SELECT"
     elif getattr(dataset, 'distinct', True):
         select_keyword = "SELECT DISTINCT"
     else:
@@ -807,7 +841,13 @@ def compile_dataset_to_sql(
 
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
-        
+
+    # Results-JSON dedupe: GROUP BY on every non-JSON selected column collapses
+    # the duplicate `results` rows into one per unique combination of those
+    # columns (the MAX'd JSON column carries the populated value).
+    if dedupe_results and group_by_exprs:
+        sql += " GROUP BY " + ", ".join(group_by_exprs)
+
     # ORDER BY clause — accepts a list of {"column": "table.col", "direction": "asc"|"desc"}
     # DISTINCT ON requires its expressions to be the leftmost ORDER BY keys.
     order_list = order_by or getattr(dataset, 'order_by', None) or []
@@ -824,6 +864,8 @@ def compile_dataset_to_sql(
                 continue
             tbl, col = validate_column_identifier(col_str, active_tables)
             expr = format_column_expr(tbl, col)
+            if dedupe_results and _is_results_json_column(col_str):
+                expr = f"MAX(NULLIF({expr}, ''))" if '->' in col_str else f"MAX({expr})"
             if sak_expr and expr == sak_expr:
                 continue
             order_parts.append(f'{expr} {direction.upper()}')

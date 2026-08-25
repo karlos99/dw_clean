@@ -148,6 +148,26 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertEqual(export_cell(0), '0')
 		self.assertEqual(export_cell('—'), '—')
 
+	def test_parse_apall_sort_key(self):
+		from dataexploration.column_utils import parse_apall_sort_key
+		self.assertEqual(
+			parse_apall_sort_key('apall_2024_2025_1_SUBJECT'),
+			{'year': '2024-2025', 'index': 1, 'field': 'SUBJECT'},
+		)
+		self.assertEqual(
+			parse_apall_sort_key('apall_2025_2026_3_PL'),
+			{'year': '2025-2026', 'index': 3, 'field': 'PL'},
+		)
+		self.assertIsNone(parse_apall_sort_key('ap_2024_2025_Calc_AB_PL'))
+		self.assertIsNone(parse_apall_sort_key('apawards_all_2024_2025'))
+
+	def test_pl_sort_sql_escapes_like_wildcards_for_psycopg(self):
+		from dataexploration.column_utils import PL_SORT_SQL
+		# Raw '%' would be eaten as a placeholder; must be '%%' in the fragment.
+		self.assertIn("LIKE 'novice%%'", PL_SORT_SQL)
+		self.assertIn("LIKE '%%ifep%%'", PL_SORT_SQL)
+		self.assertNotIn("LIKE 'novice%'", PL_SORT_SQL.replace('%%', ''))
+
 
 class SchoolYearUtilsTests(SimpleTestCase):
 	@patch("dataexploration.school_year_utils.resolve_school_year")

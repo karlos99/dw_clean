@@ -68,6 +68,58 @@ SCORE_SENTINELS = frozenset({
     'inf', '-inf', 'infinity', '-infinity',
 })
 
+# SQL fragment: treat import sentinels as NULL so they sort with blanks.
+_PL_BLANK_SQL = (
+    "r.pl IS NULL OR btrim(r.pl) = '' OR lower(btrim(r.pl)) IN "
+    "('nan','ns','n/a','na','n/s','null','none')"
+)
+
+# Initial ELPAC (and similar) use text PL labels, not 1-4. Map to a stable
+# proficiency order so ASC goes Novice → Intermediate → IFEP instead of
+# alphabetical ("Initial Fluent..." before "Intermediate...").
+# NOTE: ``%%`` so psycopg does not treat LIKE wildcards as placeholders.
+PL_SORT_SQL = (
+    "CASE "
+    f"WHEN {_PL_BLANK_SQL} THEN NULL "
+    "WHEN lower(btrim(r.pl)) LIKE 'novice%%' THEN 1 "
+    "WHEN lower(btrim(r.pl)) LIKE 'intermediate%%' THEN 2 "
+    "WHEN lower(btrim(r.pl)) LIKE '%%ifep%%' "
+    "  OR lower(btrim(r.pl)) LIKE 'initial fluent%%' THEN 3 "
+    "ELSE CAST(NULLIF(regexp_replace(btrim(r.pl), '[^0-9.].*', '', 'g'), '') AS NUMERIC) "
+    "END"
+)
+
+SS_SORT_SQL = (
+    "CASE "
+    "WHEN r.ss IS NULL OR btrim(r.ss) = '' OR lower(btrim(r.ss)) IN "
+    "('nan','ns','n/a','na','n/s','null','none') THEN NULL "
+    "ELSE CAST(NULLIF(regexp_replace(btrim(r.ss), '[^0-9.]', '', 'g'), '') AS NUMERIC) "
+    "END"
+)
+
+
+def parse_apall_sort_key(col_key: str):
+    """Parse ``apall_<YYYY_YYYY>_<n>_SUBJECT|PL`` into year/index/field, or None."""
+    if not isinstance(col_key, str) or not col_key.startswith('apall_'):
+        return None
+    # apall_2024_2025_1_SUBJECT
+    rest = col_key[len('apall_'):]
+    parts = rest.split('_')
+    if len(parts) < 4:
+        return None
+    # year is YYYY_YYYY (two parts), then index, then field
+    try:
+        y0, y1, idx_s, field = parts[0], parts[1], parts[2], parts[3]
+        if len(y0) != 4 or len(y1) != 4 or field not in ('SUBJECT', 'PL'):
+            return None
+        return {
+            'year': f'{y0}-{y1}',
+            'index': int(idx_s),
+            'field': field,
+        }
+    except (ValueError, TypeError, IndexError):
+        return None
+
 
 def normalize_score_value(value):
     """Return ``None`` for missing/placeholder score values, else the trimmed value."""

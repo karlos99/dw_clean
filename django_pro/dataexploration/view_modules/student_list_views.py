@@ -19,6 +19,7 @@ from ..column_utils import (
     get_test_columns, get_mark_columns, get_ap_columns, _get_display_name,
     RESULTS_STUDENT_MATCH_SQL, RESULTS_BULK_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
     assign_result_value_maps, lookup_result_value,
+    PL_SORT_SQL, SS_SORT_SQL, parse_apall_sort_key,
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
@@ -1498,16 +1499,18 @@ def load_students(request):
                 window_clause = ""
                 window_params = []
                 if test_info.get('test_window'):
-                    window_clause = "AND t.test_window ILIKE %s"
+                    # Exact match (lower) — ILIKE treats '_' as a wildcard, which
+                    # breaks names like Initial_ELPAC / ELPAC_summative.
+                    window_clause = "AND lower(t.test_window) = lower(%s)"
                     window_params = [test_info['test_window']]
                 
                 select_expr = ""
                 extra_params = []
                 
                 if metric_col == 'ss':
-                     select_expr = "CAST(NULLIF(regexp_replace(r.ss, '[^0-9.]', '', 'g'), '') AS NUMERIC)"
+                     select_expr = SS_SORT_SQL
                 elif metric_col == 'pl':
-                     select_expr = "CASE WHEN r.pl ~ '^[0-9]+$' THEN LPAD(r.pl, 10, '0') ELSE r.pl END"
+                     select_expr = PL_SORT_SQL
                 else:
                     select_expr = "(r.other_info ->> %s)"
                     extra_params = [test_info.get('other_info_key', '')]
@@ -1517,8 +1520,8 @@ def load_students(request):
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     f"WHERE {RESULTS_STUDENT_MATCH_SQL} "
                     "AND r.school_year = %s "
-                    "AND t.test_name ILIKE %s "
-                    "AND t.subject ILIKE %s "
+                    "AND lower(t.test_name) = lower(%s) "
+                    "AND lower(t.subject) = lower(%s) "
                     f"{window_clause} "
                     "LIMIT 1)"
                 )
@@ -1529,6 +1532,30 @@ def load_students(request):
                     test_info['subject'],
                 ])
                 params.extend(window_params)
+            elif sort_by.startswith('apall_'):
+                # AP "All Results" wide columns: apall_<year>_<n>_SUBJECT|PL
+                # Must be checked before the generic ap_* branch (apall_ starts with ap_).
+                apall_parsed = parse_apall_sort_key(sort_by)
+                if apall_parsed and apall_parsed['index'] >= 1:
+                    _field = apall_parsed['field']
+                    if _field == 'SUBJECT':
+                        _apall_select = "e.name"
+                    else:
+                        _apall_select = (
+                            "CAST(NULLIF(regexp_replace("
+                            "NULLIF(btrim(r.exam_grade), ''), '[^0-9.]', '', 'g'), '') AS NUMERIC)"
+                        )
+                    _off = apall_parsed['index'] - 1
+                    order_by_expr = (
+                        f"(SELECT {_apall_select} "
+                        "FROM \"dataLoader_apexamresult\" r "
+                        "INNER JOIN \"dataLoader_apexamcode\" e ON r.exam_id = e.code "
+                        "INNER JOIN \"dataLoader_apimportlog\" il ON r.import_log_id = il.id "
+                        "WHERE r.ssid = cs.ssid AND r.admin_year = %s AND il.is_published = true "
+                        "ORDER BY e.name "
+                        f"LIMIT 1 OFFSET {_off})"
+                    )
+                    params.append(apall_parsed['year'])
             elif sort_by.startswith('apawards_all_'):
                 # Combined "All Awards" column for a year — sort by the joined list.
                 # Use PG dialect (string_agg) so the Postgres fallback works;
@@ -1570,6 +1597,15 @@ def load_students(request):
                     params.extend([ap_info['year'], ap_info['award']])
 
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
+        # Put blank/missing assessment values at the end for both directions.
+        # Otherwise DESC on sparse columns (Initial ELPAC, AP slot N) fills the
+        # first page with empty rows and looks like sorting is broken.
+        is_dynamic_sort = bool(sort_by) and (
+            sort_by in test_col_map
+            or sort_by in mark_col_map
+            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_'))
+        )
+        order_nulls_sql = ' NULLS LAST' if is_dynamic_sort else ''
 
         # Check Redis cache for sorted IDs
         # Include full params in key to ensure uniqueness for filters
@@ -1577,7 +1613,7 @@ def load_students(request):
         cache_key_components = {
             'sql_hash': hashlib.md5((where_sql + join_sql).encode()).hexdigest(),
             'params': [str(p) for p in params], # params includes where + sort params
-            'sort': f"{sort_by}:{sort_dir}",
+            'sort': f"{sort_by}:{sort_dir}:nulls_last" if is_dynamic_sort else f"{sort_by}:{sort_dir}",
             'limit': limit,
             'offset': offset 
         }
@@ -1651,7 +1687,7 @@ def load_students(request):
             FROM current_student cs
             {join_sql}
             WHERE {where_sql}
-            ORDER BY {order_by_expr} {sort_dir}
+            ORDER BY {order_by_expr} {sort_dir}{order_nulls_sql}
             LIMIT %s OFFSET %s
             """
             
