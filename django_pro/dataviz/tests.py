@@ -58,6 +58,83 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertEqual(len(out), 3)
         self.assertEqual([r['grade'] for r in out], ['1', '3', '4'])
 
+    def test_compile_dataset_to_sql_one_row_per_sak_prefers_results_json(self):
+        # With one_row_per_stu_annual_key + a results.other_info->'key' column,
+        # DISTINCT ON must prefer the duplicate results row carrying the JSON
+        # value (e.g. DFP) so drills don't show a blank DFP for the student.
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=[
+                "results.ssid",
+                "results.pl",
+                "results.stu_annual_key",
+                "results.other_info->'dfp'",
+            ],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            if '->' in col:
+                base_col, key = col.split('->', 1)
+                return f'"{tbl}"."{base_col}"->>\'{key.strip("\\\'\\\"")}\''
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'ssid', 'pl', 'other_info', 'stu_annual_key', 'school_year', 'test_group_key', 'ss'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                one_row_per_stu_annual_key=True,
+            )
+
+        self.assertTrue(sql.startswith('SELECT DISTINCT ON'))
+        self.assertIn(
+            '(NULLIF("results"."other_info"->>\'dfp\', \'\') IS NOT NULL) DESC',
+            sql,
+        )
+
+    def test_compile_dataset_to_sql_one_row_per_sak_no_tiebreaker_without_json(self):
+        # No results JSON column -> DISTINCT ON ordering is untouched.
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=["results.ssid", "results.pl", "results.stu_annual_key"],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'ssid', 'pl', 'other_info', 'stu_annual_key', 'school_year', 'test_group_key', 'ss'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                one_row_per_stu_annual_key=True,
+            )
+
+        self.assertTrue(sql.startswith('SELECT DISTINCT ON'))
+        self.assertNotIn('IS NOT NULL) DESC', sql)
+
     def test_compile_dataset_to_sql_uses_any_for_multi_value_filters(self):
         dataset = SimpleNamespace(
             base_table='current_student',

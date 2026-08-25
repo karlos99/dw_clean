@@ -882,6 +882,17 @@ def compile_dataset_to_sql(
     order_parts = []
     if sak_expr:
         order_parts.append(f'{sak_expr} ASC')
+        # one_row_per_stu_annual_key: DISTINCT ON (stu_annual_key) picks ONE row
+        # per student — among duplicate `results` rows (one carries the JSON
+        # value e.g. dfp, one doesn't) it must prefer the populated row, or the
+        # chart/drill show a blank DFP for that student.
+        for col_str in results_json_cols:
+            _tbl, _col = validate_column_identifier(col_str, active_tables)
+            _expr = format_column_expr(_tbl, _col)
+            if '->' in col_str:
+                order_parts.append(f'(NULLIF({_expr}, \'\') IS NOT NULL) DESC')
+            else:
+                order_parts.append(f'({_expr} IS NOT NULL) DESC')
     if order_list:
         for ob in order_list:
             col_str = ob.get('column')
