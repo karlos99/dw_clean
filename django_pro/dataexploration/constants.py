@@ -15,6 +15,7 @@ COLUMN_DEFINITIONS = {
     # Demographics
     "gender": "Gender",
     "race": "Race/Ethnicity",
+    "race_list": "Race List",
     "ell": "ELL Status",
     "status": "Status",
     "birth_date": "Birth Date",
@@ -47,7 +48,7 @@ COLUMN_CATEGORIES = {
     },
     "demographics": {
         "title": "Demographics",
-        "columns": ["gender", "race", "status"]
+        "columns": ["gender", "race", "race_list", "status"]
     },
     "dates": {
         "title": "Dates",

@@ -26,6 +26,11 @@ from dataexploration.school_year_utils import get_year_labels_map
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
+from dataexploration.view_modules.column_management import (
+    is_race_list_column,
+    append_race_list_filter,
+    race_list_unnest_select_expr,
+)
 from dataexploration.view_modules.student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -465,6 +470,10 @@ def load_students(request):
                     params.extend(mark_base_params + blank_params)
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            if is_race_list_column(col):
+                append_race_list_filter(where_clauses, params, values)
                 continue
 
             # NYL or standard column
@@ -950,9 +959,6 @@ def load_students(request):
             for col in base_cols:
                 if col in excluded_filters:
                     continue
-                expr = base_col_expressions.get(col)
-                if not expr:
-                    continue
                 other_f = _get_other_f(col)
                 ck = _filt_ck(col, other_f)
                 cached_vals = cache.get(ck)
@@ -963,6 +969,30 @@ def load_students(request):
                 opt_params = list(base_params)
                 _apply_column_filters(opt_where, opt_params, other_f, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
                 opt_sql = " AND ".join(opt_where)
+
+                if is_race_list_column(col):
+                    try:
+                        unnest_expr = race_list_unnest_select_expr('cs')
+                        cursor.execute(
+                            f"SELECT DISTINCT v FROM ("
+                            f" SELECT {unnest_expr} AS v"
+                            f" FROM current_student cs {NYL_JOIN} {join_sql}"
+                            f" WHERE {opt_sql}"
+                            f") _race_opts WHERE v IS NOT NULL AND BTRIM(v) != ''"
+                            f" ORDER BY v ASC LIMIT 100",
+                            opt_params,
+                        )
+                        values = [r[0] for r in cursor.fetchall() if r[0] is not None and str(r[0]).strip()]
+                        if values:
+                            filter_options[col] = values
+                            cache.set(ck, values, 300)
+                    except Exception:
+                        pass
+                    continue
+
+                expr = base_col_expressions.get(col)
+                if not expr:
+                    continue
                 cursor.execute(
                     f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {NYL_JOIN} {join_sql} WHERE {opt_sql}",
                     opt_params,

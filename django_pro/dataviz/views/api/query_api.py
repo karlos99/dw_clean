@@ -209,7 +209,7 @@ def query_columns_api(request, query_id):
 # Columns that make sense as discrete multi-select filters in the chart builder.
 # Excludes unique / high-cardinality identifiers.
 _FILTERABLE_COLUMNS = frozenset([
-    'school_year', 'grade', 'school', 'gender', 'race', 'ell', 'sed',
+    'school_year', 'grade', 'school', 'gender', 'race', 'race_list', 'ell', 'sed',
     'foster', 'homeless', 'sped', 'gate', 'in_504', 'dli', 'ltel',
     'status', 'suspension_indicator', 'atendace_rate',
     'birth_date', 'us_enter_date', 'fep_date',
@@ -367,6 +367,11 @@ def _build_where_clause(filters_dict: dict, exclude_col: str = None) -> tuple[li
             continue
         
         # Determine SQL expression for the column
+        if fkey == 'race_list':
+            from dataexploration.view_modules.column_management import append_race_list_filter
+            vals = fval if isinstance(fval, list) else ([fval] if fval else [])
+            append_race_list_filter(where_parts, params, vals)
+            continue
         if fkey in _enroll_keys:
             expr = _ENROLL_FILTER_EXPRS[fkey]
         elif _SAFE_COL_RE.match(fkey):
@@ -529,6 +534,23 @@ def query_filter_options_api(request, query_id):
                 union_parts = []
                 union_params: list = []
                 for col in filter_cols:
+                    # Race List: distinct individual values from JSON array
+                    if col == 'race_list':
+                        from dataexploration.view_modules.column_management import (
+                            race_list_unnest_select_expr,
+                        )
+                        col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
+                        col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts) if col_where_parts else ''
+                        unnest = race_list_unnest_select_expr('cs')
+                        union_parts.append(
+                            f"(SELECT DISTINCT v AS val, %s AS col_name FROM ("
+                            f" SELECT {unnest} AS v FROM current_student cs{join_sql} {col_where_sql}"
+                            f") _rl WHERE v IS NOT NULL AND v != '' ORDER BY val)"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
+                        continue
+
                     expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
                     
                     # Build dynamic cascading WHERE clause excluding the current column itself
@@ -955,6 +977,22 @@ def column_filter_options_api(request):
                 union_parts = []
                 union_params: list = []
                 for col in filter_cols:
+                    if col == 'race_list':
+                        from dataexploration.view_modules.column_management import (
+                            race_list_unnest_select_expr,
+                        )
+                        col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
+                        col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts) if col_where_parts else ''
+                        unnest = race_list_unnest_select_expr('cs')
+                        union_parts.append(
+                            f"(SELECT DISTINCT v AS val, %s AS col_name FROM ("
+                            f" SELECT {unnest} AS v FROM current_student cs{join_sql} {col_where_sql}"
+                            f") _rl WHERE v IS NOT NULL AND v != '' ORDER BY val)"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
+                        continue
+
                     expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
                     col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
                     is_numeric = _is_numeric_filter_col(col)

@@ -94,3 +94,33 @@ class SQLTranslatorTests(SimpleTestCase):
         self.assertIn('lower(cs.ssid) LIKE LOWER(%(p1)s)', translated_sql)
         self.assertIn('lower(cs.student_id) LIKE LOWER(%(p2)s)', translated_sql)
         self.assertEqual(ch_params['p0'], '%8037020790%')
+
+    def test_translate_race_list_display_and_overlap(self):
+        from dataexploration.view_modules.column_management import (
+            race_list_display_expr,
+            race_list_overlap_sql,
+            race_list_unnest_select_expr,
+            race_list_blank_sql,
+        )
+        display = race_list_display_expr('cs')
+        overlap = race_list_overlap_sql('cs')
+        unnest = race_list_unnest_select_expr('cs')
+        blank = race_list_blank_sql('cs')
+
+        sql = f"SELECT {display} AS race_list FROM current_student cs WHERE {overlap} OR {blank}"
+        translated, ch_params = translate_pg_to_clickhouse(sql, [['Asian', 'White']])
+
+        self.assertIn("arrayStringConcat(", translated)
+        self.assertIn("JSONExtract(cs.add_data, 'l_race', 'Array(String)')", translated)
+        self.assertIn("hasAny(", translated)
+        self.assertIn("[%(p0)s, %(p1)s]", translated)
+        self.assertNotIn('__HASANY_ARR__', translated)
+        self.assertNotIn('jsonb_array_elements_text', translated)
+        self.assertNotIn('regexp_split_to_array', translated)
+        self.assertEqual(ch_params.get('p0'), 'Asian')
+        self.assertEqual(ch_params.get('p1'), 'White')
+
+        unnest_sql = f"SELECT DISTINCT v FROM (SELECT {unnest} AS v FROM current_student cs) t"
+        unnest_translated, _ = translate_pg_to_clickhouse(unnest_sql, [])
+        self.assertIn("arrayJoin(", unnest_translated)
+        self.assertNotIn('unnest(', unnest_translated.lower().replace('arrayjoin', ''))

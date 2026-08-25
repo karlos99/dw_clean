@@ -776,6 +776,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const s = String(value);
             return formatDateForDisplay(s);
         }
+        if (col === 'race_list') {
+            if (Array.isArray(value)) {
+                return value.filter(v => v !== null && v !== undefined && String(v).trim() !== '').join(', ');
+            }
+            const s = String(value).trim();
+            if (!s || s === '—' || s === '[]' || s === 'null') return '—';
+            // JSON array string → readable list
+            if (s.startsWith('[')) {
+                try {
+                    const parsed = JSON.parse(s);
+                    if (Array.isArray(parsed)) {
+                        return parsed.filter(v => v !== null && v !== undefined && String(v).trim() !== '').join(', ') || '—';
+                    }
+                } catch (_) { /* keep raw */ }
+            }
+            return s;
+        }
         return value;
     };
 

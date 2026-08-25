@@ -75,7 +75,7 @@ def _build_student_info_for_ssid(ssid: str):
     elif cs_latest and getattr(cs_latest, 'student_name', None):
         full_name = cs_latest.student_name
 
-    return {
+    student_info = {
         'full_name': full_name,
         'student_id': getattr(cs_latest, 'student_id', None) if cs_latest else None,
         'ssid': getattr(cs_latest, 'ssid', None) if cs_latest else ssid,
@@ -107,17 +107,28 @@ def _build_student_info_for_ssid(ssid: str):
         'suspension_indicator': getattr(cs_latest, 'suspension_indicator', None) if cs_latest else None,
         'avid': None,
         'avid_type': None,
+        'race_list': None,
     }
 
-    # Extract AVID info from add_data JSON
+    # Extract JSON add_data fields (AVID, Race List)
     if cs_latest and getattr(cs_latest, 'add_data', None):
         try:
             import json
-            add_data = json.loads(cs_latest.add_data)
-            student_info['avid'] = add_data.get('AVID')
-            student_info['avid_type'] = add_data.get('AVID_type')
+            add_data = cs_latest.add_data
+            if isinstance(add_data, str):
+                add_data = json.loads(add_data)
+            if isinstance(add_data, dict):
+                student_info['avid'] = add_data.get('AVID')
+                student_info['avid_type'] = add_data.get('AVID_type')
+                l_race = add_data.get('l_race')
+                if isinstance(l_race, list):
+                    student_info['race_list'] = ', '.join(str(r) for r in l_race if r is not None)
+                elif l_race:
+                    student_info['race_list'] = str(l_race)
         except (json.JSONDecodeError, TypeError):
             pass
+
+    return student_info
 
 
 # Fields that identify a single test result for a student. Join-derived context

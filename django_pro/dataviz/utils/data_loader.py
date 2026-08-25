@@ -169,6 +169,9 @@ _CS_COLUMNS = frozenset([
     'ltel', 'status', 'school_year',
 ])
 
+# Virtual columns resolved via JSON expressions (not real CS table columns)
+_VIRTUAL_CS_COLUMNS = frozenset(['race_list', 'avid', 'avid_type'])
+
 # Column-Picker fields that live in student_enroll, not current_student.
 # 'ell'/'grade' exist in both tables (see the COALESCE handling below); the
 # rest are enrollment-only, so selecting them requires the se. join alias —
@@ -1017,7 +1020,7 @@ def enrich_drill_rows(
             test_cols.append(rc)
         elif rc.startswith('mark_'):
             mark_cols.append(rc)
-        elif bare in _CS_COLUMNS or bare in _ENROLL_FIELDS:
+        elif bare in _CS_COLUMNS or bare in _ENROLL_FIELDS or bare in _VIRTUAL_CS_COLUMNS:
             if _SAFE_IDENT_RE.match(bare) and bare not in missing_base:
                 missing_base.append(bare)
 
@@ -1260,7 +1263,7 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
     ap_cols:    list[str] = []
     award_cols: list[str] = []
     for c in requested:
-        if (c in _CS_COLUMNS or c in _ENROLL_FIELDS) and _SAFE_IDENT_RE.match(c):
+        if (c in _CS_COLUMNS or c in _ENROLL_FIELDS or c in _VIRTUAL_CS_COLUMNS) and _SAFE_IDENT_RE.match(c):
             base_cols.append(c)
         elif c.startswith('apawards_all_') or c.startswith('apaward_'):
             award_cols.append(c)
@@ -1446,11 +1449,20 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             except Exception:
                 dynamic_filters[fkey] = fval
             continue  # dynamic columns are filtered after enrichment below
+        if fkey == 'race_list':
+            from dataexploration.view_modules.column_management import append_race_list_filter
+            vals = fval if isinstance(fval, list) else ([fval] if fval else [])
+            append_race_list_filter(where_parts, params, vals)
+            continue
         if fkey in _ENROLL_FIELDS:
             needs_enroll = True
             _add_filter(_ENROLL_FIELDS[fkey], fval)
         elif fkey in _CS_COLUMNS and _SAFE_IDENT_RE.match(fkey):
             _add_filter(f'cs.{fkey}', fval)
+        elif fkey == 'avid':
+            _add_filter("(cs.add_data::jsonb->>'AVID')", fval)
+        elif fkey == 'avid_type':
+            _add_filter("(cs.add_data::jsonb->>'AVID_type')", fval)
 
     # Search filter
     search = filters.get('search', '')
@@ -1492,6 +1504,13 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             select_exprs.append('COALESCE(se.grade, cs.grade) AS grade')
         elif c in _ENROLL_FIELDS and needs_enroll:
             select_exprs.append(f'{_ENROLL_FIELDS[c]} AS {c}')
+        elif c == 'race_list':
+            from dataexploration.view_modules.column_management import race_list_display_expr
+            select_exprs.append(f'{race_list_display_expr("cs")} AS race_list')
+        elif c == 'avid':
+            select_exprs.append("(cs.add_data::jsonb->>'AVID') AS avid")
+        elif c == 'avid_type':
+            select_exprs.append("(cs.add_data::jsonb->>'AVID_type') AS avid_type")
         else:
             select_exprs.append(f'cs.{c}')
 

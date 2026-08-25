@@ -392,12 +392,29 @@ def format_column_expr(tbl, col):
     Given a table name and a column name, returns the SQL expression.
     If the column name contains a JSON path like 'other_info->\'lexile\'',
     formats it as '"table"."other_info"->>\'lexile\''.
+    Race-list arrays (add_data->'l_race') are rendered as comma-joined text.
     """
     if '->' in col:
         base_col, key = col.split('->', 1)
         key_clean = key.strip("'\"")
+        if base_col == 'add_data' and key_clean == 'l_race':
+            from dataexploration.view_modules.column_management import race_list_display_expr
+            return race_list_display_expr(f'"{tbl}"')
         return f'"{tbl}"."{base_col}"->>\'{key_clean}\''
     return f'"{tbl}"."{col}"'
+
+
+def _append_dataset_l_race_filter(where_parts, params, tbl, val, operator='in'):
+    """Any-of overlap filter for current_student.add_data->'l_race'."""
+    from dataexploration.view_modules.column_management import append_race_list_filter
+    alias = f'"{tbl}"'
+    if operator == 'exact':
+        values = [val] if val not in (None, '') else []
+    elif isinstance(val, list):
+        values = val
+    else:
+        values = [val] if val not in (None, '') else []
+    append_race_list_filter(where_parts, params, values, table_alias=alias)
 
 
 def find_stu_annual_key_column(active_tables, columns_list=None) -> str | None:
@@ -673,6 +690,12 @@ def compile_dataset_to_sql(
         val = f.get('value')
         
         tbl, col = validate_column_identifier(col_str, active_tables)
+
+        from dataexploration.view_modules.column_management import is_race_list_column
+        if is_race_list_column(col_str) or is_race_list_column(col):
+            _append_dataset_l_race_filter(where_parts, params, tbl, val, operator)
+            continue
+
         expr = format_column_expr(tbl, col)
         
         if operator == 'exact':
@@ -791,6 +814,11 @@ def compile_dataset_to_sql(
             
             base_col = fname.split('->', 1)[0]
             if ftbl not in allowed_tables or base_col not in get_columns_for_table(ftbl):
+                continue
+
+            from dataexploration.view_modules.column_management import is_race_list_column
+            if is_race_list_column(fname) or is_race_list_column(fkey):
+                _append_dataset_l_race_filter(where_parts, params, ftbl, fval, 'in')
                 continue
             
             # Add filter condition
@@ -966,6 +994,10 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
         operator = f.get('operator', 'exact').lower()
         val = f.get('value')
         tbl, col = validate_column_identifier(col_str, active_tables)
+        from dataexploration.view_modules.column_management import is_race_list_column
+        if is_race_list_column(col_str) or is_race_list_column(col):
+            _append_dataset_l_race_filter(where_parts, params, tbl, val, operator)
+            continue
         expr = format_column_expr(tbl, col)
         if operator == 'exact':
             where_parts.append(f'{expr} = %s')

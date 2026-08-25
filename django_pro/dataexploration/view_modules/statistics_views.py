@@ -24,6 +24,8 @@ from .student_data_utils import (
 from .column_management import (
     get_saved_default_columns,
     get_column_expression,
+    is_race_list_column,
+    append_race_list_filter,
 )
 
 @login_required
@@ -377,6 +379,11 @@ def get_column_statistics(request):
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
             
+            # Race List (add_data.l_race) — any-of overlap
+            if is_race_list_column(col):
+                append_race_list_filter(where_clauses, params, values)
+                continue
+
             # Standard
             expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
             if expr:
