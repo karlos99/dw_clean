@@ -25,6 +25,12 @@ class SQLTranslationError(Exception):
     pass
 
 
+def _strip_pg_casts(ref: str) -> str:
+    """Drop PG casts/quotes so a column ref is ClickHouse-safe."""
+    ref = re.sub(r'::\w+', '', ref or '')
+    return ref.replace('"', '')
+
+
 def translate_pg_to_clickhouse(sql, params):
     """
     Translate PostgreSQL SQL + params to ClickHouse SQL + params dict.
@@ -75,6 +81,59 @@ def translate_pg_to_clickhouse(sql, params):
     #   2. Split into quoted / unquoted segments on remaining quotes.
     #   3. Apply JSON translation only to unquoted segments.
     #   4. Reassemble.
+
+    # Race List idioms (before general JSON rewrite) — keep CH on the fast path.
+    # Matches the CASE text[] normalizer from race_list_array_sql().
+    _rl_ref = r'((?:\"[^\"]+\"|\w+)(?:\.(?:\"[^\"]+\"|\w+))?)'
+    _rl_case = (
+        rf'\(\s*CASE\s+'
+        rf'WHEN\s+{_rl_ref}\s+IS\s+NULL\s+OR\s+\1->\'l_race\'\s+IS\s+NULL\s+'
+        rf'OR\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'null\'\s+'
+        rf'THEN\s+ARRAY\s*\[\s*\]\s*::\s*text\s*\[\s*\]\s+'
+        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'array\'\s+'
+        rf'THEN\s+ARRAY\s*\(\s*SELECT\s+jsonb_array_elements_text\s*\(\s*\1->\'l_race\'\s*\)\s*\)\s+'
+        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'string\'\s+'
+        rf'AND\s+BTRIM\s*\(\s*COALESCE\s*\(\s*\1->>\'l_race\'\s*,\s*\'\'\s*\)\s*\)\s*<>\s*\'\'\s+'
+        rf'THEN\s+regexp_split_to_array\s*\(\s*BTRIM\s*\(\s*\1->>\'l_race\'\s*\)\s*,\s*'
+        rf'\'\[\[:space:\]\]\*,\[\[:space:\]\]\*\'\s*\)\s+'
+        rf'ELSE\s+ARRAY\s*\[\s*\]\s*::\s*text\s*\[\s*\]\s+END\s*\)'
+    )
+
+    def _ch_race_list_arr(ref: str) -> str:
+        r = _strip_pg_casts(ref)
+        return (
+            f"if(JSONType(JSONExtractRaw({r}, 'l_race')) = 'Array', "
+            f"JSONExtract({r}, 'l_race', 'Array(String)'), "
+            f"if(JSONType(JSONExtractRaw({r}, 'l_race')) = 'String' "
+            f"AND trim(BOTH ' ' FROM JSONExtractString({r}, 'l_race')) != '', "
+            f"splitByRegexp('\\\\s*,\\\\s*', trim(BOTH ' ' FROM JSONExtractString({r}, 'l_race'))), "
+            f"CAST([] AS Array(String))))"
+        )
+
+    sql = re.sub(
+        rf'array_to_string\s*\(\s*{_rl_case}\s*,\s*\',\s*\'\s*\)',
+        lambda m: f"arrayStringConcat({_ch_race_list_arr(m.group(1))}, ', ')",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    sql = re.sub(
+        rf'\(\s*{_rl_case}\s*&&\s*%s::text\s*\[\s*\]\s*\)',
+        lambda m: f"hasAny({_ch_race_list_arr(m.group(1))}, __HASANY_ARR__%s)",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    sql = re.sub(
+        rf'\(\s*cardinality\s*\(\s*{_rl_case}\s*\)\s*=\s*0\s*\)',
+        lambda m: f"empty({_ch_race_list_arr(m.group(1))})",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    sql = re.sub(
+        rf'unnest\s*\(\s*{_rl_case}\s*\)',
+        lambda m: f"arrayJoin({_ch_race_list_arr(m.group(1))})",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
     def _unquote_simple(m):
         inner = m.group(1)
@@ -158,8 +217,10 @@ def translate_pg_to_clickhouse(sql, params):
     new_sql_parts = []
     idx = 0
     
-    # Matches: '= ANY(%s)' (with optional spaces) OR '%s'
-    placeholder_re = re.compile(r'(?i)=\s*ANY\s*\(\s*%s\s*\)|%s')
+    # Matches: '= ANY(%s)' OR '__HASANY_ARR__%s' (Race List) OR '%s'
+    placeholder_re = re.compile(
+        r'(?i)=\s*ANY\s*\(\s*%s\s*\)|__HASANY_ARR__%s|%s'
+    )
     
     for m in placeholder_re.finditer(sql):
         new_sql_parts.append(sql[pos:m.start()])
@@ -170,11 +231,13 @@ def translate_pg_to_clickhouse(sql, params):
         else:
             val = None
             
-        if matched_str.startswith('='):
-            # It's an '= ANY(%s)' placeholder
+        is_has_any = matched_str.upper().startswith('__HASANY_ARR__')
+
+        if is_has_any or matched_str.startswith('='):
+            # '= ANY(%s)' or '__HASANY_ARR__%s' — expand list params
             if isinstance(val, (list, tuple, set)):
                 if not val:
-                    new_sql_parts.append('IN (NULL)')
+                    new_sql_parts.append('[]' if is_has_any else 'IN (NULL)')
                 else:
                     ph_parts = []
                     for v in val:
@@ -182,11 +245,17 @@ def translate_pg_to_clickhouse(sql, params):
                         param_index += 1
                         ph_parts.append(f'%({name})s')
                         ch_params[name] = v
-                    new_sql_parts.append('IN (' + ', '.join(ph_parts) + ')')
+                    if is_has_any:
+                        new_sql_parts.append('[' + ', '.join(ph_parts) + ']')
+                    else:
+                        new_sql_parts.append('IN (' + ', '.join(ph_parts) + ')')
             else:
                 name = f'p{param_index}'
                 param_index += 1
-                new_sql_parts.append(f'IN (%({name})s)')
+                if is_has_any:
+                    new_sql_parts.append(f'[%({name})s]')
+                else:
+                    new_sql_parts.append(f'IN (%({name})s)')
                 ch_params[name] = val
         else:
             # It's a '%s' placeholder

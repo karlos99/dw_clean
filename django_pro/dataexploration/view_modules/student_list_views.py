@@ -31,6 +31,11 @@ from .student_data_utils import (
 from .column_management import (
     get_saved_default_columns,
     get_column_expression,
+    get_enabled_columns,
+    is_race_list_column,
+    append_race_list_filter,
+    race_list_unnest_select_expr,
+    RACE_LIST_COL,
 )
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
 from landing.utils import get_project_config
@@ -182,12 +187,13 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['marks_structure'] = marks_structure
         context['survey_structure'] = survey_structure.get('structure', {})
         context['ap_structure'] = ap_structure
-        context['column_categories'] = COLUMN_CATEGORIES
-        context['column_definitions'] = COLUMN_DEFINITIONS
+        enabled_defs, enabled_cats = get_enabled_columns()
+        context['column_categories'] = enabled_cats
+        context['column_definitions'] = enabled_defs
         default_columns = get_saved_default_columns()
         context['default_columns'] = default_columns
         context['default_columns_json'] = json.dumps(default_columns)
-        context['column_definitions_json'] = json.dumps(COLUMN_DEFINITIONS)
+        context['column_definitions_json'] = json.dumps(enabled_defs)
         
         # Handle Saved Query
         saved_query_id = self.request.GET.get('saved_query')
@@ -834,6 +840,11 @@ def load_students(request):
                     params.extend(sub_params + sub_params)
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            # Race List (add_data.l_race JSON array) — match students with ANY selected race
+            if is_race_list_column(col):
+                append_race_list_filter(where_clauses, params, values)
                 continue
 
             # Standard columns
@@ -1999,10 +2010,7 @@ def load_students(request):
             for col in base_cols:
                 if col in excluded_filters:
                     continue
-                expr = base_col_expressions.get(col)
-                if not expr:
-                    continue
-                
+
                 # Faceted filtering: compute this column's options without its own filter applied.
                 if isinstance(filters, dict) and col in filters:
                     other_filters = {k: v for k, v in filters.items() if k != col}
@@ -2022,6 +2030,37 @@ def load_students(request):
                 option_params = list(base_params)
                 _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+
+                # Race List options: unnest individual races from the JSON array/string
+                if is_race_list_column(col):
+                    try:
+                        unnest_expr = race_list_unnest_select_expr('cs')
+                        options_query = f"""
+                            SELECT DISTINCT v FROM (
+                                SELECT {unnest_expr} AS v
+                                FROM current_student cs
+                                {join_sql}
+                                WHERE {option_where_sql}
+                            ) _race_opts
+                            WHERE v IS NOT NULL AND BTRIM(v) != ''
+                            ORDER BY v ASC
+                            LIMIT 100
+                        """
+                        cursor.execute(options_query, option_params)
+                        rows = cursor.fetchall()
+                        values = [row[0] for row in rows if row[0] is not None and str(row[0]).strip()]
+                        # Always expose filter options for Race List when any values exist
+                        if values:
+                            filter_options[col] = values
+                            cache.set(cache_key, values, 300)
+                    except Exception:
+                        # Don't let Race List options take down the whole table load
+                        pass
+                    continue
+
+                expr = base_col_expressions.get(col)
+                if not expr:
+                    continue
 
                 limit_clause = "" if col in always_include else "LIMIT 31"
 
