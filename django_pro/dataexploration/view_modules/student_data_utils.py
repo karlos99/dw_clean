@@ -16,7 +16,7 @@ def _student_summary_cache_version():
         mtime = int(os.path.getmtime(template_path))
     except Exception:
         mtime = 0
-    return f"v2:{mtime}"
+    return f"v3:{mtime}"
 
 
 def _resolve_ssid(ssid: str) -> str:
@@ -75,7 +75,7 @@ def _build_student_info_for_ssid(ssid: str):
     elif cs_latest and getattr(cs_latest, 'student_name', None):
         full_name = cs_latest.student_name
 
-    return {
+    student_info = {
         'full_name': full_name,
         'student_id': getattr(cs_latest, 'student_id', None) if cs_latest else None,
         'ssid': getattr(cs_latest, 'ssid', None) if cs_latest else ssid,
@@ -107,17 +107,82 @@ def _build_student_info_for_ssid(ssid: str):
         'suspension_indicator': getattr(cs_latest, 'suspension_indicator', None) if cs_latest else None,
         'avid': None,
         'avid_type': None,
+        'race_list': None,
     }
 
-    # Extract AVID info from add_data JSON
+    # Extract JSON add_data fields (AVID, Race List)
     if cs_latest and getattr(cs_latest, 'add_data', None):
         try:
             import json
-            add_data = json.loads(cs_latest.add_data)
-            student_info['avid'] = add_data.get('AVID')
-            student_info['avid_type'] = add_data.get('AVID_type')
+            add_data = cs_latest.add_data
+            if isinstance(add_data, str):
+                add_data = json.loads(add_data)
+            if isinstance(add_data, dict):
+                student_info['avid'] = add_data.get('AVID')
+                student_info['avid_type'] = add_data.get('AVID_type')
+                l_race = add_data.get('l_race')
+                if isinstance(l_race, list):
+                    student_info['race_list'] = ', '.join(str(r) for r in l_race if r is not None)
+                elif l_race:
+                    student_info['race_list'] = str(l_race)
         except (json.JSONDecodeError, TypeError):
             pass
+
+    return student_info
+
+
+# Fields that identify a single test result for a student. Join-derived context
+# (grade, school, school_short_name) is deliberately excluded — the `school`
+# table can contain several rows per assessment_school_code and the summary
+# should still show one row per test.
+_TEST_IDENTITY_FIELDS = ('school_year', 'test_name', 'subject', 'test_window', 'pl', 'ss', 'school_code')
+
+
+def _merge_other_info(rows_group: list) -> dict:
+    """Merge a group's ``other_info`` dicts, keeping the first non-None value per key.
+
+    Duplicate ``results`` rows for the same test/scores differ only in whether
+    the additional-info JSON (DFP, writing domains, …) is populated. Unioning
+    the dicts preserves every key (e.g. ``dfp``) from the row that carries it.
+    """
+    merged: dict = {}
+    for row in rows_group:
+        oi = row.get('other_info')
+        if not isinstance(oi, dict):
+            continue
+        for k, v in oi.items():
+            if v is None or k in merged:
+                continue
+            merged[k] = v
+    return merged
+
+
+def _dedupe_test_records(rows: list) -> list:
+    """Collapse duplicate test-result rows for the summary page.
+
+    The ``results`` table often stores the same student/test/scores twice — one
+    row whose ``other_info`` carries the DFP/additional-info JSON and one (or
+    more) without it — and the ``school`` join can fan a single result out to
+    several rows. Rows sharing the same test identity are merged into a single
+    record (keeping the first, with the unioned ``other_info``). Rows that
+    genuinely differ (e.g. distinct iReady scale scores) are preserved.
+    """
+    if not rows:
+        return rows
+    groups: dict = {}
+    order: list = []
+    for row in rows:
+        key = tuple(row.get(k) for k in _TEST_IDENTITY_FIELDS)
+        if key in groups:
+            groups[key].append(row)
+        else:
+            groups[key] = [row]
+            order.append(key)
+    for key in order:
+        group = groups[key]
+        if len(group) > 1:
+            group[0]['other_info'] = _merge_other_info(group)
+    return [groups[key][0] for key in order]
 
 
 def _fetch_test_records_for_ssid(ssid: str):
@@ -162,7 +227,7 @@ def _fetch_test_records_for_ssid(ssid: str):
                 row['other_info'] = {}
         elif not isinstance(oi, dict):
             row['other_info'] = {}
-    return rows
+    return _dedupe_test_records(rows)
 
 
 def _fetch_student_marks_for_ssid(ssid: str):

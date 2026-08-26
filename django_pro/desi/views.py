@@ -9,6 +9,7 @@ from django.http import HttpResponse, HttpResponseForbidden
 from django.template.loader import render_to_string
 from django.urls import reverse
 import csv
+import json
 
 from studata.models import CurrentStudent, School as StudataSchool, TeacherAccess
 from landing.utils import get_project_config
@@ -49,6 +50,16 @@ def _is_project_admin(user):
     if hasattr(user, 'active_role') and user.active_role and user.active_role.name == 'Project Admin':
         return True
     return user.roles.filter(name='Project Admin').exists() if hasattr(user, 'roles') else False
+
+
+def _is_teacher(user):
+    """Return whether the user's active role is Teacher."""
+    if not user.is_authenticated:
+        return False
+    active_role = getattr(user, 'active_role', None)
+    if active_role:
+        return active_role.name == 'Teacher'
+    return user.roles.filter(name='Teacher').exists() if hasattr(user, 'roles') else False
 
 
 def _get_student_field_options():
@@ -150,6 +161,11 @@ def _parse_dependency_assessments(post_data):
     return {int(x) for x in post_data.getlist('dependency_assessments') if x.isdigit()}
 
 
+def _split_option_values(raw_value):
+    """Turn one option field into one or more trimmed comma-separated values."""
+    return [value.strip() for value in (raw_value or '').split(',') if value.strip()]
+
+
 def _validate_dependency(accommodation, dep_support_id, dep_option_id):
     if dep_support_id and dep_option_id:
         try:
@@ -223,6 +239,7 @@ def _get_student_list_context(request):
     school_year = request.GET.get('school_year', default_year)
     search_query = request.GET.get('search', '').strip()
     grade_filter = request.GET.get('grade', '').strip()
+    teacher_filter = request.GET.get('teacher', '').strip()
     
     active_school = getattr(request.user, 'active_school', None)
     school_filter_id = request.GET.get('school', '')
@@ -230,13 +247,60 @@ def _get_student_list_context(request):
     if school_filter_id and not active_school:
         user_schools = getattr(request.user, 'schools', None)
         if not user_schools or school_filter_id in user_schools:
-            try:
-                active_school = StudataSchool.objects.get(state_id=school_filter_id)
-            except StudataSchool.DoesNotExist:
-                pass
+            active_school = (
+                StudataSchool.objects
+                .filter(state_id=school_filter_id)
+                .order_by('school_name', 'dw_schoolkey')
+                .first()
+            )
 
     students_qs = get_visible_students(request.user, active_school=active_school)
     students_qs = students_qs.filter(school_year=school_year)
+
+    # Build teacher choices from the students visible in the selected school/year,
+    # then optionally narrow the student list to that teacher's students.
+    teacher_names = []
+    teacher_options_by_filter = {}
+    try:
+        teacher_access_qs = TeacherAccess.objects.filter(
+            school_year=school_year,
+            stu_annual_key__in=students_qs.values('stu_annual_key'),
+        )
+        student_details = {
+            row['stu_annual_key']: row
+            for row in students_qs.values('stu_annual_key', 'school_state_id', 'grade')
+        }
+        for access in teacher_access_qs.values('staff_name', 'stu_annual_key'):
+            name = (access['staff_name'] or '').strip()
+            student_detail = student_details.get(access['stu_annual_key'])
+            if not name or not student_detail:
+                continue
+            school_key = student_detail['school_state_id'] or ''
+            grade_key = student_detail['grade'] or ''
+            for key in ('::', f'{school_key}::', f'::{grade_key}', f'{school_key}::{grade_key}'):
+                teacher_options_by_filter.setdefault(key, set()).add(name)
+
+        teacher_options_by_filter = {
+            key: sorted(names, key=str.casefold)
+            for key, names in teacher_options_by_filter.items()
+        }
+        current_school = school_filter_id or getattr(active_school, 'state_id', '') or ''
+        teacher_names = teacher_options_by_filter.get(
+            f'{current_school}::{grade_filter}',
+            teacher_options_by_filter.get(f'{current_school}::', []) if current_school
+            else teacher_options_by_filter.get(f'::{grade_filter}', teacher_options_by_filter.get('::', [])),
+        )
+        if teacher_filter:
+            students_qs = students_qs.filter(
+                stu_annual_key__in=teacher_access_qs.filter(
+                    staff_name__iexact=teacher_filter
+                ).values('stu_annual_key')
+            )
+    except Exception:
+        # Some deployments do not have the teacher-access view available.
+        teacher_names = []
+        if teacher_filter:
+            students_qs = students_qs.none()
 
     if search_query:
         students_qs = students_qs.filter(
@@ -259,26 +323,6 @@ def _get_student_list_context(request):
         acc_records = StudentAccommodation.objects.filter(student_annual_key__in=student_keys).prefetch_related('options__accommodation')
         for rec in acc_records:
             global_acc_map[rec.student_annual_key] = list(rec.options.all())
-
-    teacher_map = {}
-    if student_keys:
-        from django.db import connection
-        with connection.cursor() as cursor:
-            table_names = [t.name for t in connection.introspection.get_table_list(cursor)]
-        if 'teacher_access_list' in table_names:
-            access_records = TeacherAccess.objects.filter(
-                stu_annual_key__in=student_keys,
-                school_year=school_year
-            ).values('stu_annual_key', 'staff_name').distinct()
-            for rec in access_records:
-                key = rec['stu_annual_key']
-                name = rec['staff_name']
-                if name:
-                    name = name.strip()
-                    if key not in teacher_map:
-                        teacher_map[key] = []
-                    if name not in teacher_map[key]:
-                        teacher_map[key].append(name)
 
     completions_map = {}
     if student_keys:
@@ -303,10 +347,22 @@ def _get_student_list_context(request):
         student.eligible_count = len(eligible_ids)
         student_completed_ids = completions_map.get(student.stu_annual_key, set())
         student.completed_count = len(student_completed_ids.intersection(set(eligible_ids)))
+        student.assessment_statuses = [
+            {
+                'assessment': ast,
+                'is_completed': ast.id in student_completed_ids,
+            }
+            for ast in all_year_assessments
+            if ast.id in eligible_ids
+        ]
         student.global_accommodations = global_acc_map.get(student.stu_annual_key, [])
-        student.teachers = ", ".join(sorted(teacher_map.get(student.stu_annual_key, [])))
 
-    grades = CurrentStudent.objects.filter(school_year=school_year).values_list('grade', flat=True).distinct().order_by('grade')
+    grade_base = CurrentStudent.objects.filter(school_year=school_year)
+    if school_filter_id:
+        grade_base = grade_base.filter(school_state_id=school_filter_id)
+    elif active_school:
+        grade_base = grade_base.filter(school_state_id=active_school.state_id)
+    grades = grade_base.values_list('grade', flat=True).distinct().order_by('grade')
     grades = [g for g in grades if g]
 
     available_schools = getattr(request.user, 'available_schools', [])
@@ -318,18 +374,39 @@ def _get_student_list_context(request):
     else:
         has_multiple_schools = len(available_schools) > 1
 
+    grade_options_by_school = {}
+    school_ids = [s.state_id for s in available_schools if getattr(s, 'state_id', None)] if not hasattr(available_schools, 'values_list') else list(available_schools.values_list('state_id', flat=True))
+    for school_id in school_ids:
+        grade_options_by_school[school_id] = list(
+            CurrentStudent.objects.filter(school_year=school_year, school_state_id=school_id)
+            .exclude(grade__isnull=True).exclude(grade='')
+            .values_list('grade', flat=True).distinct().order_by('grade')
+        )
+
+    school_names = {}
+    school_rows = available_schools if hasattr(available_schools, '__iter__') else available_schools
+    for school in school_rows:
+        school_names[school.state_id] = school.short_name or school.school_name
+    for student in page_obj:
+        student.school_display = school_names.get(student.school_state_id) or student.school or student.school_state_id
+
     return {
         'page_obj': page_obj,
         'search_query': search_query,
         'grade_filter': grade_filter,
+        'teacher_filter': teacher_filter,
+        'teachers': teacher_names,
+        'teacher_options_by_filter_json': json.dumps(teacher_options_by_filter),
         'school_filter': school_filter_id,
         'school_year': school_year,
         'grades': grades,
         'schools': available_schools,
         'active_school': active_school,
         'is_project_admin': _is_project_admin(request.user),
+        'show_teacher_filter': not _is_teacher(request.user),
         'students_qs_raw': students_qs,
         'has_multiple_schools': has_multiple_schools,
+        'grade_options_by_school_json': json.dumps(grade_options_by_school),
     }
 
 
@@ -868,11 +945,10 @@ def create_accommodation(request):
         option_codes = request.POST.getlist('option_code[]')
         master_options = []
         for idx, raw_name in enumerate(option_names):
-            opt_name = raw_name.strip()
-            if not opt_name:
-                continue
             opt_code = option_codes[idx].strip() if idx < len(option_codes) else ''
-            master_options.append((opt_name, opt_code))
+            names = _split_option_values(raw_name)
+            for opt_name in names:
+                master_options.append((opt_name, opt_code if len(names) == 1 else ''))
 
         if bulk_options_text:
             for raw_name in [x.strip() for x in bulk_options_text.split(',') if x.strip()]:
@@ -979,12 +1055,13 @@ def edit_accommodation(request, id):
         option_codes = request.POST.getlist('option_code[]')
         posted_options = []
         for idx, raw_name in enumerate(option_names):
-            opt_name = raw_name.strip()
-            if not opt_name:
-                continue
             opt_code = option_codes[idx].strip() if idx < len(option_codes) else ''
             opt_id = option_ids[idx].strip() if idx < len(option_ids) else ''
-            posted_options.append((opt_id, opt_name, opt_code))
+            names = _split_option_values(raw_name)
+            for opt_name in names:
+                # A single value can safely retain its existing ID/code;
+                # comma-expanded values are new options.
+                posted_options.append((opt_id if len(names) == 1 else '', opt_name, opt_code if len(names) == 1 else ''))
 
         if bulk_options_text:
             for raw_name in [x.strip() for x in bulk_options_text.split(',') if x.strip()]:
@@ -1164,8 +1241,9 @@ def create_assessment(request):
             messages.error(request, "Assessment name is required.")
             return redirect('desi:create_assessment')
 
-        if Assessment.objects.filter(name=name, school_year=school_year).exists():
-            messages.error(request, f"An assessment named '{name}' already exists for school year {school_year}.")
+        if Assessment.objects.filter(name=name, subject=subject, school_year=school_year).exists():
+            subject_label = subject or ' no subject'
+            messages.error(request, f"An assessment named '{name}' with subject '{subject_label}' already exists for school year {school_year}.")
             return redirect('desi:create_assessment')
 
         assessment = Assessment.objects.create(
@@ -1216,9 +1294,15 @@ def edit_assessment(request, id):
     assessment = get_object_or_404(Assessment, id=id)
 
     if request.method == 'POST':
-        assessment.name = request.POST.get('name', '').strip()
-        assessment.subject = request.POST.get('subject', '').strip()
-        assessment.school_year = request.POST.get('school_year', assessment.school_year).strip()
+        name = request.POST.get('name', '').strip()
+        subject = request.POST.get('subject', '').strip()
+        school_year = request.POST.get('school_year', assessment.school_year).strip()
+        if Assessment.objects.filter(name=name, subject=subject, school_year=school_year).exclude(id=assessment.id).exists():
+            messages.error(request, f"An assessment named '{name}' with subject '{subject or 'no subject'}' already exists for school year {school_year}.")
+            return redirect('desi:edit_assessment', id=assessment.id)
+        assessment.name = name
+        assessment.subject = subject
+        assessment.school_year = school_year
         assessment.description = request.POST.get('description', '').strip()
         assessment.is_active = request.POST.get('is_active') == 'on'
         assessment.save()
@@ -1296,9 +1380,10 @@ def clone_assessment(request, id):
     return redirect('desi:admin_dashboard')
 
 
-def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids):
+def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None):
     """Build workspace context for the DESI accommodation editor."""
     shared_accommodations = []
+    selected_support_ids = set(selected_support_ids or [])
     test_specific_accommodations = {ast.id: [] for ast in eligible_assessments}
 
     # Map: accommodation -> { assessment: options_list }
@@ -1357,6 +1442,7 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
             'is_multichoice': is_multichoice,
             'selected_option': assigned_opt,
             'dependency_option_id': acc.depends_on_option_id if dependency_applies(asts[0].id) else None,
+            'selected_direct': acc.id in selected_support_ids,
         }
 
         if len(asts) > 1 and is_identical:
@@ -1378,6 +1464,7 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
                     'is_multichoice': ast_is_multi,
                     'selected_option': ast_assigned,
                     'dependency_option_id': acc.depends_on_option_id if dependency_applies(ast.id) else None,
+                    'selected_direct': acc.id in selected_support_ids,
                 })
 
     # Completions status
@@ -1417,6 +1504,37 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
     }
 
 
+def _student_annual_keys(student):
+    """Find this student's annual records across school years."""
+    identity_filter = Q(ssid=student.ssid) if student.ssid else Q(student_id=student.student_id)
+    if student.student_id:
+        identity_filter |= Q(student_id=student.student_id)
+    return list(CurrentStudent.objects.filter(identity_filter).values_list('stu_annual_key', flat=True))
+
+
+def _get_student_accommodation(student):
+    """Load supports by stable student identity, carrying them across years."""
+    keys = _student_annual_keys(student)
+    records = list(StudentAccommodation.objects.filter(
+        student_annual_key__in=keys
+    ).prefetch_related('options').order_by('-updated_at'))
+    if records:
+        record = records[0]
+        if record.student_annual_key != student.stu_annual_key:
+            current, _ = StudentAccommodation.objects.get_or_create(
+                student_annual_key=student.stu_annual_key,
+                defaults={'updated_by': record.updated_by},
+            )
+            current.options.set(record.options.all())
+            current.selected_accommodations.set(record.selected_accommodations.all())
+            return current, keys
+        return record, keys
+    record, _ = StudentAccommodation.objects.get_or_create(
+        student_annual_key=student.stu_annual_key
+    )
+    return record, keys
+
+
 @login_required
 def assign_accommodations(request, stu_annual_key):
     """Workspace to check eligibility, group accommodations, select options, and mark tests as completed."""
@@ -1427,9 +1545,7 @@ def assign_accommodations(request, stu_annual_key):
     if not visible_students.filter(stu_annual_key=stu_annual_key).exists():
         return HttpResponseForbidden("You do not have permission to view or manage this student's data.")
 
-    student_acc, _ = StudentAccommodation.objects.get_or_create(
-        student_annual_key=stu_annual_key
-    )
+    student_acc, student_annual_keys = _get_student_accommodation(student)
 
     # Pull active assessments
     assessments = Assessment.objects.filter(school_year=student.school_year, is_active=True).prefetch_related(
@@ -1453,6 +1569,7 @@ def assign_accommodations(request, stu_annual_key):
         # 1. Update Student's global assigned AccommodationOptions
         selected_opt_ids = request.POST.getlist('student_options')
         selected_opt_ids = [int(x) for x in selected_opt_ids if x and str(x).isdigit()]
+        selected_support_ids = [int(x) for x in request.POST.getlist('student_supports') if x and str(x).isdigit()]
         selected_options = list(
             AccommodationOption.objects.filter(id__in=selected_opt_ids)
             .select_related('accommodation')
@@ -1487,8 +1604,16 @@ def assign_accommodations(request, stu_annual_key):
             dependency_rules,
         )
         student_acc.options.set(AccommodationOption.objects.filter(id__in=selected_opt_ids))
+        student_acc.selected_accommodations.set(Accommodation.objects.filter(id__in=selected_support_ids))
         student_acc.updated_by = request.user
         student_acc.save()
+        # Keep the student's support choices consistent across annual records.
+        StudentAccommodation.objects.filter(
+            student_annual_key__in=student_annual_keys
+        ).exclude(pk=student_acc.pk).update(updated_by=request.user)
+        for annual_record in StudentAccommodation.objects.filter(student_annual_key__in=student_annual_keys).exclude(pk=student_acc.pk):
+            annual_record.options.set(selected_opt_ids)
+            annual_record.selected_accommodations.set(selected_support_ids)
 
         # 2. Update Assessment completions status
         completed_ids_list = request.POST.getlist('completed_assessments')
@@ -1515,6 +1640,7 @@ def assign_accommodations(request, stu_annual_key):
                 assessments,
                 failed_rules_map,
                 selected_opt_ids,
+                selected_support_ids,
             )
             list_context.update(context)
 
@@ -1546,6 +1672,7 @@ def assign_accommodations(request, stu_annual_key):
 
     # GET logic: Group accommodations into Shared vs Test-Specific
     student_options = list(student_acc.options.all())
+    selected_support_ids = set(student_acc.selected_accommodations.values_list('id', flat=True))
     option_to_accommodation = {opt.id: opt.accommodation_id for opt in student_options}
     dependency_rules = {}
     support_contexts = {}
@@ -1577,6 +1704,7 @@ def assign_accommodations(request, stu_annual_key):
         assessments,
         failed_rules_map,
         student_option_ids,
+        selected_support_ids,
     )
 
     if is_htmx:

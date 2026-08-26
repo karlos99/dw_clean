@@ -12,6 +12,7 @@ function pageBuilder() {
     /* ── State ──────────────────────────────────────────────────── */
     pageId:   _PAGE_ID,
     pageSlug: _PAGE_SLUG,
+    pageFolder: typeof _PAGE_FOLDER !== 'undefined' ? _PAGE_FOLDER : '',
     title:    _PAGE_TITLE,
     description: _PAGE_DESC,
     status:   _PAGE_STATUS,
@@ -22,7 +23,9 @@ function pageBuilder() {
     filterCategories: [],
 
     /* Sidebar accordion open/closed state */
-    sidebarSections: { settings: true, filters: true, layout: true },
+    sidebarSections: { settings: true, filters: true, tabs: true, layout: true },
+    tabs: (_TABS_JSON || []).map(t => ({ ...t })),
+    newTabName: '',
 
     /* Filter modal */
     filterModalOpen: false,
@@ -57,6 +60,7 @@ function pageBuilder() {
       bg_color:  r.bg_color || '',
       collapsed: r.collapsed || false,
       col_guide: r.col_guide || 0,
+      tab_id: r.tab_id || null,
       sections:  (r.sections || []).map(s => _mapSection(s)),
     })),
 
@@ -70,6 +74,7 @@ function pageBuilder() {
     toast: '',
     toastType: 'success',
     lastSaved: '',
+    slugError: '',
 
     /* ── Computed: filtered categories for filter modal ─────────── */
     get filteredFilterCategories() {
@@ -280,8 +285,9 @@ function pageBuilder() {
         }
       });
 
-      // After paint, auto-fit height to content for HTML blocks
-      if (sec.element_type === 'html') {
+      // Only auto-fit when the saved value explicitly requests it. Running
+      // this for every HTML block overwrites fixed heights on page reload.
+      if (sec.element_type === 'html' && Number(sec.gs_h) === 0) {
         this.$nextTick(() => this._fitHtmlWidget(grid, item));
       }
 
@@ -376,6 +382,39 @@ function pageBuilder() {
     },
 
     /* ── Page CRUD ──────────────────────────────────────────────── */
+    normalizeSlug(value) {
+      return (value || '')
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9_-]/g, '')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 200);
+    },
+
+    onSlugInput() {
+      this.slugError = '';
+    },
+
+    onSlugBlur() {
+      const normalized = this.normalizeSlug(this.pageSlug);
+      if (normalized !== this.pageSlug) {
+        this.pageSlug = normalized;
+      }
+      this.autoSave();
+    },
+
+    _applySavedPage(page, previousSlug) {
+      if (!page) return;
+      const newSlug = page.slug || '';
+      if (newSlug && newSlug !== previousSlug) {
+        this.pageSlug = newSlug;
+        history.replaceState(null, '', '/dataviz/pages/' + newSlug + '/edit/');
+      }
+      this.status = page.status;
+    },
+
     _sectionsUrl() {
       return _SECTIONS_URL.replace('__slug__', this.pageSlug);
     },
@@ -388,6 +427,7 @@ function pageBuilder() {
       }
       const res = await this._post(_SAVE_URL, {
         title: this.title.trim(),
+        folder: this.pageFolder,
         description: this.description,
         status: 'draft',
         container_width: this.containerWidth,
@@ -461,17 +501,27 @@ function pageBuilder() {
 
     async autoSave() {
       if (!this.pageId || !this.title.trim()) return;
+      const previousSlug = this.pageSlug;
       this.saving = true;
-      await this._post(_SAVE_URL, {
+      const res = await this._post(_SAVE_URL, {
         id: this.pageId,
         title: this.title.trim(),
         slug: this.pageSlug,
+        folder: this.pageFolder,
         description: this.description,
         status: this.status,
         container_width: this.containerWidth,
         show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
+      if (res.error) {
+        this.slugError = res.error;
+        this.showToast(res.error, 'error');
+        this.saving = false;
+        return;
+      }
+      this.slugError = '';
+      this._applySavedPage(res.page, previousSlug);
       this.lastSaved = new Date().toLocaleTimeString();
       this.saving = false;
       this.refreshCharts();
@@ -481,22 +531,27 @@ function pageBuilder() {
       const pageId = await this._ensurePage();
       if (!pageId) return;
 
+      const previousSlug = this.pageSlug;
       this.saving = true;
       const res = await this._post(_SAVE_URL, {
         id: pageId,
         title: this.title.trim(),
         slug: this.pageSlug,
+        folder: this.pageFolder,
         description: this.description,
         status: status || this.status,
         container_width: this.containerWidth,
         show_header: this.showHeader,
         page_filters: this._collectFilters(),
       });
-      if (res.error) { this.showToast(res.error, 'error'); this.saving = false; return; }
-      if (res.page) {
-        this.pageSlug = res.page.slug;
-        this.status = res.page.status;
+      if (res.error) {
+        this.slugError = res.error;
+        this.showToast(res.error, 'error');
+        this.saving = false;
+        return;
       }
+      this.slugError = '';
+      this._applySavedPage(res.page, previousSlug);
 
       // Save row + grid layouts
       const rowsPayload = this.rows.map((row, ri) => {
@@ -524,6 +579,7 @@ function pageBuilder() {
         return {
           row_id: row.id,
           position: ri,
+          tab_id: row.tab_id || null,
           sections: sectionLayout,
         };
       });
@@ -572,12 +628,44 @@ function pageBuilder() {
         bg_color: '',
         collapsed: false,
         col_guide: 0,
+        tab_id: null,
         sections: [],
       };
       this.rows.push(row);
       this.activeRow = row.id;
       this.$nextTick(() => this._initRowGrid(row));
       this.showToast('Section added');
+    },
+
+    async addTab() {
+      const name = (this.newTabName || '').trim();
+      if (!name) return;
+      const pageId = await this._ensurePage();
+      if (!pageId) return;
+      const res = await this._post(this._sectionsUrl(), { action: 'add_tab', name });
+      if (res.error) { this.showToast(res.error, 'error'); return; }
+      this.tabs.push(res.tab);
+      this.newTabName = '';
+      this.showToast('Tab added');
+    },
+
+    async updateTab(tab) {
+      const res = await this._post(this._sectionsUrl(), { action: 'update_tab', tab_id: tab.id, name: tab.name, position: tab.position });
+      if (res.error) this.showToast(res.error, 'error');
+    },
+
+    async removeTab(tabId) {
+      if (!confirm('Delete this tab? Rows will become unassigned, not deleted.')) return;
+      const res = await this._post(this._sectionsUrl(), { action: 'delete_tab', tab_id: tabId });
+      if (res.error) { this.showToast(res.error, 'error'); return; }
+      this.tabs = this.tabs.filter(t => t.id !== tabId);
+      this.rows.forEach(row => { if (row.tab_id === tabId) row.tab_id = null; });
+    },
+
+    async assignRowTab(row, tabId) {
+      row.tab_id = tabId ? parseInt(tabId, 10) : null;
+      const res = await this._post(_ROW_URL_TPL.replace('ROWID', row.id), { tab_id: row.tab_id });
+      if (res.error) this.showToast(res.error, 'error');
     },
 
     async removeRow(rowId) {

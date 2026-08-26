@@ -290,7 +290,7 @@ def _assessment_type_label(test_name: str) -> str:
     if 'caaspp' in normalized or 'caspp' in normalized:
         return 'CAASPP'
     if 'dibels' in normalized or 'dibbles' in normalized:
-        return 'DIBELS'
+        return 'Dibels'
     if 'iready' in normalized:
         return 'iReady'
     return test_name or 'Assessment'
@@ -366,7 +366,7 @@ def _assessment_snapshot_map(ssids: list[str], school_year: str) -> dict[str, li
         assessment_type = _assessment_type_label(test_name)
 
         include_row = False
-        if assessment_type in {'DIBELS', 'iReady'}:
+        if assessment_type in {'Dibels', 'iReady'}:
             include_row = row_year in current_year_variants
         elif assessment_type == 'CAASPP':
             include_row = row_year in allowed_years
@@ -469,7 +469,7 @@ def _draw_assessment_three_columns(pdf: Any, ssid: str, x: int, y: int, width: i
             row_type = row.get('type', '')
             if row_type == 'iReady':
                 iready_groups[(row.get('year', '—'), row.get('subject', '—'))].append(row)
-            elif row_type == 'DIBELS':
+            elif row_type == 'Dibels':
                 dibels_groups[row.get('year', '—')].append(row)
             elif row_type in {'ELPAC Summative', 'ELPAC Summative (Regular)', 'CAASPP'}:
                 state_groups[(row.get('year', '—'), row.get('test_name', row_type))].append(row)
@@ -488,7 +488,7 @@ def _draw_assessment_three_columns(pdf: Any, ssid: str, x: int, y: int, width: i
             for item in rows:
                 period = item.get('window', '—') or '—'
                 lines.append(f"{period}: {item.get('pl', '—')}")
-            blocks.append((f"DIBELS {year}", lines or ['—']))
+            blocks.append((f"Dibels {year}", lines or ['—']))
 
         for (year, test_name) in sorted(state_groups.keys(), reverse=True):
             rows = state_groups[(year, test_name)]

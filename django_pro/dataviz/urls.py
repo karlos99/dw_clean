@@ -14,7 +14,7 @@ from .views import (
     # Column Picker (Explorer) API
     column_structures_api, column_filter_options_api,
     # Page API
-    page_save_api, page_delete_api, page_sections_api, page_filter_options_api,
+    page_save_api, page_duplicate_api, page_delete_api, page_folders_list_api, page_folder_create_api, page_batch_move_api, page_publish_api, page_unpublish_api, page_move_api, page_sections_api, page_filter_options_api,
     page_filter_columns_api, section_detail_api, clear_cache_api,
     # Row API
     row_detail_api,
@@ -25,6 +25,8 @@ from .views import (
     dataset_save_api, dataset_detail_api, dataset_list_api, dataset_preview_api, api_column_unique_values, dataset_filter_options_api, dataset_duplicate_api, dataset_export_csv_api,
     # Color-mapping preset API
     colormap_preset_save_api, colormap_preset_detail_api, colormap_preset_list_api,
+    # Home dashboard API
+    home_dashboard_api,
 )
 
 app_name = 'dataviz'
@@ -65,6 +67,9 @@ urlpatterns = [
     path('api/colormap-presets/list/',        colormap_preset_list_api,   name='colormap_preset_list'),
     path('api/colormap-presets/<int:preset_id>/', colormap_preset_detail_api, name='colormap_preset_detail'),
 
+    # ── Home dashboard (per-user, landing page) ────────────────────────────
+    path('api/home-dashboard/', home_dashboard_api, name='home_dashboard'),
+
     # ── Dataset pages ─────────────────────────────────────────────────────
     path('datasets/',                   dataset_index,  name='dataset_index'),
     path('datasets/new/',               dataset_builder, name='dataset_new'),
@@ -97,6 +102,13 @@ urlpatterns = [
 
     # ── Page API ─────────────────────────────────────────────────────────
     path('api/pages/save/',                                      page_save_api,           name='page_save'),
+    path('api/pages/folders/',                                   page_folders_list_api,  name='page_folders_list'),
+    path('api/pages/folders/create/',                            page_folder_create_api, name='page_folder_create'),
+    path('api/pages/move-batch/',                                page_batch_move_api,    name='page_batch_move'),
+    path('api/pages/<slug>/duplicate/',                         page_duplicate_api,     name='page_duplicate'),
+    path('api/pages/<slug>/publish/',                           page_publish_api,       name='page_publish'),
+    path('api/pages/<slug>/unpublish/',                         page_unpublish_api,     name='page_unpublish'),
+    path('api/pages/<slug>/move/',                              page_move_api,          name='page_move'),
     path('api/pages/<slug>/delete/',                             page_delete_api,         name='page_delete'),
     path('api/pages/<slug>/sections/',                           page_sections_api,       name='page_sections'),
     path('api/pages/filter-columns/',                             page_filter_columns_api, name='page_filter_columns'),

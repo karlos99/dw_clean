@@ -15,6 +15,7 @@ COLUMN_DEFINITIONS = {
     # Demographics
     "gender": "Gender",
     "race": "Race/Ethnicity",
+    "race_list": "Race List",
     "ell": "ELL Status",
     "status": "Status",
     "birth_date": "Birth Date",
@@ -47,7 +48,7 @@ COLUMN_CATEGORIES = {
     },
     "demographics": {
         "title": "Demographics",
-        "columns": ["gender", "race", "status"]
+        "columns": ["gender", "race", "race_list", "status"]
     },
     "dates": {
         "title": "Dates",
@@ -76,11 +77,17 @@ DEFAULT_COLUMNS = ["student_name", "ssid", "grade", "school_year", "status"]
 SY_THIS_YEAR = '__sy_this__'   # resolves to ProjectConfig.default_school_year
 SY_LAST_YEAR = '__sy_prev1__'  # resolves to one year before the default
 SY_TWO_PRIOR = '__sy_prev2__'  # resolves to two years before the default
+SY_THREE_PRIOR = '__sy_prev3__'  # resolves to three years before the default
+SY_FOUR_PRIOR = '__sy_prev4__'  # resolves to four years before the default
+SY_FIVE_PRIOR = '__sy_prev5__'  # resolves to five years before the default
 
 # Human-readable labels used in dropdowns
 SCHOOL_YEAR_ALIASES = {
     SY_THIS_YEAR: 'This School Year',
     SY_LAST_YEAR: 'Last School Year',
     SY_TWO_PRIOR: 'Two Years Prior',
+    SY_THREE_PRIOR: 'Three Years Prior',
+    SY_FOUR_PRIOR: 'Four Years Prior',
+    SY_FIVE_PRIOR: 'Five Years Prior',
 }
 

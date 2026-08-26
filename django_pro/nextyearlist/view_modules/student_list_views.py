@@ -21,11 +21,16 @@ import json
 from users.decorators import page_access_required
 
 from dataexploration.models import SavedQuery, StudentList
-from dataexploration.column_utils import get_test_columns, get_mark_columns
+from dataexploration.column_utils import get_test_columns, get_mark_columns, get_ap_columns
 from dataexploration.school_year_utils import get_year_labels_map
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
+from dataexploration.view_modules.column_management import (
+    is_race_list_column,
+    append_race_list_filter,
+    race_list_unnest_select_expr,
+)
 from dataexploration.view_modules.student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -39,9 +44,11 @@ def _is_unrestricted(user):
         return True
     if getattr(user, 'is_project_admin', False):
         return True
-    if hasattr(user, 'active_role') and user.active_role and 'District' in user.active_role.name:
+    from ..utils import get_user_roles
+    user_roles = get_user_roles(user)
+    if user_roles & {'Project Admin', 'District Admin', 'District View'}:
         return True
-    return False
+    return any('District' in r for r in user_roles)
 
 
 def _apply_nyl_school_filter(where_clauses, params, user):
@@ -84,6 +91,7 @@ class NextYearListView(LoginRequiredMixin, ListView):
 
         test_structure = get_test_columns()
         marks_structure = get_mark_columns()
+        ap_structure = get_ap_columns()
 
         school_years_key = "nyl:school_years"
         school_years = cache.get(school_years_key)
@@ -96,9 +104,28 @@ class NextYearListView(LoginRequiredMixin, ListView):
                 school_years = [row[0] for row in cursor.fetchall()]
                 cache.set(school_years_key, school_years, 3600)
 
+        # Hide school years disabled via Project Settings
+        try:
+            from landing.utils import get_disabled_school_years
+            _disabled_years = get_disabled_school_years()
+            if _disabled_years:
+                school_years = [sy for sy in school_years if sy not in _disabled_years]
+        except Exception:
+            pass
+
         is_unres = _is_unrestricted(self.request.user)
         grade_filter_clauses = ["cs.grade IS NOT NULL"]
         grade_filter_params = []
+
+        # Hide school years disabled via Project Settings
+        try:
+            from landing.utils import get_disabled_school_years
+            _disabled_years = get_disabled_school_years()
+            if _disabled_years:
+                grade_filter_clauses.append("cs.school_year NOT IN (%s)")
+                grade_filter_params.append(_disabled_years)
+        except Exception:
+            pass
 
         if hasattr(self.request.user, 'active_school') and self.request.user.active_school:
             grade_filter_clauses.append("cs.school_state_id = %s")
@@ -142,6 +169,7 @@ class NextYearListView(LoginRequiredMixin, ListView):
         context['grades'] = grades
         context['test_structure'] = test_structure
         context['marks_structure'] = marks_structure
+        context['ap_structure'] = ap_structure
         context['column_categories'] = COLUMN_CATEGORIES
         context['column_definitions'] = COLUMN_DEFINITIONS
         default_columns = get_saved_default_columns()
@@ -356,6 +384,7 @@ def load_students(request):
                     "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.school_year = %s "
+                    "AND (r.ssid IS NULL OR r.ssid = '') "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
@@ -441,6 +470,10 @@ def load_students(request):
                     params.extend(mark_base_params + blank_params)
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            if is_race_list_column(col):
+                append_race_list_filter(where_clauses, params, values)
                 continue
 
             # NYL or standard column
@@ -678,6 +711,15 @@ def load_students(request):
 
         where_clauses = list(base_where_clauses)
         params = list(base_params)
+        # Hide school years disabled via Project Settings
+        try:
+            from landing.utils import get_disabled_school_years
+            _disabled_years = get_disabled_school_years()
+            if _disabled_years:
+                where_clauses.append("cs.school_year NOT IN (%s)")
+                params.append(_disabled_years)
+        except Exception:
+            pass
         _apply_column_filters(where_clauses, params, filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
         where_sql = " AND ".join(where_clauses)
 
@@ -751,7 +793,7 @@ def load_students(request):
                     extra_params = [test_info.get('other_info_key', '')]
                 order_by_expr = (
                     f"(SELECT {select_expr} FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key"
-                    " WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) AND r.school_year = %s"
+                    " WHERE (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid) OR ((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = cs.student_id) AND r.school_year = %s"
                     " AND t.test_name ILIKE %s AND t.subject ILIKE %s "
                     f"{window_clause} LIMIT 1)"
                 )
@@ -795,7 +837,7 @@ def load_students(request):
                     val_expr = f"(r.other_info ->> '{ti.get('other_info_key', '')}')"
                 test_sub = (
                     f"(SELECT {val_expr} FROM results r INNER JOIN tests t ON r.test_group_key = t.test_group_key"
-                    f" WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) AND r.school_year = %s"
+                    f" WHERE (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid) OR ((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = cs.student_id) AND r.school_year = %s"
                     f" AND t.test_name ILIKE %s AND t.subject ILIKE %s {window_clause}LIMIT 1)"
                     f" AS \"{ti['col_name']}\""
                 )
@@ -917,9 +959,6 @@ def load_students(request):
             for col in base_cols:
                 if col in excluded_filters:
                     continue
-                expr = base_col_expressions.get(col)
-                if not expr:
-                    continue
                 other_f = _get_other_f(col)
                 ck = _filt_ck(col, other_f)
                 cached_vals = cache.get(ck)
@@ -930,6 +969,30 @@ def load_students(request):
                 opt_params = list(base_params)
                 _apply_column_filters(opt_where, opt_params, other_f, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
                 opt_sql = " AND ".join(opt_where)
+
+                if is_race_list_column(col):
+                    try:
+                        unnest_expr = race_list_unnest_select_expr('cs')
+                        cursor.execute(
+                            f"SELECT DISTINCT v FROM ("
+                            f" SELECT {unnest_expr} AS v"
+                            f" FROM current_student cs {NYL_JOIN} {join_sql}"
+                            f" WHERE {opt_sql}"
+                            f") _race_opts WHERE v IS NOT NULL AND BTRIM(v) != ''"
+                            f" ORDER BY v ASC LIMIT 100",
+                            opt_params,
+                        )
+                        values = [r[0] for r in cursor.fetchall() if r[0] is not None and str(r[0]).strip()]
+                        if values:
+                            filter_options[col] = values
+                            cache.set(ck, values, 300)
+                    except Exception:
+                        pass
+                    continue
+
+                expr = base_col_expressions.get(col)
+                if not expr:
+                    continue
                 cursor.execute(
                     f"SELECT COUNT(DISTINCT {expr}) FROM current_student cs {NYL_JOIN} {join_sql} WHERE {opt_sql}",
                     opt_params,

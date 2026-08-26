@@ -7,11 +7,16 @@ from django.core.cache import cache
 import json
 import csv
 import hashlib
+import re
 
 from ..models import SavedQuery, StudentList
 from ..constants import COLUMN_DEFINITIONS
-from ..column_utils import _get_display_name
-from ..utils import can_user_view_query, get_user_folders
+from ..column_utils import (
+    _get_display_name,
+    RESULTS_BULK_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
+    assign_result_value_maps, lookup_result_value, export_cell,
+)
+from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -19,7 +24,10 @@ from .student_data_utils import (
 from .column_management import (
     get_saved_default_columns,
     get_column_expression,
+    is_race_list_column,
+    append_race_list_filter,
 )
+from dataexploration.school_year_utils import resolve_relative_column_key
 
 @login_required
 def export_students_csv(request):
@@ -52,6 +60,9 @@ def export_students_csv(request):
         selected_columns = saved_config.get('columns')
     else:
         selected_columns = get_saved_default_columns()
+    
+    # Resolve any relative column keys (e.g. test___sy_this___...) to real year keys
+    selected_columns = [resolve_relative_column_key(c) for c in selected_columns]
     
     # Extract saved filters (they may be nested under 'filters' key or at top level)
     saved_filters = saved_config.get('filters', {}) if isinstance(saved_config.get('filters'), dict) else {}
@@ -108,11 +119,48 @@ def export_students_csv(request):
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
 
+    if sort_by:
+        sort_by = resolve_relative_column_key(sort_by)
+    if isinstance(filters, dict):
+        filters = {resolve_relative_column_key(k): v for k, v in filters.items()}
+
     # Helper for column filters (Duplicated from load_students to avoid refactoring risk)
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
         if not isinstance(filters_to_apply, dict): return
         for col, values in filters_to_apply.items():
             if not values: continue
+
+            if col == 'atendace_rate':
+                expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
+                if expr:
+                    conditions = []
+                    for val in values:
+                        val_str = str(val).strip()
+                        if not val_str:
+                            conditions.append(f"({expr} IS NULL)")
+                            continue
+
+                        match = re.match(r'^([<>]=?|=)?\s*(\d+(?:\.\d+)?)$', val_str)
+                        if match:
+                            op = match.group(1) or '='
+                            num = match.group(2)
+                            conditions.append(f"{expr} {op} %s")
+                            params.append(num)
+                            continue
+
+                        match_range = re.match(r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$', val_str)
+                        if match_range:
+                            low, high = match_range.groups()
+                            conditions.append(f"{expr} BETWEEN %s AND %s")
+                            params.extend([low, high])
+                            continue
+
+                        conditions.append(f"{expr} = %s")
+                        params.append(val)
+
+                    if conditions:
+                        where_clauses.append(f"({' OR '.join(conditions)})")
+                    continue
 
             # Handle blank values (represented by empty string)
             has_blank = "" in values
@@ -127,14 +175,21 @@ def export_students_csv(request):
                 if test_info.get('test_window'):
                     window_clause = "AND LOWER(t.test_window) = LOWER(%s) "
                     window_params = [test_info['test_window']]
-                else:
-                    window_clause = "AND (t.test_window IS NULL OR t.test_window = '') "
-                    window_params = []
 
                 id_subquery_base = (
                     "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.school_year = %s "
+                    f"AND {RESULTS_BLANK_SSID_SQL} "
+                    "AND LOWER(t.test_name) = LOWER(%s) "
+                    "AND LOWER(t.subject) = LOWER(%s) "
+                    f"{window_clause}"
+                )
+                ssid_subquery_base = (
+                    "SELECT r.ssid FROM results r "
+                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' "
+                    "AND r.school_year = %s "
                     "AND LOWER(t.test_name) = LOWER(%s) "
                     "AND LOWER(t.subject) = LOWER(%s) "
                     f"{window_clause}"
@@ -147,44 +202,61 @@ def export_students_csv(request):
                 conditions = []
 
                 if real_values:
-                    val_clause = id_subquery_base
+                    val_id = id_subquery_base
+                    val_ssid = ssid_subquery_base
                     if metric_col in {'ss', 'pl'}:
-                        val_clause += f"AND r.{metric_col} = ANY(%s)"
+                        val_id += f"AND r.{metric_col} = ANY(%s)"
+                        val_ssid += f"AND r.{metric_col} = ANY(%s)"
                     else:
-                        val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
+                        val_id += "AND (r.other_info ->> %s) = ANY(%s)"
+                        val_ssid += "AND (r.other_info ->> %s) = ANY(%s)"
                     
-                    val_params = list(base_params)
+                    val_id_params = list(base_params)
+                    val_ssid_params = list(base_params)
                     if metric_col in {'oi', 'dfp'}:
-                         val_params.append(test_info.get('other_info_key', ''))
-                    val_params.append(real_values)
+                         val_id_params.append(test_info.get('other_info_key', ''))
+                         val_ssid_params.append(test_info.get('other_info_key', ''))
+                    val_id_params.append(real_values)
+                    val_ssid_params.append(real_values)
                     
-                    conditions.append(f"cs.student_id IN ({val_clause})")
-                    params.extend(val_params)
+                    conditions.append(f"(cs.student_id IN ({val_id}) OR cs.ssid IN ({val_ssid}))")
+                    params.extend(val_id_params + val_ssid_params)
 
                 if has_blank:
                     blank_subconditions = []
                     
                     # 1. No record exists
-                    blank_subconditions.append(f"cs.student_id NOT IN ({id_subquery_base})")
-                    params.extend(base_params)
+                    blank_subconditions.append(
+                        f"(cs.student_id NOT IN ({id_subquery_base}) AND cs.ssid NOT IN ({ssid_subquery_base}))"
+                    )
+                    params.extend(base_params + base_params)
 
                     # 2. Record exists but value is NULL
-                    null_clause = id_subquery_base
-                    null_params = list(base_params)
+                    null_id = id_subquery_base
+                    null_ssid = ssid_subquery_base
+                    null_id_params = list(base_params)
+                    null_ssid_params = list(base_params)
                     
                     if metric_col in {'ss', 'pl'}:
-                        null_clause += f"AND r.{metric_col} IS NULL"
+                        null_id += f"AND r.{metric_col} IS NULL"
+                        null_ssid += f"AND r.{metric_col} IS NULL"
                     else:
-                        null_clause += "AND (r.other_info ->> %s) IS NULL"
-                        null_params.append(test_info.get('other_info_key', ''))
+                        null_id += "AND (r.other_info ->> %s) IS NULL"
+                        null_ssid += "AND (r.other_info ->> %s) IS NULL"
+                        null_id_params.append(test_info.get('other_info_key', ''))
+                        null_ssid_params.append(test_info.get('other_info_key', ''))
                     
-                    blank_subconditions.append(f"cs.student_id IN ({null_clause})")
-                    params.extend(null_params)
+                    blank_subconditions.append(f"(cs.student_id IN ({null_id}) OR cs.ssid IN ({null_ssid}))")
+                    params.extend(null_id_params + null_ssid_params)
                     
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
                 
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            if is_race_list_column(col):
+                append_race_list_filter(where_clauses, params, values)
                 continue
 
             expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
@@ -538,28 +610,7 @@ def export_students_csv(request):
                     base_params.append(status_value)
 
                 # Apply active school context or enforce school permissions
-                if hasattr(request.user, 'active_school') and request.user.active_school:
-                     # User explicitly selected a school
-                     base_where_clauses.append("cs.school_state_id = %s")
-                     base_params.append(request.user.active_school.state_id)
-                else:
-                     # Check if user is unrestricted (Project Admin OR District Role)
-                     is_unrestricted = False
-                     if request.user.is_superuser:
-                         is_unrestricted = True
-                     elif getattr(request.user, 'is_project_admin', False):
-                         is_unrestricted = True
-                     elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
-                         is_unrestricted = True
-                         
-                     if not is_unrestricted:
-                         # No specific school selected, so limit to ALL assigned schools
-                         if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
-                              base_where_clauses.append("cs.school_state_id = ANY(%s)")
-                              base_params.append(request.user.schools)
-                         else:
-                              # Non-admin user with no assigned schools sees nothing
-                              base_where_clauses.append("1=0")
+                _apply_de_school_filter(base_where_clauses, base_params, request.user)
 
                 # Apply specific row-level permissions (e.g. Teacher seeing only their students)
                 if hasattr(request.user, 'get_accessible_student_keys'):
@@ -633,12 +684,11 @@ def export_students_csv(request):
                         student_ssids = [s.get('ssid') for s in chunk_students if s.get('ssid')]
                         for test_info in test_cols_info:
                             metric_col = test_info['metric']
+                            window_clause = ""
+                            window_params = []
                             if test_info.get('test_window'):
                                 window_clause = "AND LOWER(t.test_window) = LOWER(%s)"
                                 window_params = [test_info['test_window']]
-                            else:
-                                window_clause = "AND (t.test_window IS NULL OR t.test_window = '')"
-                                window_params = []
 
                             select_expr = f"r.{metric_col}" if metric_col in {'ss', 'pl'} else "(r.other_info ->> %s)"
                             extra_params = [] if metric_col in {'ss', 'pl'} else [test_info.get('other_info_key', '')]
@@ -647,34 +697,23 @@ def export_students_csv(request):
                                 SELECT r.local_student_id, r.ssid, {select_expr}
                                 FROM results r
                                 INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                                WHERE (r.local_student_id = ANY(%s)
-                                       OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
+                                WHERE {RESULTS_BULK_MATCH_SQL}
                                 AND r.school_year = %s
                                 AND LOWER(t.test_name) = LOWER(%s)
                                 AND LOWER(t.subject) = LOWER(%s)
                                 {window_clause}
                             """
                             cursor.execute(tquery, [
-                                *extra_params, student_ids, student_ssids, test_info['year'],
+                                *extra_params, student_ssids, student_ids, test_info['year'],
                                 test_info['test_name'], test_info['subject'], *window_params,
                             ])
-                            test_data_by_id = {}
-                            test_data_by_ssid = {}
-                            for row in cursor.fetchall():
-                                local_id, ssid, val = row[0], row[1], row[2]
-                                if local_id:
-                                    test_data_by_id[local_id] = val
-                                if ssid:
-                                    test_data_by_ssid[ssid] = val
+                            test_data_by_id, test_data_by_ssid = assign_result_value_maps(
+                                cursor.fetchall()
+                            )
                             for student in chunk_students:
-                                val = '—'
-                                sid = student.get('student_id')
-                                ssid = student.get('ssid')
-                                if sid in test_data_by_id:
-                                    val = test_data_by_id[sid]
-                                elif ssid in test_data_by_ssid:
-                                    val = test_data_by_ssid[ssid]
-                                student[test_info['col_name']] = val
+                                student[test_info['col_name']] = lookup_result_value(
+                                    student, test_data_by_id, test_data_by_ssid,
+                                )
                     
                     # Fetch marks data for this chunk
                     student_keys = [s.get('stu_annual_key') for s in chunk_students if s.get('stu_annual_key')]
@@ -706,9 +745,7 @@ def export_students_csv(request):
                     for student in chunk_students:
                         row = []
                         for col in selected_columns:
-                            val = student.get(col)
-                            if val is None: val = ""
-                            row.append(str(val))
+                            row.append(export_cell(student.get(col)))
                         yield writer.writerow(row)
                 
                     logger.info(f"CSV Export: Yielded {len(chunk_students)} rows")

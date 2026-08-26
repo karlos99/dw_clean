@@ -392,18 +392,110 @@ def format_column_expr(tbl, col):
     Given a table name and a column name, returns the SQL expression.
     If the column name contains a JSON path like 'other_info->\'lexile\'',
     formats it as '"table"."other_info"->>\'lexile\''.
+    Race-list arrays (add_data->'l_race') are rendered as comma-joined text.
     """
     if '->' in col:
         base_col, key = col.split('->', 1)
         key_clean = key.strip("'\"")
+        if base_col == 'add_data' and key_clean == 'l_race':
+            from dataexploration.view_modules.column_management import race_list_display_expr
+            return race_list_display_expr(f'"{tbl}"')
         return f'"{tbl}"."{base_col}"->>\'{key_clean}\''
     return f'"{tbl}"."{col}"'
 
 
-def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=None, status_filter=_UNSET):
+def _append_dataset_l_race_filter(where_parts, params, tbl, val, operator='in'):
+    """Any-of overlap filter for current_student.add_data->'l_race'."""
+    from dataexploration.view_modules.column_management import append_race_list_filter
+    alias = f'"{tbl}"'
+    if operator == 'exact':
+        values = [val] if val not in (None, '') else []
+    elif isinstance(val, list):
+        values = val
+    else:
+        values = [val] if val not in (None, '') else []
+    append_race_list_filter(where_parts, params, values, table_alias=alias)
+
+
+def find_stu_annual_key_column(active_tables, columns_list=None) -> str | None:
+    """Return ``table.stu_annual_key`` from selected columns or active tables."""
+    if columns_list:
+        for col_str in columns_list:
+            if not isinstance(col_str, str):
+                continue
+            if col_str.endswith('.stu_annual_key') or col_str.split('.')[-1] == 'stu_annual_key':
+                return col_str if '.' in col_str else None
+    preferred = (
+        'current_student', 'student_enroll', 'schedule_list',
+        'student_marks_list', 'results',
+    )
+    for tbl in preferred:
+        if tbl in active_tables and 'stu_annual_key' in _allowed(tbl):
+            return f'{tbl}.stu_annual_key'
+    for tbl in sorted(active_tables):
+        if 'stu_annual_key' in _allowed(tbl):
+            return f'{tbl}.stu_annual_key'
+    return None
+
+
+def dedupe_rows_by_stu_annual_key(rows: list) -> list:
+    """Keep the first row for each non-blank ``stu_annual_key`` value."""
+    if not rows:
+        return rows
+    key_col = None
+    for k in rows[0].keys():
+        if k == 'stu_annual_key' or str(k).split('.')[-1] == 'stu_annual_key':
+            key_col = k
+            break
+    if not key_col:
+        return rows
+    seen = set()
+    out = []
+    for row in rows:
+        val = row.get(key_col)
+        if val is None or not str(val).strip():
+            out.append(row)
+            continue
+        key = str(val).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
+
+
+def _is_results_json_column(col_str: str) -> bool:
+    """True for ``results.other_info`` / ``results.other_info->'key'`` selections.
+
+    The ``results`` table stores per-test additional info (DFP, writing domain
+    scores, etc.) in ``other_info``. That info is frequently loaded as a
+    *separate* ``results`` row from the one carrying ``ss``/``pl``, so the same
+    student/test can appear twice — once with the JSON key populated and once
+    without. ``SELECT DISTINCT`` cannot collapse those rows because the
+    extracted ``other_info->'key'`` value differs (blank vs populated).
+    """
+    if not col_str.startswith('results.'):
+        return False
+    return '->' in col_str or col_str == 'results.other_info'
+
+
+def compile_dataset_to_sql(
+    dataset,
+    user=None,
+    limit=None,
+    offset=None,
+    interactive_filters=None,
+    status_filter=_UNSET,
+    order_by=None,
+    one_row_per_stu_annual_key=False,
+):
     """
     Compiles a Dataset definition object into parameterized SQL.
     Returns (sql_query_string, parameters_list).
+
+    When ``one_row_per_stu_annual_key`` is True, emit
+    ``SELECT DISTINCT ON (stu_annual_key)`` so join fan-out collapses to one
+    enrollment-year record (mirrors chart / drill counts).
     """
     # Cache compiled SQL keyed on dataset content + user context + interactive filters
     user_part = ""
@@ -419,9 +511,12 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
             'filters': dataset.filters or [],
             'columns': dataset.columns or [],
             'limit': limit,
+            'offset': offset,
             'updated': str(getattr(dataset, 'updated_at', '')),
             'interactive_filters': interactive_filters or {},
             'status_filter': '__unset__' if status_filter is _UNSET else status_filter,
+            'order_by': order_by or getattr(dataset, 'order_by', None) or [],
+            'one_row_per_stu_annual_key': bool(one_row_per_stu_annual_key),
         }, sort_keys=True, default=str).encode()
     ).hexdigest()
     cache_key = f"dv:compiled_sql:{ds_hash}{user_part}"
@@ -498,20 +593,55 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                     })
                     active_tables.add(target_tbl)
         
-    columns_list = dataset.columns or []
+    columns_list = list(dataset.columns or [])
     if not columns_list:
         raise SQLCompilationError("Dataset has no select columns specified.")
-        
+
+    sak_col = None
+    sak_expr = None
+    if one_row_per_stu_annual_key:
+        sak_col = find_stu_annual_key_column(active_tables, columns_list)
+        if sak_col and sak_col not in columns_list:
+            columns_list.append(sak_col)
+        if sak_col:
+            sak_tbl, sak_name = validate_column_identifier(sak_col, active_tables)
+            sak_expr = format_column_expr(sak_tbl, sak_name)
+
+    # Duplicate `results` rows (one `other_info` carries the DFP/additional-info
+    # JSON, one doesn't) survive `SELECT DISTINCT` because the extracted
+    # `results.other_info->'key'` value differs between them — the same student
+    # then shows up twice, once with data and once blank. When a results JSON
+    # column is selected, collapse each set of rows that are identical in every
+    # other selected column to one, keeping the non-blank JSON value via MAX.
+    results_json_cols = [c for c in columns_list if _is_results_json_column(c)]
+    dedupe_results = bool(results_json_cols) and not sak_expr
+
     select_clauses = []
+    group_by_exprs = []
     for col_str in columns_list:
         tbl, col = validate_column_identifier(col_str, active_tables)
         expr = format_column_expr(tbl, col)
-        select_clauses.append(f'{expr} AS "{tbl}.{col}"')
-        
+        alias = f'"{tbl}.{col}"'
+        if dedupe_results and col_str in results_json_cols:
+            agg_expr = f"MAX(NULLIF({expr}, ''))" if '->' in col_str else f"MAX({expr})"
+            select_clauses.append(f'{agg_expr} AS {alias}')
+        else:
+            select_clauses.append(f'{expr} AS {alias}')
+            group_by_exprs.append(expr)
+
     select_sql = ", ".join(select_clauses)
-    
-    # Construct base query
-    select_keyword = "SELECT DISTINCT" if getattr(dataset, 'distinct', True) else "SELECT"
+
+    # Construct base query. DISTINCT ON (stu_annual_key) wins over row-level DISTINCT
+    # when the chart asks for one enrollment-year record; results-JSON dedupe uses
+    # GROUP BY (which also collapses the duplicates) and overrides row-level DISTINCT.
+    if sak_expr:
+        select_keyword = f"SELECT DISTINCT ON ({sak_expr})"
+    elif dedupe_results:
+        select_keyword = "SELECT"
+    elif getattr(dataset, 'distinct', True):
+        select_keyword = "SELECT DISTINCT"
+    else:
+        select_keyword = "SELECT"
     sql = f'{select_keyword} {select_sql} FROM "{base_table}"'
     
     # Construct joins
@@ -560,6 +690,12 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
         val = f.get('value')
         
         tbl, col = validate_column_identifier(col_str, active_tables)
+
+        from dataexploration.view_modules.column_management import is_race_list_column
+        if is_race_list_column(col_str) or is_race_list_column(col):
+            _append_dataset_l_race_filter(where_parts, params, tbl, val, operator)
+            continue
+
         expr = format_column_expr(tbl, col)
         
         if operator == 'exact':
@@ -598,11 +734,11 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                 is_unrestricted = True
                 
         # Inject context filter on current_student if present
-        if 'current_student' in active_tables:
+        if 'current_student' in active_tables and not is_unrestricted:
             if hasattr(user, 'active_school') and user.active_school:
                 where_parts.append('"current_student"."school_state_id" = %s')
                 params.append(user.active_school.state_id)
-            elif not is_unrestricted:
+            else:
                 user_schools = getattr(user, 'schools', [])
                 if isinstance(user_schools, list) and user_schools:
                     where_parts.append('"current_student"."school_state_id" = ANY(%s)')
@@ -611,11 +747,11 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                     where_parts.append("1=0")
                     
         # Inject context filter on student_enroll if present and current_student not present
-        elif 'student_enroll' in active_tables:
+        elif 'student_enroll' in active_tables and not is_unrestricted:
             if hasattr(user, 'active_school') and user.active_school:
                 where_parts.append('"student_enroll"."state_school_code" = %s')
                 params.append(user.active_school.state_id)
-            elif not is_unrestricted:
+            else:
                 user_schools = getattr(user, 'schools', [])
                 if isinstance(user_schools, list) and user_schools:
                     where_parts.append('"student_enroll"."state_school_code" = ANY(%s)')
@@ -649,14 +785,17 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
                 else:
                     where_parts.append("1=0")  # No students assigned
 
-    # Status filter — same semantics as data exploration / column queries.
+    # Status filter — callers pass this explicitly. Dataset compilation must not
+    # implicitly restrict rows to Active when no status was selected.
     from dataviz.utils.status_filter import append_quoted_status_where, normalize_status_value
     if status_filter is not _UNSET:
         resolved_status = status_filter
-    else:
-        scratch = dict(interactive_filters or {})
+    elif interactive_filters:
+        scratch = dict(interactive_filters)
         resolved_status = normalize_status_value(scratch, pop=True)
         interactive_filters = scratch
+    else:
+        resolved_status = None
     if 'current_student' in active_tables:
         append_quoted_status_where(where_parts, params, resolved_status, table='current_student')
 
@@ -675,6 +814,11 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
             
             base_col = fname.split('->', 1)[0]
             if ftbl not in allowed_tables or base_col not in get_columns_for_table(ftbl):
+                continue
+
+            from dataexploration.view_modules.column_management import is_race_list_column
+            if is_race_list_column(fname) or is_race_list_column(fkey):
+                _append_dataset_l_race_filter(where_parts, params, ftbl, fval, 'in')
                 continue
             
             # Add filter condition
@@ -725,9 +869,52 @@ def compile_dataset_to_sql(dataset, user=None, limit=None, interactive_filters=N
 
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
-        
+
+    # Results-JSON dedupe: GROUP BY on every non-JSON selected column collapses
+    # the duplicate `results` rows into one per unique combination of those
+    # columns (the MAX'd JSON column carries the populated value).
+    if dedupe_results and group_by_exprs:
+        sql += " GROUP BY " + ", ".join(group_by_exprs)
+
+    # ORDER BY clause — accepts a list of {"column": "table.col", "direction": "asc"|"desc"}
+    # DISTINCT ON requires its expressions to be the leftmost ORDER BY keys.
+    order_list = order_by or getattr(dataset, 'order_by', None) or []
+    order_parts = []
+    if sak_expr:
+        order_parts.append(f'{sak_expr} ASC')
+        # one_row_per_stu_annual_key: DISTINCT ON (stu_annual_key) picks ONE row
+        # per student — among duplicate `results` rows (one carries the JSON
+        # value e.g. dfp, one doesn't) it must prefer the populated row, or the
+        # chart/drill show a blank DFP for that student.
+        for col_str in results_json_cols:
+            _tbl, _col = validate_column_identifier(col_str, active_tables)
+            _expr = format_column_expr(_tbl, _col)
+            if '->' in col_str:
+                order_parts.append(f'(NULLIF({_expr}, \'\') IS NOT NULL) DESC')
+            else:
+                order_parts.append(f'({_expr} IS NOT NULL) DESC')
+    if order_list:
+        for ob in order_list:
+            col_str = ob.get('column')
+            direction = (ob.get('direction') or 'asc').lower()
+            if direction not in ('asc', 'desc'):
+                direction = 'asc'
+            if not col_str:
+                continue
+            tbl, col = validate_column_identifier(col_str, active_tables)
+            expr = format_column_expr(tbl, col)
+            if dedupe_results and _is_results_json_column(col_str):
+                expr = f"MAX(NULLIF({expr}, ''))" if '->' in col_str else f"MAX({expr})"
+            if sak_expr and expr == sak_expr:
+                continue
+            order_parts.append(f'{expr} {direction.upper()}')
+    if order_parts:
+        sql += " ORDER BY " + ", ".join(order_parts)
+    
     if limit is not None:
         sql += f" LIMIT {limit}"
+        if offset is not None and offset > 0:
+            sql += f" OFFSET {int(offset)}"
     
     result = (sql, params)
     try:
@@ -818,6 +1005,10 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
         operator = f.get('operator', 'exact').lower()
         val = f.get('value')
         tbl, col = validate_column_identifier(col_str, active_tables)
+        from dataexploration.view_modules.column_management import is_race_list_column
+        if is_race_list_column(col_str) or is_race_list_column(col):
+            _append_dataset_l_race_filter(where_parts, params, tbl, val, operator)
+            continue
         expr = format_column_expr(tbl, col)
         if operator == 'exact':
             where_parts.append(f'{expr} = %s')
@@ -852,22 +1043,22 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
             unrestricted_names = {'Project Admin', 'District Admin', 'District View'}
             if any(name in unrestricted_names or 'District' in name for name in user_roles):
                 is_unrestricted = True
-        if 'current_student' in active_tables:
+        if 'current_student' in active_tables and not is_unrestricted:
             if hasattr(user, 'active_school') and user.active_school:
                 where_parts.append('"current_student"."school_state_id" = %s')
                 params.append(user.active_school.state_id)
-            elif not is_unrestricted:
+            else:
                 user_schools = getattr(user, 'schools', [])
                 if isinstance(user_schools, list) and user_schools:
                     where_parts.append('"current_student"."school_state_id" = ANY(%s)')
                     params.append(user_schools)
                 else:
                     where_parts.append("1=0")
-        elif 'student_enroll' in active_tables:
+        elif 'student_enroll' in active_tables and not is_unrestricted:
             if hasattr(user, 'active_school') and user.active_school:
                 where_parts.append('"student_enroll"."state_school_code" = %s')
                 params.append(user.active_school.state_id)
-            elif not is_unrestricted:
+            else:
                 user_schools = getattr(user, 'schools', [])
                 if isinstance(user_schools, list) and user_schools:
                     where_parts.append('"student_enroll"."state_school_code" = ANY(%s)')
@@ -946,3 +1137,53 @@ def execute_compiled_query_aliased(sql, params, column_mappings):
         result['rows'] = aliased_rows
 
     return result
+
+
+def load_dataset_result(
+    dataset,
+    *,
+    user=None,
+    interactive_filters=None,
+    limit=None,
+    status_filter=_UNSET,
+    one_per_sak=False,
+    apply_aliases=True,
+):
+    """Execute a Dataset (visual join or custom SQL) and return row dicts."""
+    from dataviz.models import Dataset as DatasetModel
+    from dataviz.utils.data_loader import execute_sql_dataset
+    from dataviz.utils.status_filter import dataset_status_value
+
+    source_type = getattr(dataset, 'source_type', None) or DatasetModel.SOURCE_VISUAL
+    col_mappings = dataset.column_mappings or generate_column_aliases(dataset.columns or [], {})
+
+    if source_type == DatasetModel.SOURCE_SQL:
+        res = execute_sql_dataset(dataset.source_sql or '', limit=limit)
+        if res.get('error'):
+            return res
+        rows = res.get('rows') or []
+        if apply_aliases and col_mappings:
+            rows = apply_column_aliases(rows, col_mappings)
+        if one_per_sak:
+            rows = dedupe_rows_by_stu_annual_key(rows)
+        columns = list(rows[0].keys()) if rows else (res.get('columns') or [])
+        return {
+            'columns': columns,
+            'rows': rows,
+            'row_count': len(rows),
+            'error': None,
+        }
+
+    if status_filter is _UNSET:
+        status_filter = dataset_status_value(dataset)
+    sql, params = compile_dataset_to_sql(
+        dataset,
+        user=user,
+        interactive_filters=interactive_filters or {},
+        limit=limit,
+        status_filter=status_filter,
+        one_row_per_stu_annual_key=one_per_sak,
+    )
+    if apply_aliases:
+        return execute_compiled_query_aliased(sql, params, col_mappings)
+    return execute_compiled_query(sql, params)

@@ -21,7 +21,12 @@ class Page(models.Model):
         help_text="Primary Django app this page belongs to (e.g., placementcards, dataexploration)",
     )
     description = models.TextField(_("Description"), blank=True)
-    url_path = models.CharField(_("URL Path"), max_length=500, help_text="Internal URL path for this page")
+    url_path = models.CharField(
+        _("URL Path"),
+        max_length=500,
+        blank=True,
+        help_text="Internal URL path; optional when this page is only a menu category",
+    )
     icon = models.CharField(_("Icon Class"), max_length=100, blank=True, help_text="CSS class for icon (e.g., 'fa-dashboard')")
     
     status = models.CharField(_("Status"), max_length=20, choices=STATUS_CHOICES, default='active')
@@ -45,6 +50,11 @@ class Page(models.Model):
     
     # Display options
     show_in_menu = models.BooleanField(_("Show in Menu"), default=True)
+    is_menu_category = models.BooleanField(
+        _("Menu Category"),
+        default=False,
+        help_text="Use this page as a navigation category/container instead of a destination page",
+    )
     menu_order = models.IntegerField(_("Menu Order"), default=0, help_text="Lower numbers appear first")
     menu_roles = models.JSONField(
         _("Menu Roles"),
@@ -87,3 +97,73 @@ class Page(models.Model):
     
     def get_absolute_url(self):
         return self.url_path
+
+
+class NavbarConfig(models.Model):
+    """Singleton navbar settings managed from Page Management."""
+
+    NAVBAR_STYLE_CHOICES = [
+        ('classic', 'Classic Dark'),
+        ('meter', 'Meter.com Inspired'),
+    ]
+
+    LABEL_CASE_CHOICES = [
+        ('uppercase', 'Uppercase'),
+        ('normal', 'Normal Case'),
+    ]
+
+    SUBMENU_STYLE_CHOICES = [
+        ('dropdown', 'Classic Dropdown'),
+        ('megamenu', 'Mega Menu'),
+    ]
+
+    sticky = models.BooleanField(_("Sticky Navbar"), default=True, help_text="Keep the navbar fixed to the top of the viewport while scrolling")
+    navbar_style = models.CharField(
+        _("Navbar Style"),
+        max_length=20,
+        choices=NAVBAR_STYLE_CHOICES,
+        default='classic',
+        help_text="Classic Dark matches the current site look; Meter.com Inspired uses a clean light bar whose submenus toggle open/closed when you click their parent item",
+    )
+    label_case = models.CharField(
+        _("Label Case"),
+        max_length=20,
+        choices=LABEL_CASE_CHOICES,
+        default='uppercase',
+        help_text="Uppercase matches the classic site look; Normal Case is the cleaner, inspiration-based style",
+    )
+    submenu_style = models.CharField(
+        _("Submenu Style"),
+        max_length=20,
+        choices=SUBMENU_STYLE_CHOICES,
+        default='dropdown',
+        help_text="Classic Dropdown shows a small menu below the item; Mega Menu shows a full-width panel with descriptions",
+    )
+
+    updated_by = models.ForeignKey(
+        'User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='navbar_config_updates',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Navbar Configuration")
+        verbose_name_plural = _("Navbar Configuration")
+
+    def __str__(self):
+        return f'Navbar Config — {self.get_navbar_style_display()} / {"sticky" if self.sticky else "static"} / {self.get_label_case_display()} / {self.get_submenu_style_display()}'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1  # enforce singleton
+        super().save(*args, **kwargs)
+        from django.core.cache import cache
+        cache.delete('landing:navbar_config')
+
+    @classmethod
+    def get(cls):
+        """Return the singleton, creating it (with defaults) if it doesn't exist yet."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj

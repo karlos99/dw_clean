@@ -89,6 +89,10 @@
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 4v16m8-8H4"/></svg>
         <span>Save &amp; Add to Page</span>
       </button>
+      <label class="inline-flex items-center gap-2 px-2 py-2 text-xs font-medium text-slate-600 cursor-pointer select-none" title="Show this chart in the 'User Charts' navbar menu so any user can add it to their home dashboard">
+        <input type="checkbox" x-model="isUserMenu" class="h-3.5 w-3.5 text-blue-600 border-slate-300 rounded">
+        <span>User Charts</span>
+      </label>
     </div>
   </header>
 
@@ -122,7 +126,7 @@
             <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Data Source</p>
           </div>
           <div class="flex items-center gap-1.5">
-            <span class="step-dot" :class="guidedStep === 1 ? 'current' : (hasData ? 'done' : 'pending')" x-text="hasData ? '✓' : '1'"></span>
+            <span class="step-dot" :class="hasData ? 'done' : 'pending'" x-text="hasData ? '✓' : '1'"></span>
             <span x-show="!srcOpen" class="text-[9px] font-semibold text-blue-600 uppercase tracking-wide" x-text="sourceType === 'query' ? 'Saved Query' : sourceType === 'sql' ? 'SQL' : sourceType === 'columns' ? 'Explorer' : sourceType === 'dataset' ? 'Dataset' : ''"></span>
             <svg class="w-3 h-3 text-slate-400 transition-transform" :class="srcOpen && 'rotate-180'"
                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -140,6 +144,9 @@
                 <option value="{{ sy_this_year }}" x-text="aliasResolvedLabels['{{ sy_this_year }}'] || 'This School Year'"></option>
                 <option value="{{ sy_last_year }}" x-text="aliasResolvedLabels['{{ sy_last_year }}'] || 'Last School Year'"></option>
                 <option value="{{ sy_two_prior }}" x-text="aliasResolvedLabels['{{ sy_two_prior }}'] || 'Two Years Prior'"></option>
+                <option value="{{ sy_three_prior }}" x-text="aliasResolvedLabels['{{ sy_three_prior }}'] || 'Three Years Prior'"></option>
+                <option value="{{ sy_four_prior }}" x-text="aliasResolvedLabels['{{ sy_four_prior }}'] || 'Four Years Prior'"></option>
+                <option value="{{ sy_five_prior }}" x-text="aliasResolvedLabels['{{ sy_five_prior }}'] || 'Five Years Prior'"></option>
                 <option disabled>──────────────</option>
                 <option value="">Custom selection…</option>
               </select>
@@ -270,6 +277,14 @@
             Load Columns
           </button>
         </div>
+        <label x-show="datasetSourceId" class="mt-2 flex items-start gap-2 cursor-pointer select-none">
+          <input type="checkbox" x-model="oneRowPerStuAnnualKey"
+                 class="mt-0.5 w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-[10px] text-slate-600 leading-snug">
+            <span class="font-semibold text-slate-700">One record per school year</span>
+            <span class="block text-slate-400">(stu_annual_key — limits join fan-out to one row per enrollment year)</span>
+          </span>
+        </label>
         <p x-show="!datasetSourceId" class="text-[9px] text-slate-400 mt-1.5">
           <a href="{% url 'dataviz:dataset_index' %}" target="_blank" class="text-blue-500 hover:underline">Manage datasets →</a>
         </p>
@@ -1266,7 +1281,7 @@
             </template>
           </div>
           <p class="text-[9px] text-slate-400 mt-1 leading-snug">
-            Select 2+ PL columns from the same assessment (e.g. DIBELS BOY PL &amp; MOY PL). Window/year is auto-detected.
+            Select 2+ PL columns from the same assessment (e.g. Dibels BOY PL &amp; MOY PL). Window/year is auto-detected.
           </p>
         </div>
 
@@ -1482,7 +1497,7 @@
             </div>
             <p class="text-[9px] text-slate-400">
               <span x-show="dynColMode==='pivot'">Pivots unique values of selected columns as table/chart categories.</span>
-              <span x-show="dynColMode==='calculations'">Configure different calculations (averages, counts, sums) side-by-side.</span>
+              <span x-show="dynColMode==='calculations'">Build columns with aggregates (counts, averages, sums) — optionally restricted to rows meeting a threshold — then combine any columns into derived ones (+/−/×/÷, e.g. a below-threshold count ÷ total).</span>
             </p>
 
             {# Pivot Mode (dynColMode === 'pivot') #}
@@ -1552,55 +1567,157 @@
 
               <div class="space-y-3">
                 <template x-for="(calc, idx) in dynCalculations" :key="'dyncalc_'+idx">
-                  <div class="border border-slate-200 rounded-lg p-2.5 bg-slate-50/50 space-y-2 relative">
+                  <div class="border border-slate-200 rounded-lg p-2.5 bg-slate-50/50 space-y-2 relative"
+                       :class="calc.calc_type === 'derived' ? 'border-violet-200 bg-violet-50/30' : 'border-slate-200'">
                     <button type="button" @click="removeDynCalculation(idx)"
                             class="absolute top-2 right-2 text-slate-400 hover:text-red-500 font-bold text-lg leading-none"
                             title="Remove calculation">&times;</button>
-                    
-                    <div class="grid grid-cols-2 gap-2 pr-4">
-                      {# Func #}
+
+                    <div class="grid grid-cols-2 gap-2 pr-4 items-center">
+                      {# Type #}
                       <div>
-                        <label class="text-[10px] font-semibold text-slate-500">Function</label>
-                        <select x-model="calc.agg_func" @change="_schedulePreview()"
+                        <label class="text-[10px] font-semibold text-slate-500">Type</label>
+                        <select x-model="calc.calc_type" @change="_schedulePreview()"
                                 class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
-                          <option value="count">Count</option>
-                          <option value="sum">Sum</option>
-                          <option value="avg">Average</option>
-                          <option value="min">Min</option>
-                          <option value="max">Max</option>
-                          <option value="median">Median</option>
+                          <option value="base">Base (aggregate a column)</option>
+                          <option value="derived">Derived (combine columns)</option>
                         </select>
                       </div>
-
-                      {# Value Col #}
-                      <div x-show="calc.agg_func !== 'count'">
-                        <label class="text-[10px] font-semibold text-slate-500">Value Column</label>
-                        <select x-model="calc.value_col" @change="_schedulePreview()"
-                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
-                          <option value="">— choose —</option>
-                          <template x-for="c in activeCols" :key="'stv_calc_'+c">
-                            <option :value="c" x-text="colLabel(c)"></option>
-                          </template>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2">
                       {# Label #}
                       <div>
                         <label class="text-[10px] font-semibold text-slate-500">Custom Label</label>
                         <input type="text" x-model="calc.label" @input="_schedulePreview()" placeholder="Auto-label if blank"
                                class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
                       </div>
-
-                      {# Decimals #}
-                      <div x-show="['avg','median'].includes(calc.agg_func) && calc.value_col">
-                        <label class="text-[10px] font-semibold text-slate-500">Decimal Places</label>
-                        <input type="number" min="0" max="10" placeholder="1"
-                               x-model.number="calc.decimals" @change="_schedulePreview()"
-                               class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
-                      </div>
                     </div>
+
+                    {# ── Derived column: combine two other calculation columns ── #}
+                    <template x-if="calc.calc_type === 'derived'">
+                      <div class="space-y-2">
+                        <div class="grid grid-cols-3 gap-2 items-end">
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Column A</label>
+                            <select x-model="calc.ref_a" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                              <option value="">— choose —</option>
+                              <template x-for="o in dynCalcRefOptions(idx)" :key="'dcA_'+idx+'_'+o.id">
+                                <option :value="o.id" x-text="o.label"></option>
+                              </template>
+                            </select>
+                          </div>
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Operator</label>
+                            <select x-model="calc.op" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                              <option value="add">+ Add</option>
+                              <option value="subtract">− Subtract</option>
+                              <option value="multiply">× Multiply</option>
+                              <option value="divide">÷ Divide</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Column B</label>
+                            <select x-model="calc.ref_b" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-violet-400">
+                              <option value="">— choose —</option>
+                              <template x-for="o in dynCalcRefOptions(idx)" :key="'dcB_'+idx+'_'+o.id">
+                                <option :value="o.id" x-text="o.label"></option>
+                              </template>
+                            </select>
+                          </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 items-end">
+                          <label class="flex items-center gap-1.5 text-[10px] text-slate-600 cursor-pointer" x-show="calc.op === 'divide'">
+                            <input type="checkbox" x-model="calc.as_percent" @change="_schedulePreview()"
+                                   class="rounded text-violet-600 w-3 h-3 border-slate-300 focus:ring-violet-200">
+                            Display as % (e.g. a rate: Below ÷ Total)
+                          </label>
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Decimal Places</label>
+                            <input type="number" min="0" max="10" placeholder="1"
+                                   x-model.number="calc.decimals" @change="_schedulePreview()"
+                                   class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+
+                    {# ── Base column: aggregate a value column, optionally filtered ── #}
+                    <template x-if="calc.calc_type === 'base'">
+                      <div class="space-y-2">
+                        <div class="grid grid-cols-2 gap-2">
+                          <div>
+                            <label class="text-[10px] font-semibold text-slate-500">Function</label>
+                            <select x-model="calc.agg_func" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                              <option value="count">Count</option>
+                              <option value="sum">Sum</option>
+                              <option value="avg">Average</option>
+                              <option value="min">Min</option>
+                              <option value="max">Max</option>
+                              <option value="median">Median</option>
+                            </select>
+                          </div>
+                          <div x-show="calc.agg_func !== 'count'">
+                            <label class="text-[10px] font-semibold text-slate-500">Value Column</label>
+                            <select x-model="calc.value_col" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                              <option value="">— choose —</option>
+                              <template x-for="c in activeCols" :key="'stv_calc_'+c">
+                                <option :value="c" x-text="colLabel(c)"></option>
+                              </template>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label class="flex items-center gap-1.5 text-[10px] text-slate-600 cursor-pointer">
+                            <input type="checkbox" :checked="calc.filter && calc.filter.op" @change="toggleDynCalcFilter(calc)"
+                                   class="rounded text-amber-600 w-3 h-3 border-slate-300 focus:ring-amber-200">
+                            Only include rows where… (e.g. count students below a threshold)
+                          </label>
+                          <div x-show="calc.filter && calc.filter.op" class="grid grid-cols-[1fr_118px_1fr] gap-2 mt-1.5">
+                            <select x-model="calc.filter.col" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                              <option value="">— choose column —</option>
+                              <template x-for="c in activeCols" :key="'dcf_'+idx+'_'+c">
+                                <option :value="c" x-text="colLabel(c)"></option>
+                              </template>
+                            </select>
+                            <select x-model="calc.filter.op" @change="_schedulePreview()"
+                                    class="w-full text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                              <option value="lt">&lt; below</option>
+                              <option value="lte">≤ at most</option>
+                              <option value="gt">&gt; above</option>
+                              <option value="gte">≥ at least</option>
+                              <option value="eq">= equals</option>
+                              <option value="neq">≠ not equals</option>
+                            </select>
+                            {# Range operators: numeric input #}
+                            <input x-show="['lt','lte','gt','gte'].includes(calc.filter.op)" type="number" step="any"
+                                   x-model.number="calc.filter.val" @change="_schedulePreview()" placeholder="value"
+                                   class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                            {# Equals / not equals: text input with prepopulated value options #}
+                            <input x-show="['eq','neq'].includes(calc.filter.op)" type="text"
+                                   x-model="calc.filter.val" @change="_schedulePreview()" placeholder="value"
+                                   :list="'dyncalc_vals_'+idx"
+                                   class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                            <datalist :id="'dyncalc_vals_'+idx">
+                              <template x-for="opt in dynFilterValueOptions(calc.filter.col)" :key="'dcfo_'+idx+'_'+opt">
+                                <option :value="opt" x-text="opt"></option>
+                              </template>
+                            </datalist>
+                          </div>
+                        </div>
+
+                        <div x-show="['avg','median'].includes(calc.agg_func) && calc.value_col">
+                          <label class="text-[10px] font-semibold text-slate-500">Decimal Places</label>
+                          <input type="number" min="0" max="10" placeholder="1"
+                                 x-model.number="calc.decimals" @change="_schedulePreview()"
+                                 class="w-full text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-amber-400">
+                        </div>
+                      </div>
+                    </template>
                   </div>
                 </template>
                 <p x-show="!dynCalculations.length" class="text-[10px] text-slate-400 py-3 text-center border border-dashed border-slate-200 rounded-lg bg-white">
@@ -1740,7 +1857,7 @@
               <span class="text-[9px] text-slate-400 italic w-full">Presets:</span>
               <button type="button"
                       @click="pgScaleText='Well Below Benchmark, Below Benchmark, At Benchmark, Above Benchmark'; _pgLastAutoScale=''; _schedulePreview();"
-                      class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">DIBELS</button>
+                      class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">Dibels</button>
               <button type="button"
                       @click="pgScaleText='Not Met, Nearly Met, Met, Exceeded'; _pgLastAutoScale=''; _schedulePreview();"
                       class="text-[9px] bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 rounded px-1.5 py-0.5 transition">CAASPP</button>
@@ -2047,6 +2164,68 @@
         </div>{# /agg collapse #}
       </section>
 
+      {# X-Axis Value Aliases — bar / column charts #}
+      <section x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType)"
+               x-data="{ open: Object.keys(xValueMap).length > 0 }"
+               class="border-b border-slate-100">
+        <button type="button" @click="open=!open"
+                class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
+          <div class="flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M7 8h10M7 12h6m-6 4h10M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">X-Axis Value Aliases</p>
+            <span x-show="Object.keys(xValueMap).length > 0"
+                  class="text-[8px] bg-indigo-100 text-indigo-700 rounded-full px-1.5 font-bold"
+                  x-text="Object.keys(xValueMap).length + ' alias' + (Object.keys(xValueMap).length === 1 ? '' : 'es')"></span>
+          </div>
+          <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
+               fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-2 border-t border-slate-50">
+          <p class="text-[10px] text-slate-400 leading-snug">
+            Select a single X-axis field value (grade, year, etc.), then enter its display alias. Multi-field axes alias each part separately. Drill-through still uses original values.
+          </p>
+
+          <p x-show="!xValueAliasAvail.length"
+             class="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
+            Run a preview first so X-axis values can load into the list.
+          </p>
+
+          <template x-for="key in Object.keys(xValueMap)" :key="'xv_'+key">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] text-slate-500 truncate w-24 shrink-0" :title="key" x-text="key"></span>
+              <span class="text-slate-300 text-[10px]">→</span>
+              <input type="text" :value="xValueMap[key]"
+                     @input="xValueMap[key]=$event.target.value; xValueMap={...xValueMap}; _editorFiring=true; clearTimeout(_editorTimer); _editorTimer=setTimeout(()=>{_editorFiring=false;_schedulePreview();}, 400);"
+                     class="flex-1 text-[11px] border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300">
+              <button type="button" @click="delete xValueMap[key]; xValueMap={...xValueMap}; _schedulePreview();"
+                      class="text-red-400 hover:text-red-600 text-xs font-bold px-1">&times;</button>
+            </div>
+          </template>
+
+          <div class="flex items-center gap-1 pt-1" x-show="xValueAliasAvail.filter(c => !(c in xValueMap)).length">
+            <select x-model="xValueMapNewKey"
+                    class="w-36 max-w-[45%] text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300">
+              <option value="">Select value…</option>
+              <template x-for="v in xValueAliasAvail.filter(c => !(c in xValueMap))" :key="'xva_'+v">
+                <option :value="v" x-text="v"></option>
+              </template>
+            </select>
+            <input type="text" x-model="xValueMapNewAlias" placeholder="Alias label…"
+                   class="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                   @keydown.enter.prevent="if(xValueMapNewKey && xValueMapNewAlias.trim()){xValueMap[xValueMapNewKey]=xValueMapNewAlias.trim(); xValueMap={...xValueMap}; xValueMapNewKey=''; xValueMapNewAlias=''; _schedulePreview();}">
+            <button type="button"
+                    @click="if(xValueMapNewKey && xValueMapNewAlias.trim()){xValueMap[xValueMapNewKey]=xValueMapNewAlias.trim(); xValueMap={...xValueMap}; xValueMapNewKey=''; xValueMapNewAlias=''; _schedulePreview();}"
+                    :disabled="!xValueMapNewKey || !xValueMapNewAlias.trim()"
+                    class="text-[10px] bg-slate-800 text-white rounded px-2 py-1 hover:bg-slate-700 disabled:opacity-40 font-semibold">Add</button>
+          </div>
+          <button type="button" x-show="Object.keys(xValueMap).length > 0"
+                  @click="xValueMap={}; _schedulePreview();"
+                  class="text-[9px] text-red-400 hover:text-red-600 font-semibold">Clear all aliases</button>
+        </div>
+      </section>
+
       </div>{# /map tab #}
 
       {# ── Tab: Style ── #}
@@ -2238,9 +2417,10 @@
         </div>
       </div>
 
-      {# PERCENT FORMAT #}
+      {# PERCENT FORMAT — labels, axis values, and tooltips #}
       <div class="px-3 py-3 border-b border-slate-100 space-y-2">
         <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Percent Format</p>
+        <p class="text-[9px] text-slate-400 leading-snug">Applies to data labels, 100% stacked values, and tooltip percentages.</p>
         <label class="flex items-center gap-1.5 cursor-pointer">
           <input type="checkbox" x-model="showPercentSymbol" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
           <span class="text-[10px] text-slate-600">Show % symbol on percent values</span>
@@ -2249,7 +2429,8 @@
           <span class="text-[9px] text-slate-400 w-20 flex-shrink-0">Decimals</span>
           <input type="range" min="0" max="4" step="1" x-model.number="percentDecimals"
                  class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-          <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="percentDecimals"></span>
+          <span class="text-[9px] font-mono text-slate-400 w-10 text-right"
+                x-text="percentDecimals === 0 ? '0 (none)' : percentDecimals"></span>
         </div>
       </div>
 
@@ -2309,6 +2490,10 @@
               <span class="text-[10px] text-slate-600">100% stacked</span>
             </label>
           </template>
+          <label x-show="chartType === 'bar' && seriesCols.length > 0" class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" x-model="groupTotal" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+            <span class="text-[10px] text-slate-600">Add a <span class="font-semibold text-indigo-700">Total</span> group — a new category (e.g. per school year) counting all students across the stacks (e.g. all grades)</span>
+          </label>
         </div>
       </template>
 
@@ -2438,18 +2623,59 @@
       <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
         <div class="px-3 py-3 border-b border-slate-100 space-y-2">
           <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Axis &amp; Layout</p>
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <div class="flex justify-between"><span class="text-[9px] text-slate-400">X rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
-              <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
-                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+          <template x-if="chartType === 'assessment_compare' || xCols.length > 1">
+            <div class="space-y-2">
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Compare Labels Rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
+                  <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
+                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                </div>
+                <div>
+                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Category Labels Rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatRotation+'°'"></span></div>
+                  <input type="range" min="0" max="90" step="15" x-model.number="compareCatRotation"
+                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Compare Labels Font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
+                  <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
+                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                </div>
+                <div>
+                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Category Labels Font</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatFontSize+'px'"></span></div>
+                  <input type="range" min="8" max="16" step="1" x-model.number="compareCatFontSize"
+                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                </div>
+              </div>
+              <div class="flex items-center gap-2 pt-1 border-t border-slate-100">
+                <span class="text-[9px] text-slate-400 w-24 flex-shrink-0">Group gap</span>
+                <input type="range" min="0" max="100" step="1" x-model.number="groupGapPct"
+                       class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                <span class="text-[9px] font-mono text-slate-400 w-12 text-right"
+                      x-text="groupGapPct + '%'"></span>
+              </div>
+              <label class="flex items-center gap-2 pt-1 cursor-pointer">
+                <input type="checkbox" x-model="centerGroupLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                <span class="text-[9px] text-slate-500 font-semibold uppercase tracking-wide">Center group labels</span>
+              </label>
             </div>
-            <div>
-              <div class="flex justify-between"><span class="text-[9px] text-slate-400">X font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
-              <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
-                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+          </template>
+          <template x-if="chartType !== 'assessment_compare' && xCols.length <= 1">
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <div class="flex justify-between"><span class="text-[9px] text-slate-400">X rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
+                <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
+                       class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+              </div>
+              <div>
+                <div class="flex justify-between"><span class="text-[9px] text-slate-400">X font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
+                <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
+                       class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+              </div>
             </div>
-          </div>
+          </template>
           <div class="flex items-center gap-2">
             <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Truncate</span>
             <input type="range" min="0" max="30" step="1" x-model.number="xLabelMaxLength"
@@ -2464,12 +2690,12 @@
               <span class="text-[10px] text-slate-600 font-semibold uppercase tracking-wider">Force show all labels</span>
             </label>
           </div>
-          <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
+          <template x-if="['bar','waterfall','progress_growth'].includes(chartType)">
             <div class="flex items-center gap-2">
-              <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Bar gap</span>
-              <input type="range" min="0" max="80" step="5" x-model.number="barCategoryGap"
+              <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Cat. gap</span>
+              <input type="range" min="0" max="100" step="1" x-model.number="groupGap"
                      class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-              <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="barCategoryGap+'%'"></span>
+              <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="groupGap+'%'"></span>
             </div>
           </template>
           <template x-if="!['heatmap','box','scatter','bubble'].includes(chartType)">
@@ -2949,6 +3175,8 @@
   <form id="chart-form" class="hidden">
     {% csrf_token %}
     <input type="hidden" name="chart_id"       x-bind:value="chartId">
+    <input type="hidden" name="is_user_menu"   x-bind:value="isUserMenu ? 'on' : ''">
+    <input type="hidden" name="user_menu_order" x-bind:value="isUserMenu ? 0 : 0">
     <input type="hidden" name="name"           x-bind:value="name">
     <input type="hidden" name="chart_title"    x-bind:value="chartTitle">
     <input type="hidden" name="title_font_size" x-model="titleFontSize">
@@ -2962,6 +3190,8 @@
     <input type="hidden" name="y_col"          x-bind:value="yCol">
     <input type="hidden" name="series_col"     x-bind:value="seriesCols.join(',')">
     <input type="hidden" name="group_col"      x-bind:value="groupCol">
+    <input type="hidden" name="show_group_total" x-bind:value="groupTotal ? '1' : ''">
+    <input type="hidden" name="group_total_label" x-bind:value="groupTotalLabel">
     <input type="hidden" name="compare_pl_cols"  x-bind:value="JSON.stringify(comparePlCols)">
     <input type="hidden" name="ac_include_cats"  x-bind:value="JSON.stringify(acIncludeCats)">
     <input type="hidden" name="ac_include_pl"    x-bind:value="JSON.stringify(acIncludePl)">
@@ -2989,6 +3219,7 @@
     <input type="hidden" name="show_points"    x-bind:value="showPoints ? '1' : ''">
     <input type="hidden" name="smooth"         x-bind:value="smooth ? '1' : ''">
     <input type="hidden" name="color_map"      x-bind:value="JSON.stringify(colorMap)">
+    <input type="hidden" name="x_value_map"    x-bind:value="JSON.stringify(xValueMap)">
     <input type="hidden" name="show_zoom"       x-bind:value="showZoom ? '1' : ''">
     <input type="hidden" name="show_toolbox"    x-bind:value="showToolbox ? '1' : ''">
     <input type="hidden" name="show_grid"       x-bind:value="showGrid ? '1' : ''">
@@ -3013,6 +3244,9 @@
     <input type="hidden" name="compare_gap"     x-bind:value="compareGap">
     <input type="hidden" name="compare_cat_font_size" x-bind:value="compareCatFontSize">
     <input type="hidden" name="compare_cat_rotation" x-bind:value="compareCatRotation">
+    <input type="hidden" name="group_gap_size"     x-bind:value="Math.round(groupGapPct / 100 * 8)">
+    <input type="hidden" name="group_gap"          x-bind:value="groupGap">
+    <input type="hidden" name="center_group_labels" x-bind:value="centerGroupLabels ? '1' : ''">
     <input type="hidden" name="x_label_rotation"    x-bind:value="xLabelRotation">
     <input type="hidden" name="x_label_font_size"   x-bind:value="xLabelFontSize">
     <input type="hidden" name="x_label_max_length"  x-bind:value="xLabelMaxLength">
@@ -3064,6 +3298,7 @@
     <input type="hidden" name="drill_through_columns_str" x-bind:value="drillColumns">
     <input type="hidden" name="source_filters" x-bind:value="JSON.stringify(cleanSourceFilters())">
     <input type="hidden" name="school_filter_mode" x-bind:value="schoolFilterMode">
+    <input type="hidden" name="one_row_per_stu_annual_key" x-bind:value="oneRowPerStuAnnualKey ? '1' : ''">
     <input type="hidden" name="parliament_dot_scale" x-bind:value="parliamentDotScale">
     <input type="hidden" name="parliament_shape"     x-bind:value="parliamentShape">
     <input type="hidden" name="parliament_rows"      x-bind:value="parliamentRowsAuto ? '' : parliamentRows">
@@ -3102,45 +3337,6 @@
         <p class="text-[9px] text-slate-400 mt-3 text-center" x-show="!targetPageId">Select a target page to enable</p>
       </div>
     </div>
-  </div>
-
-  {# ── Guided Mode banner ── #}
-  <div x-show="!guidedMode" x-transition
-       class="fixed bottom-4 right-4 z-40 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl shadow-xl p-4 max-w-xs"
-       x-cloak>
-    <div class="flex items-start gap-2">
-      <svg class="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-      <div>
-        <p class="text-xs font-bold">New to charts?</p>
-        <p class="text-[10px] opacity-90 mt-0.5">Guided mode walks you through each step.</p>
-        <button @click="guidedMode = true; localStorage.setItem('datavizGuidedMode','true'); guidedStep=1"
-                class="mt-2 text-[9px] font-bold bg-white/20 hover:bg-white/30 rounded-lg px-2.5 py-1 transition">
-          Start Guided Mode
-        </button>
-      </div>
-      <button @click="guidedMode = true; localStorage.setItem('datavizGuidedMode','true')" class="text-white/60 hover:text-white">&times;</button>
-    </div>
-  </div>
-
-  {# ── Chart Recommendations panel (shown after column load) ── #}
-  <div x-show="recommendedCharts.length > 0 && centerTab === 'type'" x-transition
-       class="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-indigo-50">
-    <p class="text-[9px] font-bold text-blue-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-      <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
-      Recommended for your data
-    </p>
-    <div class="flex flex-wrap gap-1">
-      <template x-for="rec in recommendedCharts" :key="rec.chart_type">
-        <button @click="chartType = rec.chart_type; centerTab = 'map'"
-                class="text-[10px] font-semibold px-2 py-1 rounded-full border transition whitespace-nowrap"
-                :class="chartType === rec.chart_type ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-100'"
-                :title="rec.reason">
-          <span x-text="rec.label"></span>
-          <span class="text-[8px] ml-0.5 opacity-60" x-text="'(' + rec.score + ')'"></span>
-        </button>
-      </template>
-    </div>
-    <p x-show="recommendedCharts.length === 0 && recommendationsLoading" class="text-[9px] text-slate-400">Analyzing columns…</p>
   </div>
 
   {# ── Auto Description (below chart preview) ── #}
@@ -3224,6 +3420,7 @@ function chartBuilder() {
     sourceType:   existing ? (existing.source_type === 'sql' ? 'sql' : existing.source_type === 'columns' ? 'columns' : existing.source_type === 'dataset' ? 'dataset' : 'query') : 'query',
     savedQueryId: existing && existing.source_type === 'query' ? String(existing.source_id ?? '') : '',
     datasetSourceId: existing?.source_type === 'dataset' ? String(existing.source_id ?? '') : '',
+    oneRowPerStuAnnualKey: existing?.config?.one_row_per_stu_annual_key === true,
     rawSql:       existing?.source_sql ?? '',
     chartType:    existing?.chart_type ?? 'bar',
     barLayout:    existing?.config?.bar_layout ?? 'grouped',
@@ -3239,6 +3436,8 @@ function chartBuilder() {
     seriesCol:    existing?.config?.stack_col ?? existing?.config?.series_col ?? '',
     seriesCols:   ((existing?.config?.stack_col ?? existing?.config?.series_col) || '').split(',').map(s => s.trim()).filter(Boolean) || [],
     groupCol:     existing?.config?.group_col ?? '',
+    groupTotal:   existing ? existing.config?.show_group_total === true : false,
+    groupTotalLabel: existing?.config?.group_total_label || 'Total',
     comparePlCols: existing?.config?.compare_pl_cols ?? [],
     /* Progress Growth */
     pgBeforeCol:      existing?.config?.pg_before_col ?? '',
@@ -3305,6 +3504,10 @@ function chartBuilder() {
     colorMapOpen:     false,
     colorMapNewKey:   '',
     colorMapNewColor: '#636EFA',
+    xValueMap:        existing?.config?.x_value_map ?? {},
+    xValueMapNewKey:  '',
+    xValueMapNewAlias:'',
+    xValueAliasAvail: [],
     colorMapPresets:     [],
     colorMapPresetId:    null,
     colorMapPresetName:  '',
@@ -3328,6 +3531,11 @@ function chartBuilder() {
     compareGap:       existing?.config?.compare_gap ?? 30,
     compareCatFontSize: existing?.config?.compare_cat_font_size ?? 12,
     compareCatRotation: existing?.config?.compare_cat_rotation ?? 0,
+    groupGapPct:      existing?.config?.group_gap_size != null
+                        ? Math.min(100, Math.max(0, Math.round((existing.config.group_gap_size || 0) * 100 / 8)))
+                        : 0,
+    groupGap:         existing?.config?.group_gap ?? existing?.config?.bar_category_gap ?? 0,
+    centerGroupLabels: existing ? (existing.config?.center_group_labels !== false) : true,
     /* Parliament options */
     parliamentDotScale: existing?.config?.parliament_dot_scale ?? 1.0,
     parliamentShape:    existing?.config?.parliament_shape    ?? 'semi-circle',
@@ -3433,12 +3641,7 @@ function chartBuilder() {
     saveAndAttachOpen: false,
     targetPageId:      '',
     availablePages:    JSON.parse('{{ available_pages_json|escapejs }}'),
-    // Guided mode
-    guidedMode:        localStorage.getItem('datavizGuidedMode') === 'true',
-    guidedStep:        1,              // 1=Source, 2=Type, 3=Map, 4=Preview
-    // Chart recommendations
-    recommendedCharts: [],
-    recommendationsLoading: false,
+    isUserMenu:        !!(existing && existing.is_user_menu),
     // Auto description
     autoDescription:   '',
     // Cross-nav
@@ -3477,6 +3680,22 @@ function chartBuilder() {
         return !!l.agg_func && !!l.value_col;
       });
     },
+    get _dynCalcsValid() {
+      if (!this.dynCalculations.length) return false;
+      return this.dynCalculations.every(calc => {
+        if (calc.calc_type === 'derived') return !!calc.op && !!calc.ref_a && !!calc.ref_b;
+        if (calc.filter && calc.filter.op) {
+          const f = calc.filter;
+          const baseOk = calc.agg_func === 'count' || !!calc.value_col;
+          if (!baseOk || !f.col) return false;
+          const v = f.val;
+          if (v === '' || v === null || v === undefined) return false;
+          if (['lt', 'lte', 'gt', 'gte'].includes(f.op)) return !Number.isNaN(Number(v));
+          return true;
+        }
+        return calc.agg_func === 'count' || !!calc.value_col;
+      });
+    },
     get canPreview() {
       if (!this.hasData || !this.chartType) return false;
       if (this.chartType === 'assessment_compare' && this.comparePlCols.length < 2) return false;
@@ -3490,10 +3709,7 @@ function chartBuilder() {
       }
       if (this.chartType === 'dynamic_summary_table') {
         if (this.dynColMode === 'calculations') {
-          const hasRows = this.dynRowCols.length > 0;
-          const hasCalcs = this.dynCalculations.length > 0;
-          const calcsValid = this.dynCalculations.every(calc => calc.agg_func === 'count' || !!calc.value_col);
-          return hasRows && hasCalcs && calcsValid;
+          return this.dynRowCols.length > 0 && this._dynCalcsValid;
         } else {
           const hasAxes = this.dynRowCols.length > 0 && this.dynColCols.length > 0;
           const needsVal = !['count'].includes(this.dynAggFunc);
@@ -3522,7 +3738,7 @@ function chartBuilder() {
           : (!!this.stRowCol && !!this.stColCol);
       } else if (this.chartType === 'dynamic_summary_table') {
         if (this.dynColMode === 'calculations') {
-          colsDone = this.dynRowCols.length > 0 && this.dynCalculations.length > 0 && this.dynCalculations.every(calc => calc.agg_func === 'count' || !!calc.value_col);
+          colsDone = this.dynRowCols.length > 0 && this._dynCalcsValid;
         } else {
           const hasAxes = this.dynRowCols.length > 0 && this.dynColCols.length > 0;
           const needsVal = !['count'].includes(this.dynAggFunc);
@@ -3572,7 +3788,6 @@ function chartBuilder() {
       preview:       '{% url "dataviz:chart_preview" %}',
       save:          '{% url "dataviz:chart_save" %}',
       saveAndAttach: '{% url "dataviz:chart_save_and_attach" %}',
-      recommend:     '{% url "dataviz:chart_recommend" %}',
       describe:      '{% url "dataviz:chart_describe" %}',
     }),
   };

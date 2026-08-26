@@ -3,19 +3,114 @@ from django.contrib import messages
 from django.db import connection
 from django.core.cache import cache
 from dataexploration.models import SavedQuery
+import json
 
 
 # Create your views here.
 def index(request):
     if request.user.is_authenticated:
-        # Dashboard data
+        from landing.utils import get_project_config
+        cfg = get_project_config()
+        home_charts_enabled = bool(getattr(cfg, 'enable_home_charts', True))
+
+        home_dashboard_json = 'null'
+        home_slots_json = '[]'
+        slots = []
+        home_max_charts = 0
+        home_forced_chart_ids = []
+        active_school = getattr(request.user, 'active_school', None)
+        active_school_id = active_school.state_id if active_school else ''
+        if home_charts_enabled:
+            # Sync system-forced charts so they appear (and render) server-side,
+            # just like charts the user added themselves.
+            from dataviz.views.api.dashboard_api import sync_home_dashboard
+            home_dashboard, home_cfg = sync_home_dashboard(request.user)
+            home_max_charts = int(getattr(home_cfg, 'home_max_charts', 0) or 0)
+            home_forced_chart_ids = [int(c) for c in (home_cfg.home_forced_charts or [])]
+            slots = list(home_dashboard.chart_slots.select_related('chart').order_by('position'))
+
+            # Pre-render each chart via the shared (cached) pipeline so the home
+            # page renders charts exactly like the dataviz pages do. The user's
+            # saved school (if any) narrows the visuals to that school.
+            from dataviz.views.api.chart_api import _render_saved_chart
+            for slot in slots:
+                slot.rendered_html = ''
+                slot.render_error = None
+                if slot.element_type != 'chart' or not slot.chart_id:
+                    continue
+                try:
+                    res = _render_saved_chart(
+                        slot.chart_id, {},
+                        drill_source='dashboard',
+                        drill_source_id=slot.dashboard_id,
+                        drill_source_name='My Charts',
+                        is_embed=True,
+                        request=request,
+                        school_id=active_school_id,
+                    )
+                    slot.rendered_html = res.get('html', '')
+                    slot.render_error = res.get('error')
+                except Exception as exc:
+                    slot.render_error = str(exc)
+            home_dashboard_json = json.dumps(home_dashboard.to_dict())
+            home_slots_json = json.dumps([s.to_dict() for s in slots])
+
+        # Schools the user can filter home charts by
+        user_school_ids = request.user.schools if isinstance(request.user.schools, list) else []
+        user_schools = []
+        if user_school_ids:
+            from studata.models import School as StudataSchool
+            user_schools = list(
+                StudataSchool.objects
+                .filter(state_id__in=user_school_ids)
+                .order_by('school_name')
+                .values('state_id', 'school_name', 'short_name')
+            )
+        else:
+            # Unrestricted roles (superuser / Project / District Admin) get the full
+            # school list so they can filter home charts by school.
+            unrestricted = (
+                request.user.is_superuser
+                or request.user.roles.filter(name__in=['Project Admin', 'District Admin']).exists()
+            )
+            if unrestricted:
+                from studata.models import School as StudataSchool
+                user_schools = list(
+                    StudataSchool.objects
+                    .order_by('school_name')
+                    .values('state_id', 'school_name', 'short_name')
+                )
+
+        # Hide already-placed charts (incl. forced) from the dock so users only
+        # see charts they can actually add.
+        dock_charts = None
+        if home_charts_enabled:
+            try:
+                from users.context_processors import _user_charts
+                placed_ids = {s.chart_id for s in slots if s.chart_id}
+                dock_charts = [c for c in _user_charts() if c['id'] not in placed_ids]
+            except Exception:
+                dock_charts = None
+
         context = {
             'saved_queries': SavedQuery.objects.filter(owner=request.user).order_by('-updated_at')[:5],
             'shared_queries': SavedQuery.objects.filter(shares__shared_with=request.user).order_by('-updated_at')[:5],
-            'school_count': len(request.user.schools) if isinstance(request.user.schools, list) else 0,
+            'school_count': len(user_school_ids),
+            'home_charts_enabled': home_charts_enabled,
+            'home_dashboard_json': home_dashboard_json,
+            'home_slots_json': home_slots_json,
+            'home_slots': slots,
+            'home_max_charts': home_max_charts,
+            'home_forced_chart_ids': home_forced_chart_ids,
+            'home_forced_chart_ids_json': json.dumps(home_forced_chart_ids),
+            'user_schools': user_schools,
+            'active_school_id': active_school_id,
+            'active_school_name': active_school.school_name if active_school else '',
         }
+        if dock_charts is not None:
+            context['user_charts'] = dock_charts
         return render(request, 'landing_dashboard.html', context)
-            
+
     return render(request, 'landing.html')
 
 
@@ -67,6 +162,20 @@ def project_settings(request):
         cfg.default_columns = default_columns if default_columns else None
         cfg.enabled_columns = enabled_columns if enabled_columns else None
         cfg.enabled_dataset_tables = enabled_tables if enabled_tables else None
+        cfg.enable_home_charts = request.POST.get('enable_home_charts') == 'on'
+        cfg.disabled_school_years = request.POST.getlist('disabled_school_years')
+
+        raw_forced = request.POST.get('home_forced_charts_json', '')
+        try:
+            forced = _json.loads(raw_forced) if raw_forced.strip() else []
+        except (ValueError, TypeError):
+            forced = []
+        cfg.home_forced_charts = [int(c) for c in forced if str(c).strip()]
+        try:
+            cfg.home_max_charts = max(0, int(request.POST.get('home_max_charts') or 0))
+        except (TypeError, ValueError):
+            cfg.home_max_charts = 0
+
         cfg.updated_by = request.user
         cfg.save()
 
@@ -86,6 +195,12 @@ def project_settings(request):
             label = 'Users/User'
         TABLE_CHOICES.append((t, label))
 
+    from dataviz.models import SavedChart
+    chart_choices = list(
+        SavedChart.objects.order_by('name').values('id', 'name', 'chart_type', 'is_user_menu')
+    )
+    home_forced = [int(c) for c in (cfg.home_forced_charts or [])]
+
     context = {
         'cfg': cfg,
         'school_years': school_years,
@@ -95,8 +210,16 @@ def project_settings(request):
         'active_default_columns_json': _json.dumps(active_default),
         'active_enabled_columns_json': _json.dumps(active_enabled),
         'all_column_keys_json':        _json.dumps(all_col_keys),
+        'column_labels_json':          _json.dumps(COLUMN_DEFINITIONS),
         'dataset_tables':              TABLE_CHOICES,
         'enabled_dataset_tables':      cfg.enabled_dataset_tables or [],
+        'enable_home_charts':          cfg.enable_home_charts,
+        'disabled_school_years':       [str(sy) for sy in (cfg.disabled_school_years or [])],
+        'chart_choices':               chart_choices,
+        'chart_choices_json':          _json.dumps(chart_choices),
+        'home_forced_charts':          home_forced,
+        'home_forced_charts_json':     _json.dumps(home_forced),
+        'home_max_charts':             int(cfg.home_max_charts or 0),
     }
     return render(request, 'landing/project_settings.html', context)
 

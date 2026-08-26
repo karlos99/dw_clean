@@ -9,6 +9,24 @@ def get_user_roles(user):
         return {user.active_role.name}
     return set(user.roles.values_list('name', flat=True))
 
+
+def is_unrestricted(user):
+    """Return True for superusers and District/Project-level roles.
+
+    Respects the active-role context exactly like ``get_user_roles``: when the
+    user has no active role selected (e.g. the "All Roles" switcher), the full
+    role list is used, so a District Admin / District View user still sees all
+    students instead of being restricted to their assigned schools.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    user_roles = get_user_roles(user)
+    if user_roles & {'Project Admin', 'District Admin', 'District View'}:
+        return True
+    return any('District' in r for r in user_roles)
+
 def _user_has_access_to_user_school(user, user_school):
     """
     Check if user has access to the given users.models.School object.
@@ -293,20 +311,19 @@ def can_user_manage_list(user, student_list):
     return can_user_edit_folder(user, student_list.folder)
 
 def _apply_de_school_filter(where_clauses, params, user):
-    """Apply the active school context or enforce school permissions."""
-    is_unrestricted = False
-    if user.is_staff:
-        is_unrestricted = True
-    elif hasattr(user, 'active_role') and user.active_role and 'District' in user.active_role.name:
-        is_unrestricted = True
+    """Apply the active school context or enforce school permissions.
+
+    District/Project-level roles see all students regardless of assigned
+    schools or navbar school selection.
+    """
+    if is_unrestricted(user):
+        return
 
     if hasattr(user, 'active_school') and user.active_school:
         where_clauses.append("cs.school_state_id = %s")
         params.append(user.active_school.state_id)
+    elif hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
+        where_clauses.append("cs.school_state_id = ANY(%s)")
+        params.append(user.schools)
     else:
-        if not is_unrestricted:
-            if hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
-                where_clauses.append("cs.school_state_id = ANY(%s)")
-                params.append(user.schools)
-            else:
-                where_clauses.append("1=0")
+        where_clauses.append("1=0")

@@ -9,10 +9,14 @@ import logging
 
 from dataexploration.models import SavedQuery
 from dataexploration.view_modules.student_data_utils import get_current_student_columns, get_student_enroll_columns
-from dataexploration.column_utils import _get_display_name
+from dataexploration.column_utils import _get_display_name, export_cell
 from ..constants import COLUMN_DEFINITIONS
 from ..utils import can_user_view_query
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
+from dataexploration.view_modules.column_management import (
+    is_race_list_column,
+    append_race_list_filter,
+)
 from ..view_modules.student_list_views import _apply_nyl_school_filter
 from users.decorators import page_access_required
 
@@ -282,7 +286,7 @@ def export_students_csv(request):
                 exist_query_base = (
                     "SELECT 1 FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) "
+                    "WHERE (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid) OR ((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = cs.student_id) "
                     "AND r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
@@ -352,6 +356,10 @@ def export_students_csv(request):
                         params.append(val)
                     if conds:
                         where_clauses.append(f"({' OR '.join(conds)})")
+                continue
+
+            if is_race_list_column(col):
+                append_race_list_filter(where_clauses, params, values)
                 continue
 
             # Resolve column expression
@@ -556,7 +564,7 @@ def export_students_csv(request):
                     test_selects.append(
                         f"(SELECT {val_expr} FROM results r"
                         f" INNER JOIN tests t ON r.test_group_key = t.test_group_key"
-                        f" WHERE (r.local_student_id = cs.student_id OR (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)) AND r.school_year = %s"
+                        f" WHERE (r.ssid IS NOT NULL AND r.ssid != '' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid) OR ((r.ssid IS NULL OR r.ssid = '') AND r.local_student_id = cs.student_id) AND r.school_year = %s"
                         f" AND t.test_name ILIKE %s AND t.subject ILIKE %s {wc}LIMIT 1)"
                         f' AS "{ti["col_name"]}"'
                     )
@@ -607,7 +615,7 @@ def export_students_csv(request):
                 row_count = 0
                 for row in cursor:
                     row_count += 1
-                    yield [row[p] if p is not None else '' for p in col_positions]
+                    yield [export_cell(row[p]) if p is not None else '\u2014' for p in col_positions]
 
                 logger.info("NYL CSV Export: completed, %d rows", row_count)
 

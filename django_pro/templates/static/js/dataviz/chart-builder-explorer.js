@@ -207,7 +207,6 @@ function chartBuilderExplorerMethods() {
       clearTimeout(this._explorerSyncTimer);
       this._explorerSyncTimer = setTimeout(() => {
         this._loadExplorerFilterOptions();
-        this.fetchRecommendations();
       }, 350);
     },
 
@@ -242,6 +241,7 @@ function chartBuilderExplorerMethods() {
         Object.keys(this.filterOptions).forEach(col => {
           this.filterOptions[col] = this.normalizeRangeOptionBounds(col, this.filterOptions[col]);
         });
+        this._preserveSelectedFilterValues();
         this._recomputeFilterCols();
       } catch (e) {
         if (e.name !== 'AbortError') { console.error('Explorer filters:', e); this.filterOptions = {}; this.filterLabels = {}; }

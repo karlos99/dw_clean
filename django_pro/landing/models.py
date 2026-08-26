@@ -50,6 +50,40 @@ class ProjectConfig(models.Model):
         ),
     )
 
+    # ── Home dashboard ──────────────────────────────────────────────────────
+    enable_home_charts = models.BooleanField(
+        default=True,
+        help_text="Allow users to build a personalized charts dashboard on the home page (drag charts from the User Charts panel).",
+    )
+
+    home_forced_charts = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "List of SavedChart IDs that are forced onto every user's home "
+            "dashboard. Users cannot delete these charts, but they can rearrange "
+            "and resize them alongside charts they add themselves."
+        ),
+    )
+
+    home_max_charts = models.PositiveIntegerField(
+        default=0,
+        help_text=(
+            "Maximum number of charts a user may add to their own home dashboard. "
+            "Forced charts do not count toward this limit. 0 = unlimited."
+        ),
+    )
+
+    # ── Available school years ──────────────────────────────────────────────
+    disabled_school_years = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "School years to hide from the Data Explorer. Students enrolled in these "
+            "years will not be available. Empty means all school years are available."
+        ),
+    )
+
     # ── Audit ──────────────────────────────────────────────────────────────────
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -100,6 +134,24 @@ class ProjectConfig(models.Model):
                         'alias': '__sy_prev2__',
                         'label': 'Two Years Prior',
                         'is_current': False
+                    },
+                    {
+                        'offset': -3,
+                        'alias': '__sy_prev3__',
+                        'label': 'Three Years Prior',
+                        'is_current': False
+                    },
+                    {
+                        'offset': -4,
+                        'alias': '__sy_prev4__',
+                        'label': 'Four Years Prior',
+                        'is_current': False
+                    },
+                    {
+                        'offset': -5,
+                        'alias': '__sy_prev5__',
+                        'label': 'Five Years Prior',
+                        'is_current': False
                     }
                 ]
                 # Re-populate relative_year table
@@ -113,6 +165,36 @@ class ProjectConfig(models.Model):
                         relative_label=m['label'],
                         offset_years=m['offset'],
                         is_current=m['is_current']
+                    )
+                # Keep the ClickHouse relative_year mirror in sync — dataset
+                # charts resolve relative-year filters against it, so a stale
+                # mirror would leave charts on the old current-year mapping.
+                # Push rows directly from Django (not the postgresql() table
+                # function) so both databases update in the same save().
+                try:
+                    from clickhouse_utils.client import get_clickhouse_client
+                    from dataviz.models import RelativeYear as _RelYear
+                    _ch = get_clickhouse_client()
+                    if _ch is not None:
+                        from django.conf import settings as _settings
+                        _ch_db = getattr(_settings, 'CLICKHOUSE_DB', 'fastapi_clickhouse_db')
+                        _ch.command(f"TRUNCATE TABLE {_ch_db}.relative_year")
+                        _rows = [
+                            (r.school_year, r.relative_alias, r.relative_label,
+                             r.offset_years, r.is_current)
+                            for r in _RelYear.objects.order_by('offset_years')
+                        ]
+                        if _rows:
+                            _ch.insert(
+                                f"{_ch_db}.relative_year",
+                                _rows,
+                                column_names=['school_year', 'relative_alias',
+                                              'relative_label', 'offset_years', 'is_current'],
+                            )
+                except Exception:
+                    import logging
+                    logging.getLogger('landing').exception(
+                        'Failed to sync relative_year to ClickHouse'
                     )
         except Exception:
             # Prevent failure during initial migrations/schema changes before table exists

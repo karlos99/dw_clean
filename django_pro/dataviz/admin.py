@@ -1,12 +1,12 @@
 from django.contrib import admin
 
-from .models import SavedChart, Dashboard, DashboardChart, DataVizPage, DataVizPageSection, ColorMapPreset
+from .models import SavedChart, Dashboard, DashboardChart, DataVizPage, DataVizPageFolder, DataVizPageSection, ColorMapPreset
 
 
 @admin.register(SavedChart)
 class SavedChartAdmin(admin.ModelAdmin):
-    list_display  = ('name', 'chart_type', 'owner', 'updated_at')
-    list_filter   = ('chart_type',)
+    list_display  = ('name', 'chart_type', 'owner', 'is_user_menu', 'user_menu_order', 'updated_at')
+    list_filter   = ('chart_type', 'is_user_menu')
     search_fields = ('title', 'owner__username')
     readonly_fields = ('created_at', 'updated_at')
 
@@ -26,11 +26,17 @@ class DashboardChartAdmin(admin.ModelAdmin):
 
 @admin.register(DataVizPage)
 class DataVizPageAdmin(admin.ModelAdmin):
-    list_display  = ('title', 'slug', 'status', 'owner', 'updated_at')
+    list_display  = ('title', 'slug', 'folder', 'status', 'owner', 'updated_at')
     list_filter   = ('status',)
-    search_fields = ('title', 'slug', 'owner__username')
+    search_fields = ('title', 'slug', 'folder', 'owner__username')
     readonly_fields = ('created_at', 'updated_at')
     prepopulated_fields = {'slug': ('title',)}
+
+
+@admin.register(DataVizPageFolder)
+class DataVizPageFolderAdmin(admin.ModelAdmin):
+    list_display = ('path', 'created_at')
+    search_fields = ('path',)
 
 
 @admin.register(DataVizPageSection)

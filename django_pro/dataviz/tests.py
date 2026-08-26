@@ -1,14 +1,140 @@
 from types import SimpleNamespace
 from unittest.mock import patch
+import json
 from django.test import SimpleTestCase, TestCase
 from django.contrib.auth import get_user_model
-from dataviz.models import SavedChart, Dataset
+from dataviz.models import (
+    SavedChart, Dataset, DataVizPage, DataVizPageRow, DataVizPageSection, DataVizPageFolder,
+)
 from dataviz.utils.compiler import compile_dataset_to_sql
 from dataviz.utils.drill_through import execute_drill_query
 
 User = get_user_model()
 
 class CompilerSqlTests(SimpleTestCase):
+    def test_compile_dataset_to_sql_one_row_per_stu_annual_key(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade', 'current_student.stu_annual_key'],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade', 'stu_annual_key', 'status'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                status_filter=None,
+                one_row_per_stu_annual_key=True,
+            )
+
+        self.assertIn('SELECT DISTINCT ON ("current_student"."stu_annual_key")', sql)
+        self.assertIn('ORDER BY "current_student"."stu_annual_key" ASC', sql)
+        self.assertFalse(sql.startswith('SELECT DISTINCT "'))
+
+    def test_dedupe_rows_by_stu_annual_key(self):
+        from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
+
+        rows = [
+            {'stu_annual_key': 'A', 'grade': '1'},
+            {'stu_annual_key': 'A', 'grade': '2'},
+            {'stu_annual_key': 'B', 'grade': '3'},
+            {'stu_annual_key': '', 'grade': '4'},
+        ]
+        out = dedupe_rows_by_stu_annual_key(rows)
+        self.assertEqual(len(out), 3)
+        self.assertEqual([r['grade'] for r in out], ['1', '3', '4'])
+
+    def test_compile_dataset_to_sql_one_row_per_sak_prefers_results_json(self):
+        # With one_row_per_stu_annual_key + a results.other_info->'key' column,
+        # DISTINCT ON must prefer the duplicate results row carrying the JSON
+        # value (e.g. DFP) so drills don't show a blank DFP for the student.
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=[
+                "results.ssid",
+                "results.pl",
+                "results.stu_annual_key",
+                "results.other_info->'dfp'",
+            ],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            if '->' in col:
+                base_col, key = col.split('->', 1)
+                return f'"{tbl}"."{base_col}"->>\'{key.strip("\\\'\\\"")}\''
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'ssid', 'pl', 'other_info', 'stu_annual_key', 'school_year', 'test_group_key', 'ss'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                one_row_per_stu_annual_key=True,
+            )
+
+        self.assertTrue(sql.startswith('SELECT DISTINCT ON'))
+        self.assertIn(
+            '(NULLIF("results"."other_info"->>\'dfp\', \'\') IS NOT NULL) DESC',
+            sql,
+        )
+
+    def test_compile_dataset_to_sql_one_row_per_sak_no_tiebreaker_without_json(self):
+        # No results JSON column -> DISTINCT ON ordering is untouched.
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=["results.ssid", "results.pl", "results.stu_annual_key"],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'ssid', 'pl', 'other_info', 'stu_annual_key', 'school_year', 'test_group_key', 'ss'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                one_row_per_stu_annual_key=True,
+            )
+
+        self.assertTrue(sql.startswith('SELECT DISTINCT ON'))
+        self.assertNotIn('IS NOT NULL) DESC', sql)
+
     def test_compile_dataset_to_sql_uses_any_for_multi_value_filters(self):
         dataset = SimpleNamespace(
             base_table='current_student',
@@ -33,7 +159,28 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertEqual(params[0], 'Active')
         self.assertEqual(params[1], ['K', '1'])
 
-    def test_compile_dataset_to_sql_status_default_active(self):
+    def test_compile_dataset_to_sql_status_default_active_with_interactive_filters(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade'],
+            updated_at=None,
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', return_value=('current_student', 'grade')), \
+             patch('dataviz.utils.compiler.format_column_expr', return_value='"current_student"."grade"'):
+            sql, params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={'current_student.grade': ['K']},
+                user=None,
+            )
+        self.assertIn('"current_student"."status" = %s', sql)
+        self.assertIn('Active', params)
+
+    def test_compile_dataset_to_sql_status_no_implicit_filter_for_dataset_builder(self):
         dataset = SimpleNamespace(
             base_table='current_student',
             distinct=False,
@@ -47,8 +194,7 @@ class CompilerSqlTests(SimpleTestCase):
              patch('dataviz.utils.compiler.validate_column_identifier', return_value=('current_student', 'grade')), \
              patch('dataviz.utils.compiler.format_column_expr', return_value='"current_student"."grade"'):
             sql, params = compile_dataset_to_sql(dataset, interactive_filters={}, user=None)
-        self.assertIn('"current_student"."status" = %s', sql)
-        self.assertIn('Active', params)
+        self.assertNotIn('"current_student"."status"', sql)
 
     def test_compile_dataset_to_sql_status_explicit_all(self):
         dataset = SimpleNamespace(
@@ -102,6 +248,65 @@ class CompilerSqlTests(SimpleTestCase):
             self.assertIn('("current_student"."atendace_rate" < %s OR "current_student"."atendace_rate" > %s OR "current_student"."atendace_rate" IS NULL)', sql)
             self.assertEqual(params[1:], [90.0, 95.0])
 
+    def test_compile_dataset_to_sql_order_by(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade', 'current_student.student_name'],
+            updated_at=None,
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade', 'student_name'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=lambda c, t: (c.split('.')[0], c.split('.')[1])), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=lambda t, c: f'"{t}"."{c}"'):
+            sql, params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                order_by=[
+                    {'column': 'current_student.grade', 'direction': 'asc'},
+                    {'column': 'current_student.student_name', 'direction': 'desc'},
+                ],
+            )
+        self.assertIn('ORDER BY "current_student"."grade" ASC, "current_student"."student_name" DESC', sql)
+
+    def test_compile_dataset_to_sql_order_by_defaults_asc(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade'],
+            updated_at=None,
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=lambda c, t: (c.split('.')[0], c.split('.')[1])), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=lambda t, c: f'"{t}"."{c}"'):
+            sql, params = compile_dataset_to_sql(
+                dataset, interactive_filters={}, user=None,
+                order_by=[{'column': 'current_student.grade'}],
+            )
+        self.assertIn('ORDER BY "current_student"."grade" ASC', sql)
+
+    def test_compile_dataset_to_sql_order_by_none_skipped(self):
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['current_student.grade'],
+            updated_at=None,
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'grade'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', return_value=('current_student', 'grade')), \
+             patch('dataviz.utils.compiler.format_column_expr', return_value='"current_student"."grade"'):
+            sql, params = compile_dataset_to_sql(dataset, interactive_filters={}, user=None)
+        self.assertNotIn('ORDER BY', sql)
+
     def test_build_where_clause_range_filters(self):
         from dataviz.views.api.query_api import _build_where_clause
 
@@ -150,6 +355,45 @@ class StatusFilterTests(SimpleTestCase):
         self.assertEqual(where, ['cs.status = %s'])
         self.assertEqual(params, ['Inactive'])
 
+    def test_dataset_status_value_requires_explicit_selection(self):
+        from dataviz.utils.status_filter import dataset_status_value
+        # A dataset without a selection includes all statuses.
+        self.assertIsNone(dataset_status_value(SimpleNamespace()))
+        # Empty list → all statuses (no restriction)
+        self.assertEqual(dataset_status_value(SimpleNamespace(status_filter=[])), None)
+        # Single value
+        self.assertEqual(dataset_status_value(SimpleNamespace(status_filter=['Inactive'])), 'Inactive')
+        # Multiple values
+        self.assertEqual(
+            dataset_status_value(SimpleNamespace(status_filter=['Active', 'Inactive'])),
+            ['Active', 'Inactive'],
+        )
+        # Explicit None also means all statuses.
+        self.assertIsNone(dataset_status_value(SimpleNamespace(status_filter=None)))
+
+    def test_prepare_interactive_filters_uses_dataset_status_when_no_explicit(self):
+        from dataviz.utils.status_filter import prepare_interactive_filters
+        ds = SimpleNamespace(
+            base_table='current_student', joins=[], columns=['current_student.grade'],
+            column_mappings=None, filters=[], status_filter=['Inactive'],
+        )
+        with patch('dataviz.utils.compiler.resolve_dataset_filters', return_value={}):
+            resolved, status_val = prepare_interactive_filters({}, ds, {'current_student'})
+        self.assertEqual(status_val, 'Inactive')
+        self.assertEqual(resolved, {})
+
+    def test_prepare_interactive_filters_explicit_status_wins(self):
+        from dataviz.utils.status_filter import prepare_interactive_filters
+        ds = SimpleNamespace(
+            base_table='current_student', joins=[], columns=['current_student.grade'],
+            column_mappings=None, filters=[], status_filter=['Inactive'],
+        )
+        with patch('dataviz.utils.compiler.resolve_dataset_filters', return_value={}):
+            resolved, status_val = prepare_interactive_filters({'status': ['Active']}, ds, {'current_student'})
+        self.assertEqual(status_val, ['Active'])
+        self.assertEqual(resolved, {})
+
+
 
 class DatasetDrillThroughTests(TestCase):
     def setUp(self):
@@ -170,8 +414,8 @@ class DatasetDrillThroughTests(TestCase):
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
     @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
-    @patch('dataviz.utils.data_loader._run_saved_query_sql')
-    def test_dataset_drill_through_with_ssids(self, mock_run_sql, mock_execute_query, mock_compile):
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_through_with_ssids(self, mock_enrich, mock_execute_query, mock_compile):
         # 1. Mock dataset query result returning ssids
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
@@ -183,17 +427,15 @@ class DatasetDrillThroughTests(TestCase):
             'row_count': 2
         }
 
-        # 2. Mock _run_saved_query_sql which queries standard student list
-        mock_run_sql.return_value = {
-            'columns': ['student_id', 'student_name', 'grade', 'school', 'school_year'],
-            'rows': [
-                {'student_id': 'S1', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026', 'ssid': '12345'},
-                {'student_id': 'S2', 'student_name': 'Bob', 'grade': '6', 'school': 'School B', 'school_year': '2025-2026', 'ssid': '67890'}
+        mock_enrich.return_value = (
+            [
+                {'ssid': '12345', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026'},
+                {'ssid': '67890', 'student_name': 'Bob', 'grade': '6', 'school': 'School B', 'school_year': '2025-2026'},
             ],
-            'error': None
-        }
+            ['ssid', 'student_name', 'grade', 'student_id', 'school', 'school_year'],
+            None,
+        )
 
-        # Run execute_drill_query
         result = execute_drill_query(
             self.chart,
             drill_filters={'current_student.grade': '5'},
@@ -207,23 +449,12 @@ class DatasetDrillThroughTests(TestCase):
         args, kwargs = mock_compile.call_args
         self.assertEqual(kwargs['interactive_filters'], {'current_student.grade': '5'})
 
-        # Check standard query runner config
-        mock_run_sql.assert_called_once()
-        run_config = mock_run_sql.call_args[0][0]
-        self.assertIn('ssid', run_config['filters'])
-        self.assertCountEqual(run_config['filters']['ssid'], ['12345', '67890'])
+        mock_enrich.assert_called_once()
+        enrich_args, enrich_kwargs = mock_enrich.call_args
+        self.assertIn('ssid', enrich_args[1] or enrich_args[0])
 
-        # Check columns default to dataset columns + basic columns
-        self.assertCountEqual(
-            run_config['columns'],
-            ['ssid', 'student_name', 'grade', 'student_id', 'school', 'school_year']
-        )
-
-        # Result verification
         self.assertEqual(len(result['rows']), 2)
-        # Should have student_name merged from demographics
         self.assertEqual(result['rows'][0]['student_name'], 'Alice')
-        # Cleaned dataset key should exist
         self.assertEqual(result['rows'][0]['ssid'], '12345')
 
     def test_build_drill_filter_multiple_x_axis(self):
@@ -245,8 +476,8 @@ class DatasetDrillThroughTests(TestCase):
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
     @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
-    @patch('dataviz.utils.data_loader._run_saved_query_sql')
-    def test_dataset_drill_through_with_multiple_x_axis(self, mock_run_sql, mock_execute_query, mock_compile):
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_through_with_multiple_x_axis(self, mock_enrich, mock_execute_query, mock_compile):
         # 1. Mock dataset query result returning ssids
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
@@ -255,12 +486,11 @@ class DatasetDrillThroughTests(TestCase):
             'row_count': 1
         }
 
-        # 2. Mock _run_saved_query_sql
-        mock_run_sql.return_value = {
-            'columns': ['student_id', 'student_name', 'grade', 'school', 'school_year'],
-            'rows': [{'student_id': 'S1', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026', 'ssid': '12345'}],
-            'error': None
-        }
+        mock_enrich.return_value = (
+            [{'ssid': '12345', 'student_name': 'Alice', 'grade': '5'}],
+            ['ssid', 'student_name', 'grade'],
+            None,
+        )
 
         # Update chart config to have multiple x axis columns
         self.chart.config = {
@@ -400,19 +630,19 @@ class DatasetDrillThroughTests(TestCase):
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
     @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
-    @patch('dataviz.utils.data_loader._run_saved_query_sql')
-    def test_dataset_drill_through_with_jsonb_filter_key(self, mock_run_sql, mock_execute_query, mock_compile):
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_through_with_jsonb_filter_key(self, mock_enrich, mock_execute_query, mock_compile):
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
             'columns': ['ssid'],
             'rows': [{'ssid': '12345'}],
             'row_count': 1,
         }
-        mock_run_sql.return_value = {
-            'columns': ['student_id', 'student_name', 'grade', 'school', 'school_year'],
-            'rows': [{'student_id': 'S1', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026', 'ssid': '12345'}],
-            'error': None,
-        }
+        mock_enrich.return_value = (
+            [{'ssid': '12345', 'student_name': 'Alice'}],
+            ['ssid', 'student_name'],
+            None,
+        )
 
         result = execute_drill_query(
             self.chart,
@@ -428,19 +658,19 @@ class DatasetDrillThroughTests(TestCase):
 
     @patch('dataviz.utils.compiler.compile_dataset_to_sql')
     @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
-    @patch('dataviz.utils.data_loader._run_saved_query_sql')
-    def test_dataset_drill_through_with_custom_column_mapping(self, mock_run_sql, mock_execute_query, mock_compile):
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_through_with_custom_column_mapping(self, mock_enrich, mock_execute_query, mock_compile):
         mock_compile.return_value = ("SELECT current_student.ssid FROM ...", [])
         mock_execute_query.return_value = {
             'columns': ['ssid'],
             'rows': [{'ssid': '12345'}],
             'row_count': 1
         }
-        mock_run_sql.return_value = {
-            'columns': ['student_id', 'student_name', 'grade', 'school', 'school_year'],
-            'rows': [{'student_id': 'S1', 'student_name': 'Alice', 'grade': '5', 'school': 'School A', 'school_year': '2025-2026', 'ssid': '12345'}],
-            'error': None
-        }
+        mock_enrich.return_value = (
+            [{'ssid': '12345', 'student_name': 'Alice', 'test_window': 'Fall'}],
+            ['ssid', 'student_name', 'test_window'],
+            None,
+        )
 
         # Set up custom mapping on the dataset
         self.dataset.joins = [{'table': 'tests', 'join_type': 'left', 'conditions': []}]
@@ -458,14 +688,40 @@ class DatasetDrillThroughTests(TestCase):
             extra_columns=[]
         )
 
-        # Verify compiler received the dataset filter
         mock_compile.assert_called_once()
         self.assertEqual(mock_compile.call_args[1]['interactive_filters'], {'tests.test_window': 'Fall'})
+        mock_enrich.assert_called_once()
+        self.assertEqual(result['rows'][0]['ssid'], '12345')
 
-        # Verify that Data Exploration runner received the mapped filter key 'test_window' rather than 'tests.test_window'
-        mock_run_sql.assert_called_once()
-        run_config = mock_run_sql.call_args[0][0]
-        self.assertEqual(run_config['filters'].get('test_window'), 'Fall')
+    @patch('dataviz.utils.compiler.compile_dataset_to_sql')
+    @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_skips_enrichment_when_empty(self, mock_enrich, mock_execute_query, mock_compile):
+        mock_compile.return_value = ("SELECT ...", [])
+        mock_execute_query.return_value = {
+            'columns': ['ssid'],
+            'rows': [],
+            'row_count': 0,
+        }
+        result = execute_drill_query(
+            self.chart, drill_filters={}, columns=[], user=self.user, extra_columns=[],
+        )
+        mock_enrich.assert_not_called()
+        self.assertEqual(result['rows'], [])
+
+    @patch('dataviz.utils.compiler.compile_dataset_to_sql')
+    @patch('dataviz.utils.compiler.execute_compiled_query_aliased')
+    @patch('dataviz.utils.data_loader.enrich_drill_rows')
+    def test_dataset_drill_preserves_row_count(self, mock_enrich, mock_execute_query, mock_compile):
+        mock_compile.return_value = ("SELECT ...", [])
+        ds_rows = [
+            {'ssid': '12345', 'student_name': 'Alice', 'grade': '5'},
+            {'ssid': '67890', 'student_name': 'Bob', 'grade': '6'},
+        ]
+        mock_execute_query.return_value = {'columns': ['ssid', 'student_name', 'grade'], 'rows': ds_rows, 'row_count': 2}
+        mock_enrich.return_value = (ds_rows, ['ssid', 'student_name', 'grade'], None)
+        result = execute_drill_query(self.chart, drill_filters={}, columns=[], user=self.user)
+        self.assertEqual(len(result['rows']), 2)
 
     def test_allowed_dataset_tables_whitelisting(self):
         from dataviz.utils.compiler import get_allowed_dataset_tables, compile_dataset_to_sql, SQLCompilationError
@@ -576,14 +832,98 @@ class DatasetDrillThroughTests(TestCase):
 
         sql, params = compile_dataset_to_sql(self.dataset, user=self.user)
         
-        # Verify compiled SQL structure
-        self.assertIn('"results"."other_info"->>\'lexile\' AS "results.other_info->\'lexile\'"', sql)
+        # Verify compiled SQL structure — results.other_info->'key' columns are
+        # aggregated with MAX so duplicate results rows (one with the JSON key,
+        # one without) collapse to a single row instead of appearing twice.
+        self.assertIn('MAX(NULLIF("results"."other_info"->>\'lexile\', \'\')) AS "results.other_info->\'lexile\'"', sql)
         self.assertIn('"results"."other_info"->>\'lexile\' = %s', sql)
         self.assertIn('450', params)
 
         # Clean up
         Result.objects.filter(test_id="T1").delete()
         cache.delete('dataviz:schema_json')
+
+    def test_dataset_results_json_column_dedupes_with_group_by(self):
+        from django.core.cache import cache
+        from dataviz.utils.compiler import compile_dataset_to_sql
+
+        cache.clear()  # avoid stale compiled-SQL from earlier runs
+
+        # A results dataset selecting other_info->'dfp' alongside student cols
+        # must collapse duplicate results rows (identical non-JSON cols, one row
+        # with dfp, one without) via GROUP BY + MAX — instead of relying on
+        # SELECT DISTINCT which cannot merge them.
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=[
+                "results.ssid",
+                "results.pl",
+                "results.other_info->'dfp'",
+            ],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            if '->' in col:
+                base_col, key = col.split('->', 1)
+                return f'"{tbl}"."{base_col}"->>\'{key.strip("\\\'\\\"")}\''
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'ssid', 'pl', 'other_info', 'school_year', 'test_group_key', 'ss'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(dataset, interactive_filters={}, user=None)
+
+        self.assertFalse(sql.startswith('SELECT DISTINCT'))
+        self.assertTrue(sql.startswith('SELECT '))
+        self.assertIn('MAX(NULLIF("results"."other_info"->>\'dfp\', \'\')) AS "results.other_info->\'dfp\'"', sql)
+        self.assertIn('"results"."ssid" AS "results.ssid"', sql)
+        self.assertIn('"results"."pl" AS "results.pl"', sql)
+        self.assertIn('GROUP BY "results"."ssid", "results"."pl"', sql)
+
+    def test_dataset_current_student_json_column_no_group_by(self):
+        from django.core.cache import cache
+        from dataviz.utils.compiler import compile_dataset_to_sql
+
+        cache.clear()  # avoid stale compiled-SQL from earlier runs
+
+        # current_student.add_data->'key' is not a results column, so the query
+        # keeps its normal DISTINCT form (no GROUP BY dedupe).
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=[
+                "current_student.ssid",
+                "current_student.add_data->'AVID'",
+            ],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'ssid', 'add_data', 'status', 'grade', 'school_year', 'stu_annual_key'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_dataset_to_sql(dataset, interactive_filters={}, user=None)
+
+        self.assertTrue(sql.startswith('SELECT DISTINCT '))
+        self.assertNotIn('GROUP BY', sql)
 
     def test_dataset_student_add_data_json_column_compilation(self):
         from django.core.cache import cache
@@ -715,11 +1055,10 @@ class DatasetDrillThroughTests(TestCase):
             self.assertEqual(grade_call_args, {'current_student.school': ['Lincoln']})
 
     def test_new_aggregations_and_empty_mappings_resolution(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _agg
-        
-        # Test 1: pandas-based count_unique and count_occurrence aggregation
-        df = pd.DataFrame([
+
+        df = pl.from_dicts([
             {'x': 'A', 'y': 10},
             {'x': 'A', 'y': 10},
             {'x': 'A', 'y': 20},
@@ -999,6 +1338,27 @@ class DrillThroughResultAlignmentTests(TestCase):
         response = self.client.get(f'/dataviz/api/drill/{self.chart.id}/rows/?cols=', HTTP_HX_REQUEST='true')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['columns'], ['grade', 'student_name'])
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_bar_count_drill_deduplicates_joined_rows_by_student(self, mock_run_sql):
+        mock_run_sql.return_value = {
+            'columns': ['ssid', 'student_name', 'grade', 'result_id'],
+            'rows': [
+                {'ssid': '123', 'student_name': 'Alice', 'grade': '5', 'result_id': 'a'},
+                {'ssid': '123', 'student_name': 'Alice', 'grade': '5', 'result_id': 'b'},
+                {'ssid': '456', 'student_name': 'Bob', 'grade': '5', 'result_id': 'c'},
+            ]
+        }
+
+        result = execute_drill_query(
+            self.chart,
+            drill_filters={'grade': '5'},
+            columns=['grade', 'student_name'],
+            user=self.user,
+        )
+
+        self.assertEqual(result['total_rows'], 2)
+        self.assertEqual([row['student_name'] for row in result['rows']], ['Alice', 'Bob'])
 
     @patch('dataviz.utils.drill_through.run_raw_sql')
     def test_drill_export_csv_api(self, mock_run_sql):
@@ -1321,6 +1681,349 @@ class ProgressGrowthMatrixTests(SimpleTestCase):
         )
 
         self.assertEqual(result['total_rows'], 1)
+
+
+class GroupGapOptionTests(SimpleTestCase):
+    def _bar_rows(self):
+        return [
+            {'grade': 'K', 'subject': 'Reading', 'n': 10},
+            {'grade': 'K', 'subject': 'Math', 'n': 12},
+            {'grade': '1', 'subject': 'Reading', 'n': 15},
+            {'grade': '1', 'subject': 'Math', 'n': 9},
+            {'grade': '2', 'subject': 'Reading', 'n': 8},
+            {'grade': '2', 'subject': 'Math', 'n': 14},
+        ]
+
+    def _base_cfg(self, **overrides):
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': '__x_comp__',
+            'x_cols': ['grade', 'subject'],
+            'y_col': 'n',
+            'agg_func': 'sum',
+            'bar_layout': 'grouped',
+        }
+        cfg.update(overrides)
+        return cfg
+
+    def test_x_value_map_aliases_category_labels_keeps_raw_for_drill(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': 'K', 'n': 10},
+            {'grade': '1', 'n': 15},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'grade',
+            'y_col': 'n',
+            'agg_func': 'sum',
+            'x_value_map': {'K': 'Kindergarten', '1': 'Grade 1'},
+        }
+        opt = build_option(rows, {}, cfg)
+        x_axis = opt.get('xAxis')
+        if isinstance(x_axis, list):
+            x_axis = x_axis[0]
+        raw = opt.get('__category_names__') or []
+        display = x_axis.get('data') or []
+        self.assertEqual(set(raw), {'K', '1'})
+        self.assertEqual(set(display), {'Kindergarten', 'Grade 1'})
+        # Display order matches raw category order; drill keeps originals.
+        self.assertEqual(len(display), len(raw))
+        for orig, shown in zip(raw, display):
+            self.assertEqual(shown, cfg['x_value_map'][orig])
+
+    def test_x_value_map_aliases_each_multi_x_field_separately(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(
+            self._bar_rows(),
+            {},
+            self._base_cfg(
+                x_value_map={'K': 'Kindergarten', 'Reading': 'ELA'},
+                center_group_labels=False,
+            ),
+        )
+        self.assertEqual(
+            set(opt.get('__x_alias_keys__') or []),
+            {'K', '1', '2', 'Reading', 'Math'},
+        )
+        # Composite raw categories stay for drill.
+        self.assertIn('K · Reading', opt.get('__category_names__') or [])
+        x_axes = opt.get('xAxis')
+        self.assertIsInstance(x_axes, list)
+        leaf, groups = x_axes[0].get('data') or [], x_axes[1].get('data') or []
+        self.assertIn('ELA', leaf)
+        self.assertIn('Math', leaf)
+        self.assertNotIn('Reading', leaf)
+        self.assertIn('Kindergarten', groups)
+        self.assertNotIn('K', [g for g in groups if g])
+
+    def test_center_group_labels_emits_bands_and_hides_tick_labels(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(center_group_labels=True))
+        bands = opt.get('__group_label_bands__') or []
+        self.assertTrue(bands)
+        self.assertEqual({b['label'] for b in bands}, {'K', '1', '2'})
+        for b in bands:
+            self.assertEqual(b['end'] - b['start'], 1)  # two leaf values per grade
+        x_axes = opt.get('xAxis')
+        self.assertIsInstance(x_axes, list)
+        self.assertFalse(x_axes[1].get('axisLabel', {}).get('show'))
+        self.assertTrue(all(not v for v in (x_axes[1].get('data') or [])))
+
+    def test_group_gap_sets_bar_category_gap_on_grouped_axis_bar(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(group_gap=40))
+        self.assertIsInstance(opt.get('xAxis'), list)  # two-level grouped axis
+        gaps = {s.get('barCategoryGap') for s in opt.get('series', []) if s.get('type') == 'bar'}
+        self.assertTrue(len(gaps) > 0)
+        self.assertEqual(gaps, {'40%'})
+
+    def test_group_gap_default_does_not_override_bar_category_gap(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg())
+        for s in opt.get('series', []):
+            if s.get('type') == 'bar':
+                self.assertNotEqual(s.get('barCategoryGap'), '0%')
+
+        opt_bar = build_option(self._bar_rows(), {}, self._base_cfg(bar_category_gap='50'))
+        gaps = {s.get('barCategoryGap') for s in opt_bar.get('series', []) if s.get('type') == 'bar'}
+        self.assertEqual(gaps, {'50%'})
+
+    def test_group_gap_takes_precedence_over_bar_category_gap(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(bar_category_gap='50', group_gap=70))
+        gaps = {s.get('barCategoryGap') for s in opt.get('series', []) if s.get('type') == 'bar'}
+        self.assertEqual(gaps, {'70%'})
+
+    def test_group_gap_sets_category_gap_on_single_base_category_bar(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': 'K', 'ssid': 1},
+            {'grade': '1', 'ssid': 2},
+            {'grade': '2', 'ssid': 3},
+        ]
+        cfg = {'chart_type': 'bar', 'x_col': 'grade', 'y_col': 'ssid',
+               'agg': 'count', 'group_gap': 45}
+        opt = build_option(rows, {}, cfg)
+        self.assertNotIsInstance(opt.get('xAxis'), list)  # single category axis
+        gaps = {s.get('barCategoryGap') for s in opt.get('series', []) if s.get('type') == 'bar'}
+        self.assertEqual(gaps, {'45%'})
+
+    def test_group_gap_size_inserts_spacers_between_groups(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(self._bar_rows(), {}, self._base_cfg(group_gap_size=2))
+        self.assertIsInstance(opt.get('xAxis'), list)  # two-level grouped axis
+        leaf = opt['xAxis'][0]['data']
+        # one spacer band (plus a blank for the same position) inserted between each group
+        self.assertIn(' ', leaf)
+        series = [s for s in opt.get('series', []) if s.get('type') == 'bar']
+        self.assertTrue(len(series) > 0)
+        self.assertEqual(len(series[0]['data']), len(leaf))
+        spacer_nones = sum(1 for v in series[0]['data'] if v is None)
+        self.assertEqual(spacer_nones, 2 * 2)  # 2 groups boundaries × 2 spacer cols
+
+    def test_spacer_categories_have_empty_group_labels(self):
+        from dataviz.utils.chart_builder import build_option
+
+        opt = build_option(
+            self._bar_rows(), {},
+            self._base_cfg(group_gap_size=1, center_group_labels=False),
+        )
+        group_axis = opt['xAxis'][1]
+        labels = group_axis['data']
+        # spacer positions must not repeat the group name — it stays centered once per group
+        self.assertEqual(labels.count('K'), 1)
+        self.assertEqual(labels.count('1'), 1)
+
+    def test_group_gap_size_tooltip_categories_match_expanded_axis(self):
+        import json
+        import re
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': '__x_comp__',
+            'x_cols': ['grade', 'school_year'],
+            'y_col': 'pl',
+            'stack_col': 'pl',
+            'agg': 'count',
+            'show_percent': True,
+            'group_gap_size': 1,
+        }
+        opt = build_option(rows, {}, cfg)
+        axis_cats = opt['__category_names__']
+        leaf = opt['xAxis'][0]['data']
+        self.assertEqual(len(axis_cats), len(leaf))
+        self.assertEqual(len(opt['series'][0]['data']), len(axis_cats))
+
+        fmt = opt['tooltip']['__formatter_js__']
+        tooltip_cats = json.loads(re.search(r'var cats = (\[.*?\]);', fmt).group(1))
+        self.assertEqual(tooltip_cats, axis_cats)
+
+        raw_lookup = json.loads(re.search(r'var rawLookup = (\{.*?\});', fmt).group(1))
+        real_cat = '03 · 2024-2025'
+        self.assertIn(real_cat, axis_cats)
+        self.assertTrue(any(raw_lookup[s].get(real_cat, 0) > 0 for s in raw_lookup))
+
+
+class GroupTotalOptionTests(SimpleTestCase):
+    def test_grouped_stacked_total_adds_per_group_total_columns(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school': 'A', 'school_year': '2024-2025', 'grade': 'K'},
+            {'school': 'A', 'school_year': '2024-2025', 'grade': 'K'},
+            {'school': 'A', 'school_year': '2024-2025', 'grade': '1'},
+            {'school': 'A', 'school_year': '2025-2026', 'grade': 'K'},
+            {'school': 'A', 'school_year': '2025-2026', 'grade': '1'},
+            {'school': 'A', 'school_year': '2025-2026', 'grade': '1'},
+            {'school': 'A', 'school_year': '2025-2026', 'grade': '2'},
+            {'school': 'B', 'school_year': '2024-2025', 'grade': 'K'},
+            {'school': 'B', 'school_year': '2025-2026', 'grade': '1'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'school',
+            'group_col': 'school_year',
+            'stack_col': 'grade',
+            'agg': 'count',
+            'show_group_total': True,
+            'group_total_label': 'Total',
+        }
+        opt = build_option(rows, {}, cfg)
+        series = {s['name']: s for s in opt['series']}
+
+        total_names = [n for n in series if n.startswith('Total — ')]
+        self.assertEqual(sorted(total_names), ['Total — 2024-2025', 'Total — 2025-2026'])
+
+        # A: 2024 → K(2)+1(1)=3, 2025 → K(1)+1(2)+2(1)=4; B: 2024 → 1, 2025 → 1
+        self.assertEqual(series['Total — 2024-2025']['data'], [3.0, 1.0])
+        self.assertEqual(series['Total — 2025-2026']['data'], [4.0, 1.0])
+        # Each total is its own column (distinct stack) and sits immediately
+        # after its group's stacked bar so it renders beside it, not grouped
+        # together at the end.
+        names = [s['name'] for s in opt['series']]
+        self.assertNotEqual(
+            series['Total — 2024-2025']['stack'],
+            series['Total — 2025-2026']['stack'],
+        )
+        self.assertEqual(names, [
+            '2024-2025 — K', '2024-2025 — 2', '2024-2025 — 1', 'Total — 2024-2025',
+            '2025-2026 — K', '2025-2026 — 2', '2025-2026 — 1', 'Total — 2025-2026',
+        ])
+        # Regular stacked series are untouched.
+        self.assertIn('2024-2025 — K', series)
+
+    def test_grouped_stacked_without_total_has_no_total_series(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school': 'A', 'school_year': '2024-2025', 'grade': 'K'},
+            {'school': 'B', 'school_year': '2025-2026', 'grade': '1'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'school',
+            'group_col': 'school_year',
+            'stack_col': 'grade',
+            'agg': 'count',
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertFalse(any(s['name'].startswith('Total') for s in opt['series']))
+
+    def test_single_x_stacked_total_adds_total_category(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school': 'A', 'grade': 'K'},
+            {'school': 'A', 'grade': 'K'},
+            {'school': 'A', 'grade': '1'},
+            {'school': 'B', 'grade': 'K'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'school',
+            'stack_col': 'grade',
+            'agg': 'count',
+            'show_group_total': True,
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertEqual(opt['__category_names__'], ['A', 'B', 'Total'])
+        series = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(series['K'], [2.0, 1.0, 3.0])  # A=2, B=1, Total=all schools
+        self.assertEqual(series['1'], [1.0, 0.0, 1.0])
+
+    def test_composite_x_stacked_total_adds_one_bar_per_leaf(self):
+        from dataviz.utils.chart_builder import build_option
+
+        # Chart 108 pattern: x = grade · school_year, stacked by pl. The Total
+        # becomes a new "grade"-equivalent group — one bar per school year,
+        # NOT one bar per grade · year combination.
+        rows = [
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '2'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '2'},
+            {'grade': '03', 'school_year': '2025-2026', 'pl': '3'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '04', 'school_year': '2025-2026', 'pl': '2'},
+            {'grade': '04', 'school_year': '2025-2026', 'pl': '2'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': '__x_comp__',
+            'x_cols': ['grade', 'school_year'],
+            'stack_col': 'pl',
+            'agg': 'count',
+            'show_percent': True,
+            'show_group_total': True,
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertEqual(
+            opt['__category_names__'],
+            ['03 · 2024-2025', '03 · 2025-2026', '04 · 2024-2025', '04 · 2025-2026',
+             'Total · 2024-2025', 'Total · 2025-2026'],
+        )
+        # Only two new bars (one per year), each still 100% stacked by pl.
+        series = {s['name']: s['data'] for s in opt['series']}
+        self.assertEqual(series['1'], [33.3, 0.0, 50.0, 0.0, 40.0, 0.0])
+        self.assertEqual(series['2'], [66.7, 0.0, 0.0, 100.0, 40.0, 66.7])
+        self.assertEqual(series['4'], [0.0, 0.0, 50.0, 0.0, 20.0, 0.0])
+        # Total group appears on the secondary category axis.
+        bands = opt.get('__group_label_bands__') or []
+        self.assertIn('Total', [b['label'] for b in bands])
+
+    def test_plain_stacked_without_total_has_no_total_category(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'school': 'A', 'grade': 'K'},
+            {'school': 'B', 'grade': '1'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'school',
+            'stack_col': 'grade',
+            'agg': 'count',
+        }
+        opt = build_option(rows, {}, cfg)
+        self.assertNotIn('Total', opt['__category_names__'])
 
 
 class DateSeriesOptionTests(SimpleTestCase):
@@ -1770,6 +2473,47 @@ class DateSeriesCalcOperatorTests(SimpleTestCase):
         self.assertEqual(by_name['C'], [2.0])  # 2 * 1
 
 
+class DrillCacheTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+        self.user = User.objects.create_user(username='drillcache', password='password', is_superuser=True)
+        self.chart = SavedChart.objects.create(
+            name='Cache Chart',
+            chart_type='bar',
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['grade', 'student_id']},
+            owner=self.user,
+        )
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_drill_tier2_hit_on_page_change(self, mock_run_query):
+        mock_run_query.return_value = {
+            'rows': [{'student_id': str(i), 'grade': 'K'} for i in range(5)],
+            'columns': ['student_id', 'grade'],
+            'error': None,
+        }
+        r1 = execute_drill_query(self.chart, {'grade': 'K'}, [], self.user, page=1, per_page=2)
+        r2 = execute_drill_query(self.chart, {'grade': 'K'}, [], self.user, page=2, per_page=2)
+        self.assertEqual(r1['total_rows'], 5)
+        self.assertEqual(len(r1['rows']), 2)
+        self.assertEqual(len(r2['rows']), 2)
+        self.assertEqual(mock_run_query.call_count, 1)
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_drill_source_filters_bust_tier1(self, mock_run_query):
+        mock_run_query.return_value = {
+            'rows': [{'student_id': '1', 'grade': 'K'}],
+            'columns': ['student_id', 'grade'],
+            'error': None,
+        }
+        execute_drill_query(self.chart, {}, [], self.user)
+        self.chart.source_filters = {'grade': '1'}
+        self.chart.save()
+        execute_drill_query(self.chart, {}, [], self.user)
+        self.assertEqual(mock_run_query.call_count, 2)
+
+
 class ChartRenderCacheTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testadmin', password='password', is_staff=True, is_superuser=True)
@@ -1879,10 +2623,10 @@ class ChartAccessControlTests(TestCase):
 
 class DynamicSummaryTableOptionTests(TestCase):
     def test_dynamic_summary_table_calculations_mode(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _dynamic_summary_table_option
 
-        df = pd.DataFrame([
+        df = pl.from_dicts([
             {'grade': '5', 'ssid': '123', 'scale_score': 300.0},
             {'grade': '5', 'ssid': '456', 'scale_score': 400.0},
             {'grade': '6', 'ssid': '789', 'scale_score': 500.0},
@@ -1908,10 +2652,10 @@ class DynamicSummaryTableOptionTests(TestCase):
         ])
 
     def test_dynamic_summary_table_echarts_mode(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _dynamic_summary_table_option
 
-        df = pd.DataFrame([
+        df = pl.from_dicts([
             {'grade': '5', 'ssid': '123', 'scale_score': 300.0},
             {'grade': '5', 'ssid': '456', 'scale_score': 400.0},
             {'grade': '6', 'ssid': '789', 'scale_score': 500.0},
@@ -1937,10 +2681,10 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res['series'][0]['data'], [2.0, 1.0])
 
     def test_dynamic_summary_table_pivot_decimals(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _dynamic_summary_table_option
 
-        df = pd.DataFrame([
+        df = pl.from_dicts([
             {'grade': '5', 'gender': 'F', 'scale_score': 300.567},
             {'grade': '5', 'gender': 'F', 'scale_score': 400.123},
             {'grade': '6', 'gender': 'M', 'scale_score': 500.000},
@@ -1964,10 +2708,10 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res['total_row'], ['Total', 350.3, 500.0, 850.3])
 
     def test_summary_table_and_dynamic_table_tooltips(self):
-        import pandas as pd
+        import polars as pl
         from dataviz.utils.chart_builder import _summary_table_option, _dynamic_summary_table_option
 
-        df = pd.DataFrame([
+        df = pl.from_dicts([
             {'grade': '5', 'gender': 'F', 'scale_score': 300.0, 'ssid': '1'},
             {'grade': '5', 'gender': 'F', 'scale_score': 400.0, 'ssid': '1'},
             {'grade': '5', 'gender': 'F', 'scale_score': 500.0, 'ssid': '2'},
@@ -2006,6 +2750,519 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res_dyn['rows'][0][1], {'val': 2.0, 'tooltip': 'Average: 400.0'})
         self.assertEqual(res_dyn['rows'][0][2], {'val': 400.0, 'tooltip': 'Count: 2'})
 
+    def test_dynamic_summary_table_derived_ratio_with_threshold_filter(self):
+        """A derived column dividing a threshold-filtered count by a total count,
+        displayed as a percentage. Row total must exclude derived columns and the
+        total row must recompute the derived value from the input column totals."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'att_rate': 90.0},
+            {'grade': '5', 'ssid': '456', 'att_rate': 80.0},
+            {'grade': '5', 'ssid': '999', 'att_rate': 70.0},
+            {'grade': '6', 'ssid': '789', 'att_rate': 95.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'c1', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Total Students'},
+                {'id': 'c2', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Below 85',
+                 'filter': {'col': 'att_rate', 'op': 'lt', 'val': 85}},
+                {'id': 'c3', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'c2', 'ref_b': 'c1',
+                 'label': 'Pct Below', 'as_percent': True, 'decimals': 1},
+            ],
+            'dyn_show_row_totals': True,
+            'dyn_show_col_totals': True,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['col_headers'], ['Total Students', 'Below 85', 'Pct Below'])
+        # Grade 5: 3 students, 2 below 85 (80, 70) → 66.7%; row total = 3 + 2 = 5
+        self.assertEqual(res['rows'][0], ['5', 3.0, 2.0, 66.7, 5.0])
+        # Grade 6: 1 student, none below → 0.0%
+        self.assertEqual(res['rows'][1], ['6', 1.0, 0.0, 0.0, 1.0])
+        # Total row: derived recomputed from totals → 2 / 4 = 50.0%; grand total = 4 + 2 = 6
+        self.assertEqual(res['total_row'], ['Total', 4.0, 2.0, 50.0, 6.0])
+
+    def test_dynamic_summary_table_derived_chain(self):
+        """Derived columns may reference other derived columns (e.g. first compute
+        At/Above = Total − Below, then Pct = At/Above ÷ Total)."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'att_rate': 90.0},
+            {'grade': '5', 'ssid': '456', 'att_rate': 80.0},
+            {'grade': '5', 'ssid': '999', 'att_rate': 70.0},
+            {'grade': '6', 'ssid': '789', 'att_rate': 95.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'c1', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Total'},
+                {'id': 'c2', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Below',
+                 'filter': {'col': 'att_rate', 'op': 'lt', 'val': 85}},
+                {'id': 'c3', 'calc_type': 'derived', 'op': 'subtract', 'ref_a': 'c1', 'ref_b': 'c2', 'label': 'At/Above'},
+                {'id': 'c4', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'c3', 'ref_b': 'c1',
+                 'label': 'Pct At/Above', 'as_percent': True, 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['col_headers'], ['Total', 'Below', 'At/Above', 'Pct At/Above'])
+        self.assertEqual(res['rows'][0], ['5', 3.0, 2.0, 1.0, 33.3])
+        self.assertEqual(res['rows'][1], ['6', 1.0, 0.0, 1.0, 100.0])
+
+    def test_dynamic_summary_table_derived_other_ops(self):
+        """Add/subtract/multiply derived columns combine base values correctly."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'males': 10.0},
+            {'grade': '5', 'ssid': '2', 'males': 20.0},
+            {'grade': '6', 'ssid': '3', 'males': 30.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'a', 'calc_type': 'base', 'agg_func': 'count', 'label': 'Count'},
+                {'id': 'm', 'calc_type': 'base', 'agg_func': 'sum', 'value_col': 'males', 'label': 'Male Sum'},
+                {'id': 'add', 'calc_type': 'derived', 'op': 'add', 'ref_a': 'a', 'ref_b': 'm', 'label': 'A+M'},
+                {'id': 'mul', 'calc_type': 'derived', 'op': 'multiply', 'ref_a': 'a', 'ref_b': 'm', 'label': 'A*M'},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        # Grade 5: Count=2, Male Sum=30, A+M=32, A*M=60
+        self.assertEqual(res['rows'][0], ['5', 2.0, 30.0, 32.0, 60.0])
+        self.assertEqual(res['rows'][1], ['6', 1.0, 30.0, 31.0, 30.0])
+
+    def test_dynamic_summary_table_threshold_filter_other_ops(self):
+        """Threshold filters support gt/lte and apply to sum/avg aggregations."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'score': 100.0},
+            {'grade': '5', 'ssid': '2', 'score': 200.0},
+            {'grade': '5', 'ssid': '3', 'score': 300.0},
+            {'grade': '6', 'ssid': '4', 'score': 400.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'hi', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Above 150',
+                 'filter': {'col': 'score', 'op': 'gt', 'val': 150}},
+                {'id': 'sumhi', 'calc_type': 'base', 'agg_func': 'sum', 'value_col': 'score', 'label': 'Sum Above 150',
+                 'filter': {'col': 'score', 'op': 'gt', 'val': 150}},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        # Grade 5: scores 100,200,300 → above 150 = 2 students, sum = 500
+        self.assertEqual(res['rows'][0], ['5', 2.0, 500.0])
+        # Grade 6: 400 → 1 student, sum 400
+        self.assertEqual(res['rows'][1], ['6', 1.0, 400.0])
+
+    def test_dynamic_summary_table_equality_filter(self):
+        """eq/neq operators match a specific value (categorical and numeric),
+        and derived columns can build on those counts."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'gender': 'F', 'att_rate': 85.0},
+            {'grade': '5', 'ssid': '2', 'gender': 'M', 'att_rate': 80.0},
+            {'grade': '5', 'ssid': '3', 'gender': 'F', 'att_rate': 90.0},
+            {'grade': '6', 'ssid': '4', 'gender': 'M', 'att_rate': 95.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'fem', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Females',
+                 'filter': {'col': 'gender', 'op': 'eq', 'val': 'F'}},
+                {'id': 'males', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Not Females',
+                 'filter': {'col': 'gender', 'op': 'neq', 'val': 'F'}},
+                {'id': 'exact85', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Rate = 85',
+                 'filter': {'col': 'att_rate', 'op': 'eq', 'val': '85.0'}},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['col_headers'], ['Females', 'Not Females', 'Rate = 85'])
+        # Grade 5: F=2, not F=1, att_rate exactly 85.0=1
+        self.assertEqual(res['rows'][0], ['5', 2.0, 1.0, 1.0])
+        # Grade 6: F=0, not F=1, none exactly 85.0
+        self.assertEqual(res['rows'][1], ['6', 0.0, 1.0, 0.0])
+
+    def test_dynamic_summary_table_equality_derived(self):
+        """Equals/not-equals filtered counts compose into a derived ratio."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'gender': 'F'},
+            {'grade': '5', 'ssid': '2', 'gender': 'M'},
+            {'grade': '5', 'ssid': '3', 'gender': 'F'},
+            {'grade': '6', 'ssid': '4', 'gender': 'M'},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'fem', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Females',
+                 'filter': {'col': 'gender', 'op': 'eq', 'val': 'F'}},
+                {'id': 'tot', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Total'},
+                {'id': 'pct', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'fem', 'ref_b': 'tot',
+                 'label': '% Female', 'as_percent': True, 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['rows'][0], ['5', 2.0, 3.0, 66.7])
+        self.assertEqual(res['rows'][1], ['6', 0.0, 1.0, 0.0])
+
+    def test_dynamic_summary_table_legacy_calculations_backcompat(self):
+        """Calculation entries saved before this feature (no id/calc_type) must
+        produce byte-identical output to the original behavior."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'scale_score': 300.0},
+            {'grade': '5', 'ssid': '456', 'scale_score': 400.0},
+            {'grade': '6', 'ssid': '789', 'scale_score': 500.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'agg_func': 'count', 'value_col': 'ssid', 'label': 'My Count', 'decimals': None},
+                {'agg_func': 'avg', 'value_col': 'scale_score', 'label': 'My Avg', 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['__type__'], 'table')
+        self.assertEqual(res['col_headers'], ['My Count', 'My Avg'])
+        self.assertEqual(res['rows'], [
+            ['5', 2.0, 350.0],
+            ['6', 1.0, 500.0],
+        ])
+
+    def test_dynamic_summary_table_derived_echarts_mode(self):
+        """Derived columns render correctly when the dynamic table is displayed
+        as a stacked bar chart."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'att_rate': 90.0},
+            {'grade': '5', 'ssid': '456', 'att_rate': 80.0},
+            {'grade': '6', 'ssid': '789', 'att_rate': 95.0},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'c1', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Total'},
+                {'id': 'c2', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Below',
+                 'filter': {'col': 'att_rate', 'op': 'lt', 'val': 85}},
+                {'id': 'c3', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'c2', 'ref_b': 'c1',
+                 'label': 'Pct Below', 'as_percent': True, 'decimals': 1},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'dyn_display_type': 'stacked_bar',
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertNotIn('__type__', res)
+        self.assertEqual(res['xAxis']['data'], ['5', '6'])
+        self.assertEqual([s['name'] for s in res['series']], ['Total', 'Below', 'Pct Below'])
+        self.assertEqual(res['series'][0]['stack'], 'total')
+        self.assertEqual([s['data'] for s in res['series']], [[2.0, 1.0], [1.0, 0.0], [50.0, 0.0]])
+
+
+class PageDuplicateTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='pageadmin', password='password', is_superuser=True,
+        )
+        self.chart = SavedChart.objects.create(
+            name='Shared Chart', owner=self.user, chart_type='bar',
+        )
+        self.page = DataVizPage.objects.create(
+            title='Enrollment Overview',
+            description='Page description',
+            container_width='wide',
+            show_header=False,
+            owner=self.user,
+            status=DataVizPage.STATUS_ACTIVE,
+            page_filters=[{'source_col': 'grade', 'label': 'Grade'}],
+        )
+        row = DataVizPageRow.objects.create(
+            page=self.page, label='Main row', position=2,
+            bg_color='#fff', collapsed=True, col_guide=4,
+        )
+        DataVizPageSection.objects.create(
+            page=self.page, row=row,
+            element_type=DataVizPageSection.TYPE_CHART,
+            chart=self.chart, show_title=False,
+            slot_filters=[{'col': 'grade', 'value': '5'}],
+            gs_x=2, gs_y=3, gs_w=8, gs_h=5, position=1,
+        )
+        DataVizPageSection.objects.create(
+            page=self.page,
+            element_type=DataVizPageSection.TYPE_HTML,
+            html_content='<p>Notes</p>', position=2,
+            gs_w=12, gs_h=2,
+        )
+
+    def test_duplicate_page_copies_layout_and_reuses_shared_charts(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(f'/dataviz/api/pages/{self.page.slug}/duplicate/')
+
+        self.assertEqual(response.status_code, 200)
+        copied = DataVizPage.objects.get(slug=response.json()['page']['slug'])
+        self.assertEqual(copied.title, 'Enrollment Overview (Copy)')
+        self.assertEqual(copied.status, DataVizPage.STATUS_DRAFT)
+        self.assertEqual(copied.owner, self.user)
+        self.assertIsNone(copied.linked_site_page_id)
+        self.assertEqual(copied.page_filters, self.page.page_filters)
+        self.assertEqual(copied.rows.count(), 1)
+        self.assertEqual(copied.sections.count(), 2)
+
+        copied_row = copied.rows.get()
+        self.assertEqual(copied_row.label, 'Main row')
+        self.assertTrue(copied_row.collapsed)
+        copied_chart_section = copied.sections.get(element_type=DataVizPageSection.TYPE_CHART)
+        self.assertEqual(copied_chart_section.chart_id, self.chart.id)
+        self.assertEqual(copied_chart_section.row_id, copied_row.id)
+        self.assertEqual(copied_chart_section.slot_filters, [{'col': 'grade', 'value': '5'}])
+
+
+class PageSlugTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='slugadmin', password='password', is_superuser=True,
+        )
+        self.client.force_login(self.user)
+
+    def _save(self, payload):
+        import json
+        return self.client.post(
+            '/dataviz/api/pages/save/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+    def test_slug_with_spaces_is_normalized(self):
+        response = self._save({'title': 'My Page', 'slug': 'my page url', 'status': 'draft'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['page']['slug'], 'my-page-url')
+
+    def test_invalid_slug_is_rejected(self):
+        response = self._save({'title': 'Bad Slug', 'slug': '!!!', 'status': 'draft'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('URL slug', response.json()['error'])
+
+    def test_duplicate_slug_is_rejected(self):
+        DataVizPage.objects.create(title='Existing', slug='taken-slug', owner=self.user)
+        response = self._save({'title': 'Another Page', 'slug': 'taken-slug', 'status': 'draft'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('already exists', response.json()['error'])
+
+    def test_slug_change_on_published_page_updates_navbar(self):
+        from dataviz.utils.page_publish import publish_page
+        from users.models_pages import Page
+
+        page = DataVizPage.objects.create(
+            title='Navbar Page',
+            slug='old-slug',
+            owner=self.user,
+            status=DataVizPage.STATUS_ACTIVE,
+        )
+        publish_page(page, self.user)
+        page.refresh_from_db()
+        site_page_id = page.linked_site_page_id
+
+        response = self._save({
+            'id': page.id,
+            'title': 'Navbar Page',
+            'slug': 'new-slug',
+            'status': 'active',
+        })
+        self.assertEqual(response.status_code, 200)
+
+        page.refresh_from_db()
+        self.assertEqual(page.slug, 'new-slug')
+
+        site_page = Page.objects.get(pk=site_page_id)
+        self.assertEqual(site_page.url_path, '/dataviz/pages/new-slug/')
+        self.assertEqual(site_page.status, 'active')
+
+
+class PageFolderTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='folderadmin', password='password', is_superuser=True,
+        )
+        self.client.force_login(self.user)
+
+    def test_page_index_groups_by_folder(self):
+        DataVizPage.objects.create(title='A', slug='a', owner=self.user, folder='Reports / ELA')
+        DataVizPage.objects.create(title='B', slug='b', owner=self.user, folder='Reports / Math')
+        DataVizPage.objects.create(title='C', slug='c', owner=self.user, folder='')
+
+        response = self.client.get('/dataviz/pages/?folder=Reports')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ELA')
+        self.assertContains(response, 'Math')
+        self.assertNotContains(response, '>C<')
+
+    def test_status_filter_shows_only_published(self):
+        DataVizPage.objects.create(
+            title='Live', slug='live', owner=self.user, status=DataVizPage.STATUS_ACTIVE,
+        )
+        DataVizPage.objects.create(
+            title='Draft Page', slug='draft-page', owner=self.user, status=DataVizPage.STATUS_DRAFT,
+        )
+
+        response = self.client.get('/dataviz/pages/?status=active')
+        self.assertContains(response, 'Live')
+        self.assertNotContains(response, 'Draft Page')
+
+    def test_unpublish_api(self):
+        from dataviz.utils.page_publish import publish_page
+        from users.models_pages import Page
+
+        page = DataVizPage.objects.create(
+            title='To Unpublish', slug='to-unpublish', owner=self.user,
+            status=DataVizPage.STATUS_ACTIVE,
+        )
+        publish_page(page, self.user)
+        page.refresh_from_db()
+        site_page_id = page.linked_site_page_id
+
+        response = self.client.post('/dataviz/api/pages/to-unpublish/unpublish/')
+        self.assertEqual(response.status_code, 200)
+        page.refresh_from_db()
+        self.assertEqual(page.status, DataVizPage.STATUS_DRAFT)
+        self.assertEqual(Page.objects.get(pk=site_page_id).status, 'inactive')
+
+    def test_publish_api(self):
+        from users.models_pages import Page
+
+        page = DataVizPage.objects.create(
+            title='To Publish', slug='to-publish', owner=self.user,
+            status=DataVizPage.STATUS_DRAFT,
+        )
+        response = self.client.post('/dataviz/api/pages/to-publish/publish/')
+        self.assertEqual(response.status_code, 200)
+        page.refresh_from_db()
+        self.assertEqual(page.status, DataVizPage.STATUS_ACTIVE)
+        self.assertIsNotNone(page.linked_site_page_id)
+        self.assertEqual(Page.objects.get(pk=page.linked_site_page_id).status, 'active')
+
+    def test_move_api(self):
+        import json
+        page = DataVizPage.objects.create(title='Movable', slug='movable', owner=self.user)
+        response = self.client.post(
+            '/dataviz/api/pages/movable/move/',
+            data=json.dumps({'folder': 'Academics / Math'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        page.refresh_from_db()
+        self.assertEqual(page.folder, 'Academics / Math')
+
+    def test_create_empty_folder(self):
+        import json
+        response = self.client.post(
+            '/dataviz/api/pages/folders/create/',
+            data=json.dumps({'folder': 'Reports / ELA'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        response = self.client.get('/dataviz/pages/?folder=Reports')
+        self.assertContains(response, 'ELA')
+
+    def test_folders_list_api(self):
+        DataVizPage.objects.create(title='A', slug='a', owner=self.user, folder='Alpha / Beta')
+        DataVizPageFolder.objects.create(path='Gamma')
+        response = self.client.get('/dataviz/api/pages/folders/')
+        self.assertEqual(response.status_code, 200)
+        folders = response.json()['folders']
+        self.assertIn('Alpha / Beta', folders)
+        self.assertIn('Gamma', folders)
+
+    def test_batch_move_api(self):
+        import json
+        DataVizPage.objects.create(title='One', slug='one', owner=self.user, folder='Old')
+        DataVizPage.objects.create(title='Two', slug='two', owner=self.user, folder='Old')
+        response = self.client.post(
+            '/dataviz/api/pages/move-batch/',
+            data=json.dumps({'slugs': ['one', 'two'], 'folder': 'New / Home'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['moved'], 2)
+        self.assertEqual(DataVizPage.objects.get(slug='one').folder, 'New / Home')
+        self.assertEqual(DataVizPage.objects.get(slug='two').folder, 'New / Home')
+
 
 class DatasetExportCSVTests(TestCase):
     def setUp(self):
@@ -2028,6 +3285,7 @@ class DatasetExportCSVTests(TestCase):
             'distinct': True,
             'joins': [],
             'filters': [],
+            'status_filter': ['Inactive'],
             'columns': ['current_student.ssid', 'current_student.student_name', 'current_student.grade']
         }
 
@@ -2040,6 +3298,7 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['Content-Type'], 'text/csv')
         self.assertIn('attachment; filename="dataset_export.csv"', response['Content-Disposition'])
+        self.assertEqual(mock_compile.call_args.kwargs['status_filter'], ['Inactive'])
 
         # Consume the streaming content
         content = b"".join(response.streaming_content).decode('utf-8')
@@ -2049,10 +3308,326 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(lines[1], '"123","Alice","5"')
 
 
+class SqlDatasetTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='sqladmin', password='password', is_superuser=True)
+
+class SqlYearPlaceholderTests(SimpleTestCase):
+    @patch('dataviz.models.RelativeYear')
+    def test_resolve_sql_year_placeholders_from_relative_year_table(self, mock_rel_model):
+        from dataviz.utils.data_loader import resolve_sql_year_placeholders
+
+        mock_rel_model.objects.all.return_value = [
+            SimpleNamespace(relative_label='Last School Year', school_year='2024-2025'),
+            SimpleNamespace(relative_label='This School Year', school_year='2025-2026'),
+        ]
+        sql = (
+            "SELECT * FROM t WHERE yr = '{{Last School Year}}' "
+            "OR yr = '{{This School Year}}'"
+        )
+        resolved, err = resolve_sql_year_placeholders(sql)
+        self.assertIsNone(err)
+        self.assertIn("'2024-2025'", resolved)
+        self.assertIn("'2025-2026'", resolved)
+        self.assertNotIn('{{', resolved)
 
 
+class SqlDatasetTests(TestCase):
+    def test_dataset_sql_preview_api(self, mock_execute):
+        mock_execute.return_value = {
+            'columns': ['ssid', 'grade'],
+            'rows': [{'ssid': '1', 'grade': '5'}],
+            'total_rows': 1,
+            'has_more': False,
+            'error': None,
+        }
+        self.client.force_login(self.user)
+        response = self.client.post(
+            '/dataviz/api/datasets/preview/',
+            data=json.dumps({'source_type': 'sql', 'source_sql': 'SELECT 1'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'ssid')
+        mock_execute.assert_called_once()
+
+    @patch('dataviz.views.dataset_views.execute_sql_dataset')
+    def test_dataset_sql_save_api(self, mock_execute):
+        mock_execute.return_value = {
+            'columns': ['ssid'],
+            'rows': [{'ssid': '1'}],
+            'total_rows': 1,
+            'has_more': False,
+            'error': None,
+        }
+        self.client.force_login(self.user)
+        response = self.client.post(
+            '/dataviz/api/datasets/save/',
+            data=json.dumps({
+                'source_type': 'sql',
+                'source_sql': 'SELECT ssid FROM current_student LIMIT 1',
+                'name': 'SQL Test Dataset',
+                'columns': ['ssid'],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        ds = Dataset.objects.get(pk=data['id'])
+        self.assertEqual(ds.source_type, Dataset.SOURCE_SQL)
+        self.assertIn('SELECT', ds.source_sql)
 
 
+class AssessmentEnrichmentRegressionTests(TestCase):
+    def test_augment_passes_school_year_from_rows_and_column_keys(self):
+        from unittest.mock import patch
+        from dataviz.utils.assessment_enrichment import augment_rows_with_assessment_cols
 
+        rows = [
+            {'ssid': '123', 'grade': '5', 'school_year': '2025-2026'},
+        ]
+        with patch('dataviz.utils.data_loader.enrich_drill_rows') as mock_enrich:
+            mock_enrich.return_value = (rows, [], None)
+            augment_rows_with_assessment_cols(
+                rows,
+                ['test_2025_2026_ELA_Fall_PL'],
+                None,
+            )
+        filters = mock_enrich.call_args[0][2]
+        self.assertIn('2025-2026', filters.get('school_year', []))
 
+    def test_enrich_requests_student_id_when_column_empty(self):
+        from unittest.mock import patch
+        from dataviz.utils.data_loader import enrich_drill_rows
+
+        rows = [
+            {'ssid': '123', 'student_id': None, 'grade': '5', 'school_year': '2025-2026'},
+            {'ssid': '456', 'student_id': '', 'grade': '6', 'school_year': '2025-2026'},
+        ]
+        with patch('dataviz.utils.data_loader._fetch_base_columns_for_rows') as mock_base, \
+             patch('dataviz.utils.data_loader._enrich_rows_test_mark') as mock_test:
+            mock_base.return_value = (
+                [
+                    {'ssid': '123', 'student_id': 'loc1', 'grade': '5', 'school_year': '2025-2026'},
+                    {'ssid': '456', 'student_id': 'loc2', 'grade': '6', 'school_year': '2025-2026'},
+                ],
+                None,
+            )
+            mock_test.return_value = None
+            enrich_drill_rows(rows, ['test_2025_2026_ELA_Fall_PL'], {})
+        mock_base.assert_called_once()
+        self.assertIn('student_id', mock_base.call_args[0][1])
+
+    @patch('clickhouse_utils.executor.QueryExecutor.pg_cursor')
+    @patch('dataviz.utils.chart_builder._record_pg_val')
+    def test_fetch_test_data_uses_ssid_when_student_id_missing(self, _mock_pg, mock_pg_cursor):
+        from unittest.mock import MagicMock
+        from dataviz.utils.data_loader import _fetch_test_data
+
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+        mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        students = [{'ssid': '999', 'grade': '5', 'school_year': '2025-2026'}]
+        test_infos = [{
+            'year': '2025-2026',
+            'test_name': 'CAASPP',
+            'subject': 'ELA',
+            'test_window': None,
+            'metric': 'pl',
+            'col_name': 'test_2025_2026_CAASPP_ELA_PL',
+        }]
+
+        _fetch_test_data(None, test_infos, [], students)
+
+        cursor.execute.assert_called_once()
+        sql = cursor.execute.call_args[0][0]
+        params = cursor.execute.call_args[0][1]
+        self.assertIn('INNER JOIN tests t', sql)
+        self.assertNotIn('test_window IS NULL', sql)
+        self.assertIn('999', params[0])
+
+    def test_fetch_test_data_no_window_matches_spring_results(self):
+        from unittest.mock import patch, MagicMock
+        from dataviz.utils.data_loader import _fetch_test_data
+
+        students = [{'ssid': '123', 'school_year': '2024-2025', 'grade': '5'}]
+        test_infos = [{
+            'year': '2024-2025',
+            'test_name': 'CAASPP',
+            'subject': 'ELA',
+            'test_window': None,
+            'metric': 'pl',
+            'col_name': 'test_2024_2025_CAASPP_ELA_PL',
+        }]
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('loc1', '123', None, '3', None, '2024-2025', 'CAASPP', 'ELA', 'Spring'),
+        ]
+        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor, \
+             patch('dataviz.utils.chart_builder._record_pg_val'):
+            mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+            mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+            _fetch_test_data(None, test_infos, [], students)
+
+        self.assertEqual(students[0]['test_2024_2025_CAASPP_ELA_PL'], '3')
+
+    @patch('dataviz.utils.chart_builder._record_pg_val')
+    def test_fetch_test_data_attaches_pl_on_all_enrollment_rows(self, mock_record):
+        from unittest.mock import MagicMock, patch
+        from dataviz.utils.data_loader import _fetch_test_data
+
+        students = [
+            {'ssid': '123', 'student_id': 'loc1', 'school_year': '2025-2026', 'grade': '6'},
+            {'ssid': '123', 'student_id': 'loc1', 'school_year': '2024-2025', 'grade': '5'},
+        ]
+        test_infos = [{
+            'year': '2024-2025',
+            'test_name': 'ELPAC',
+            'subject': 'summative',
+            'test_window': 'Regular',
+            'metric': 'pl',
+            'col_name': 'test_2024_2025_ELPAC_summative_Regular_PL',
+        }]
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('loc1', '123', None, '2', None, '2024-2025', 'ELPAC', 'summative', 'Regular'),
+        ]
+        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
+            mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+            mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+            _fetch_test_data(None, test_infos, [], students)
+
+        col = 'test_2024_2025_ELPAC_summative_Regular_PL'
+        self.assertEqual(students[0][col], '2')
+        self.assertEqual(students[1][col], '2')
+        self.assertEqual(mock_record.call_count, 2)
+
+    @patch('clickhouse_utils.executor.QueryExecutor.pg_cursor')
+    @patch('dataviz.utils.chart_builder._record_pg_val')
+    def test_fetch_test_data_blank_sentinel_scores(self, _mock_pg, mock_record):
+        from unittest.mock import MagicMock, patch
+        from dataviz.utils.data_loader import _fetch_test_data
+
+        students = [
+            {'ssid': '123', 'student_id': 'loc1', 'school_year': '2024-2025', 'grade': '6'},
+        ]
+        test_infos = [
+            {
+                'year': '2024-2025',
+                'test_name': 'CAASPP',
+                'subject': 'ELA',
+                'test_window': None,
+                'metric': 'pl',
+                'col_name': 'test_2024_2025_CAASPP_ELA_PL',
+            },
+            {
+                'year': '2024-2025',
+                'test_name': 'CAASPP',
+                'subject': 'Math',
+                'test_window': None,
+                'metric': 'ss',
+                'col_name': 'test_2024_2025_CAASPP_Math_SS',
+            },
+        ]
+        # NaN / NS sentinel values must never surface as raw strings.
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('loc1', '123', None, 'NaN', None, '2024-2025', 'CAASPP', 'ELA', ''),
+            ('loc1', '123', 'NS', None, None, '2024-2025', 'CAASPP', 'Math', ''),
+        ]
+        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
+            mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+            mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+            _fetch_test_data(None, test_infos, [], students)
+
+        self.assertEqual(students[0]['test_2024_2025_CAASPP_ELA_PL'], '\u2014')
+        self.assertEqual(students[0]['test_2024_2025_CAASPP_Math_SS'], '\u2014')
+
+    def test_stack_same_as_y_uses_count_not_avg(self):
+        import polars as pl
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '1'},
+            {'grade': '03', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+            {'grade': '04', 'school_year': '2024-2025', 'pl': '4'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'grade',
+            'y_col': 'pl',
+            'stack_col': 'pl',
+            'agg': 'avg',
+            'show_percent': True,
+            'stack_order': ['1', '4'],
+        }
+        opt = build_option(rows, {}, cfg)
+        idx = {c: i for i, c in enumerate(opt['__category_names__'])}
+        pl1 = {s['name']: s['data'][idx['03']] for s in opt['series']}
+        pl4 = {s['name']: s['data'][idx['04']] for s in opt['series']}
+        self.assertNotEqual(pl1.get('1'), pl4.get('1'))
+        self.assertAlmostEqual(pl1['1'], 66.7, places=1)
+        self.assertAlmostEqual(pl4['4'], 100.0, places=1)
+
+    def test_stacked_percent_honors_zero_decimals(self):
+        from dataviz.utils.chart_builder import build_option
+        from dataviz.utils.chart_builder.common import _percent_decimals
+
+        self.assertEqual(_percent_decimals({'percent_decimals': 0}), 0)
+        self.assertEqual(_percent_decimals({'percent_decimals': '0'}), 0)
+        self.assertEqual(_percent_decimals({}), 1)
+
+        rows = [
+            {'grade': '03', 'pl': '1'},
+            {'grade': '03', 'pl': '1'},
+            {'grade': '03', 'pl': '4'},
+        ]
+        cfg = {
+            'chart_type': 'bar',
+            'x_col': 'grade',
+            'y_col': 'pl',
+            'stack_col': 'pl',
+            'agg': 'count',
+            'show_percent': True,
+            'percent_decimals': 0,
+            'stack_order': ['1', '4'],
+        }
+        opt = build_option(rows, {}, cfg)
+        pl1 = next(s for s in opt['series'] if s['name'] == '1')
+        self.assertEqual(pl1['data'][0], 67)
+        self.assertIn('toFixed(0)', opt['series'][0]['label']['__formatter_js__'])
+        self.assertIn('toFixed(0)', opt['tooltip']['__formatter_js__'])
+
+    def test_bar_chart_keeps_students_after_test_pl_enrichment(self):
+        from unittest.mock import patch
+        from dataviz.utils.chart_builder import build_option
+        from dataviz.utils.assessment_enrichment import augment_rows_with_assessment_cols
+
+        rows = [
+            {'grade': '5', 'ssid': '1', 'school_year': '2025-2026'},
+            {'grade': '5', 'ssid': '2', 'school_year': '2025-2026'},
+            {'grade': '5', 'ssid': '3', 'school_year': '2025-2026'},
+        ]
+        enriched = [
+            {**r, 'test_2025_2026_ELA_Fall_PL': pl}
+            for r, pl in zip(rows, ['Above', 'Below', 'Above'])
+        ]
+        with patch('dataviz.utils.data_loader.enrich_drill_rows', return_value=(enriched, [], None)):
+            rows = augment_rows_with_assessment_cols(
+                rows, ['test_2025_2026_ELA_Fall_PL'], None,
+            )
+        opt = build_option(rows, {}, {
+            'chart_type': 'bar',
+            'x_col': 'test_2025_2026_ELA_Fall_PL',
+            'y_col': 'ssid',
+            'agg': 'count',
+        })
+        data = sorted(zip(opt['xAxis']['data'], opt['series'][0]['data']))
+        self.assertEqual(data, [('Above', 2.0), ('Below', 1.0)])
 

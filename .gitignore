@@ -38,3 +38,6 @@ logs/
 *.log
 docker-compose.yml
 *.dump
+
+# Old Django project
+django_pro_old/

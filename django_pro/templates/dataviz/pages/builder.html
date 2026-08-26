@@ -75,6 +75,7 @@
 <script>
   const _PAGE_ID              = {{ page_id|default:'null' }};
   const _PAGE_SLUG            = "{{ page.slug|default:''|escapejs }}";
+  const _PAGE_FOLDER          = "{{ page.folder|default:default_folder|default:''|escapejs }}";
   const _PAGE_TITLE           = "{{ page.title|default:''|escapejs }}";
   const _PAGE_DESC            = "{{ page.description|default:''|escapejs }}";
   const _PAGE_STATUS          = "{{ page.status|default:'draft'|escapejs }}";
@@ -82,6 +83,7 @@
   const _PAGE_SHOW_HEADER     = {{ page.show_header|default:True|yesno:"true,false" }};
   const _PAGE_FILTERS         = JSON.parse('{{ filters_json|escapejs }}');
   const _ROWS_JSON            = JSON.parse('{{ rows_json|escapejs }}');
+  const _TABS_JSON            = JSON.parse('{{ tabs_json|escapejs }}');
   const _SECTIONS_JSON        = JSON.parse('{{ sections_json|escapejs }}');
   const _SAVE_URL             = "{% url 'dataviz:page_save' %}";
   const _SECTIONS_URL         = "{% url 'dataviz:page_sections' '__slug__' %}";
@@ -203,10 +205,30 @@
         <div x-show="sidebarSections.settings" x-cloak class="px-4 pb-4 space-y-3">
 
           <div>
-            <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Slug</label>
-            <input type="text" x-model="pageSlug" @blur="autoSave()"
+            <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Page URL</label>
+            <div class="flex items-stretch">
+              <span class="inline-flex items-center px-2.5 py-1.5 text-[10px] text-slate-400 bg-slate-50 border border-r-0 border-slate-300 rounded-l-lg whitespace-nowrap">/dataviz/pages/</span>
+              <input type="text" x-model="pageSlug" @input="onSlugInput()" @blur="onSlugBlur()"
+                     class="flex-1 min-w-0 px-2.5 py-1.5 text-xs border border-slate-300 rounded-r-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                     :class="slugError ? 'border-red-400 focus:ring-red-400 focus:border-red-400' : ''"
+                     placeholder="auto-generated"
+                     spellcheck="false"
+                     autocapitalize="off"
+                     autocomplete="off">
+            </div>
+            <p class="text-[10px] text-slate-400 mt-1">Lowercase letters, numbers, and hyphens only — no spaces.</p>
+            <p x-show="slugError" x-cloak class="text-[10px] text-red-500 mt-1" x-text="slugError"></p>
+          </div>
+
+          <div>
+            <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Folder</label>
+            <input type="text" x-model="pageFolder" @blur="autoSave()" list="page-folder-datalist"
                    class="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                   placeholder="auto-generated">
+                   placeholder="e.g. Academics / Enrollment">
+            <datalist id="page-folder-datalist">
+              {% for f in all_folders %}<option value="{{ f }}">{% endfor %}
+            </datalist>
+            <p class="text-[10px] text-slate-400 mt-1">Pick an existing folder or type a new path. Use <span class="font-mono"> / </span> to nest.</p>
           </div>
 
           <div>
@@ -389,7 +411,43 @@
         </div>
       </div>
 
-      <!-- ── 3. Layout (row/section tree) ─────────────────────── -->
+      <!-- ── 3. Page tabs ──────────────────────────────────────── -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-header" @click="sidebarSections.tabs = !sidebarSections.tabs">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold uppercase tracking-widest text-slate-700">Page tabs</span>
+            <span class="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-indigo-50 text-indigo-600" x-text="tabs.length"></span>
+          </div>
+          <svg class="w-3.5 h-3.5 text-slate-400" :class="{'rotate-180': sidebarSections.tabs}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+        </div>
+        <div x-show="sidebarSections.tabs" x-cloak class="px-3 pb-4 space-y-2">
+          <p class="text-[10px] leading-4 text-slate-500">Create tabs at the top of the published page, then assign each row to a tab.</p>
+          <template x-for="tab in tabs" :key="tab.id">
+            <div class="flex items-center gap-1">
+              <input x-model="tab.name" @change="updateTab(tab)" class="min-w-0 flex-1 text-[10px] border border-slate-200 rounded px-2 py-1.5 focus:ring-1 focus:ring-indigo-500">
+              <button @click="removeTab(tab.id)" class="text-slate-300 hover:text-red-500 text-sm">&times;</button>
+            </div>
+          </template>
+          <div class="flex gap-1">
+            <input x-model="newTabName" @keydown.enter.prevent="addTab()" placeholder="New tab name…" class="min-w-0 flex-1 text-[10px] border border-slate-300 rounded px-2 py-1.5">
+            <button @click="addTab()" class="px-2 py-1.5 text-[9px] font-bold uppercase text-indigo-700 bg-indigo-50 border border-indigo-200 rounded">Add</button>
+          </div>
+          <div x-show="tabs.length > 0" class="pt-1 border-t border-slate-100">
+            <p class="mb-1 text-[9px] font-semibold text-slate-400 uppercase tracking-wide">Assign rows</p>
+            <template x-for="row in rows" :key="'tab-row-' + row.id">
+              <label class="flex items-center gap-1.5 py-1 text-[10px] text-slate-600">
+                <span class="truncate flex-1" x-text="row.label || ('Row ' + (rows.indexOf(row) + 1))"></span>
+                <select :value="row.tab_id || ''" @change="assignRowTab(row, $event.target.value)" class="w-28 text-[9px] border border-slate-200 rounded px-1 py-1 bg-white">
+                  <option value="">Unassigned</option>
+                  <template x-for="tab in tabs" :key="tab.id"><option :value="tab.id" x-text="tab.name"></option></template>
+                </select>
+              </label>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 4. Layout (row/section tree) ─────────────────────── -->
       <div class="sidebar-section flex-1">
         <div class="sidebar-section-header" @click="sidebarSections.layout = !sidebarSections.layout">
           <div class="flex items-center gap-2">
@@ -530,7 +588,7 @@
                           <!-- Height control -->
                           <div>
                             <div class="text-[9px] text-slate-500 mb-0.5 font-semibold uppercase tracking-wider">Height</div>
-                            <select :value="getSection(selectedSection)?.gs_h || 2"
+                            <select :value="getSection(selectedSection)?.gs_h ?? 2"
                                     @change="updateSectionHeight(selectedSection, parseInt($event.target.value))"
                                     class="w-full text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
                               <option value="0">Auto (fit content)</option>

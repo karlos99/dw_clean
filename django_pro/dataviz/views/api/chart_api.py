@@ -18,7 +18,7 @@ from dataviz.utils.chart_builder import build_option
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '8'
+_CHART_PIPELINE_VERSION = '10'
 
 
 def _effective_chart_cfg(chart) -> dict:
@@ -68,6 +68,9 @@ def _remap_config_cols(config: dict, column_mappings: dict | None) -> dict:
                     new_item = dict(item)
                     if 'value_col' in new_item and isinstance(new_item['value_col'], str):
                         new_item['value_col'] = column_mappings.get(new_item['value_col'], new_item['value_col'])
+                    f = new_item.get('filter')
+                    if isinstance(f, dict) and f.get('col') and isinstance(f['col'], str):
+                        new_item['filter'] = {**f, 'col': column_mappings.get(f['col'], f['col'])}
                     new_calcs.append(new_item)
                 else:
                     new_calcs.append(item)
@@ -101,158 +104,18 @@ def _progress_growth_query_columns(chart_type: str, chart_cfg: dict) -> list:
 
 
 def _augment_chart_result_rows(chart_type: str, chart_cfg: dict, col_mappings: dict, result: dict) -> dict:
-    """Ensure test/mark PL columns are present on chart rows (mirrors drill fetch)."""
-    if result.get('error') or not result.get('rows'):
-        return result
-    missing = _get_missing_assessment_cols(chart_cfg, col_mappings or {}, result['rows'])
-    if missing:
-        result = dict(result)
-        result['rows'] = _augment_rows_with_assessment_cols(result['rows'], missing, None)
-    return result
+    from dataviz.utils.assessment_enrichment import augment_chart_result_rows
+    return augment_chart_result_rows(chart_type, chart_cfg, col_mappings, result)
 
 
 def _augment_rows_with_assessment_cols(rows: list, needed_keys: list, dataset, source_filters=None) -> list:
-    """Bulk-fetch missing test/mark columns for rows retrieved from a SavedQuery or
-    dataset SQL (i.e. the dataset doesn't include the results/tests JOIN).  The
-    data explorer already knows how to resolve these keys to pl/ss from results
-    and test metadata from tests — this reuses that exact mechanism.
-    """
-    if not rows or not needed_keys:
-        return rows
-    from dataviz.utils.data_loader import run_column_query, _parse_year
-    from dataexploration.school_year_utils import resolve_relative_column_key
-
-    id_key = None
-    ids = []
-    for candidate in ('student_id', 'ssid', 'stu_annual_key'):
-        ids = [str(r.get(candidate) or '').strip() for r in rows if r.get(candidate)]
-        if ids:
-            id_key = candidate
-            ids = list(set(ids))
-            break
-    if not ids:
-        return rows
-
-    explorer_filters: dict = {id_key: ids}
-    if source_filters and 'status' in source_filters:
-        explorer_filters['status'] = source_filters['status']
-    # Extract years from both existing rows AND needed assessment column keys
-    needed_years = []
-    for k in needed_keys:
-        res_k = resolve_relative_column_key(k)
-        yr = _parse_year(res_k)
-        if yr:
-            needed_years.append(yr)
-
-    raw_years = []
-    for r in rows:
-        sy = r.get('school_year')
-        if not sy:
-            for k in r:
-                if k.endswith('school_year'):
-                    sy = r[k]
-                    break
-        if sy:
-            raw_years.append(str(sy).strip())
-    all_years = list(set(raw_years + needed_years))
-    if all_years:
-        explorer_filters['school_year'] = all_years
-
-    fetch_cols = ['stu_annual_key', 'ssid', 'student_id', 'school_year'] + needed_keys
-    exp_result = run_column_query(fetch_cols, explorer_filters, user=None)
-
-    # Merge fetched assessment columns into student dicts by student_id or candidate id_key
-    exp_rows = exp_result.get('rows', [])
-    lookup_map = {}
-    for r in exp_rows:
-        match_val = str(r.get(id_key) or '').strip()
-        if match_val:
-            lookup_map.setdefault(match_val, []).append(r)
-
-    from dataviz.utils.chart_builder import _record_pg_val
-
-    for row in rows:
-        match = str(row.get(id_key) or '').strip()
-        if match and match in lookup_map:
-            for exp_row in lookup_map[match]:
-                norm_exp_row = {str(col).replace('-', '_').lower(): val for col, val in exp_row.items()}
-                for k in needed_keys:
-                    k_norm = str(k).replace('-', '_').lower()
-                    val = norm_exp_row.get(k_norm)
-                    existing = row.get(k)
-                    existing_blank = (
-                        existing is None
-                        or str(existing).strip() in ('', '\u2014', '-', 'None', 'null', 'NULL', 'nan', 'NaN')
-                    )
-                    if val is not None and str(val).strip() not in ('', '\u2014', '-', 'None', 'null', 'NULL'):
-                        row[k] = val
-                        resolved_k = k
-                        for exp_k in exp_row:
-                            if str(exp_k).replace('-', '_').lower() == k_norm:
-                                resolved_k = exp_k
-                                break
-                        _record_pg_val(row, resolved_k, val)
-                    elif existing_blank and val is not None:
-                        row[k] = val
-                for exp_k, exp_v in exp_row.items():
-                    if not str(exp_k).startswith('__pg_all__'):
-                        continue
-                    if isinstance(exp_v, list):
-                        for item in exp_v:
-                            _record_pg_val(row, exp_k[len('__pg_all__'):], item)
-                    elif isinstance(exp_v, (set, tuple)):
-                        for item in exp_v:
-                            _record_pg_val(row, exp_k[len('__pg_all__'):], item)
-                    else:
-                        _record_pg_val(row, exp_k[len('__pg_all__'):], exp_v)
-    return rows
+    from dataviz.utils.assessment_enrichment import augment_rows_with_assessment_cols
+    return augment_rows_with_assessment_cols(rows, needed_keys, dataset, source_filters)
 
 
 def _get_missing_assessment_cols(cfg: dict, col_mappings: dict, aliased_rows: list) -> list:
-    cols = list(col_mappings.values())
-    cfg_cols = []
-    for k, v in cfg.items():
-        if k in _CONFIG_COL_KEYS:
-            if isinstance(v, str):
-                cfg_cols.extend([p.strip() for p in v.split(',') if p.strip()])
-            elif isinstance(v, list):
-                cfg_cols.extend([str(item).strip() for item in v if isinstance(item, str)])
-    
-    from dataexploration.school_year_utils import resolve_relative_column_key
-    resolved_cfg_cols = [resolve_relative_column_key(c) for c in cfg_cols]
-    cols.extend(resolved_cfg_cols)
-
-    seen = set()
-    missing = []
-    blank_vals = {'', '\u2014', '-', 'none', 'null', 'nan', 'n/a'}
-
-    def _norm(c):
-        return str(c).replace('-', '_').lower()
-
-    def _col_has_data(c_norm: str) -> bool:
-        for r in aliased_rows:
-            for k, v in r.items():
-                if _norm(k) == c_norm:
-                    if v is not None and str(v).strip().lower() not in blank_vals:
-                        return True
-        return False
-
-    existing_cols = set()
-    if aliased_rows:
-        existing_cols = {_norm(c) for c in aliased_rows[0].keys()}
-
-    for c in cols:
-        if not c:
-            continue
-        c_norm = _norm(c)
-        if c_norm in seen:
-            continue
-        seen.add(c_norm)
-        if not (c.startswith('test_') or c.startswith('mark_')):
-            continue
-        if c_norm not in existing_cols or not _col_has_data(c_norm):
-            missing.append(c)
-    return missing
+    from dataviz.utils.assessment_enrichment import get_missing_assessment_cols
+    return get_missing_assessment_cols(cfg, col_mappings, aliased_rows)
 
 
 def _cfg_from_post(post):
@@ -270,6 +133,15 @@ def _cfg_from_post(post):
         color_map = json.loads(cm_raw) if cm_raw else {}
     except (json.JSONDecodeError, ValueError):
         color_map = {}
+
+    # Parse x_value_map JSON (category-axis display aliases)
+    xvm_raw = post.get('x_value_map', '')
+    try:
+        x_value_map = json.loads(xvm_raw) if xvm_raw else {}
+    except (json.JSONDecodeError, ValueError):
+        x_value_map = {}
+    if not isinstance(x_value_map, dict):
+        x_value_map = {}
 
     # Parse stack_order JSON
     so_raw = post.get('stack_order', '')
@@ -337,6 +209,8 @@ def _cfg_from_post(post):
         'series_col':        post.get('series_col', ''),
         'stack_col':         post.get('series_col', ''),
         'group_col':         post.get('group_col', ''),
+        'show_group_total':  post.get('show_group_total', '') in ('1', 'true', 'True', 'on', True),
+        'group_total_label': post.get('group_total_label') or None,
         'compare_pl_cols':   compare_pl_cols,
         'ac_include_cats':   ac_include_cats,
         'ac_include_pl':     ac_include_pl,
@@ -399,6 +273,7 @@ def _cfg_from_post(post):
         'show_points':       bool(post.get('show_points')),
         'smooth':            bool(post.get('smooth')),
         'color_map':         color_map,
+        'x_value_map':       x_value_map,
         # Stack order
         'stack_order':       stack_order,
         # Element toggles
@@ -426,6 +301,9 @@ def _cfg_from_post(post):
         'compare_gap':       _parse_int(post.get('compare_gap'), 30),
         'compare_cat_font_size': _parse_int(post.get('compare_cat_font_size'), 12),
         'compare_cat_rotation':  _parse_int(post.get('compare_cat_rotation'), 0),
+        'group_gap_size':        _parse_int(post.get('group_gap_size'), 0),
+        'group_gap':             _parse_int(post.get('group_gap'), 0),
+        'center_group_labels':   post.get('center_group_labels', '1') in ('1', 'true', 'True', 'on', True),
         # Axis & layout
         'x_label_rotation':  _parse_int(post.get('x_label_rotation'), 0),
         'x_label_font_size': _parse_int(post.get('x_label_font_size'), 11),
@@ -450,6 +328,7 @@ def _cfg_from_post(post):
         'parliament_shape':     post.get('parliament_shape', 'semi-circle'),
         'parliament_rows':      _parse_int(post.get('parliament_rows'), None) if post.get('parliament_rows') else None,
         'parliament_show_ss':   bool(post.get('parliament_show_ss')),
+        'one_row_per_stu_annual_key': bool(post.get('one_row_per_stu_annual_key')),
     }
 
 
@@ -555,6 +434,7 @@ def chart_preview_api(request):
         'ssql': source_sql,
         'sf': source_filters,
         'sc': _sel_cols,
+        'one_row_per_stu_annual_key': bool(cfg.get('one_row_per_stu_annual_key')),
     }, sort_keys=True).encode()).hexdigest()[:12]
     preview_data_key = f'preview_data:{preview_source_hash}'
     preview_cached = cache.get(preview_data_key)
@@ -584,26 +464,36 @@ def chart_preview_api(request):
         from dataviz.models import Dataset
         from dataviz.utils.compiler import (
             compile_dataset_to_sql, execute_compiled_query_aliased,
-            generate_column_aliases,
+            generate_column_aliases, dedupe_rows_by_stu_annual_key,
+            load_dataset_result,
         )
         from dataviz.utils.status_filter import prepare_interactive_filters
         try:
             ds = Dataset.objects.get(pk=source_id)
         except Dataset.DoesNotExist:
             return _error('Dataset not found')
-        # Fall back to auto-generated aliases when the dataset has no saved mappings.
         col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
-        active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-        resolved_filters, status_val = prepare_interactive_filters(source_filters or {}, ds, active_tables)
         limit_val = _parse_chart_row_limit(cfg)
-        sql, params = compile_dataset_to_sql(
-            ds, user=None, interactive_filters=resolved_filters,
-            limit=limit_val, status_filter=status_val,
-        )
-        res = execute_compiled_query_aliased(sql, params, col_mappings)
-        if res.get('error'):
-            return _error(res['error'])
-        aliased_rows = res.get('rows', [])
+        one_per_sak = bool(cfg.get('one_row_per_stu_annual_key'))
+        if getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL:
+            res = load_dataset_result(ds, limit=limit_val, one_per_sak=one_per_sak)
+            if res.get('error'):
+                return _error(res['error'])
+            aliased_rows = res.get('rows', [])
+        else:
+            active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
+            resolved_filters, status_val = prepare_interactive_filters(source_filters or {}, ds, active_tables)
+            sql, params = compile_dataset_to_sql(
+                ds, user=None, interactive_filters=resolved_filters,
+                limit=limit_val, status_filter=status_val,
+                one_row_per_stu_annual_key=one_per_sak,
+            )
+            res = execute_compiled_query_aliased(sql, params, col_mappings)
+            if res.get('error'):
+                return _error(res['error'])
+            aliased_rows = res.get('rows', [])
+            if one_per_sak:
+                aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
         # Fetch test_*/mark_* columns via data explorer for any alias that wasn't
         # returned by the dataset SQL (dataset without a results/tests JOIN).
         _missing_assessment = _get_missing_assessment_cols(cfg, col_mappings, aliased_rows)
@@ -612,7 +502,7 @@ def chart_preview_api(request):
                 aliased_rows, _missing_assessment, None, source_filters=source_filters,
             )
         cfg = _remap_config_cols(cfg, col_mappings)
-        result = {'rows': aliased_rows, 'columns': res.get('columns', []), 'row_count': res.get('row_count', 0)}
+        result = {'rows': aliased_rows, 'columns': res.get('columns', []), 'row_count': len(aliased_rows)}
     else:
         if not source_id:
             return _error('Select a data source first')
@@ -640,6 +530,7 @@ def chart_preview_api(request):
         # Extract series names for the stack-order UI, then strip the internal key
         series_names    = option.pop('__series_names__', [])
         category_names  = option.pop('__category_names__', [])
+        x_alias_keys    = option.pop('__x_alias_keys__', [])
         ac_avail_cats   = option.pop('__ac_avail_cats__', [])
         ac_avail_pl     = option.pop('__ac_avail_pl__', [])
         query_columns = list(rows[0].keys()) if rows else (result.get('columns', []))
@@ -647,6 +538,7 @@ def chart_preview_api(request):
             'option_json':        json.dumps(option),
             'series_names_json':  json.dumps(series_names),
             'category_names_json': json.dumps(category_names),
+            'x_alias_keys_json':  json.dumps(x_alias_keys),
             'ac_avail_cats_json': json.dumps(ac_avail_cats),
             'ac_avail_pl_json':   json.dumps(ac_avail_pl),
             'query_columns_json': json.dumps(query_columns),
@@ -685,6 +577,8 @@ def chart_save_api(request):
         drill_columns  = body.get('drill_through_columns', [])
         drill_fm       = body.get('drill_through_filter_map', {})
         school_filter_mode = body.get('school_filter_mode', 'enrolled')
+        is_user_menu   = bool(body.get('is_user_menu', False))
+        user_menu_order = body.get('user_menu_order', 0) or 0
     else:
         name           = request.POST.get('name', '').strip()
         chart_id       = request.POST.get('chart_id') or None
@@ -703,6 +597,11 @@ def chart_save_api(request):
         drill_columns  = [c.strip() for c in dt_str.split(',') if c.strip()] if dt_str else []
         drill_fm       = {}
         school_filter_mode = request.POST.get('school_filter_mode', 'enrolled')
+        is_user_menu   = request.POST.get('is_user_menu') == 'on'
+        try:
+            user_menu_order = int(request.POST.get('user_menu_order', 0) or 0)
+        except (TypeError, ValueError):
+            user_menu_order = 0
 
     if not name:
         msg = 'Chart name is required'
@@ -726,6 +625,8 @@ def chart_save_api(request):
     chart.school_filter_mode       = school_filter_mode
     chart.drill_through_columns    = drill_columns
     chart.drill_through_filter_map = drill_fm
+    chart.is_user_menu             = is_user_menu
+    chart.user_menu_order          = user_menu_order
 
     # For Column Picker source, store selected columns inside config
     if source_type == 'columns':
@@ -827,6 +728,22 @@ def chart_duplicate_api(request, chart_id):
     return JsonResponse({'chart': chart.to_dict(), 'success': True})
 
 
+def _can_render_chart(user, chart):
+    """Project Admins can render any chart. Other users may only render charts
+    exposed in the 'User Charts' menu or already placed on their home dashboard."""
+    from ..mixins import is_project_admin
+    if user.is_authenticated and is_project_admin(user):
+        return True
+    if chart.is_user_menu:
+        return True
+    if user.is_authenticated:
+        from dataviz.models import Dashboard
+        home = Dashboard.objects.filter(owner=user, is_home=True).first()
+        if home and home.chart_slots.filter(chart_id=chart.pk).exists():
+            return True
+    return False
+
+
 def _parse_pf_filters(get_params) -> dict:
     """Extract {column: value_or_list} from a QueryDict's pf_* params."""
     filters = {}
@@ -839,12 +756,18 @@ def _parse_pf_filters(get_params) -> dict:
 
 
 def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_source_id='',
-                         drill_source_name='', is_embed=False, request=None, if_none_match=None):
+                         drill_source_name='', is_embed=False, request=None, if_none_match=None,
+                         school_id=None):
     """
     Core chart-render pipeline: runs the chart's query (or reuses the 2-layer
     Redis cache), builds the ECharts option, and renders the chart_preview
     partial to HTML. Shared by the single-chart (chart_render_api) and
     batch (chart_batch_render_api) endpoints so both stay in sync.
+
+    ``school_id`` (a studata School ``state_id``) narrows the visual to a
+    single school on demand. It is injected as a ``school_state_id`` column
+    filter so it flows through every source type exactly like a page-level
+    filter. Omit it (or pass ''/'all') to show the default view: all students.
 
     Safe to call concurrently for different chart_ids from multiple threads:
     each chart's cache keys/queries are independent, Django's DB connections
@@ -858,6 +781,11 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     from dataviz.utils.data_loader import run_saved_query, run_raw_sql, run_column_query
 
     chart = get_object_or_404(SavedChart, pk=chart_id)
+
+    # ── School scope ────────────────────────────────────────────────
+    if school_id and school_id not in ('all', 'All', ''):
+        pf_filters = dict(pf_filters or {})
+        pf_filters.setdefault('school_state_id', school_id)
 
     # ── Build cache key ────────────────────────────────────────────
     pf_params = sorted(pf_filters.items())
@@ -928,7 +856,8 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             from dataviz.models import Dataset
             from dataviz.utils.compiler import (
                 compile_dataset_to_sql, execute_compiled_query_aliased,
-                generate_column_aliases,
+                generate_column_aliases, dedupe_rows_by_stu_annual_key,
+                load_dataset_result,
             )
             from dataviz.utils.status_filter import prepare_interactive_filters
             try:
@@ -941,36 +870,48 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
                 raw_filters = dict(chart.source_filters or {})
                 raw_filters.update(pf_filters)
-                active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-                resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
                 limit_val = _parse_chart_row_limit(chart_cfg)
+                one_per_sak = bool(chart_cfg.get('one_row_per_stu_annual_key'))
                 ds_updated = int(ds.updated_at.timestamp())
-                ds_filter_hash = hashlib.md5(json.dumps(
-                    {**resolved_filters, '__status__': status_val}, sort_keys=True, default=str,
-                ).encode()).hexdigest()[:12]
-                user = getattr(request, 'user', None)
-                user_part = ""
-                if user and getattr(user, 'is_authenticated', False):
-                    user_role = getattr(user, 'active_role', None)
-                    role_name = user_role.name if user_role else 'None'
-                    active_school = getattr(user, 'active_school', None)
-                    school_id = active_school.state_id if active_school else 'All'
-                    user_part = f":u{user.pk}:r{role_name}:s{school_id}"
-                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}{user_part}'
+                is_sql_ds = getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL
+                if is_sql_ds:
+                    ds_filter_hash = hashlib.md5(json.dumps({
+                        '__sql__': True,
+                        '__one_per_sak__': one_per_sak,
+                    }, sort_keys=True, default=str).encode()).hexdigest()[:12]
+                else:
+                    active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
+                    resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
+                    ds_filter_hash = hashlib.md5(json.dumps(
+                        {
+                            **resolved_filters,
+                            '__status__': status_val,
+                            '__one_per_sak__': one_per_sak,
+                        },
+                        sort_keys=True, default=str,
+                    ).encode()).hexdigest()[:12]
+                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}'
                 ds_cached = cache.get(ds_cache_key)
                 if ds_cached is not None:
                     result = ds_cached
                     chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
                 else:
-                    sql, params = compile_dataset_to_sql(
-                        ds, user=user, interactive_filters=resolved_filters,
-                        limit=limit_val, status_filter=status_val,
-                    )
-                    res = execute_compiled_query_aliased(sql, params, col_mappings)
+                    if is_sql_ds:
+                        res = load_dataset_result(ds, limit=limit_val, one_per_sak=one_per_sak)
+                    else:
+                        active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
+                        resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
+                        sql, params = compile_dataset_to_sql(
+                            ds, user=None, interactive_filters=resolved_filters,
+                            limit=limit_val, status_filter=status_val,
+                            one_row_per_stu_annual_key=one_per_sak,
+                        )
+                        res = execute_compiled_query_aliased(sql, params, col_mappings)
                     if res.get('error'):
                         result = {'error': res['error'], 'rows': [], 'columns': []}
                     else:
-                        result = {'rows': res.get('rows', []), 'columns': res.get('columns', []), 'row_count': res.get('row_count', 0)}
+                        rows = res.get('rows', [])
+                        result = {'rows': rows, 'columns': res.get('columns', []), 'row_count': len(rows)}
                         if result.get('rows'):
                             cache.set(ds_cache_key, result, timeout=1800)
                     chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
@@ -980,13 +921,16 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                 # might require different assessment columns.
                 if not result.get('error') and result.get('rows'):
                     aliased_rows = result['rows']
+                    if one_per_sak:
+                        aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
                     _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
                     if _missing_assessment:
                         aliased_rows = _augment_rows_with_assessment_cols(
                             aliased_rows, _missing_assessment, None,
                             source_filters=raw_filters,
                         )
-                        result['rows'] = aliased_rows
+                    result['rows'] = aliased_rows
+                    result['row_count'] = len(aliased_rows)
 
         else:
             merged_filters = dict(chart.source_filters or {})
@@ -996,7 +940,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             result = run_saved_query(
                 chart.source_id, merged_filters, user,
                 extra_columns=pg_extra or None,
-                apply_user_filters=True,
+                apply_user_filters=False,
             )
             result = _augment_chart_result_rows(
                 chart.chart_type, chart_cfg, {}, result,
@@ -1009,6 +953,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             # Save data cache (30 min TTL — confirmed acceptable staleness window)
             if data_cached is None and result.get('rows'):
                 cache.set(data_cache_key, result, timeout=1800)
+            chart_cfg['is_embed'] = is_embed
             option = build_option(result.get('rows', []), chart.column_defs, chart_cfg)
             option.pop('__series_names__', None)
             option_json = json.dumps(option)
@@ -1068,6 +1013,12 @@ def chart_render_api(request, chart_id):
     is_embed = request.GET.get('source') in ('page', 'dashboard')
     pf_filters = _parse_pf_filters(request.GET)
 
+    chart = get_object_or_404(SavedChart, pk=chart_id)
+    # Restrict the per-user home dashboard to charts the user is allowed to see;
+    # all other render contexts (project-admin pages/dashboards, drill) are unaffected.
+    if request.GET.get('source_id') == 'home' and not _can_render_chart(request.user, chart):
+        return FORBIDDEN
+
     result = _render_saved_chart(
         chart_id, pf_filters,
         drill_source=request.GET.get('source', ''),
@@ -1075,6 +1026,7 @@ def chart_render_api(request, chart_id):
         drill_source_name=request.GET.get('source_name', ''),
         is_embed=is_embed, request=request,
         if_none_match=request.headers.get('If-None-Match'),
+        school_id=request.GET.get('school_id', ''),
     )
 
     if result.get('not_modified'):
@@ -1124,16 +1076,37 @@ def chart_batch_render_api(request):
     source_name = body.get('source_name', '')
     is_embed = source in ('page', 'dashboard')
     pf_filters = body.get('filters') or {}
+    school_id = body.get('school_id') or ''
+
+    # Non-admins may only batch-render their own home-dashboard charts
+    permitted = set(chart_ids)
+    if source_id == 'home' and not is_project_admin(request.user):
+        from django.db.models import Q as _Q
+        allowed = set(
+            SavedChart.objects
+            .filter(pk__in=chart_ids)
+            .filter(
+                _Q(is_user_menu=True) |
+                _Q(dashboard_slots__dashboard__owner=request.user,
+                   dashboard_slots__dashboard__is_home=True)
+            )
+            .distinct()
+            .values_list('pk', flat=True)
+        )
+        permitted = allowed
 
     from clickhouse_utils.thread_pool import get_io_pool
     pool = get_io_pool()
 
     def _one(cid):
+        if cid not in permitted:
+            return cid, {'html': '', 'error': 'Not permitted'}
         try:
             res = _render_saved_chart(
                 cid, pf_filters,
                 drill_source=source, drill_source_id=source_id, drill_source_name=source_name,
                 is_embed=is_embed, request=request,
+                school_id=school_id,
             )
             return cid, {'html': res.get('html', ''), 'error': res.get('error')}
         except Exception as exc:
@@ -1191,6 +1164,8 @@ def chart_save_and_attach_api(request):
     drill_columns = body.get('drill_through_columns', [])
     drill_fm = body.get('drill_through_filter_map', {})
     school_filter_mode = body.get('school_filter_mode', 'enrolled')
+    is_user_menu = bool(body.get('is_user_menu', False))
+    user_menu_order = body.get('user_menu_order', 0) or 0
 
     if not name:
         return JsonResponse({'error': 'Chart name is required'}, status=400)
@@ -1211,6 +1186,8 @@ def chart_save_and_attach_api(request):
     chart.school_filter_mode = school_filter_mode
     chart.drill_through_columns = drill_columns
     chart.drill_through_filter_map = drill_fm
+    chart.is_user_menu = is_user_menu
+    chart.user_menu_order = user_menu_order
 
     if source_type == 'columns':
         sel_cols = body.get('selected_columns', [])

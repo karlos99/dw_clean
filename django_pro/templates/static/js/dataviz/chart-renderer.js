@@ -5,6 +5,78 @@
 (function () {
   'use strict';
 
+  /** Place outer multi-x group labels at the true midpoint between leaf ticks. */
+  function applyCenteredGroupLabels(chart) {
+    var bands = chart && chart._groupLabelBands;
+    if (!bands || !bands.length) return;
+
+    // convertToPixel({xAxisIndex}) alone returns only X (a number). That was
+    // incorrectly used as Y and scattered labels across the plot. Use leaf-axis
+    // ordinal → pixel for the centered X/Y along the category axis, and the grid
+    // rect + secondary-axis offset for the label row outside the plot.
+    var rect = null;
+    try {
+      var grid = chart.getModel().getComponent('grid', 0);
+      if (grid && grid.coordinateSystem) rect = grid.coordinateSystem.getRect();
+    } catch (e) { /* ignore */ }
+
+    var elems = [];
+    for (var i = 0; i < bands.length; i++) {
+      var b = bands[i];
+      if (!b || b.show === false || b.label == null || b.label === '') {
+        elems.push({ id: '__dvGroupLabel_' + i, $action: 'remove', type: 'text' });
+        continue;
+      }
+      var isY = b.axis === 'y';
+      var offset = b.offset != null ? Number(b.offset) : (isY ? 60 : 30);
+      var c0, c1;
+      try {
+        c0 = chart.convertToPixel(isY ? { yAxisIndex: 0 } : { xAxisIndex: 0 }, b.start);
+        c1 = chart.convertToPixel(isY ? { yAxisIndex: 0 } : { xAxisIndex: 0 }, b.end);
+      } catch (e) {
+        continue;
+      }
+      if (c0 == null || c1 == null) continue;
+
+      var x, y;
+      if (isY) {
+        var y0 = Array.isArray(c0) ? c0[1] : c0;
+        var y1 = Array.isArray(c1) ? c1[1] : c1;
+        y = (y0 + y1) / 2;
+        x = rect ? (rect.x - offset) : ((Array.isArray(c0) ? c0[0] : 0) - offset);
+      } else {
+        var x0 = Array.isArray(c0) ? c0[0] : c0;
+        var x1 = Array.isArray(c1) ? c1[0] : c1;
+        x = (x0 + x1) / 2;
+        y = rect ? (rect.y + rect.height + offset) : (chart.getHeight() - offset);
+      }
+      if (x == null || y == null || isNaN(x) || isNaN(y)) continue;
+
+      var rot = Number(b.rotate) || 0;
+      elems.push({
+        type: 'text',
+        id: '__dvGroupLabel_' + i,
+        silent: true,
+        z: 100,
+        rotation: rot ? (-rot * Math.PI / 180) : 0,
+        style: {
+          text: String(b.label),
+          x: x,
+          y: y,
+          textAlign: 'center',
+          textVerticalAlign: 'middle',
+          fontSize: b.fontSize || 12,
+          fontWeight: 'bold',
+          fill: b.color || '#475569',
+        },
+      });
+    }
+    if (!elems.length) return;
+    try {
+      chart.setOption({ graphic: elems }, { lazyUpdate: true });
+    } catch (e) { /* ignore */ }
+  }
+
   function adjustParliamentAspectRatio(chart, container, option) {
     if (!option || !option.__is_parliament__) return;
 
@@ -183,8 +255,13 @@
     if (option && option.__category_names__) {
       chart._categoryNames = option.__category_names__;
     }
+    if (option && option.__group_label_bands__) {
+      chart._groupLabelBands = option.__group_label_bands__;
+      delete option.__group_label_bands__;
+    }
 
     chart.setOption(option);
+    applyCenteredGroupLabels(chart);
 
     if (option && option.__is_parliament__) {
       adjustParliamentAspectRatio(chart, container, option);
@@ -196,12 +273,29 @@
     // Correct size after the browser commits the flex / grid layout.
     // This is the primary fix for charts in page-builder grid cells where
     // clientHeight may be 0 or stale at the time echarts.init() runs.
-    requestAnimationFrame(function () {
+    function _forceRelayout() {
       chart.resize();
       if (option && option.__is_parliament__) {
         adjustParliamentAspectRatio(chart, container, option);
       }
+      if (option) {
+        chart.setOption(option);
+      }
+      applyCenteredGroupLabels(chart);
+    }
+    requestAnimationFrame(_forceRelayout);
+    // Flex/grid layouts can commit their final dimensions a frame or two
+    // after the chart is inserted, and the legend is a layout component that
+    // ECharts only paints on render/resize. Without these extra passes the
+    // legend could stay un-painted until an interaction (e.g. a click) forces
+    // a repaint. Running resize again once layout has definitely settled makes
+    // the legend appear reliably on first paint.
+    requestAnimationFrame(function () {
+      _forceRelayout();
+      setTimeout(_forceRelayout, 60);
     });
+
+    let resizeTimer = null;
 
     // Auto-resize when container dimensions change
     const ro = new ResizeObserver(() => {
@@ -209,6 +303,17 @@
         adjustParliamentAspectRatio(chart, container, option);
       }
       chart.resize();
+
+      // Debounce setOption to prevent lag during active resizing, but ensure legend layout updates
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (option) {
+          try {
+            chart.setOption(option);
+          } catch (e) {}
+        }
+        applyCenteredGroupLabels(chart);
+      }, 100);
     });
     ro.observe(container);
 
@@ -242,6 +347,9 @@
       // use the full category name (e.g. "Fall · KN") instead of just "KN".
       if (chart._categoryNames && params.dataIndex != null && params.dataIndex < chart._categoryNames.length) {
         const fullCat = chart._categoryNames[params.dataIndex];
+        if (fullCat && fullCat.includes('spacer_')) {
+          return;
+        }
         if (fullCat) {
           xVal = fullCat;
         }
@@ -491,4 +599,5 @@
   window.initChart        = initChart;
   window.initAllCharts    = initAll;
   window.registerDrillThrough = registerDrillThrough;
+  window.applyCenteredGroupLabels = applyCenteredGroupLabels;
 }());

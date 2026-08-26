@@ -26,6 +26,18 @@ def replace_filter(value, args):
         return value
 
 
+@register.filter(name='markall_key')
+def markall_key_filter(year, subject):
+    """Build the 'All Marks' umbrella column key for a subject/year.
+
+    Usage: {{ year|markall_key:subject }}  →  markall_2025_2026_Math
+    """
+    import re
+    def _norm(v):
+        return re.sub(r'[^A-Za-z0-9_]+', '_', (v or '')).strip('_') or 'Unknown'
+    return f"markall_{_norm(year)}_{_norm(subject)}"
+
+
 @register.filter(name='filter_visible_folders')
 def filter_visible_folders(folders, user):
     """Filter a list of folders to only those visible to the user."""

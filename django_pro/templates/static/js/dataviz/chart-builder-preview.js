@@ -1,7 +1,7 @@
-/* chart-builder-preview.js — Alpine component methods: preview, save, save-and-attach, recommendations, describe, config builder, flash */
+/* chart-builder-preview.js — Alpine component methods: preview, save, save-and-attach, describe, config builder, flash */
 
 function chartBuilderPreviewMethods(urls) {
-  // urls injected from the template: { preview, save, saveAndAttach, recommend, describe }
+  // urls injected from the template: { preview, save, saveAndAttach, describe }
   function getCsrf() {
     return document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
   }
@@ -73,6 +73,12 @@ function chartBuilderPreviewMethods(urls) {
                   this.categoryOrderAvail = [];
                 }
               } catch (_) {}
+              try {
+                const aliasKeys = JSON.parse(el.dataset.xAliasKeys || '[]');
+                this.xValueAliasAvail = Array.isArray(aliasKeys) ? aliasKeys : [];
+              } catch (_) {
+                this.xValueAliasAvail = [];
+              }
               try {
                 const availCats = JSON.parse(el.dataset.acAvailCats || '[]');
                 const availPl   = JSON.parse(el.dataset.acAvailPl   || '[]');
@@ -170,22 +176,7 @@ function chartBuilderPreviewMethods(urls) {
       this.saving = false;
     },
 
-    /* ─── Recommendations & Auto Description ─────────────── */
-    async fetchRecommendations() {
-      if (!this.hasData) return;
-      this.recommendationsLoading = true;
-      try {
-        const r = await fetch(urls.recommend, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrf() },
-          body: JSON.stringify({ columns: this.activeCols, column_definitions: {} }),
-        });
-        const data = await r.json();
-        if (data.success) this.recommendedCharts = data.recommendations || [];
-      } catch (_) {}
-      this.recommendationsLoading = false;
-    },
-
+    /* ─── Auto Description ───────────────────────────────── */
     async fetchAutoDescription() {
       if (!this.chartType) return;
       // Throttle: only re-fetch description every 30 seconds
@@ -216,6 +207,8 @@ function chartBuilderPreviewMethods(urls) {
         series_col: seriesColStr,
         stack_col: seriesColStr,
         group_col: this.groupCol,
+        show_group_total: !!this.groupTotal,
+        group_total_label: this.groupTotalLabel,
         compare_pl_cols: this.comparePlCols,
         ac_include_cats: this.acIncludeCats,
         ac_include_pl: this.acIncludePl,
@@ -273,6 +266,7 @@ function chartBuilderPreviewMethods(urls) {
         show_points: this.showPoints,
         smooth: this.smooth,
         color_map: this.colorMap,
+        x_value_map: this.xValueMap,
         show_zoom: this.showZoom,
         show_toolbox: this.showToolbox,
         show_grid: this.showGrid,
@@ -297,6 +291,9 @@ function chartBuilderPreviewMethods(urls) {
         compare_gap: this.compareGap,
         compare_cat_font_size: this.compareCatFontSize,
         compare_cat_rotation: this.compareCatRotation,
+        group_gap_size: Math.round(this.groupGapPct / 100 * 8),
+        center_group_labels: this.centerGroupLabels,
+        group_gap: this.groupGap,
         x_label_rotation: this.xLabelRotation,
         x_label_font_size: this.xLabelFontSize,
         x_label_max_length: this.xLabelMaxLength,
@@ -321,6 +318,7 @@ function chartBuilderPreviewMethods(urls) {
         parliament_rows: this.parliamentRowsAuto ? null : this.parliamentRows,
         parliament_show_ss: this.parliamentShowSS,
         school_filter_mode: this.schoolFilterMode,
+        one_row_per_stu_annual_key: !!this.oneRowPerStuAnnualKey,
         source_filters: this.cleanSourceFilters(),
       };
     },

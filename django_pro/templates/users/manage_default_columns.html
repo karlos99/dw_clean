@@ -76,6 +76,74 @@
                 <h2 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">Assessments</h2>
                 {% include 'users/partials/manage_default_assessment_tree.html' %}
             </div>
+
+            {% if ap_structure %}
+            <div class="mt-6">
+                <h2 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mb-3">College Assessments</h2>
+                <div class="space-y-2">
+                    <details class="group bg-white border border-slate-200 rounded-lg">
+                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2.5 hover:bg-slate-50 rounded">
+                            <span class="text-sm font-semibold text-slate-800">AP</span>
+                            <span class="text-xs text-slate-500 group-open:hidden">▶</span>
+                            <span class="text-xs text-slate-500 hidden group-open:inline">▼</span>
+                        </summary>
+                        <div class="px-2 pb-2 space-y-2">
+                    {% for year, bucket in ap_structure.items %}
+                    <details class="group bg-white border border-slate-200 rounded-lg">
+                        <summary class="list-none cursor-pointer select-none flex items-center justify-between p-2.5 hover:bg-slate-50 rounded">
+                            <span class="text-sm font-semibold text-slate-800">{{ year_labels|get_item:year|default:year }}</span>
+                            <span class="text-xs text-slate-500 group-open:hidden">▶</span>
+                            <span class="text-xs text-slate-500 hidden group-open:inline">▼</span>
+                        </summary>
+                        <div class="px-2 pb-2 space-y-2">
+                            {% for subject, metrics in bucket.subjects.items %}
+                            <details class="group pl-2 border-l-2 border-slate-200">
+                                <summary class="list-none cursor-pointer select-none flex items-center justify-between py-1 px-2 hover:bg-slate-50 rounded">
+                                    <span class="text-xs font-semibold text-slate-700">{{ subject }}</span>
+                                    <span class="text-xs text-slate-500 group-open:hidden">▶</span>
+                                    <span class="text-xs text-slate-500 hidden group-open:inline">▼</span>
+                                </summary>
+                                <div class="pl-2 mt-1 space-y-1.5">
+                                    {% for metric, col in metrics.items %}
+                                    <label class="flex items-center space-x-2">
+                                        <input type="checkbox" name="columns" value="{{ col }}" {% if col in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600">
+                                        <span class="text-xs text-slate-700">{{ metric }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                            </details>
+                            {% endfor %}
+                            {% if bucket.awards %}
+                            <details class="group pl-2 border-l-2 border-slate-200">
+                                <summary class="list-none cursor-pointer select-none flex items-center justify-between py-1 px-2 hover:bg-slate-50 rounded">
+                                    <span class="text-xs font-semibold text-slate-700">Awards</span>
+                                    <span class="text-xs text-slate-500 group-open:hidden">▶</span>
+                                    <span class="text-xs text-slate-500 hidden group-open:inline">▼</span>
+                                </summary>
+                                <div class="pl-2 mt-1 space-y-1.5">
+                                    {% if bucket.all_awards %}
+                                    <label class="flex items-center space-x-2">
+                                        <input type="checkbox" name="columns" value="{{ bucket.all_awards }}" {% if bucket.all_awards in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600">
+                                        <span class="text-xs font-semibold text-slate-800">All Awards</span>
+                                    </label>
+                                    {% endif %}
+                                    {% for award, col in bucket.awards.items %}
+                                    <label class="flex items-center space-x-2">
+                                        <input type="checkbox" name="columns" value="{{ col }}" {% if col in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-600">
+                                        <span class="text-xs text-slate-700">{{ award }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                            </details>
+                            {% endif %}
+                        </div>
+                    </details>
+                    {% endfor %}
+                        </div>
+                    </details>
+                </div>
+            </div>
+            {% endif %}
         </div>
 
         <div class="px-6 py-4 border-t border-slate-200 flex items-center justify-between bg-slate-50 rounded-b-xl">

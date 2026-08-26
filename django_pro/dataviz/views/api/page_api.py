@@ -2,12 +2,14 @@
 import json
 
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.utils.text import slugify
 from django.views.decorators.http import require_GET
 
-from dataviz.models import Dashboard, DataVizPage, DataVizPageSection, DataVizPageRow, SavedChart
-from dataviz.utils.page_publish import publish_page, unpublish_page
+from dataviz.models import Dashboard, DataVizPage, DataVizPageSection, DataVizPageRow, DataVizPageTab, DataVizPageFolder, SavedChart
+from dataviz.utils.page_publish import publish_page, unpublish_page, validate_page_slug, normalize_page_folder, all_page_folder_paths
 
 from ..mixins import is_project_admin, FORBIDDEN
 
@@ -29,7 +31,7 @@ def page_save_api(request):
     if not title:
         return JsonResponse({'error': 'title is required'}, status=400)
 
-    slug = body.get('slug', '').strip() or None
+    raw_slug = (body.get('slug') or '').strip()
     page_id = body.get('id')
     if page_id:
         page = get_object_or_404(DataVizPage, pk=page_id)
@@ -38,6 +40,10 @@ def page_save_api(request):
 
     page.title           = title
     page.description     = body.get('description', '')
+    if 'folder' in body:
+        page.folder = normalize_page_folder(body.get('folder', ''))
+        if page.folder:
+            DataVizPageFolder.objects.get_or_create(path=page.folder)
     page.page_filters    = body.get('page_filters', []) if isinstance(body.get('page_filters'), list) else []
     page.container_width = body.get('container_width', page.container_width or 'xl')
     if 'show_header' in body:
@@ -47,15 +53,198 @@ def page_save_api(request):
     new_status = body.get('status', page.status)
     page.status = new_status
 
-    if slug:
+    if raw_slug:
+        slug, slug_error = validate_page_slug(raw_slug, exclude_page_id=page.pk)
+        if slug_error:
+            return JsonResponse({'error': slug_error}, status=400)
         page.slug = slug
+
     page.save()
 
-    if page.status == DataVizPage.STATUS_ACTIVE and was_draft:
+    if page.status == DataVizPage.STATUS_ACTIVE:
         publish_page(page, request.user)
-    elif page.status == DataVizPage.STATUS_DRAFT and not was_draft:
+    elif not was_draft:
         unpublish_page(page)
 
+    return JsonResponse({'page': page.to_dict(), 'success': True})
+
+
+@login_required
+def page_duplicate_api(request, slug):
+    """Duplicate a page and its layout without copying shared charts."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    source = get_object_or_404(DataVizPage, slug=slug)
+    copy_number = 1
+    with transaction.atomic():
+        while True:
+            suffix = ' (Copy)' if copy_number == 1 else f' (Copy {copy_number})'
+            title = f'{source.title[:200 - len(suffix)]}{suffix}'
+            new_slug = slugify(title)[:200] or f'page-{source.pk}-copy'
+            if not DataVizPage.objects.filter(slug=new_slug).exists():
+                break
+            copy_number += 1
+
+        page = DataVizPage.objects.create(
+            title=title,
+            slug=new_slug,
+            folder=source.folder or '',
+            description=source.description,
+            container_width=source.container_width,
+            show_header=source.show_header,
+            owner=request.user,
+            status=DataVizPage.STATUS_DRAFT,
+            page_filters=source.page_filters or [],
+        )
+
+        row_map = {}
+        tab_map = {}
+        for source_tab in source.tabs.all():
+            tab_map[source_tab.pk] = DataVizPageTab.objects.create(
+                page=page, name=source_tab.name, position=source_tab.position,
+            )
+        for source_row in source.rows.all():
+            row_map[source_row.pk] = DataVizPageRow.objects.create(
+                page=page,
+                tab=tab_map.get(source_row.tab_id),
+                label=source_row.label,
+                position=source_row.position,
+                bg_color=source_row.bg_color,
+                collapsed=source_row.collapsed,
+                col_guide=source_row.col_guide,
+            )
+
+        for source_section in source.sections.all():
+            DataVizPageSection.objects.create(
+                page=page,
+                row=row_map.get(source_section.row_id),
+                element_type=source_section.element_type,
+                chart=source_section.chart,
+                show_title=source_section.show_title,
+                slot_filters=source_section.slot_filters or [],
+                gs_x=source_section.gs_x,
+                gs_y=source_section.gs_y,
+                gs_w=source_section.gs_w,
+                gs_h=source_section.gs_h,
+                dashboard=source_section.dashboard,
+                html_content=source_section.html_content,
+                position=source_section.position,
+            )
+
+    return JsonResponse({'page': page.to_dict(), 'success': True})
+
+
+@login_required
+@require_GET
+def page_folders_list_api(request):
+    """Return all known page folder paths."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    return JsonResponse({'folders': all_page_folder_paths()})
+
+
+@login_required
+def page_folder_create_api(request):
+    """Create an empty folder on the pages list."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    path = normalize_page_folder(body.get('folder', ''))
+    if not path:
+        return JsonResponse({'error': 'Folder name is required'}, status=400)
+
+    DataVizPageFolder.objects.get_or_create(path=path)
+    return JsonResponse({'success': True, 'folder': path})
+
+
+@login_required
+def page_publish_api(request, slug):
+    """Quickly publish a draft page (add to navbar)."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    page = get_object_or_404(DataVizPage, slug=slug)
+    if page.status == DataVizPage.STATUS_ACTIVE:
+        return JsonResponse({'error': 'Page is already published'}, status=400)
+
+    page.status = DataVizPage.STATUS_ACTIVE
+    page.save(update_fields=['status'])
+    publish_page(page, request.user)
+    page.refresh_from_db()
+    return JsonResponse({'page': page.to_dict(), 'success': True})
+
+
+@login_required
+def page_unpublish_api(request, slug):
+    """Quickly unpublish a page (set to draft and hide from navbar)."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    page = get_object_or_404(DataVizPage, slug=slug)
+    if page.status != DataVizPage.STATUS_ACTIVE:
+        return JsonResponse({'error': 'Page is not published'}, status=400)
+
+    unpublish_page(page)
+    page.refresh_from_db()
+    return JsonResponse({'page': page.to_dict(), 'success': True})
+
+
+@login_required
+def page_batch_move_api(request):
+    """Move multiple pages to a folder in one request."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    slugs = [s for s in (body.get('slugs') or []) if s]
+    if not slugs:
+        return JsonResponse({'error': 'No pages selected'}, status=400)
+
+    folder = normalize_page_folder(body.get('folder', ''))
+    updated = DataVizPage.objects.filter(slug__in=slugs).update(folder=folder)
+    if folder:
+        DataVizPageFolder.objects.get_or_create(path=folder)
+    return JsonResponse({'success': True, 'moved': updated})
+
+
+@login_required
+def page_move_api(request, slug):
+    """Move a page to a different folder."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    page = get_object_or_404(DataVizPage, slug=slug)
+    page.folder = normalize_page_folder(body.get('folder', ''))
+    if page.folder:
+        DataVizPageFolder.objects.get_or_create(path=page.folder)
+    page.save(update_fields=['folder', 'updated_at'])
     return JsonResponse({'page': page.to_dict(), 'success': True})
 
 
@@ -96,6 +285,7 @@ def page_sections_api(request, slug):
         orphan_sections = page.sections.filter(row__isnull=True).select_related('chart', 'dashboard').order_by('position')
         return JsonResponse({
             'rows': [r.to_dict() for r in rows],
+            'tabs': [{'id': t.id, 'name': t.name, 'position': t.position} for t in page.tabs.all()],
             'orphan_sections': [s.to_dict() for s in orphan_sections],
         })
 
@@ -109,12 +299,35 @@ def page_sections_api(request, slug):
 
     action = body.get('action', '')
 
+    if action == 'add_tab':
+        name = (body.get('name') or '').strip()
+        if not name:
+            return JsonResponse({'error': 'Tab name is required'}, status=400)
+        tab = DataVizPageTab.objects.create(page=page, name=name, position=page.tabs.count())
+        return JsonResponse({'tab': {'id': tab.id, 'name': tab.name, 'position': tab.position}, 'success': True})
+
+    if action == 'update_tab':
+        tab = get_object_or_404(DataVizPageTab, pk=body.get('tab_id'), page=page)
+        name = (body.get('name') or '').strip()
+        if not name:
+            return JsonResponse({'error': 'Tab name is required'}, status=400)
+        tab.name = name
+        tab.position = int(body.get('position', tab.position))
+        tab.save(update_fields=['name', 'position'])
+        return JsonResponse({'success': True})
+
+    if action == 'delete_tab':
+        tab = get_object_or_404(DataVizPageTab, pk=body.get('tab_id'), page=page)
+        tab.delete()
+        return JsonResponse({'success': True})
+
     if action == 'add_row':
         pos = page.rows.count()
         row = DataVizPageRow.objects.create(
             page=page,
             label=body.get('label', ''),
             position=pos,
+            tab_id=body.get('tab_id') or None,
         )
         return JsonResponse({'row': row.to_dict(), 'success': True})
 
@@ -156,6 +369,7 @@ def page_sections_api(request, slug):
         for row_data in body.get('rows', []):
             DataVizPageRow.objects.filter(pk=row_data['row_id'], page=page).update(
                 position=row_data.get('position', 0),
+                tab_id=row_data.get('tab_id') or None,
             )
             for item in row_data.get('sections', []):
                 DataVizPageSection.objects.filter(pk=item['section_id'], page=page).update(
@@ -316,6 +530,8 @@ def row_detail_api(request, row_id):
             row.label = body['label']
         if 'position' in body:
             row.position = int(body['position'])
+        if 'tab_id' in body:
+            row.tab = DataVizPageTab.objects.filter(pk=body.get('tab_id'), page=row.page).first() if body.get('tab_id') else None
         if 'bg_color' in body:
             row.bg_color = body['bg_color']
         if 'collapsed' in body:

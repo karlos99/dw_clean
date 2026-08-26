@@ -411,7 +411,7 @@ def toggle_publish(request, pk):
             messages.success(request, f"'{survey.name}' is now available in Data Exploration.")
         
         # Invalidate the survey columns cache so data exploration reflects the change immediately
-        cache.delete_pattern('*survey_columns_v7*')
+        cache.delete_pattern('*survey_columns_v8*')
         return redirect('dataLoader:survey_detail', pk=pk)
     
     # GET - show confirmation page
@@ -450,7 +450,7 @@ def quick_toggle_publish(request, pk):
         messages.success(request, f"'{survey.name}' is now published to Data Exploration.")
     
     # Invalidate the survey columns cache so data exploration reflects the change immediately
-    cache.delete_pattern('*survey_columns_v7*')
+    cache.delete_pattern('*survey_columns_v8*')
     return redirect('dataLoader:survey_list')
 
 
@@ -483,7 +483,7 @@ def quick_toggle_publish_import(request, pk):
         messages.success(request, f"'{import_log.name}' is now published to Data Exploration.")
     
     # Invalidate the survey columns cache so data exploration reflects the change immediately
-    cache.delete_pattern('*survey_columns_v7*')
+    cache.delete_pattern('*survey_columns_v8*')
     return redirect('dataLoader:dashboard')
 
 
@@ -1017,3 +1017,43 @@ def ap_delete_import(request, pk):
         'exam_count': exam_count,
         'award_count': award_count,
     })
+
+
+@project_admin_required
+def ap_toggle_publish(request, pk):
+    """Toggle whether an AP import is published (available in the Data Explorer)."""
+    ap_import_log = get_object_or_404(APImportLog, pk=pk)
+
+    if request.method != 'POST':
+        return redirect('dataLoader:ap_import_detail', pk=pk)
+
+    if ap_import_log.status != APImportStatus.COMPLETED:
+        messages.error(request, "Only completed AP imports can be published.")
+        return redirect('dataLoader:ap_import_detail', pk=pk)
+
+    if ap_import_log.is_published:
+        ap_import_log.is_published = False
+        ap_import_log.published_at = None
+        ap_import_log.published_by = None
+        ap_import_log.save(update_fields=['is_published', 'published_at', 'published_by'])
+        messages.success(request, f"'{ap_import_log.name}' unpublished from Data Exploration.")
+    else:
+        ap_import_log.is_published = True
+        ap_import_log.published_at = timezone.now()
+        ap_import_log.published_by = request.user
+        ap_import_log.save(update_fields=['is_published', 'published_at', 'published_by'])
+        messages.success(request, f"'{ap_import_log.name}' is now available in Data Exploration.")
+
+    _invalidate_ap_caches()
+    return redirect('dataLoader:ap_import_detail', pk=pk)
+
+
+def _invalidate_ap_caches():
+    """Invalidate cached AP column structures so publish changes reflect immediately."""
+    from django.core.cache import cache
+    try:
+        cache.delete_pattern('ap_columns*')
+        cache.delete_pattern('dv_ap_exam_cols*')
+        cache.delete_pattern('dv_ap_award_cols*')
+    except Exception:
+        pass

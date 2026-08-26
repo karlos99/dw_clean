@@ -9,12 +9,12 @@ from .constants import COLUMN_DEFINITIONS
 
 
 def _get_display_name(name):
-    """Normalize test names for display (e.g. Dibbles -> Dibles)."""
+    """Normalize test names for display (e.g. Dibbles -> Dibels)."""
     if not name:
         return name
     name = str(name)
-    if 'Dibbles' in name:
-        name = name.replace('Dibbles', 'Dibels')
+    if 'Dibbles' in name or 'dibels' in name.lower():
+        name = re.sub(r'(?i)(?:Dibbles|Dibels)', 'Dibels', name)
     if 'iready' in name.lower():
         name = re.sub(r'(?i)iready', 'iReady', name)
     return name
@@ -32,9 +32,147 @@ def test_metadata_matches(info: dict, row_test_name, row_subject, row_window=Non
         return False
     expected_window = (info.get('test_window') or '').strip()
     actual_window = (row_window or '').strip()
-    if not expected_window and not actual_window:
+    if not expected_window:
         return True
+    if not actual_window:
+        return False
     return expected_window.lower() == actual_window.lower()
+
+
+# Prefer SSID when the result row has one. Local student IDs are reused across
+# students, so matching on local_student_id alone attaches the wrong scores.
+RESULTS_STUDENT_MATCH_SQL = (
+    "("
+    "(r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND cs.ssid IS NOT NULL AND cs.ssid != '' AND r.ssid = cs.ssid)"
+    " OR "
+    "((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = cs.student_id)"
+    ")"
+)
+
+# Bulk fetch: params are (student_ssids, student_ids) in that order.
+RESULTS_BULK_MATCH_SQL = (
+    "("
+    "(r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND r.ssid = ANY(%s))"
+    " OR "
+    "((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = ANY(%s))"
+    ")"
+)
+
+RESULTS_BLANK_SSID_SQL = "(r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN')"
+
+# Placeholder values produced by assessment data imports when a student has no
+# usable score (NaN, NS, N/A, ...). They must never surface on charts/tables as
+# raw strings, so ``normalize_score_value()`` maps them to ``None`` (blank).
+SCORE_SENTINELS = frozenset({
+    '', 'nan', 'ns', 'n/a', 'na', 'n/s', 'null', 'none',
+    'inf', '-inf', 'infinity', '-infinity',
+})
+
+# SQL fragment: treat import sentinels as NULL so they sort with blanks.
+_PL_BLANK_SQL = (
+    "r.pl IS NULL OR btrim(r.pl) = '' OR lower(btrim(r.pl)) IN "
+    "('nan','ns','n/a','na','n/s','null','none')"
+)
+
+# Initial ELPAC (and similar) use text PL labels, not 1-4. Map to a stable
+# proficiency order so ASC goes Novice → Intermediate → IFEP instead of
+# alphabetical ("Initial Fluent..." before "Intermediate...").
+# NOTE: ``%%`` so psycopg does not treat LIKE wildcards as placeholders.
+PL_SORT_SQL = (
+    "CASE "
+    f"WHEN {_PL_BLANK_SQL} THEN NULL "
+    "WHEN lower(btrim(r.pl)) LIKE 'novice%%' THEN 1 "
+    "WHEN lower(btrim(r.pl)) LIKE 'intermediate%%' THEN 2 "
+    "WHEN lower(btrim(r.pl)) LIKE '%%ifep%%' "
+    "  OR lower(btrim(r.pl)) LIKE 'initial fluent%%' THEN 3 "
+    "ELSE CAST(NULLIF(regexp_replace(btrim(r.pl), '[^0-9.].*', '', 'g'), '') AS NUMERIC) "
+    "END"
+)
+
+SS_SORT_SQL = (
+    "CASE "
+    "WHEN r.ss IS NULL OR btrim(r.ss) = '' OR lower(btrim(r.ss)) IN "
+    "('nan','ns','n/a','na','n/s','null','none') THEN NULL "
+    "ELSE CAST(NULLIF(regexp_replace(btrim(r.ss), '[^0-9.]', '', 'g'), '') AS NUMERIC) "
+    "END"
+)
+
+
+def parse_apall_sort_key(col_key: str):
+    """Parse ``apall_<YYYY_YYYY>_<n>_SUBJECT|PL`` into year/index/field, or None."""
+    if not isinstance(col_key, str) or not col_key.startswith('apall_'):
+        return None
+    # apall_2024_2025_1_SUBJECT
+    rest = col_key[len('apall_'):]
+    parts = rest.split('_')
+    if len(parts) < 4:
+        return None
+    # year is YYYY_YYYY (two parts), then index, then field
+    try:
+        y0, y1, idx_s, field = parts[0], parts[1], parts[2], parts[3]
+        if len(y0) != 4 or len(y1) != 4 or field not in ('SUBJECT', 'PL'):
+            return None
+        return {
+            'year': f'{y0}-{y1}',
+            'index': int(idx_s),
+            'field': field,
+        }
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def normalize_score_value(value):
+    """Return ``None`` for missing/placeholder score values, else the trimmed value."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() in SCORE_SENTINELS:
+        return None
+    return s
+
+
+def export_cell(value, blank='\u2014'):
+    """Return a CSV cell value with blank/sentinel values shown as the blank marker.
+
+    Maps ``None``, empty strings and sentinel score values (NaN/NS/N/A ...) to the
+    same ``\u2014`` marker used across charts and the data explorer, so exports stay
+    consistent instead of surfacing raw ``NaN`` / ``None`` strings.
+    """
+    v = normalize_score_value(value)
+    return blank if v is None else v
+
+
+def assign_result_value_maps(rows):
+    """Build local-id / ssid maps from ``(local_student_id, ssid, value)`` rows.
+
+    Rows that include an SSID are indexed only by SSID. Local-id indexing is
+    reserved for results with a blank SSID so recycled local IDs cannot leak.
+    """
+    by_id = {}
+    by_ssid = {}
+    for row in rows:
+        local_id, ssid, val = row[0], row[1], row[2]
+        ssid_s = str(ssid).strip() if ssid is not None else ''
+        if ssid_s:
+            by_ssid[ssid_s] = normalize_score_value(val)
+        elif local_id:
+            by_id[str(local_id).strip()] = normalize_score_value(val)
+    return by_id, by_ssid
+
+
+def lookup_result_value(student, by_id, by_ssid, blank='—'):
+    """Resolve a student's assessment value, preferring SSID over local ID."""
+    ssid = student.get('ssid')
+    if ssid is not None:
+        ssid_s = str(ssid).strip()
+        if ssid_s and ssid_s in by_ssid:
+            return by_ssid[ssid_s] or blank
+    sid = student.get('student_id')
+    if sid is not None:
+        sid_s = str(sid).strip()
+        if sid_s and sid_s in by_id:
+            return by_id[sid_s] or blank
+    return blank
 
 
 def _generate_cache_key(prefix, filters, extra_hash_str=""):
@@ -48,6 +186,143 @@ def _generate_cache_key(prefix, filters, extra_hash_str=""):
     combined_str = f"{filter_str}_{extra_hash_str}"
     key_hash = hashlib.md5(combined_str.encode('utf-8')).hexdigest()
     return f"{prefix}_{key_hash}"
+
+
+def ap_column_key(year, subject, kind):
+    """Build a stable column key for AP exam results / awards.
+
+    kind is ``'exam'`` (Performance Level) or ``'award'``.
+    Used both when building the column tree and when enriching query rows so the
+    keys always match.
+    """
+    year_key = re.sub(r'[^A-Za-z0-9_]+', '_', (year or '')).strip('_') or 'Unknown'
+    part = re.sub(r'[^A-Za-z0-9_]+', '_', (subject or '')).strip('_') or 'Unknown'
+    if kind == 'exam':
+        return f"ap_{year_key}_{part}_PL"
+    return f"apaward_{year_key}_{part}"
+
+
+def markall_key(year, subject):
+    """Build the 'All Marks' umbrella column key for a subject/year.
+
+    e.g. markall_2025_2026_Math, markall_2025_2026_Physical_Education
+    """
+    year_key = re.sub(r'[^A-Za-z0-9_]+', '_', (year or '')).strip('_') or 'Unknown'
+    subj_key = re.sub(r'[^A-Za-z0-9_]+', '_', (subject or '')).strip('_') or 'Unknown'
+    return f"markall_{year_key}_{subj_key}"
+
+
+def parse_markall_key(col_key):
+    """Resolve a ``markall_`` umbrella/expanded key to (year, subject_norm, idx, kind).
+
+    Kind is 'COURSE', 'MARKS', or None for the umbrella key.
+    Returns None if not a markall_ key.
+    """
+    if not isinstance(col_key, str) or not col_key.startswith('markall_'):
+        return None
+    tail = col_key[len('markall_'):]
+    parts = tail.split('_')
+    if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    year = f"{parts[0]}-{parts[1]}"
+    # Remaining tokens: subject(s) then optional _<idx>_<COURSE|MARKS>
+    rest = parts[2:]
+    idx = None
+    kind = None
+    if len(rest) >= 2 and rest[-2].isdigit() and rest[-1] in ('COURSE', 'MARKS'):
+        idx = int(rest[-2])
+        kind = rest[-1]
+        rest = rest[:-2]
+    subject_norm = '_'.join(rest)
+    return {'year': year, 'subject_norm': subject_norm, 'idx': idx, 'kind': kind}
+
+
+def get_ap_columns(column_filters=None):
+    """Get dynamic AP exam + award columns organized by year.
+
+    Returns structure:
+        {
+            year: {
+                'subjects': { subject: {'PL': column_key} },
+                'awards':   { award_description: column_key },
+            }
+        }
+    Data comes from the College Board AP tables loaded by the Data Loader app
+    (``dataLoader_apexamresult`` / ``dataLoader_apstudentaward``).
+    """
+    cache_key = _generate_cache_key("ap_columns", column_filters, "")
+    cached_data = cache.get(cache_key)
+
+    if cached_data:
+        columns, definitions = cached_data
+        COLUMN_DEFINITIONS.update(definitions)
+        return columns
+
+    new_definitions = {}
+    columns = {}
+
+    with connections['default'].cursor() as cursor:
+        # AP exam performance levels (subject = exam name) — only published imports
+        cursor.execute(
+            """
+            SELECT DISTINCT r.admin_year, e.name
+            FROM "dataLoader_apexamresult" r
+            JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+            JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+            WHERE r.exam_grade IS NOT NULL AND r.exam_grade <> ''
+              AND il.is_published = true
+            ORDER BY r.admin_year DESC, e.name
+            """
+        )
+        for year, subject in cursor.fetchall():
+            year_val = (year or '').strip() or 'Unknown'
+            subject_val = (subject or '').strip() or 'Unknown'
+            col_key = ap_column_key(year_val, subject_val, 'exam')
+            label = f"{subject_val}\nPerformance Level\n{year_val}"
+            COLUMN_DEFINITIONS[col_key] = label
+            new_definitions[col_key] = label
+            bucket = columns.setdefault(year_val, {'subjects': {}, 'awards': {}})
+            bucket['subjects'][subject_val] = {'PL': col_key}
+
+        # AP awards — only published imports
+        cursor.execute(
+            """
+            SELECT DISTINCT a.award_year, t.description
+            FROM "dataLoader_apstudentaward" a
+            JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+            JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+            WHERE il.is_published = true
+            ORDER BY a.award_year DESC, t.description
+            """
+        )
+        for year, award in cursor.fetchall():
+            year_val = (year or '').strip() or 'Unknown'
+            award_val = (award or '').strip() or 'Unknown'
+            col_key = ap_column_key(year_val, award_val, 'award')
+            label = f"{award_val}\n{year_val}"
+            COLUMN_DEFINITIONS[col_key] = label
+            new_definitions[col_key] = label
+            bucket = columns.setdefault(year_val, {'subjects': {}, 'awards': {}})
+            bucket['awards'][award_val] = col_key
+
+        # Combined "All Awards" column per year (lists every award the student earned)
+        for year_val in columns:
+            all_key = f"apawards_all_{year_val.replace('-', '_')}"
+            label = f"All Awards\n{year_val}"
+            COLUMN_DEFINITIONS[all_key] = label
+            new_definitions[all_key] = label
+            columns[year_val]['all_awards'] = all_key
+
+        # "All Results" option per year — expands into wide subject/PL pairs
+        for year_val in columns:
+            all_results_key = f"apall_{year_val.replace('-', '_')}"
+            label = f"All Results\n{year_val}"
+            COLUMN_DEFINITIONS[all_results_key] = label
+            new_definitions[all_results_key] = label
+            columns[year_val]['all_results'] = all_results_key
+
+    cache.set(cache_key, (columns, new_definitions), timeout=3600)
+    return columns
 
 
 def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses=None, extra_params=None):
@@ -479,6 +754,18 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
                 columns[year_val][subject_val][course_val] = {}
 
             columns[year_val][subject_val][course_val][period_val] = mark_key
+
+        # "All Marks" umbrella per subject — expands into course/marks wide pairs.
+        # Keys are deterministic (markall_<year>_<subject>) so they can be
+        # recomputed by callers; definitions are exposed for label resolution.
+        for year_val, subjects in columns.items():
+            year_key = year_val.replace(' ', '_').replace('-', '_')
+            for subject_val in subjects:
+                subj_key = subject_val.replace(' ', '_').replace('-', '_')
+                umbrella = f"markall_{year_key}_{subj_key}"
+                label = f"All Marks\n{subject_val}\n{year_val}"
+                COLUMN_DEFINITIONS[umbrella] = label
+                new_definitions[umbrella] = label
 
         cache.set(cache_key, (columns, new_definitions), timeout=3600)
         return columns

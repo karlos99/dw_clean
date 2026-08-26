@@ -26,10 +26,18 @@ def _col_label(key):
     # Check for relative year alias in the key (e.g. __sy_this__)
     alias = None
     alias_label = None
-    for a in ('__sy_this__', '__sy_prev1__', '__sy_prev2__'):
+    _ALIAS_LABELS = {
+        '__sy_this__': 'This School Year',
+        '__sy_prev1__': 'Last School Year',
+        '__sy_prev2__': 'Two Years Prior',
+        '__sy_prev3__': 'Three Years Prior',
+        '__sy_prev4__': 'Four Years Prior',
+        '__sy_prev5__': 'Five Years Prior',
+    }
+    for a, lbl in _ALIAS_LABELS.items():
         if a in key:
             alias = a
-            alias_label = 'This School Year' if a == '__sy_this__' else 'Last School Year' if a == '__sy_prev1__' else 'Two Years Prior'
+            alias_label = lbl
             break
 
     # Resolve relative key to specific year key for parsing
@@ -116,11 +124,20 @@ def _build_breadcrumbs(request):
 
     if source == 'page' and source_id:
         label = source_name or 'Page'
+        slug = source_id
+        if source_id.isdigit():
+            from dataviz.models import DataVizPage
+            try:
+                page = DataVizPage.objects.get(pk=int(source_id))
+                slug = page.slug
+                label = page.title or label
+            except DataVizPage.DoesNotExist:
+                pass
         try:
-            url = reverse('dataviz:page_view', kwargs={'slug': source_id})
+            url = reverse('dataviz:page_view', kwargs={'slug': slug})
             crumbs.append({'label': label, 'url': url})
         except:
-            crumbs.append({'label': label, 'url': f'/dataviz/pages/{source_id}/'})
+            crumbs.append({'label': label, 'url': f'/dataviz/pages/{slug}/'})
     elif source == 'dashboard' and source_id:
         label = source_name or 'Dashboard'
         # Dashboards seem to be legacy or handled elsewhere; fall back if reverse fails

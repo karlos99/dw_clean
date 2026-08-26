@@ -14,8 +14,8 @@ import statistics
 
 from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
-from ..column_utils import _get_display_name
-from ..utils import can_user_view_query, get_user_folders
+from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL
+from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from ..survey_utils import get_survey_columns
 from .student_data_utils import (
     get_current_student_columns,
@@ -24,6 +24,8 @@ from .student_data_utils import (
 from .column_management import (
     get_saved_default_columns,
     get_column_expression,
+    is_race_list_column,
+    append_race_list_filter,
 )
 
 @login_required
@@ -181,6 +183,16 @@ def get_column_statistics(request):
                     "SELECT r.local_student_id FROM results r "
                     "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
                     "WHERE r.school_year = %s "
+                    f"AND {RESULTS_BLANK_SSID_SQL} "
+                    "AND t.test_name ILIKE %s "
+                    "AND t.subject ILIKE %s "
+                    f"{window_clause}"
+                )
+                ssid_subquery_base = (
+                    "SELECT r.ssid FROM results r "
+                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
+                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' "
+                    "AND r.school_year = %s "
                     "AND t.test_name ILIKE %s "
                     "AND t.subject ILIKE %s "
                     f"{window_clause}"
@@ -189,34 +201,47 @@ def get_column_statistics(request):
 
                 conditions = []
                 if real_values:
-                    val_clause = id_subquery_base
+                    val_id = id_subquery_base
+                    val_ssid = ssid_subquery_base
                     if metric_col in {'ss', 'pl'}:
-                        val_clause += f"AND r.{metric_col} = ANY(%s)"
+                        val_id += f"AND r.{metric_col} = ANY(%s)"
+                        val_ssid += f"AND r.{metric_col} = ANY(%s)"
                     else:
-                        val_clause += "AND (r.other_info ->> %s) = ANY(%s)"
-                    val_params = list(base_params)
+                        val_id += "AND (r.other_info ->> %s) = ANY(%s)"
+                        val_ssid += "AND (r.other_info ->> %s) = ANY(%s)"
+                    val_id_params = list(base_params)
+                    val_ssid_params = list(base_params)
                     if metric_col in {'oi', 'dfp'}:
-                        val_params.append(test_info.get('other_info_key', ''))
-                    val_params.append(real_values)
-                    conditions.append(f"cs.student_id IN ({val_clause})")
-                    params.extend(val_params)
+                        val_id_params.append(test_info.get('other_info_key', ''))
+                        val_ssid_params.append(test_info.get('other_info_key', ''))
+                    val_id_params.append(real_values)
+                    val_ssid_params.append(real_values)
+                    conditions.append(f"(cs.student_id IN ({val_id}) OR cs.ssid IN ({val_ssid}))")
+                    params.extend(val_id_params + val_ssid_params)
                 
                 if has_blank:
                     blank_subconditions = []
 
-                    blank_subconditions.append(f"cs.student_id NOT IN ({id_subquery_base})")
-                    params.extend(base_params)
+                    blank_subconditions.append(
+                        f"(cs.student_id NOT IN ({id_subquery_base}) AND cs.ssid NOT IN ({ssid_subquery_base}))"
+                    )
+                    params.extend(base_params + base_params)
 
-                    null_clause = id_subquery_base
-                    null_params = list(base_params)
+                    null_id = id_subquery_base
+                    null_ssid = ssid_subquery_base
+                    null_id_params = list(base_params)
+                    null_ssid_params = list(base_params)
                     if metric_col in {'ss', 'pl'}:
-                        null_clause += f"AND r.{metric_col} IS NULL"
+                        null_id += f"AND r.{metric_col} IS NULL"
+                        null_ssid += f"AND r.{metric_col} IS NULL"
                     else:
-                        null_clause += "AND (r.other_info ->> %s) IS NULL"
-                        null_params.append(test_info.get('other_info_key', ''))
+                        null_id += "AND (r.other_info ->> %s) IS NULL"
+                        null_ssid += "AND (r.other_info ->> %s) IS NULL"
+                        null_id_params.append(test_info.get('other_info_key', ''))
+                        null_ssid_params.append(test_info.get('other_info_key', ''))
 
-                    blank_subconditions.append(f"cs.student_id IN ({null_clause})")
-                    params.extend(null_params)
+                    blank_subconditions.append(f"(cs.student_id IN ({null_id}) OR cs.ssid IN ({null_ssid}))")
+                    params.extend(null_id_params + null_ssid_params)
 
                     conditions.append(f"({' OR '.join(blank_subconditions)})")
                 
@@ -283,7 +308,82 @@ def get_column_statistics(request):
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
+
+            # AP exam performance-level columns (ap_<year>_<subject>_PL)
+            if col.startswith('ap_') and not col.startswith('apaward_') and not col.startswith('apawards_all_'):
+                ap_info = next((i for i in ap_exam_infos if i['col_name'] == col), None)
+                if not ap_info:
+                    continue
+                sub_base = (
+                    "SELECT a.ssid FROM \"dataLoader_apexamresult\" a "
+                    "INNER JOIN \"dataLoader_apexamcode\" e ON a.exam_id = e.code "
+                    "INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id "
+                    "WHERE a.admin_year = %s AND e.name = %s AND il.is_published = true "
+                )
+                sub_params = [ap_info['year'], ap_info['subject']]
+                conditions = []
+                if real_values:
+                    conditions.append(f"cs.ssid IN ({sub_base} AND a.exam_grade = ANY(%s))")
+                    params.extend(sub_params + [real_values])
+                if has_blank:
+                    conditions.append(
+                        f"(cs.ssid NOT IN ({sub_base}) OR "
+                        f"cs.ssid IN ({sub_base} AND (a.exam_grade IS NULL OR a.exam_grade = '')))"
+                    )
+                    params.extend(sub_params + sub_params)
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            # Individual AP award columns (apaward_<year>_<award>)
+            if col.startswith('apaward_') and not col.startswith('apawards_all_'):
+                ap_info = next((i for i in ap_award_infos if i['col_name'] == col), None)
+                if not ap_info:
+                    continue
+                sub_base = (
+                    "SELECT a.ssid FROM \"dataLoader_apstudentaward\" a "
+                    "INNER JOIN \"dataLoader_apawardtype\" t ON a.award_type_id = t.code "
+                    "INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id "
+                    "WHERE a.award_year = %s AND t.description = %s AND il.is_published = true "
+                )
+                sub_params = [ap_info['year'], ap_info['award']]
+                conditions = []
+                if real_values:
+                    conditions.append(f"cs.ssid IN ({sub_base})")
+                    params.extend(sub_params)
+                if has_blank:
+                    conditions.append(f"cs.ssid NOT IN ({sub_base})")
+                    params.extend(sub_params)
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            # Combined "All Awards" column (apawards_all_<year>)
+            if col.startswith('apawards_all_'):
+                year = col[len('apawards_all_'):].replace('_', '-')
+                sub_base = (
+                    "SELECT a.ssid FROM \"dataLoader_apstudentaward\" a "
+                    "INNER JOIN \"dataLoader_apawardtype\" t ON a.award_type_id = t.code "
+                    "INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id "
+                    "WHERE a.award_year = %s AND il.is_published = true "
+                )
+                sub_params = [year]
+                conditions = []
+                if real_values:
+                    conditions.append(f"cs.ssid IN ({sub_base} AND t.description = ANY(%s))")
+                    params.extend(sub_params + [real_values])
+                if has_blank:
+                    conditions.append(f"cs.ssid NOT IN ({sub_base})")
+                    params.extend(sub_params)
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
             
+            # Race List (add_data.l_race) — any-of overlap
+            if is_race_list_column(col):
+                append_race_list_filter(where_clauses, params, values)
+                continue
+
             # Standard
             expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
             if expr:
@@ -511,6 +611,30 @@ def get_column_statistics(request):
                         mark_col_map[original_key] = info
                         mark_col_map[original_key.replace('-', '_')] = info
 
+        # Build AP exam + award info maps
+        ap_exam_infos = ap_award_infos = []
+        selected_ap_cols = list(set(
+            [c for c in filter_keys if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_')] +
+            [c for c in target_columns if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_')]
+        ))
+        selected_award_cols = list(set(
+            [c for c in filter_keys if isinstance(c, str) and (c.startswith('apaward_') or c.startswith('apawards_all_'))] +
+            [c for c in target_columns if isinstance(c, str) and (c.startswith('apaward_') or c.startswith('apawards_all_'))]
+        ))
+        if selected_ap_cols or selected_award_cols:
+            try:
+                from dataviz.utils.data_loader import (
+                    _build_ap_exam_columns_from_db,
+                    _build_ap_award_columns_from_db,
+                )
+                with connections['default'].cursor() as ap_meta_cursor:
+                    if selected_ap_cols:
+                        ap_exam_infos, _ = _build_ap_exam_columns_from_db(ap_meta_cursor, selected_ap_cols)
+                    if selected_award_cols:
+                        ap_award_infos, _ = _build_ap_award_columns_from_db(ap_meta_cursor, selected_award_cols)
+            except Exception:
+                ap_exam_infos = ap_award_infos = []
+
         # Build Base Where
         base_where_clauses = ["1=1"]
         base_params = []
@@ -530,25 +654,10 @@ def get_column_statistics(request):
             base_params.append(status)
 
         # Check if user is unrestricted (Project Admin OR District Role)
-        is_unrestricted = False
-        if request.user.is_superuser:
-            is_unrestricted = True
-        elif getattr(request.user, 'is_project_admin', False):
-            is_unrestricted = True
-        elif hasattr(request.user, 'active_role') and request.user.active_role and 'District' in request.user.active_role.name:
-            is_unrestricted = True
+        is_unrestricted = _is_user_unrestricted(request.user)
 
         # Apply active school context or enforce school permissions
-        if hasattr(request.user, 'active_school') and request.user.active_school:
-            base_where_clauses.append("cs.school_state_id = %s")
-            base_params.append(request.user.active_school.state_id)
-        else:
-            if not is_unrestricted:
-                if hasattr(request.user, 'schools') and isinstance(request.user.schools, list) and request.user.schools:
-                    base_where_clauses.append("cs.school_state_id = ANY(%s)")
-                    base_params.append(request.user.schools)
-                else:
-                    base_where_clauses.append("1=0")
+        _apply_de_school_filter(base_where_clauses, base_params, request.user)
 
         # Apply grade level restrictions for specific roles
         if not is_unrestricted and hasattr(request.user, 'grade_levels'):
@@ -615,8 +724,10 @@ def get_column_statistics(request):
                     SELECT {val_expr} as val, COUNT(*) as cnt
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE r.local_student_id IN (
-                        SELECT cs.student_id FROM current_student cs {join_sql} WHERE {where_sql}
+                    WHERE EXISTS (
+                        SELECT 1 FROM current_student cs {join_sql}
+                        WHERE {where_sql}
+                          AND {RESULTS_STUDENT_MATCH_SQL}
                     )
                     AND r.school_year = %s
                     AND t.test_name ILIKE %s
@@ -686,6 +797,67 @@ def get_column_statistics(request):
                     _survey_meta['window'], _survey_meta.get('grade_range', ''),
                     _survey_meta['question_order'],
                 ]
+
+            # --- AP Exam PL Columns ---
+            elif col.startswith('ap_') and not col.startswith('apaward_') and not col.startswith('apawards_all_'):
+                ap_info = next((i for i in ap_exam_infos if i['col_name'] == col), None)
+                if not ap_info:
+                    continue
+                is_string_stats_column = True
+                query = f"""
+                    SELECT a.exam_grade as val, COUNT(*) as cnt
+                    FROM "dataLoader_apexamresult" a
+                    INNER JOIN "dataLoader_apexamcode" e ON a.exam_id = e.code
+                    INNER JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                    WHERE a.ssid IN (
+                        SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
+                    )
+                    AND a.admin_year = %s
+                    AND e.name = %s
+                    AND il.is_published = true
+                    AND a.exam_grade IS NOT NULL AND a.exam_grade <> ''
+                    GROUP BY val
+                    ORDER BY val
+                """
+                q_params = base_params + [ap_info['year'], ap_info['subject']]
+
+            # --- AP Award Columns (individual + all-awards) ---
+            elif col.startswith('apaward_') or col.startswith('apawards_all_'):
+                ap_info = next((i for i in ap_award_infos if i['col_name'] == col), None)
+                if not ap_info:
+                    continue
+                is_string_stats_column = True
+                if ap_info['award'] == '__ALL__':
+                    query = f"""
+                        SELECT t.description as val, COUNT(*) as cnt
+                        FROM "dataLoader_apstudentaward" a
+                        INNER JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+                        INNER JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                        WHERE a.ssid IN (
+                            SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
+                        )
+                        AND a.award_year = %s
+                        AND il.is_published = true
+                        GROUP BY val
+                        ORDER BY val
+                    """
+                    q_params = base_params + [ap_info['year']]
+                else:
+                    query = f"""
+                        SELECT t.description as val, COUNT(*) as cnt
+                        FROM "dataLoader_apstudentaward" a
+                        INNER JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+                        INNER JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                        WHERE a.ssid IN (
+                            SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
+                        )
+                        AND a.award_year = %s
+                        AND t.description = %s
+                        AND il.is_published = true
+                        GROUP BY val
+                        ORDER BY val
+                    """
+                    q_params = base_params + [ap_info['year'], ap_info['award']]
 
             # --- Standard Columns ---
             else:

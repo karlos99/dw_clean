@@ -209,7 +209,7 @@ def query_columns_api(request, query_id):
 # Columns that make sense as discrete multi-select filters in the chart builder.
 # Excludes unique / high-cardinality identifiers.
 _FILTERABLE_COLUMNS = frozenset([
-    'school_year', 'grade', 'school', 'gender', 'race', 'ell', 'sed',
+    'school_year', 'grade', 'school', 'gender', 'race', 'race_list', 'ell', 'sed',
     'foster', 'homeless', 'sped', 'gate', 'in_504', 'dli', 'ltel',
     'status', 'suspension_indicator', 'atendace_rate',
     'birth_date', 'us_enter_date', 'fep_date',
@@ -298,19 +298,53 @@ def _full_mark_label(info: dict) -> str:
 
 def _inject_school_year_aliases(options: dict, labels: dict) -> None:
     """Prepend relative alias options to the school_year filter if present."""
-    if 'school_year' not in options:
+    sy_key = None
+    for k in options:
+        if k == 'school_year' or (isinstance(k, str) and k.lower().endswith('.school_year')):
+            sy_key = k
+            break
+    if sy_key is None:
         return
-    from dataexploration.constants import SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR
+    from dataexploration.constants import (
+        SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR,
+        SY_THREE_PRIOR, SY_FOUR_PRIOR, SY_FIVE_PRIOR,
+    )
     alias_entries = [
         (SY_THIS_YEAR, 'This School Year'),
         (SY_LAST_YEAR, 'Last School Year'),
         (SY_TWO_PRIOR, 'Two Years Prior'),
+        (SY_THREE_PRIOR, 'Three Years Prior'),
+        (SY_FOUR_PRIOR, 'Four Years Prior'),
+        (SY_FIVE_PRIOR, 'Five Years Prior'),
     ]
     # Prepend aliases so they appear at the top of the list
-    existing = options['school_year']
-    options['school_year'] = [a for a, _ in alias_entries] + [y for y in existing if y not in {a for a, _ in alias_entries}]
+    existing = options[sy_key]
+    alias_set = {a for a, _ in alias_entries}
+    options[sy_key] = [a for a, _ in alias_entries] + [y for y in existing if y not in alias_set]
     # Store per-value labels under a special key for the frontend
     labels['__school_year_alias_labels__'] = {a: lbl for a, lbl in alias_entries}
+
+
+_RELATIVE_YEAR_LABELS = [
+    'This School Year', 'Last School Year', 'Two Years Prior',
+    'Three Years Prior', 'Four Years Prior', 'Five Years Prior',
+]
+
+
+def _inject_relative_year_labels(options: dict) -> None:
+    """Ensure all six relative-year labels are available as filter options.
+
+    Dataset charts filter by a ``relative_label`` column (from the
+    relative_year table). Only the labels for years that actually have data
+    appear from the query, so inject the full set to future-proof the options
+    when the data rolls over to a different current year.
+    """
+    for key in list(options):
+        if key == 'relative_label' or (isinstance(key, str) and key.endswith('.relative_label')):
+            existing = options[key]
+            merged = _RELATIVE_YEAR_LABELS + [v for v in existing if v not in _RELATIVE_YEAR_LABELS]
+            options[key] = merged
+    return
 
 
 def _build_where_clause(filters_dict: dict, exclude_col: str = None) -> tuple[list[str], list]:
@@ -333,6 +367,11 @@ def _build_where_clause(filters_dict: dict, exclude_col: str = None) -> tuple[li
             continue
         
         # Determine SQL expression for the column
+        if fkey == 'race_list':
+            from dataexploration.view_modules.column_management import append_race_list_filter
+            vals = fval if isinstance(fval, list) else ([fval] if fval else [])
+            append_race_list_filter(where_parts, params, vals)
+            continue
         if fkey in _enroll_keys:
             expr = _ENROLL_FILTER_EXPRS[fkey]
         elif _SAFE_COL_RE.match(fkey):
@@ -495,6 +534,23 @@ def query_filter_options_api(request, query_id):
                 union_parts = []
                 union_params: list = []
                 for col in filter_cols:
+                    # Race List: distinct individual values from JSON array
+                    if col == 'race_list':
+                        from dataexploration.view_modules.column_management import (
+                            race_list_unnest_select_expr,
+                        )
+                        col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
+                        col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts) if col_where_parts else ''
+                        unnest = race_list_unnest_select_expr('cs')
+                        union_parts.append(
+                            f"(SELECT DISTINCT v AS val, %s AS col_name FROM ("
+                            f" SELECT {unnest} AS v FROM current_student cs{join_sql} {col_where_sql}"
+                            f") _rl WHERE v IS NOT NULL AND v != '' ORDER BY val)"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
+                        continue
+
                     expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
                     
                     # Build dynamic cascading WHERE clause excluding the current column itself
@@ -799,14 +855,15 @@ def column_structures_api(request):
 
     from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
     from dataexploration.column_utils import (
-        get_test_columns, get_mark_columns,
+        get_test_columns, get_mark_columns, get_ap_columns,
         invert_test_to_assessment_first, invert_marks_to_assessment_first,
     )
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
 
     test_structure = get_test_columns()
     mark_structure = get_mark_columns()
-    all_years = list(test_structure.keys()) + list(mark_structure.keys())
+    ap_structure = get_ap_columns()
+    all_years = list(test_structure.keys()) + list(mark_structure.keys()) + list(ap_structure.keys())
 
     # Build assessment-first views for the new assessment-centric picker UI
     assessment_structure = invert_test_to_assessment_first(test_structure)
@@ -817,6 +874,7 @@ def column_structures_api(request):
         'definitions':             COLUMN_DEFINITIONS,
         'test_structure':          test_structure,
         'mark_structure':          mark_structure,
+        'ap_structure':            ap_structure,
         'assessment_structure':    assessment_structure,
         'mark_assessment_structure': mark_assessment_structure,
         'year_labels':             get_year_labels_map(all_years),
@@ -919,6 +977,22 @@ def column_filter_options_api(request):
                 union_parts = []
                 union_params: list = []
                 for col in filter_cols:
+                    if col == 'race_list':
+                        from dataexploration.view_modules.column_management import (
+                            race_list_unnest_select_expr,
+                        )
+                        col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
+                        col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts) if col_where_parts else ''
+                        unnest = race_list_unnest_select_expr('cs')
+                        union_parts.append(
+                            f"(SELECT DISTINCT v AS val, %s AS col_name FROM ("
+                            f" SELECT {unnest} AS v FROM current_student cs{join_sql} {col_where_sql}"
+                            f") _rl WHERE v IS NOT NULL AND v != '' ORDER BY val)"
+                        )
+                        union_params.append(col)
+                        union_params.extend(col_params)
+                        continue
+
                     expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
                     col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
                     is_numeric = _is_numeric_filter_col(col)

@@ -1,183 +1,391 @@
 {% extends "base.html" %}
 
-{% block title %}Manage Pages{% endblock %}
+{% block title %}Page Management{% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-data="pageManager()">
+<div class="min-h-screen bg-slate-50/70" x-data="pageManager()">
+<div class="max-w-[1480px] mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-10">
 
     <!-- Header -->
-    <div class="mb-8 flex items-start justify-between">
+    <div class="mb-8 flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
         <div>
-            <h1 class="text-3xl font-bold text-slate-900">Page Management</h1>
-            <p class="mt-1 text-sm text-slate-500">Control which pages exist, who can access them, and who sees them in the navigation menu.</p>
+            <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">
+                <span class="h-2 w-2 rounded-full bg-blue-600"></span>
+                Site administration
+            </div>
+            <h1 class="mt-2 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">Page Management</h1>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-500">Manage your site structure, decide who can access each page, and control what appears in the navigation.</p>
         </div>
         <a href="{% url 'landing:project_settings' %}"
-           class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition shadow-sm">
+           class="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 whitespace-nowrap">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2">
                 </path>
             </svg>
-            Project Settings
+            Project settings
         </a>
     </div>
 
-    <!-- Filters and Add Button -->
-    <div class="mb-6 bg-white rounded-lg shadow-sm border border-slate-200 p-4">
-        <div class="flex flex-col lg:flex-row gap-3 items-end">
-            <div class="flex-1">
-                <label class="block text-xs font-medium text-slate-600 mb-1">Search</label>
-                <input type="text" x-model="search" @input.debounce.300ms="applyFilters()"
-                       placeholder="Search by name, slug, URL, app…"
-                       class="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-            </div>
-            <div class="w-full lg:w-40">
-                <label class="block text-xs font-medium text-slate-600 mb-1">Status</label>
-                <select x-model="statusFilter" @change="applyFilters()"
-                        class="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-                    <option value="">All</option>
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                    <option value="draft">Draft</option>
-                </select>
-            </div>
-            <div class="w-full lg:w-44">
-                <label class="block text-xs font-medium text-slate-600 mb-1">Sort By</label>
-                <select x-model="sortBy" @change="applyFilters()"
-                        class="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
-                    <option value="app_reference">App</option>
-                    <option value="menu_order">Menu Order</option>
-                    <option value="name">Name</option>
-                    <option value="status">Status</option>
-                    <option value="updated_at">Last Updated</option>
-                </select>
-            </div>
-            <button @click="toggleSortDirection(); applyFilters()"
-                    class="px-3 py-2 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-sm transition">
-                <span x-show="sortDir === 'asc'">↑ Asc</span>
-                <span x-show="sortDir === 'desc'">↓ Desc</span>
-            </button>
-            <button @click="openAddModal()"
-                    class="px-5 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition whitespace-nowrap font-medium">
-                + Add Page
-            </button>
+    {% if active_tab == 'pages' %}
+    <div class="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div class="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">Total pages</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">{{ pages|length }}</p>
+            <p class="mt-1 text-xs text-slate-500">Pages matching current filters</p>
+        </div>
+        <div class="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">Top-level sections</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">{{ page_tree|length }}</p>
+            <p class="mt-1 text-xs text-slate-500">Main navigation groups</p>
+        </div>
+        <div class="rounded-xl border border-blue-100 bg-blue-50/60 px-5 py-4 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-wider text-blue-600">Quick tip</p>
+            <p class="mt-1 text-sm font-semibold text-blue-950">Drag pages to organize them</p>
+            <p class="mt-1 text-xs text-blue-700/75">Drop in the middle to nest a page.</p>
         </div>
     </div>
+    {% endif %}
 
-    <!-- Pages Table -->
-    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-        <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-slate-200 text-sm">
-                <thead class="bg-slate-50">
-                    <tr>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-56">Page</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">URL</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-28">Status</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-36">
-                            <span class="text-blue-700">Page Access</span>
-                        </th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-36">
-                            <span class="text-amber-700">Menu Preview</span>
-                        </th>
-                        <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider w-24">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-slate-200">
-                    {% if pages %}
-                    {% regroup pages by app_reference|default:'Unassigned' as app_groups %}
-                    {% for app_group in app_groups %}
-                    <tr class="bg-slate-100 border-t-2 border-slate-300">
-                        <td colspan="6" class="px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-500">
-                            📦 {{ app_group.grouper|default:'Unassigned' }}
-                        </td>
-                    </tr>
-                    {% for page in app_group.list %}
-                    <tr class="hover:bg-blue-50/30 transition">
-                        <!-- Page name / meta -->
-                        <td class="px-4 py-3">
-                            <div class="font-medium text-slate-900">
-                                {% if page.parent_page %}<span class="text-slate-400 mr-1">›</span>{% endif %}
-                                {% if page.icon %}<i class="{{ page.icon }} text-slate-400 mr-1"></i>{% endif %}
-                                {{ page.name }}
-                            </div>
-                            <div class="text-xs text-slate-400 mt-0.5">{{ page.slug }}</div>
-                            {% if not page.show_in_menu %}
-                            <span class="inline-block mt-1 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">Hidden from menu</span>
-                            {% else %}
-                            <span class="inline-block mt-1 text-[10px] px-1.5 py-0.5 bg-green-50 text-green-700 rounded">In menu · #{{ page.menu_order }}</span>
-                            {% endif %}
-                        </td>
-                        <!-- URL -->
-                        <td class="px-4 py-3">
-                            <code class="text-xs bg-slate-100 px-2 py-1 rounded break-all">{{ page.url_path }}</code>
-                        </td>
-                        <!-- Status -->
-                        <td class="px-4 py-3">
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full
-                                {% if page.status == 'active' %}bg-green-100 text-green-800
-                                {% elif page.status == 'inactive' %}bg-red-100 text-red-800
-                                {% else %}bg-yellow-100 text-yellow-800{% endif %}">
-                                {{ page.get_status_display }}
-                            </span>
-                            {% if page.is_public %}
-                            <div class="text-[10px] text-slate-500 mt-1">🌐 Public</div>
-                            {% endif %}
-                        </td>
-                        <!-- Page Access (blue) -->
-                        <td class="px-4 py-3">
-                            {% if page.is_public %}
-                            <span class="text-xs text-slate-500 italic">Everyone</span>
-                            {% elif page.required_roles %}
-                            <div class="flex flex-wrap gap-1">
-                                {% for role in page.required_roles %}
-                                <span class="inline-block text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">{{ role }}</span>
-                                {% endfor %}
-                            </div>
-                            {% else %}
-                            <span class="text-xs text-slate-500 italic">All logged in</span>
-                            {% endif %}
-                            {% if page.allowed_users.exists %}
-                            <div class="text-[10px] text-blue-600 mt-1">+ {{ page.allowed_users.count }} specific user{{ page.allowed_users.count|pluralize }}</div>
-                            {% endif %}
-                        </td>
-                        <!-- Menu Preview (amber) -->
-                        <td class="px-4 py-3">
-                            {% if page.menu_roles %}
-                            <div class="flex flex-wrap gap-1">
-                                {% for role in page.menu_roles %}
-                                <span class="inline-block text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-medium">{{ role }}</span>
-                                {% endfor %}
-                            </div>
-                            {% endif %}
-                            {% if page.menu_allowed_users.exists %}
-                            <div class="text-[10px] text-amber-600 mt-1">+ {{ page.menu_allowed_users.count }} preview user{{ page.menu_allowed_users.count|pluralize }}</div>
-                            {% endif %}
-                            {% if not page.menu_roles and not page.menu_allowed_users.exists %}
-                            <span class="text-xs text-slate-400 italic">—</span>
-                            {% endif %}
-                        </td>
-                        <!-- Actions -->
-                        <td class="px-4 py-3 text-right whitespace-nowrap">
-                            <button @click="openEditModal({{ page.id }})"
-                                    class="text-blue-600 hover:text-blue-900 font-medium mr-3">Edit</button>
-                            <button @click="confirmDelete({{ page.id }}, '{{ page.name|escapejs }}')"
-                                    class="text-red-500 hover:text-red-800 font-medium">Delete</button>
-                        </td>
-                    </tr>
+    <!-- Tabs -->
+    <div class="mb-8 flex gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm sm:w-fit">
+        <a href="{% url 'users:manage_pages' %}?tab=pages&search={{ search|urlencode }}&status={{ status_filter }}&sort_by={{ sort_by }}&sort_dir={{ sort_dir }}"
+           class="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition
+                  {% if active_tab == 'pages' %}bg-blue-600 text-white shadow-sm{% else %}text-slate-500 hover:bg-slate-50 hover:text-slate-700{% endif %}">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6M9 8h6M7 4h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z"/>
+            </svg>
+            Pages
+        </a>
+        <a href="{% url 'users:manage_pages' %}?tab=navbar"
+           class="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition
+                  {% if active_tab == 'navbar' %}bg-blue-600 text-white shadow-sm{% else %}text-slate-500 hover:bg-slate-50 hover:text-slate-700{% endif %}">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm0 4h16"/>
+            </svg>
+            Navbar
+        </a>
+    </div>
+
+    {% if active_tab == 'pages' %}
+    <!-- ═══════════════════════ PAGES TAB ═══════════════════════ -->
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-4">
+
+        <!-- Structure tree sidebar -->
+        <div class="xl:col-span-1">
+            <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:sticky xl:top-24">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <h2 class="text-base font-semibold text-slate-900">Site structure</h2>
+                        <p class="mt-0.5 text-xs text-slate-500">Organize pages and sub-pages</p>
+                    </div>
+                    <span class="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">{{ page_tree|length }} top</span>
+                </div>
+                <div class="space-y-0.5 max-h-[60vh] overflow-y-auto pr-1" @dragover.prevent @drop.prevent="dropTopLevel()">
+                    {% for node in page_tree %}
+                    {% include "users/partials/page_tree_node.html" with node=node %}
                     {% endfor %}
-                    {% endfor %}
-                    {% else %}
-                    <tr>
-                        <td colspan="6" class="px-6 py-12 text-center text-slate-500">
-                            No pages found. Click <strong>+ Add Page</strong> to create one.
-                        </td>
-                    </tr>
+                    {% if not page_tree %}
+                    <p class="text-xs text-slate-400 italic py-2">No pages yet.</p>
                     {% endif %}
-                </tbody>
-            </table>
+                </div>
+                <div class="mt-4 pt-3 border-t border-slate-100">
+                    <div class="mb-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                        <p class="text-[10px] font-bold uppercase tracking-widest text-blue-600">How the navbar is organized</p>
+                        <div class="mt-2 space-y-1 text-xs text-slate-600">
+                            <p><span class="font-semibold text-slate-800">Assessment</span> <span class="text-slate-400">→</span> top-level submenu</p>
+                            <p class="pl-3"><span class="font-semibold text-slate-800">CAASPP</span> <span class="text-slate-400">→</span> category</p>
+                            <p class="pl-6"><span class="font-semibold text-slate-800">ELA</span> <span class="text-slate-400">→</span> page in that category</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 text-[11px] text-slate-400">
+                        <span class="h-2 w-2 rounded-full bg-green-500"></span> Active
+                        <span class="ml-2 h-2 w-2 rounded-full bg-amber-400"></span> Draft
+                        <span class="ml-2 h-2 w-2 rounded-full bg-slate-300"></span> Inactive
+                    </div>
+                    <p class="mt-2 text-[11px] text-slate-500">Drag pages to reorder or nest them. Drop on the top/bottom edge of a page to reorder, or on the middle to make it a child.</p>
+                    <p class="mt-1 text-[11px] text-slate-400">Click a page to edit it.</p>
+                </div>
+            </div>
         </div>
+
+        <!-- Main panel -->
+        <div class="xl:col-span-3">
+
+            <!-- Filters and Add Button -->
+            <div class="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div class="mb-4 flex items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-base font-semibold text-slate-900">All pages</h2>
+                        <p class="mt-0.5 text-xs text-slate-500">Search, filter, and update page access or visibility.</p>
+                    </div>
+                    <span class="hidden rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500 sm:inline-flex">{{ pages|length }} result{{ pages|length|pluralize }}</span>
+                </div>
+                <div class="flex flex-col items-stretch gap-3 lg:flex-row lg:items-end">
+                    <div class="flex-1">
+                        <label class="block text-xs font-medium text-slate-600 mb-1">Search</label>
+                        <input type="text" x-model="search" @input.debounce.300ms="applyFilters()"
+                               placeholder="Search by name, slug, URL, app…"
+                               class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:ring-blue-500">
+                    </div>
+                    <div class="w-full lg:w-36">
+                        <label class="block text-xs font-medium text-slate-600 mb-1">Status</label>
+                        <select x-model="statusFilter" @change="applyFilters()"
+                                class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:ring-blue-500">
+                            <option value="">All</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                            <option value="draft">Draft</option>
+                        </select>
+                    </div>
+                    <div class="w-full lg:w-40">
+                        <label class="block text-xs font-medium text-slate-600 mb-1">Sort By</label>
+                        <select x-model="sortBy" @change="applyFilters()"
+                                class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:ring-blue-500">
+                            <option value="app_reference">App</option>
+                            <option value="menu_order">Menu Order</option>
+                            <option value="name">Name</option>
+                            <option value="status">Status</option>
+                            <option value="updated_at">Last Updated</option>
+                        </select>
+                    </div>
+                    <button @click="toggleSortDirection(); applyFilters()"
+                            class="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm transition hover:bg-slate-50">
+                        <span x-show="sortDir === 'asc'">Asc ↑</span>
+                        <span x-show="sortDir === 'desc'" style="display: none">Desc ↓</span>
+                    </button>
+                    <button @click="openAddModal()"
+                            class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 whitespace-nowrap">
+                        + Add Page
+                    </button>
+                </div>
+            </div>
+
+            <!-- Pages Table -->
+            <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-200 text-sm">
+                        <thead class="bg-slate-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-56">Page</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">URL</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-28">Status</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-36">
+                                    <span class="text-blue-700">Who can open</span>
+                                </th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-36">
+                                    <span class="text-amber-700">Who sees link</span>
+                                </th>
+                                <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider w-24">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-slate-200">
+                            {% if pages %}
+                            {% regroup pages by app_reference|default:'Unassigned' as app_groups %}
+                            {% for app_group in app_groups %}
+                            <tr class="bg-slate-50 border-t border-slate-200">
+                                <td colspan="6" class="px-4 py-2 text-xs font-bold uppercase tracking-widest text-slate-500">
+                                    {{ app_group.grouper|default:'Unassigned' }}
+                                </td>
+                            </tr>
+                            {% for page in app_group.list %}
+                            <tr class="hover:bg-blue-50/30 transition">
+                                <td class="px-4 py-3">
+                                    <div class="font-medium text-slate-900">
+                                        {% if page.parent_page %}<span class="text-slate-400 mr-1">›</span>{% endif %}
+                                        {% if page.icon %}<i class="{{ page.icon }} text-slate-400 mr-1"></i>{% endif %}
+                                        {{ page.name }}
+                                    </div>
+                                    <div class="text-xs text-slate-400 mt-0.5">{{ page.slug }}</div>
+                                    {% if page.is_menu_category %}
+                                    <span class="inline-block mt-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Menu category · expands children</span>
+                                    {% endif %}
+                                    {% if not page.show_in_menu %}
+                                    <span class="inline-block mt-1 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">Hidden from menu</span>
+                                    {% else %}
+                                    <span class="inline-block mt-1 text-[10px] px-1.5 py-0.5 bg-green-50 text-green-700 rounded">In menu · #{{ page.menu_order }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-4 py-3">
+                                    <code class="text-xs bg-slate-100 px-2 py-1 rounded break-all">{{ page.url_path }}</code>
+                                </td>
+                                <td class="px-4 py-3">
+                                    <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full
+                                        {% if page.status == 'active' %}bg-green-100 text-green-800
+                                        {% elif page.status == 'inactive' %}bg-red-100 text-red-800
+                                        {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                                        {{ page.get_status_display }}
+                                    </span>
+                                    {% if page.is_public %}
+                                    <div class="text-[10px] text-slate-500 mt-1">
+                                        <svg class="inline w-3 h-3 mr-0.5 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/></svg>
+                                        Public
+                                    </div>
+                                    {% endif %}
+                                </td>
+                                <td class="px-4 py-3">
+                                    {% if page.is_public %}
+                                    <span class="text-xs text-slate-500 italic">Everyone</span>
+                                    {% elif page.required_roles %}
+                                    <div class="flex flex-wrap gap-1">
+                                        {% for role in page.required_roles %}
+                                        <span class="inline-block text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">{{ role }}</span>
+                                        {% endfor %}
+                                    </div>
+                                    {% else %}
+                                    <span class="text-xs text-slate-500 italic">All logged in</span>
+                                    {% endif %}
+                                    {% if page.allowed_users.exists %}
+                                    <div class="text-[10px] text-blue-600 mt-1">+ {{ page.allowed_users.count }} specific user{{ page.allowed_users.count|pluralize }}</div>
+                                    {% endif %}
+                                </td>
+                                <td class="px-4 py-3">
+                                    {% if page.menu_roles %}
+                                    <div class="flex flex-wrap gap-1">
+                                        {% for role in page.menu_roles %}
+                                        <span class="inline-block text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-medium">{{ role }}</span>
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
+                                    {% if page.menu_allowed_users.exists %}
+                                    <div class="text-[10px] text-amber-600 mt-1">+ {{ page.menu_allowed_users.count }} preview user{{ page.menu_allowed_users.count|pluralize }}</div>
+                                    {% endif %}
+                                    {% if not page.menu_roles and not page.menu_allowed_users.exists %}
+                                    <span class="text-xs text-slate-400 italic">—</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-4 py-3 text-right whitespace-nowrap">
+                                    <button @click="openEditModal({{ page.id }})"
+                                            class="text-blue-600 hover:text-blue-900 font-medium mr-3">Edit</button>
+                                    <button @click="confirmDelete({{ page.id }}, '{{ page.name|escapejs }}')"
+                                            class="text-red-500 hover:text-red-800 font-medium">Delete</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            {% endfor %}
+                            {% else %}
+                            <tr>
+                                <td colspan="6" class="px-6 py-12 text-center text-slate-500">
+                                    No pages found. Click <strong>+ Add Page</strong> to create one.
+                                </td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Menu preview -->
+            <div class="mt-6 bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                <button @click="previewOpen = !previewOpen" class="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    <span class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        Menu Preview
+                    </span>
+                    <svg class="h-4 w-4 transition-transform duration-200" :class="previewOpen && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </button>
+                <div x-show="previewOpen" x-collapse style="display: none;">
+                    <div class="border-t border-slate-200">
+                        <div class="px-4 py-2 bg-slate-50 border-b border-slate-200 text-[11px] text-slate-500">Live preview — renders the navbar exactly as visitors see it</div>
+                        {% include "partials/navbar.html" %}
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /main panel -->
     </div>
 
+    {% else %}
+    <!-- ═══════════════════════ NAVBAR TAB ═══════════════════════ -->
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-5">
+
+        <!-- Settings form -->
+        <div class="xl:col-span-2">
+            <form method="POST" action="{% url 'users:navbar_settings' %}">
+                {% csrf_token %}
+                <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+                    <div>
+                        <h2 class="text-base font-semibold text-slate-900">Navbar Settings</h2>
+                        <p class="text-xs text-slate-500 mt-0.5">These apply to the navigation bar across the whole site.</p>
+                    </div>
+
+                    <!-- Sticky -->
+                    <label class="flex items-start gap-3 cursor-pointer">
+                        <input type="checkbox" name="sticky" x-model="sticky"
+                               class="mt-0.5 h-4 w-4 text-blue-600 border-slate-300 rounded">
+                        <span>
+                            <span class="block text-sm font-medium text-slate-700">Sticky navbar</span>
+                            <span class="block text-xs text-slate-500 mt-0.5">Keep the navbar pinned to the top of the viewport while scrolling.</span>
+                        </span>
+                    </label>
+
+                    <!-- Navbar style -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Navbar style</label>
+                        <select name="navbar_style" x-model="navbarStyle"
+                                class="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                            <option value="classic">Classic dark (current site look)</option>
+                            <option value="meter">Meter.com inspired</option>
+                        </select>
+                        <p class="mt-1 text-xs text-slate-400">A clean, minimal navigation style with click-to-open menus.</p>
+                    </div>
+
+                    <!-- Label case -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Nav label style</label>
+                        <select name="label_case" x-model="labelCase"
+                                class="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                            <option value="uppercase">Uppercase (classic site look)</option>
+                            <option value="normal">Normal case (cleaner, customer.io-style)</option>
+                        </select>
+                    </div>
+
+                    <!-- Submenu style -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Submenu style</label>
+                        <select name="submenu_style" x-model="submenuStyle"
+                                class="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                            <option value="dropdown">Classic dropdown (small menu under the item)</option>
+                            <option value="megamenu">Mega menu (full-width panel with descriptions)</option>
+                        </select>
+                        <p class="mt-1 text-xs text-slate-400">Top-level pages with children show this style. Hover a top-level item in the preview to see it.</p>
+                    </div>
+
+                    <div class="pt-2 border-t border-slate-100">
+                        <button type="submit"
+                                class="w-full px-5 py-2.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition font-medium">
+                            Save Navbar Settings
+                        </button>
+                    </div>
+                </div>
+            </form>
+            <p class="mt-3 text-xs text-slate-400 px-1">Tip: the Navbar tab also lets you reorder top-level items from the Pages tab via Menu Order.</p>
+        </div>
+
+        <!-- Live preview -->
+        <div class="xl:col-span-3">
+            <div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div class="px-4 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
+                    <span class="text-xs font-semibold uppercase tracking-widest text-slate-500">Live Preview</span>
+                    <div class="flex items-center gap-3">
+                        <span class="text-[11px] text-slate-500" x-text="'Style: ' + (navbarStyle === 'meter' ? 'Meter.com' : 'Classic')"></span>
+                        <span class="text-[11px] text-slate-500" x-text="'Labels: ' + (labelCase === 'uppercase' ? 'UPPERCASE' : 'normal')"></span>
+                        <span class="text-[11px] text-slate-500" x-text="'Submenu: ' + (submenuStyle === 'megamenu' ? 'Mega menu' : 'Classic dropdown')"></span>
+                        <span class="text-[11px] px-1.5 py-0.5 rounded-full"
+                              :class="sticky ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'"
+                              x-text="sticky ? 'Sticky: On' : 'Sticky: Off'"></span>
+                    </div>
+                </div>
+                {% include "partials/navbar.html" %}
+                <div class="px-4 py-2 bg-slate-50 border-t border-slate-200 text-[11px] text-slate-400">
+                    Changes above apply instantly to this preview; click <strong>Save Navbar Settings</strong> to publish.
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- ═══════════════════════════ MODAL ═══════════════════════════ -->
     <div x-show="showModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="closeModal()">
@@ -201,7 +409,7 @@
                     <!-- Modal header -->
                     <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
                         <h3 class="text-base font-semibold text-slate-900"
-                            x-text="modalMode === 'add' ? '+ Add New Page' : '✏️ Edit Page'"></h3>
+                            x-text="modalMode === 'add' ? 'Add New Page' : 'Edit Page'"></h3>
                         <button type="button" @click="closeModal()" class="text-slate-400 hover:text-slate-600">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -209,12 +417,29 @@
                         </button>
                     </div>
 
+                    <!-- Section nav -->
+                    <div class="px-6 py-2.5 bg-slate-50 border-b border-slate-200 flex gap-2 sticky top-0 z-10">
+                        <button type="button" @click="formSection = 'info'"
+                                class="px-3 py-1.5 text-xs font-medium rounded-md transition"
+                                :class="formSection === 'info' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200'">
+                            Page Info
+                        </button>
+                        <button type="button" @click="formSection = 'access'"
+                                class="px-3 py-1.5 text-xs font-medium rounded-md transition"
+                                :class="formSection === 'access' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200'">
+                            Access
+                        </button>
+                        <button type="button" @click="formSection = 'nav'"
+                                class="px-3 py-1.5 text-xs font-medium rounded-md transition"
+                                :class="formSection === 'nav' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-slate-200'">
+                            Navigation
+                        </button>
+                    </div>
+
                     <div class="overflow-y-auto max-h-[80vh] divide-y divide-slate-100">
 
                         <!-- ── SECTION 1: Page Info ─────────────────────────── -->
-                        <div class="px-6 py-5 space-y-4">
-                            <p class="text-xs font-bold uppercase tracking-widest text-slate-400">Page Info</p>
-
+                        <div x-show="formSection === 'info'" class="px-6 py-5 space-y-4">
                             <div class="grid grid-cols-2 gap-4">
                                 <div class="col-span-2">
                                     <label class="block text-sm font-medium text-slate-700 mb-1">Page Name <span class="text-red-500">*</span></label>
@@ -235,10 +460,12 @@
                                     <p class="mt-1 text-xs text-slate-400">Groups pages in the list by Django app</p>
                                 </div>
                                 <div class="col-span-2">
-                                    <label class="block text-sm font-medium text-slate-700 mb-1">URL Path <span class="text-red-500">*</span></label>
-                                    <input type="text" name="url_path" x-model="formData.url_path" required
-                                           placeholder="/path/to/page  or  # for placeholder"
+                                    <label class="block text-sm font-medium text-slate-700 mb-1">Page URL</label>
+                                    <input type="text" name="url_path" x-model="formData.url_path"
+                                           :required="!formData.is_menu_category"
+                                           placeholder="/path/to/page (leave empty for a category)"
                                            class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500">
+                                    <p class="mt-1 text-xs text-slate-400">Categories do not need a URL. Their child pages appear when the category expands.</p>
                                 </div>
                                 <div>
                                     <label class="block text-sm font-medium text-slate-700 mb-1">Icon Class</label>
@@ -254,46 +481,18 @@
                                         <option value="draft">Draft</option>
                                     </select>
                                 </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-1">Parent Page</label>
-                                    <select name="parent_page" x-model="formData.parent_page_id"
-                                            class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500">
-                                        <option value="">— Top Level (no parent)</option>
-                                        {% for p in parent_page_options %}
-                                        <option value="{{ p.id }}">{{ p.label }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-slate-700 mb-1">Menu Order</label>
-                                    <input type="number" name="menu_order" x-model="formData.menu_order" min="0"
-                                           class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500">
-                                    <p class="mt-1 text-xs text-slate-400">Lower numbers appear first</p>
-                                </div>
                                 <div class="col-span-2">
                                     <label class="block text-sm font-medium text-slate-700 mb-1">Description</label>
                                     <textarea name="description" x-model="formData.description" rows="2"
                                               class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
                                 </div>
-                                <div class="col-span-2 flex items-center gap-6">
-                                    <label class="flex items-center gap-2 cursor-pointer">
-                                        <input type="checkbox" name="show_in_menu" x-model="formData.show_in_menu"
-                                               class="h-4 w-4 text-blue-600 border-slate-300 rounded">
-                                        <span class="text-sm text-slate-700">Show in Navigation Menu</span>
-                                    </label>
-                                    <label class="flex items-center gap-2 cursor-pointer">
-                                        <input type="checkbox" name="is_public" x-model="formData.is_public"
-                                               class="h-4 w-4 text-blue-600 border-slate-300 rounded">
-                                        <span class="text-sm text-slate-700">Public (no login required)</span>
-                                    </label>
-                                </div>
                             </div>
                         </div>
 
                         <!-- ── SECTION 2: Page Access ──────────────────────── -->
-                        <div class="px-6 py-5 space-y-4 bg-blue-50/40">
+                        <div x-show="formSection === 'access'" class="px-6 py-5 space-y-4 bg-blue-50/40">
                             <div>
-                                <p class="text-xs font-bold uppercase tracking-widest text-blue-600">🔐 Page Access</p>
+                                <p class="text-xs font-bold uppercase tracking-widest text-blue-600">Page Access</p>
                                 <p class="text-xs text-slate-500 mt-0.5">Who is allowed to <strong>open</strong> this page. Leave roles empty to allow all logged-in users. Specific users override role restrictions.</p>
                             </div>
 
@@ -319,17 +518,57 @@
                                           class="w-full px-3 py-2 border border-blue-200 rounded-md text-sm bg-white focus:ring-blue-500 focus:border-blue-500"></textarea>
                                 <p class="mt-1 text-xs text-slate-400">Comma, semicolon, or one-per-line. These users can access the page regardless of their role.</p>
                             </div>
+
+                            <label class="flex items-center gap-2 cursor-pointer pt-1">
+                                <input type="checkbox" name="is_public" x-model="formData.is_public"
+                                       class="h-4 w-4 text-blue-600 border-slate-300 rounded">
+                                <span class="text-sm text-slate-700">Public (no login required)</span>
+                            </label>
                         </div>
 
-                        <!-- ── SECTION 3: Menu Preview / Testing ──────────── -->
-                        <div class="px-6 py-5 space-y-4 bg-amber-50/40">
+                        <!-- ── SECTION 3: Navigation ───────────────────────── -->
+                        <div x-show="formSection === 'nav'" class="px-6 py-5 space-y-4 bg-amber-50/40">
                             <div>
-                                <p class="text-xs font-bold uppercase tracking-widest text-amber-600">👁 Navigation Preview / Testing</p>
+                                <p class="text-xs font-bold uppercase tracking-widest text-amber-600">Navigation / Menu</p>
                                 <p class="text-xs text-slate-500 mt-0.5">
-                                    Controls who sees this page in the <strong>navigation menu</strong> before it's released to everyone.
-                                    This does <em>not</em> change who can actually open the page — only who sees the link.
-                                    Leave both empty to apply no preview restriction (everyone with access sees it in the menu).
+                                    Where this page appears in the <strong>navbar</strong>, and who sees it there before it's released to everyone.
+                                    Menu visibility does <em>not</em> change who can open the page — only who sees the link.
                                 </p>
+                            </div>
+
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" name="show_in_menu" x-model="formData.show_in_menu"
+                                       class="h-4 w-4 text-amber-500 border-slate-300 rounded">
+                                <span class="text-sm text-slate-700">Show in Navigation Menu</span>
+                            </label>
+
+                            <label class="flex items-start gap-3 rounded-lg border border-amber-200 bg-white p-3 cursor-pointer">
+                                <input type="checkbox" name="is_menu_category" x-model="formData.is_menu_category"
+                                       class="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-500">
+                                <span>
+                                    <span class="block text-sm font-medium text-slate-800">Use as a menu category</span>
+                                    <span class="mt-0.5 block text-xs text-slate-500">This is a grouping label, not a page link. Put pages under it to make them expand in the navbar.</span>
+                                </span>
+                            </label>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-700 mb-1">Place this page under</label>
+                                    <select name="parent_page" x-model="formData.parent_page_id"
+                                            class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500">
+                                        <option value="">Top level — appears in the main navbar</option>
+                                        {% for p in parent_page_options %}
+                                        <option value="{{ p.id }}">{{ p.label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <p class="mt-1 text-xs text-slate-400">Use one level per purpose: top-level page → category → pages inside that category.</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-slate-700 mb-1">Menu Order</label>
+                                    <input type="number" name="menu_order" x-model="formData.menu_order" min="0"
+                                           class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500">
+                                    <p class="mt-1 text-xs text-slate-400">Lower numbers appear first</p>
+                                </div>
                             </div>
 
                             <div>
@@ -362,21 +601,29 @@
                     </div><!-- end scrollable body -->
 
                     <!-- Footer -->
-                    <div class="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
-                        <button type="button" @click="closeModal()"
-                                class="px-4 py-2 border border-slate-300 rounded-md text-sm text-slate-700 hover:bg-slate-100 transition">
-                            Cancel
-                        </button>
-                        <button type="submit"
-                                class="px-5 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition font-medium">
-                            <span x-text="modalMode === 'add' ? 'Add Page' : 'Save Changes'"></span>
-                        </button>
+                    <div class="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-between gap-3 items-center">
+                        <span class="text-xs text-slate-400">
+                            <span x-show="formSection === 'info'">1 · Info &nbsp;›&nbsp; 2 · Access &nbsp;›&nbsp; 3 · Navigation</span>
+                            <span x-show="formSection === 'access'" style="display: none;">&larr; Back to Info</span>
+                            <span x-show="formSection === 'nav'" style="display: none;">&larr; Back to Access</span>
+                        </span>
+                        <div class="flex gap-3">
+                            <button type="button" @click="closeModal()"
+                                    class="px-4 py-2 border border-slate-300 rounded-md text-sm text-slate-700 hover:bg-slate-100 transition">
+                                Cancel
+                            </button>
+                            <button type="submit"
+                                    class="px-5 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition font-medium">
+                                <span x-text="modalMode === 'add' ? 'Add Page' : 'Save Changes'"></span>
+                            </button>
+                        </div>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
+</div><!-- end content width -->
 </div><!-- end x-data -->
 
 <script>
@@ -386,9 +633,107 @@ function pageManager() {
         statusFilter: '{{ status_filter }}',
         sortBy: '{{ sort_by }}',
         sortDir: '{{ sort_dir }}',
+        previewOpen: false,
         showModal: false,
         modalMode: 'add',
         editingPageId: null,
+        formSection: 'info',
+        // Navbar preview state (mirrors navbarController in base.html)
+        sticky: {{ navbar_config.sticky|yesno:"true,false" }},
+        navbarStyle: '{{ navbar_config.navbar_style }}',
+        labelCase: '{{ navbar_config.label_case }}',
+        submenuStyle: '{{ navbar_config.submenu_style }}',
+        mobileOpen: false,
+        activeMega: null,
+        meterOpen: null,
+        _megaTimer: null,
+        // Drag-and-drop organizing
+        dragPageId: null,
+        dragOverId: null,
+        dragZone: null,
+        dragStart(id) {
+            this.dragPageId = id;
+        },
+        dragOver(id, evt) {
+            const rect = evt.currentTarget.getBoundingClientRect();
+            const y = evt.clientY;
+            const third = rect.height / 3;
+            this.dragOverId = id;
+            if (y < rect.top + third) {
+                this.dragZone = 'before';
+            } else if (y > rect.bottom - third) {
+                this.dragZone = 'after';
+            } else {
+                this.dragZone = 'child';
+            }
+        },
+        dragLeave(id, evt) {
+            if (this.dragOverId === id && !evt.currentTarget.contains(evt.relatedTarget)) {
+                this.dragOverId = null;
+                this.dragZone = null;
+            }
+        },
+        dragEnd() {
+            this.dragPageId = null;
+            this.dragOverId = null;
+            this.dragZone = null;
+        },
+        async dropPage(id) {
+            const targetId = this.dragOverId || id;
+            const pageId = this.dragPageId;
+            this.dragEnd();
+            if (!pageId || pageId === targetId) return;
+            const payload = { page_id: pageId };
+            if (this.dragZone === 'child') {
+                payload.new_parent_id = targetId;
+            } else {
+                payload.new_parent_id = null;
+                payload.before_id = this.dragZone === 'before' ? targetId : null;
+                if (this.dragZone === 'after') payload.after_id = targetId;
+            }
+            await this.saveOrder(payload);
+        },
+        async dropTopLevel() {
+            const pageId = this.dragPageId;
+            this.dragEnd();
+            if (!pageId) return;
+            await this.saveOrder({ page_id: pageId, new_parent_id: null });
+        },
+        async saveOrder(payload) {
+            const response = await fetch('{% url "users:reorder_page" %}', {
+                method: 'POST',
+                headers: { 'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await response.json();
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert(data.error || 'Could not reorder page.');
+            }
+        },
+        toggleMobile() {
+            this.mobileOpen = !this.mobileOpen;
+        },
+        openMega(slug) {
+            clearTimeout(this._megaTimer);
+            this.activeMega = slug;
+        },
+        closeMega() {
+            clearTimeout(this._megaTimer);
+            this._megaTimer = setTimeout(() => { this.activeMega = null; }, 150);
+        },
+        toggleMeter(slug) {
+            this.meterOpen = this.meterOpen === slug ? null : slug;
+        },
+        navWrapClass() {
+            return "relative";
+        },
+        navLabelClass() {
+            return this.labelCase === 'uppercase'
+                ? "text-xs font-semibold uppercase tracking-[0.15em]"
+                : "text-sm font-medium normal-case tracking-normal";
+        },
         formData: {
             name: '',
             slug: '',
@@ -399,6 +744,7 @@ function pageManager() {
             status: 'active',
             is_public: false,
             show_in_menu: true,
+            is_menu_category: false,
             menu_order: 0,
             parent_page_id: '',
             required_roles: [],
@@ -409,6 +755,7 @@ function pageManager() {
 
         applyFilters() {
             const params = new URLSearchParams();
+            params.set('tab', 'pages');
             if (this.search) params.set('search', this.search);
             if (this.statusFilter) params.set('status', this.statusFilter);
             if (this.sortBy) params.set('sort_by', this.sortBy);
@@ -423,6 +770,7 @@ function pageManager() {
         openAddModal() {
             this.modalMode = 'add';
             this.resetFormData();
+            this.formSection = 'info';
             this.showModal = true;
         },
 
@@ -439,6 +787,7 @@ function pageManager() {
                     menu_roles: data.page.menu_roles || [],
                 };
             }
+            this.formSection = 'info';
             this.showModal = true;
         },
 
@@ -458,6 +807,7 @@ function pageManager() {
                 status: 'active',
                 is_public: false,
                 show_in_menu: true,
+                is_menu_category: false,
                 menu_order: 0,
                 parent_page_id: '',
                 required_roles: [],

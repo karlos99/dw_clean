@@ -45,23 +45,37 @@ class ActiveRoleMiddleware:
             
             # Ensure we treat it as a list of strings
             user_schools_list = request.user.schools if isinstance(request.user.schools, list) else []
-            
-            if user_schools_list:
+            unrestricted = self._is_unrestricted(request.user)
+
+            if user_schools_list or unrestricted:
                 # Pre-fetch available schools for the UI
                 # We order by name for the dropdown
-                request.user.available_schools = StudataSchool.objects.filter(state_id__in=user_schools_list).order_by('school_name')
-                
+                if user_schools_list:
+                    request.user.available_schools = StudataSchool.objects.filter(state_id__in=user_schools_list).order_by('school_name')
+                else:
+                    request.user.available_schools = StudataSchool.objects.order_by('school_name')
+
                 active_school_id = request.session.get('active_school_id')
-                
+                if active_school_id is None:
+                    prefs = request.user.preferences if isinstance(request.user.preferences, dict) else {}
+                    active_school_id = prefs.get('active_school_id')
+
                 if active_school_id:
                      if active_school_id == 'all':
                           request.user.active_school = None
-                     elif active_school_id in user_schools_list:
+                     elif active_school_id in user_schools_list or unrestricted:
                           # It's in the allowed list, get the object
                           # We can find it from the prefetched queryset to save a DB hit if we iterate users.available_schools
                           # But simple filter is fine.
                           try:
-                              request.user.active_school = StudataSchool.objects.get(state_id=active_school_id)
+                              request.user.active_school = (
+                                  StudataSchool.objects
+                                  .filter(state_id=active_school_id)
+                                  .order_by('school_name', 'dw_schoolkey')
+                                  .first()
+                              )
+                              if request.user.active_school is None:
+                                  raise StudataSchool.DoesNotExist
                           except StudataSchool.DoesNotExist:
                               request.session.pop('active_school_id', None)
                               request.user.active_school = None
@@ -87,7 +101,7 @@ class ActiveRoleMiddleware:
 
         # Define priority (index 0 is highest)
         # Assuming typical hierarchy. Adjust as needed.
-        PRIORITY = ['Project Admin', 'District Admin', 'School Admin', 'Teacher']
+        PRIORITY = ['Project Admin', 'District Admin', 'District View', 'School Admin', 'Teacher']
         
         best_role = None
         best_idx = 999
@@ -108,6 +122,15 @@ class ActiveRoleMiddleware:
              # If we save to session, 'All' becomes impossible to reach by default without explicit 'all' flag.
         else:
              request.user.active_role = None
+
+    @staticmethod
+    def _is_unrestricted(user):
+        """Superusers and District/Project-level roles can act across all schools."""
+        if user.is_superuser:
+            return True
+        return user.roles.filter(
+            name__in=['Project Admin', 'District Admin', 'District View']
+        ).exists() or user.roles.filter(name__icontains='District').exists()
 
 
 class UsageTrackingMiddleware:

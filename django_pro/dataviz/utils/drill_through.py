@@ -7,7 +7,75 @@ import json
 
 from django.core.cache import cache
 
-from .data_loader import run_saved_query, run_raw_sql, run_column_query
+from .data_loader import run_saved_query, run_raw_sql, run_column_query, enrich_drill_rows
+
+
+DRILL_CACHE_TTL = 300
+
+
+def _drill_user_part(user) -> str:
+    if not user:
+        return ''
+    user_role = getattr(user, 'active_role', None)
+    role_name = user_role.name if user_role else 'None'
+    active_school = getattr(user, 'active_school', None)
+    school_id = active_school.state_id if active_school else 'All'
+    return f":u{user.pk}:r{role_name}:s{school_id}"
+
+
+def _drill_fetch_hash(chart, drill_filters: dict, extra_columns: list | None) -> str:
+    payload = {
+        'f': drill_filters,
+        'sf': chart.source_filters or {},
+        'sid': chart.source_id,
+        'ec': sorted(extra_columns) if extra_columns else None,
+        'one_per_sak': bool((chart.config or {}).get('one_row_per_stu_annual_key')),
+    }
+    return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def _drill_post_cfg_sig(chart) -> str:
+    cfg = chart.config or {}
+    relevant = {}
+    for k, v in cfg.items():
+        if k.startswith(('pg_', 'ds_', 'dyn_', 'st_')) or k in ('agg', 'one_row_per_stu_annual_key'):
+            relevant[k] = v
+    return hashlib.md5(json.dumps(relevant, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
+def _drill_post_hash(chart, fetch_hash: str) -> str:
+    payload = {
+        'fetch_hash': fetch_hash,
+        'ct': chart.chart_type,
+        'cfg_sig': _drill_post_cfg_sig(chart),
+    }
+    return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def _drill_needs_post_filter_cache(chart, drill_filters: dict) -> bool:
+    if chart.chart_type in ('progress_growth', 'date_series', 'dynamic_summary_table', 'summary_table'):
+        return True
+    if (chart.config or {}).get('one_row_per_stu_annual_key'):
+        return True
+    if chart.chart_type in ('bar', 'grouped_bar', 'stacked_bar') and (chart.config or {}).get('agg', 'count') == 'count':
+        return True
+    for fkey in drill_filters:
+        bare = fkey.split('.')[-1]
+        if bare.startswith(('test_', 'mark_')):
+            return True
+    return False
+
+
+def _can_sql_paginate_drill(chart, drill_filters: dict, sort_by: str) -> bool:
+    if _drill_needs_post_filter_cache(chart, drill_filters):
+        return False
+    if chart.source_type not in ('query', 'columns'):
+        return False
+    if sort_by:
+        bare = sort_by.split('.')[-1]
+        if bare.startswith(('test_', 'mark_')):
+            return False
+    return True
 
 
 def split_composite_value(val: str, expected_len: int) -> list:
@@ -47,6 +115,46 @@ def _find_id_col(row_dict):
         if match:
             return match
     return None
+
+
+def _deduplicate_count_drill_rows(rows, chart):
+    """Keep one drill row per student for row-count bar charts.
+
+    Drill queries add identifier/extra columns to the chart query. For joined
+    datasets those columns can make otherwise identical rows distinct, even
+    though the chart count was calculated from one row per student. Numeric
+    and occurrence aggregations intentionally retain their source rows.
+
+    When the chart uses ``one_row_per_stu_annual_key``, always collapse on
+    ``stu_annual_key`` so drill matches the dataset chart row set.
+    """
+    if not rows:
+        return rows
+
+    if (chart.config or {}).get('one_row_per_stu_annual_key'):
+        from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
+        return dedupe_rows_by_stu_annual_key(rows)
+
+    if chart.chart_type not in ('bar', 'grouped_bar', 'stacked_bar'):
+        return rows
+    if (chart.config or {}).get('agg', 'count') != 'count':
+        return rows
+
+    id_col = _find_id_col(rows[0])
+    if not id_col:
+        return rows
+
+    seen = set()
+    deduped = []
+    for row in rows:
+        key = row.get(id_col)
+        if key is None or not str(key).strip():
+            deduped.append(row)
+            continue
+        if key not in seen:
+            seen.add(key)
+            deduped.append(row)
+    return deduped
 
 
 def build_drill_filter(chart, params: dict) -> dict:
@@ -110,19 +218,59 @@ def build_drill_filter(chart, params: dict) -> dict:
         # calculation definition and, for non-count aggregates, restrict the
         # drill to students who actually contributed a value — otherwise the
         # drill list shows every student in the row group instead of just
-        # the ones the calculation was computed over.
+        # the ones the calculation was computed over.  Derived columns (built
+        # by arithmetic over other calculation columns) have no value column of
+        # their own, so resolve through to the base column they ultimately
+        # aggregate, carrying along any threshold filters on the way.
         if chart.config.get('dyn_col_mode') == 'calculations' and col_val:
             col_defs = chart.column_defs or {}
+            calc_by_id = {}
+            for _idx, _c in enumerate(chart.config.get('dyn_calculations', [])):
+                if isinstance(_c, dict):
+                    calc_by_id[str(_c.get('id') or f'c{_idx}')] = _c
+
+            def _calc_label(_c):
+                _fn = _c.get('agg_func', 'count')
+                _vc = _c.get('value_col', '')
+                _lbl = (_c.get('label') or '').strip()
+                if not _lbl:
+                    _vc_lbl = col_defs.get(_vc, _vc) if _vc else _vc
+                    _lbl = f"{_fn.capitalize()} of {_vc_lbl}" if _vc else _fn.capitalize()
+                return _lbl
+
+            def _resolve_underlying(_c, _seen=None):
+                """Return (value_col, thresholds) for a calc — the base value
+                column it ultimately aggregates plus the threshold filters on
+                the base columns it is built from (if any)."""
+                _seen = _seen or set()
+                _cid = str(_c.get('id') or '')
+                if _cid in _seen:
+                    return '', []
+                _seen.add(_cid)
+                _vc = _c.get('value_col', '')
+                _f = _c.get('filter')
+                _thresholds = []
+                if isinstance(_f, dict) and _f.get('col') and _f.get('op'):
+                    _thresholds.append({'col': _f['col'], 'op': _f['op'], 'val': _f.get('val')})
+                if _vc:
+                    return _vc, _thresholds
+                for _ref in (_c.get('ref_a'), _c.get('ref_b')):
+                    _refc = calc_by_id.get(str(_ref or ''))
+                    if _refc:
+                        _rvc, _rth = _resolve_underlying(_refc, _seen)
+                        if _rvc:
+                            return _rvc, _rth + _thresholds
+                return '', _thresholds
+
             for calc in chart.config.get('dyn_calculations', []):
-                fn = calc.get('agg_func', 'count')
-                vc = calc.get('value_col', '')
-                lbl = (calc.get('label') or '').strip()
-                if not lbl:
-                    vc_lbl = col_defs.get(vc, vc) if vc else vc
-                    lbl = f"{fn.capitalize()} of {vc_lbl}" if vc else fn.capitalize()
-                if lbl == col_val:
+                if not isinstance(calc, dict):
+                    continue
+                if _calc_label(calc) == col_val:
+                    vc, thresholds = _resolve_underlying(calc)
                     if vc:
                         filters['dyn_calc_value_col'] = vc
+                    if thresholds:
+                        filters['dyn_calc_thresholds'] = thresholds
                     break
             if row_val and row_cols:
                 parts = row_val.split(_SEP)
@@ -234,8 +382,16 @@ def build_drill_filter(chart, params: dict) -> dict:
         if len(x_cols_list) > 1:
             parts = split_composite_value(x_val, len(x_cols_list))
             if len(parts) == len(x_cols_list):
-                for col_name, part_val in zip(x_cols_list, parts):
+                cfg = chart.config or {}
+                total_label = str(cfg.get('group_total_label', '') or 'Total')
+                is_total = bool(cfg.get('show_group_total')) and parts[0] == total_label
+                for i, (col_name, part_val) in enumerate(zip(x_cols_list, parts)):
                     if col_name:
+                        # A Total category aggregates across the first x column —
+                        # only the remaining dimension filters apply (e.g. the
+                        # school year is kept, the grade is not).
+                        if is_total and i == 0:
+                            continue
                         filters[col_name] = part_val
             else:
                 # ECharts did not concatenate or splitting didn't match (single value clicked)
@@ -286,7 +442,7 @@ def build_drill_filter(chart, params: dict) -> dict:
                 filters[col_name] = x_val
 
     # assessment_compare: drill_col is the specific PL column (e.g.
-    # test_2025_2026_DIBELS_Reading_BOY_PL).  The series_val is the PL value
+    # test_2025_2026_Dibels_Reading_BOY_PL).  The series_val is the PL value
     # ("Above Benchmark").  Filter that column directly — it already encodes
     # the test, subject, window, and year so no extra filters are needed.
     drill_col = params.get('drill_col', '')
@@ -302,8 +458,16 @@ def build_drill_filter(chart, params: dict) -> dict:
         if group_col and series_col:
             parts = split_composite_value(series_val, 2)
             if len(parts) == 2:
-                filters[group_col] = parts[0]
-                filters[series_col] = parts[1]
+                cfg = chart.config or {}
+                total_label = str(cfg.get('group_total_label', '') or 'Total')
+                if cfg.get('show_group_total') and parts[0] == total_label:
+                    # Total group aggregates across the stack column — drill into
+                    # every stack value for the clicked group value (e.g. all
+                    # grades for the clicked school year).
+                    filters[group_col] = parts[1]
+                else:
+                    filters[group_col] = parts[0]
+                    filters[series_col] = parts[1]
                 split_success = True
         
         if not split_success and series_col:
@@ -452,12 +616,19 @@ def execute_drill_query(
     # fetched so we can restrict the drill to students who actually
     # contributed a value to the aggregate.
     dyn_calc_value_col = None
+    dyn_calc_thresholds = None
     if 'dyn_calc_value_col' in drill_filters and chart.chart_type == 'dynamic_summary_table':
         drill_filters = dict(drill_filters)
         dyn_calc_value_col = drill_filters.pop('dyn_calc_value_col')
+        dyn_calc_thresholds = drill_filters.pop('dyn_calc_thresholds', None)
         extra_columns = list(extra_columns or [])
         if dyn_calc_value_col not in extra_columns:
             extra_columns.append(dyn_calc_value_col)
+        if isinstance(dyn_calc_thresholds, list):
+            for _t in dyn_calc_thresholds:
+                _tc = _t.get('col') if isinstance(_t, dict) else None
+                if _tc and _tc not in extra_columns:
+                    extra_columns.append(_tc)
 
     # date_series (Dates chart): extract the bucketed-date + value-col /
     # active-range sentinels before they leak into SQL filters, and ensure
@@ -520,20 +691,12 @@ def execute_drill_query(
     # drill-through (unlike chart rendering) applies row-level access control
     # — role, school, and even per-teacher restrictions can change the rows
     # returned for the same chart+filters.
-    user_part = ''
-    if user:
-        user_role = getattr(user, 'active_role', None)
-        role_name = user_role.name if user_role else 'None'
-        active_school = getattr(user, 'active_school', None)
-        school_id = active_school.state_id if active_school else 'All'
-        user_part = f":u{user.pk}:r{role_name}:s{school_id}"
-    _fetch_hash = hashlib.md5(json.dumps(
-        {'f': drill_filters, 'ec': sorted(extra_columns) if extra_columns else None},
-        sort_keys=True, default=str,
-    ).encode()).hexdigest()[:16]
+    user_part = _drill_user_part(user)
+    _fetch_hash = _drill_fetch_hash(chart, drill_filters, extra_columns)
     updated_ts = int(chart.updated_at.timestamp())
     _drill_cache_key = f"drill_fetch:{chart.pk}:{updated_ts}:{chart.source_type}:{_fetch_hash}{user_part}"
     _cached_fetch = cache.get(_drill_cache_key)
+    sql_total_rows = None
 
     if _cached_fetch is not None:
         rows, cols, error = _cached_fetch
@@ -557,14 +720,21 @@ def execute_drill_query(
                 if c not in sel_set:
                     selected_columns.append(c)
                     sel_set.add(c)
-        result = run_column_query(selected_columns, merged_filters, user=user, apply_user_filters=True)
+        result = run_column_query(
+            selected_columns, merged_filters, user=user, apply_user_filters=True,
+            limit=per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
+            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
+            order_by=sort_by if _can_sql_paginate_drill(chart, drill_filters, sort_by) and sort_by else None,
+        )
         rows = result.get('rows', [])
         cols = result.get('columns', [])
         error = result.get('error')
+        if result.get('total_rows') is not None:
+            sql_total_rows = result.get('total_rows')
     elif chart.source_type == 'dataset':
         from dataviz.models import Dataset
         from dataviz.utils.compiler import compile_dataset_to_sql, execute_compiled_query, execute_compiled_query_aliased, COLUMN_WHITELIST, get_columns_for_table
-        from dataviz.utils.data_loader import _run_saved_query_sql
+        from dataviz.utils.data_loader import enrich_drill_rows as _enrich_drill_rows
         try:
             ds = Dataset.objects.get(pk=chart.source_id)
         except Dataset.DoesNotExist:
@@ -572,229 +742,201 @@ def execute_drill_query(
             cols = []
             error = 'Dataset not found'
         else:
-            merged_filters = dict(chart.source_filters or {})
-            merged_filters.update(drill_filters)
-
-            # Map standard keys in merged_filters to "table.column" format for compile_dataset_to_sql
-            active_tables = {ds.base_table}
-            for j in (ds.joins or []):
-                if j.get('table'):
-                    active_tables.add(j['table'])
-
-            def _allowed_columns(tbl: str) -> set:
-                return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
-
-            # Resolve all filter keys (bare exploration names, JSONB key suffixes,
-            # clean aliases from column_mappings, or already-qualified table.column)
-            # into the table.column format required by compile_dataset_to_sql.
-            from dataviz.utils.compiler import resolve_dataset_filters as _resolve_filters
-            from dataviz.utils.status_filter import prepare_interactive_filters
-            dataset_filters, status_val = prepare_interactive_filters(merged_filters, ds, active_tables)
-
-            # Extract school_year for the explorer fallback (used below when yr_col
-            # is absent from the dataset columns).
-            school_year = None
-            for fk, fval in merged_filters.items():
-                if fk.split('.')[-1] == 'school_year':
-                    school_year = fval
-                    break
-            
-            # Find the best student identifier, year, and annual key columns whitelisted in active tables
-            student_identifier_col = None
-            for tbl in ['current_student', 'student_enroll', 'results', 'student_marks_list', 'schedule_list']:
-                if tbl in active_tables and 'ssid' in COLUMN_WHITELIST.get(tbl, {}):
-                    student_identifier_col = f"{tbl}.ssid"
-                    break
-            if not student_identifier_col and 'ssid' in COLUMN_WHITELIST.get(ds.base_table, {}):
-                student_identifier_col = f"{ds.base_table}.ssid"
-            
-            if not student_identifier_col:
-                for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list', 'results']:
-                    if tbl in active_tables and 'student_id' in COLUMN_WHITELIST.get(tbl, {}):
-                        student_identifier_col = f"{tbl}.student_id"
-                        break
-                if not student_identifier_col and 'student_id' in COLUMN_WHITELIST.get(ds.base_table, {}):
-                    student_identifier_col = f"{ds.base_table}.student_id"
-
-            if not student_identifier_col:
-                student_identifier_col = f"{ds.base_table}.ssid"
-
-            key_col = None
-            for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list']:
-                if tbl in active_tables and 'stu_annual_key' in COLUMN_WHITELIST.get(tbl, {}):
-                    key_col = f"{tbl}.stu_annual_key"
-                    break
-            if not key_col and 'stu_annual_key' in COLUMN_WHITELIST.get(ds.base_table, {}):
-                key_col = f"{ds.base_table}.stu_annual_key"
-
-            yr_col = None
-            for tbl in ['current_student', 'student_enroll', 'results', 'schedule_list', 'student_marks_list', 'tests']:
-                if tbl in active_tables and 'school_year' in COLUMN_WHITELIST.get(tbl, {}):
-                    yr_col = f"{tbl}.school_year"
-                    break
-            if not yr_col and 'school_year' in COLUMN_WHITELIST.get(ds.base_table, {}):
-                yr_col = f"{ds.base_table}.school_year"
-
-            dataset_columns = list(ds.columns or [])
-            if student_identifier_col not in dataset_columns:
-                dataset_columns.append(student_identifier_col)
-            if key_col and key_col not in dataset_columns:
-                dataset_columns.append(key_col)
-            if yr_col and yr_col not in dataset_columns:
-                dataset_columns.append(yr_col)
-            
-            # Dynamically select any filtered dataset columns so they are returned in the rows
-            for fk in dataset_filters:
-                if fk not in dataset_columns:
-                    parts = fk.split('.', 1)
-                    if len(parts) == 2:
-                        tbl, col = parts
-                        if tbl in active_tables and (col in _allowed_columns(tbl) or col.split('->', 1)[0] in _allowed_columns(tbl)):
-                            dataset_columns.append(fk)
-            
-            class MockDataset:
-                def __init__(self, original, columns):
-                    self.base_table = original.base_table
-                    self.distinct = original.distinct
-                    self.joins = original.joins
-                    self.filters = original.filters
-                    self.columns = columns
-                    self.column_mappings = getattr(original, 'column_mappings', None) or {}
-                    self.updated_at = getattr(original, 'updated_at', None)
-            
-            mock_ds = MockDataset(ds, dataset_columns)
-            sql, params = compile_dataset_to_sql(
-                mock_ds, user=user, interactive_filters=dataset_filters,
-                limit=None, status_filter=status_val,
-            )
-            # Use aliased executor so column_mappings are applied to result keys
-            _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
-            ds_result = execute_compiled_query_aliased(sql, params, _col_mappings)
-            
-            error = ds_result.get('error')
-            if error:
-                rows = []
-                cols = []
-            else:
-                ds_rows = ds_result.get('rows', [])
-                keys = []
-                if key_col:
-                    _key_alias = _col_mappings.get(key_col, key_col.split('.')[-1])
-                    keys = list(set(str(r.get(_key_alias) or '').strip() for r in ds_rows))
-                    keys = [k for k in keys if k]
-                
-                ssids = []
-                if student_identifier_col:
-                    _sid_alias = _col_mappings.get(student_identifier_col, student_identifier_col.split('.')[-1])
-                    ssids = list(set(str(r.get(_sid_alias) or '').strip() for r in ds_rows))
-                    ssids = [s for s in ssids if s]
-
-                # Determine default columns from the dataset columns if none are requested
-                if not extra_columns:
-                    ds_cols = []
-                    for c in (ds.columns or []):
-                        col_name = _col_mappings.get(c, c.split('.')[-1])
-                        if col_name not in ds_cols:
-                            ds_cols.append(col_name)
-                    for base_col in ['student_id', 'student_name', 'grade', 'school', 'school_year']:
-                        if base_col not in ds_cols:
-                            ds_cols.append(base_col)
-                    # Include all column_mappings aliases so the explorer
-                    # fetches assessment scores via its results/tests join logic.
-                    for alias in (ds.column_mappings or {}).values():
-                        if alias and alias not in ds_cols:
-                            ds_cols.append(alias)
-                    extra_columns = ds_cols
-                else:
-                    # Map any prefixed columns in extra_columns to clean column names
-                    clean_extra_cols = []
-                    for c in extra_columns:
-                        clean_col = c.split('.')[-1]
-                        if clean_col not in clean_extra_cols:
-                            clean_extra_cols.append(clean_col)
-                    extra_columns = clean_extra_cols
-                
-                if not ssids and not keys:
+            one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
+            if getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL:
+                from dataviz.utils.compiler import load_dataset_result
+                ds_result = load_dataset_result(ds, apply_aliases=True, one_per_sak=one_per_sak)
+                error = ds_result.get('error')
+                if error:
                     rows = []
-                    cols = extra_columns
-                else:
-                    explorer_filters = {}
-                    if keys:
-                        explorer_filters['stu_annual_key'] = keys
-                    elif student_identifier_col and student_identifier_col.endswith('.student_id'):
-                        explorer_filters['student_id'] = ssids
-                    else:
-                        explorer_filters['ssid'] = ssids
-
-                    # Map dataset filters to explorer filters if they are standard columns
-                    from dataviz.utils.resolution import resolve_exploration_column
-                    for fk, fval in dataset_filters.items():
-                        resolved_col = resolve_exploration_column(ds, fk)
-                        if resolved_col:
-                            explorer_filters[resolved_col] = fval
-                    if status_val is None:
-                        explorer_filters['status'] = []
-                    elif status_val != 'Active':
-                        explorer_filters['status'] = status_val
-
-                    if yr_col:
-                        years = list(set(str(r.get(yr_col) or '').strip() for r in ds_rows))
-                        years = [y for y in years if y]
-                        if years:
-                            explorer_filters['school_year'] = years
-                    elif school_year:
-                        explorer_filters['school_year'] = school_year
-                        
-                    config = {
-                        'columns': extra_columns,
-                        'filters': explorer_filters,
-                    }
-                    
-                    explorer_result = _run_saved_query_sql(config, user=user)
-                    exp_rows = explorer_result.get('rows', [])
-                    error = explorer_result.get('error')
-
-                    # Build a lookup map of the explorer rows
-                    lookup = {}
-                    for r in exp_rows:
-                        for key_attr in ['stu_annual_key', 'ssid', 'student_id']:
-                            val = r.get(key_attr)
-                            if val:
-                                lookup[str(val).strip()] = r
-
-                    rows = []
-                    for r in ds_rows:
-                        new_row = {}
-                        
-                        # Dataset columns already have column_mappings applied via
-                        # execute_compiled_query_aliased — use keys as-is.
-                        for dk, dval in r.items():
-                            new_row[dk] = dval
-                        
-                        # Merge explorer columns
-                        match_val = None
-                        if key_col and r.get(_key_alias):
-                            match_val = str(r.get(_key_alias)).strip()
-                        elif student_identifier_col and r.get(_sid_alias):
-                            match_val = str(r.get(_sid_alias)).strip()
-                        
-                        if match_val and match_val in lookup:
-                            exp_row = lookup[match_val]
-                            for ek, eval in exp_row.items():
-                                if ek not in new_row or ek in ['student_name', 'student_id', 'grade', 'school', 'school_year']:
-                                    new_row[ek] = eval
-                        
-                        rows.append(new_row)
-
-                    # Build final ordered columns: dataset columns first (aliased), then explorer columns
                     cols = []
-                    for c in dataset_columns:
-                        clean_c = _col_mappings.get(c, c.split('.')[-1])
-                        if clean_c not in cols:
-                            cols.append(clean_c)
-                    for c in extra_columns:
-                        if c not in cols:
-                            cols.append(c)
+                else:
+                    rows = ds_result.get('rows', [])
+                    cols = list(rows[0].keys()) if rows else (ds_result.get('columns') or [])
+            else:
+                merged_filters = dict(chart.source_filters or {})
+                merged_filters.update(drill_filters)
+
+                # Map standard keys in merged_filters to "table.column" format for compile_dataset_to_sql
+                active_tables = {ds.base_table}
+                for j in (ds.joins or []):
+                    if j.get('table'):
+                        active_tables.add(j['table'])
+
+                def _allowed_columns(tbl: str) -> set:
+                    return set(get_columns_for_table(tbl)) | set(COLUMN_WHITELIST.get(tbl, set()))
+
+                # Resolve all filter keys (bare exploration names, JSONB key suffixes,
+                # clean aliases from column_mappings, or already-qualified table.column)
+                # into the table.column format required by compile_dataset_to_sql.
+                from dataviz.utils.compiler import resolve_dataset_filters as _resolve_filters
+                from dataviz.utils.status_filter import prepare_interactive_filters
+                dataset_filters, status_val = prepare_interactive_filters(merged_filters, ds, active_tables)
+
+                # Extract school_year for the explorer fallback (used below when yr_col
+                # is absent from the dataset columns).
+                school_year = None
+                for fk, fval in merged_filters.items():
+                    if fk.split('.')[-1] == 'school_year':
+                        school_year = fval
+                        break
+            
+                # Find the best student identifier, year, and annual key columns whitelisted in active tables
+                student_identifier_col = None
+                for tbl in ['current_student', 'student_enroll', 'results', 'student_marks_list', 'schedule_list']:
+                    if tbl in active_tables and 'ssid' in COLUMN_WHITELIST.get(tbl, {}):
+                        student_identifier_col = f"{tbl}.ssid"
+                        break
+                if not student_identifier_col and 'ssid' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                    student_identifier_col = f"{ds.base_table}.ssid"
+            
+                if not student_identifier_col:
+                    for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list', 'results']:
+                        if tbl in active_tables and 'student_id' in COLUMN_WHITELIST.get(tbl, {}):
+                            student_identifier_col = f"{tbl}.student_id"
+                            break
+                    if not student_identifier_col and 'student_id' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                        student_identifier_col = f"{ds.base_table}.student_id"
+
+                if not student_identifier_col:
+                    student_identifier_col = f"{ds.base_table}.ssid"
+
+                key_col = None
+                for tbl in ['current_student', 'student_enroll', 'schedule_list', 'student_marks_list']:
+                    if tbl in active_tables and 'stu_annual_key' in COLUMN_WHITELIST.get(tbl, {}):
+                        key_col = f"{tbl}.stu_annual_key"
+                        break
+                if not key_col and 'stu_annual_key' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                    key_col = f"{ds.base_table}.stu_annual_key"
+
+                yr_col = None
+                for tbl in ['current_student', 'student_enroll', 'results', 'schedule_list', 'student_marks_list', 'tests']:
+                    if tbl in active_tables and 'school_year' in COLUMN_WHITELIST.get(tbl, {}):
+                        yr_col = f"{tbl}.school_year"
+                        break
+                if not yr_col and 'school_year' in COLUMN_WHITELIST.get(ds.base_table, {}):
+                    yr_col = f"{ds.base_table}.school_year"
+
+                dataset_columns = list(ds.columns or [])
+                if student_identifier_col not in dataset_columns:
+                    dataset_columns.append(student_identifier_col)
+                if key_col and key_col not in dataset_columns:
+                    dataset_columns.append(key_col)
+                if yr_col and yr_col not in dataset_columns:
+                    dataset_columns.append(yr_col)
+            
+                # Dynamically select any filtered dataset columns so they are returned in the rows
+                for fk in dataset_filters:
+                    if fk not in dataset_columns:
+                        parts = fk.split('.', 1)
+                        if len(parts) == 2:
+                            tbl, col = parts
+                            if tbl in active_tables and (col in _allowed_columns(tbl) or col.split('->', 1)[0] in _allowed_columns(tbl)):
+                                dataset_columns.append(fk)
+            
+                class MockDataset:
+                    def __init__(self, original, columns):
+                        self.base_table = original.base_table
+                        self.distinct = original.distinct
+                        self.joins = original.joins
+                        self.filters = original.filters
+                        self.status_filter = getattr(original, 'status_filter', None)
+                        self.columns = columns
+                        self.column_mappings = getattr(original, 'column_mappings', None) or {}
+                        self.updated_at = getattr(original, 'updated_at', None)
+            
+                mock_ds = MockDataset(ds, dataset_columns)
+                one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
+                sql, params = compile_dataset_to_sql(
+                    mock_ds, user=user, interactive_filters=dataset_filters,
+                    limit=None, status_filter=status_val,
+                    one_row_per_stu_annual_key=one_per_sak,
+                )
+                # Use aliased executor so column_mappings are applied to result keys
+                _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
+                ds_result = execute_compiled_query_aliased(sql, params, _col_mappings)
+                if one_per_sak and not ds_result.get('error') and ds_result.get('rows'):
+                    from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
+                    ds_result = dict(ds_result)
+                    ds_result['rows'] = dedupe_rows_by_stu_annual_key(ds_result['rows'])
+                    ds_result['row_count'] = len(ds_result['rows'])
+            
+                error = ds_result.get('error')
+                if error:
+                    rows = []
+                    cols = []
+                else:
+                    ds_rows = ds_result.get('rows', [])
+                    keys = []
+                    if key_col:
+                        _key_alias = _col_mappings.get(key_col, key_col.split('.')[-1])
+                        keys = list(set(str(r.get(_key_alias) or '').strip() for r in ds_rows))
+                        keys = [k for k in keys if k]
+                
+                    ssids = []
+                    if student_identifier_col:
+                        _sid_alias = _col_mappings.get(student_identifier_col, student_identifier_col.split('.')[-1])
+                        ssids = list(set(str(r.get(_sid_alias) or '').strip() for r in ds_rows))
+                        ssids = [s for s in ssids if s]
+
+                    # Determine default columns from the dataset columns if none are requested
+                    if not extra_columns:
+                        ds_cols = []
+                        for c in (ds.columns or []):
+                            col_name = _col_mappings.get(c, c.split('.')[-1])
+                            if col_name not in ds_cols:
+                                ds_cols.append(col_name)
+                        for base_col in ['student_id', 'student_name', 'grade', 'school', 'school_year']:
+                            if base_col not in ds_cols:
+                                ds_cols.append(base_col)
+                        # Include all column_mappings aliases so the explorer
+                        # fetches assessment scores via its results/tests join logic.
+                        for alias in (ds.column_mappings or {}).values():
+                            if alias and alias not in ds_cols:
+                                ds_cols.append(alias)
+                        extra_columns = ds_cols
+                    else:
+                        # Map any prefixed columns in extra_columns to clean column names
+                        clean_extra_cols = []
+                        for c in extra_columns:
+                            clean_col = c.split('.')[-1]
+                            if clean_col not in clean_extra_cols:
+                                clean_extra_cols.append(clean_col)
+                        extra_columns = clean_extra_cols
+                
+                    if not ssids and not keys:
+                        rows = []
+                        cols = extra_columns or []
+                    else:
+                        explorer_filters = {}
+                        if status_val is None:
+                            explorer_filters['status'] = []
+                        elif status_val != 'Active':
+                            explorer_filters['status'] = status_val
+
+                        if yr_col:
+                            _yr_alias = _col_mappings.get(yr_col, yr_col.split('.')[-1])
+                            years = list(set(str(r.get(_yr_alias) or '').strip() for r in ds_rows))
+                            years = [y for y in years if y]
+                            if years:
+                                explorer_filters['school_year'] = years
+                        elif school_year:
+                            explorer_filters['school_year'] = school_year
+
+                        rows = [dict(r) for r in ds_rows]
+                        rows, cols, error = _enrich_drill_rows(
+                            rows, extra_columns or [], explorer_filters, user=user,
+                        )
+                        if not error:
+                            ordered_cols = []
+                            for c in dataset_columns:
+                                clean_c = _col_mappings.get(c, c.split('.')[-1])
+                                if clean_c not in ordered_cols:
+                                    ordered_cols.append(clean_c)
+                            for c in cols:
+                                if c not in ordered_cols:
+                                    ordered_cols.append(c)
+                            cols = ordered_cols
     else:
         # Merge saved source_filters with the click-derived drill_filters
         merged_filters = dict(chart.source_filters or {})
@@ -803,136 +945,48 @@ def execute_drill_query(
             chart.source_id, merged_filters, user,
             extra_columns=extra_columns,
             apply_user_filters=True,
+            limit=per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
+            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
+            order_by=sort_by if _can_sql_paginate_drill(chart, drill_filters, sort_by) and sort_by else None,
         )
         rows = result.get('rows', [])
         cols = result.get('columns', [])
         error = result.get('error')
+        if result.get('total_rows') is not None:
+            sql_total_rows = result.get('total_rows')
 
     if _cached_fetch is None and not error:
-        cache.set(_drill_cache_key, (rows, cols, error), 300)
+        cache.set(_drill_cache_key, (rows, cols, error), DRILL_CACHE_TTL)
 
-    # Post-fetch filtering for dynamic columns (test_* / mark_*).
-    # The SQL data_loader skips these at the SQL level because the data
-    # is fetched in a separate bulk phase.  We apply them here in Python.
-    if rows and drill_filters:
-        for fkey, fval in drill_filters.items():
-            col_name = fkey.split('.')[-1]
-            if not col_name.startswith(('test_', 'mark_')):
-                continue
-            if isinstance(fval, list):
-                vals = set(str(v) for v in fval)
-                rows = [r for r in rows if str(r.get(col_name) or '\u2014').strip() in vals or 
-                        ('(Blank)' in vals and (not r.get(col_name) or r.get(col_name) == '\u2014'))]
-            else:
-                target = str(fval).strip()
-                if target == '(Blank)':
-                    rows = [r for r in rows if not r.get(col_name) or r.get(col_name) == '\u2014']
+    # Tier-2 cache: post-filtered row set (before UI column_filters / sort / page)
+    _post_hash = _drill_post_hash(chart, _fetch_hash)
+    _drill_post_key = f"drill_post:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
+    _cached_post = cache.get(_drill_post_key)
+
+    if _cached_post is not None:
+        rows, cols, all_columns = _cached_post
+    else:
+        # Post-fetch filtering for dynamic columns (test_* / mark_*).
+        # The SQL data_loader skips these at the SQL level because the data
+        # is fetched in a separate bulk phase.  We apply them here in Python.
+        if rows and drill_filters:
+            for fkey, fval in drill_filters.items():
+                col_name = fkey.split('.')[-1]
+                if not col_name.startswith(('test_', 'mark_')):
+                    continue
+                if isinstance(fval, list):
+                    vals = set(str(v) for v in fval)
+                    rows = [r for r in rows if str(r.get(col_name) or '\u2014').strip() in vals or
+                            ('(Blank)' in vals and (not r.get(col_name) or r.get(col_name) == '\u2014'))]
                 else:
-                    rows = [r for r in rows if str(r.get(col_name) or '').strip() == target]
+                    target = str(fval).strip()
+                    if target == '(Blank)':
+                        rows = [r for r in rows if not r.get(col_name) or r.get(col_name) == '\u2014']
+                    else:
+                        rows = [r for r in rows if str(r.get(col_name) or '').strip() == target]
 
-    # summary_table / dynamic_summary_table: deduplicate by student id AFTER
-    # dynamic column filters so the row count matches the chart.
-    if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
-        _id_col = _find_id_col(rows[0])
-        if _id_col:
-            _seen: set = set()
-            _deduped: list = []
-            for _r in rows:
-                _k = _r.get(_id_col)
-                if _k not in _seen:
-                    _seen.add(_k)
-                    _deduped.append(_r)
-            rows = _deduped
-
-    # Calculations mode: restrict to students with a valid numeric value in
-    # the aggregated column — mirrors _dynamic_summary_table_option's
-    # pd.to_numeric(...).dropna() so the drill list matches who the
-    # sum/avg/min/max/median was actually computed over.
-    if dyn_calc_value_col and rows:
-        row_keys = list(rows[0].keys())
-        from dataexploration.school_year_utils import resolve_relative_column_key
-        def _norm_col(c):
-            return str(c).replace('-', '_').lower()
-        key_map = {_norm_col(k): k for k in row_keys}
-        def _resolve_calc_col(col):
-            if not col:
-                return col
-            norm = _norm_col(col)
-            if norm in key_map:
-                return key_map[norm]
-            resolved = resolve_relative_column_key(col)
-            norm_res = _norm_col(resolved)
-            if norm_res in key_map:
-                return key_map[norm_res]
-            clean = col.split('.')[-1]
-            norm_clean = _norm_col(clean)
-            if norm_clean in key_map:
-                return key_map[norm_clean]
-            return col
-
-        calc_target_col = _resolve_calc_col(dyn_calc_value_col)
-
-        def _has_calc_value(v):
-            if v is None:
-                return False
-            s = str(v).strip()
-            if not s or s in {'-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'}:
-                return False
-            return True
-
-        rows = [r for r in rows if _has_calc_value(r.get(calc_target_col))]
-
-    # date_series (Dates chart): bucket the date column the same way the
-    # chart did and keep only rows in the clicked bucket, then (for a
-    # specific line) require its value column to be non-blank — mirroring
-    # _date_series_option's per-line aggregation so the drill list matches
-    # exactly what that line counted for that date.
-    if rows and chart.chart_type == 'date_series' and (ds_date_val or ds_value_col_required or ds_active_enter_col):
-        row_keys = list(rows[0].keys())
-        from dataexploration.school_year_utils import resolve_relative_column_key
-
-        def _norm_ds_col(c):
-            return str(c).replace('-', '_').lower()
-
-        _ds_key_map = {_norm_ds_col(k): k for k in row_keys}
-
-        def _resolve_ds_col(col):
-            if not col:
-                return col
-            norm = _norm_ds_col(col)
-            if norm in _ds_key_map:
-                return _ds_key_map[norm]
-            resolved = resolve_relative_column_key(col)
-            norm_res = _norm_ds_col(resolved)
-            if norm_res in _ds_key_map:
-                return _ds_key_map[norm_res]
-            clean = col.split('.')[-1]
-            norm_clean = _norm_ds_col(clean)
-            if norm_clean in _ds_key_map:
-                return _ds_key_map[norm_clean]
-            return col
-
-        if ds_active_enter_col:
-            # Active-Range line: re-run the same enter/leave overlap test the
-            # chart used, against the clicked bucket's calendar [start, end]
-            # range, then dedupe to one row per active student.
-            import pandas as pd
-            from dataviz.utils.chart_builder import _ds_bucket_label_range
-            date_bucket = (chart.config.get('ds_date_bucket') or 'day').strip().lower()
-            start, end = _ds_bucket_label_range(ds_date_val, date_bucket) if ds_date_val else (None, None)
-            enter_col = _resolve_ds_col(ds_active_enter_col)
-            leave_col = _resolve_ds_col(ds_active_leave_col) if ds_active_leave_col else None
-            if start is not None and enter_col:
-                enter_dt = pd.Series([r.get(enter_col) for r in rows])
-                enter_dt = pd.to_datetime(enter_dt, errors='coerce')
-                if leave_col:
-                    leave_dt = pd.to_datetime(pd.Series([r.get(leave_col) for r in rows]), errors='coerce')
-                else:
-                    leave_dt = pd.Series(pd.NaT, index=enter_dt.index)
-                mask = enter_dt.notna() & (enter_dt <= end) & (leave_dt.isna() | (leave_dt >= start))
-                rows = [r for r, keep in zip(rows, mask.tolist()) if keep]
-
-            _id_col = _find_id_col(rows[0]) if rows else None
+        if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
+            _id_col = _find_id_col(rows[0])
             if _id_col:
                 _seen: set = set()
                 _deduped: list = []
@@ -943,70 +997,236 @@ def execute_drill_query(
                         _deduped.append(_r)
                 rows = _deduped
 
-        if ds_date_val and not ds_active_enter_col:
-            date_col = _resolve_ds_col(chart.config.get('ds_date_col', ''))
-            if date_col:
-                import pandas as pd
-                from dataviz.utils.chart_builder import _bucket_date_column
-                date_bucket = (chart.config.get('ds_date_bucket') or 'day').strip().lower()
-                bucketed = _bucket_date_column(pd.Series([r.get(date_col) for r in rows]), date_bucket)
-                rows = [r for r, b in zip(rows, bucketed) if b == ds_date_val]
+        rows = _deduplicate_count_drill_rows(rows, chart)
 
-        if ds_value_col_required and rows:
-            value_col = _resolve_ds_col(ds_value_col_required)
+        if dyn_calc_value_col and rows:
+            row_keys = list(rows[0].keys())
+            from dataexploration.school_year_utils import resolve_relative_column_key
 
-            def _has_ds_value(v):
+            def _norm_col(c):
+                return str(c).replace('-', '_').lower()
+
+            key_map = {_norm_col(k): k for k in row_keys}
+
+            def _resolve_calc_col(col):
+                if not col:
+                    return col
+                norm = _norm_col(col)
+                if norm in key_map:
+                    return key_map[norm]
+                resolved = resolve_relative_column_key(col)
+                norm_res = _norm_col(resolved)
+                if norm_res in key_map:
+                    return key_map[norm_res]
+                clean = col.split('.')[-1]
+                norm_clean = _norm_col(clean)
+                if norm_clean in key_map:
+                    return key_map[norm_clean]
+                return col
+
+            calc_target_col = _resolve_calc_col(dyn_calc_value_col)
+
+            def _has_calc_value(v):
                 if v is None:
                     return False
                 s = str(v).strip()
-                if not s or s in {'-', '—', '–', 'N/A', 'n/a', 'None', 'null', 'NULL'}:
+                if not s or s in {'-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'}:
                     return False
                 return True
 
-            rows = [r for r in rows if _has_ds_value(r.get(value_col))]
+            rows = [r for r in rows if _has_calc_value(r.get(calc_target_col))]
 
-    # progress_growth drill filtering — matrix uses per-cell dedupe (matches chart);
-    # bar/donut modes use one row per student globally.
-    if rows and chart.chart_type == 'progress_growth' and (pg_cat_filter or pg_before_val):
-        cfg = chart.config
-        before_col = cfg.get('pg_before_col', '')
-        after_col  = cfg.get('pg_after_col', '')
-        pl_scale   = cfg.get('pl_scale', [])
-        if before_col and after_col:
-            from dataviz.utils.chart_builder import (
-                _BLANK_PL_VALS,
-                _resolve_row_column,
-                classify_progress_growth_row,
-                filter_progress_growth_matrix_rows,
-                prepare_progress_growth_rows,
-            )
+        # A calculation column can carry numeric threshold filters (e.g.
+        # "count of students with attendance_rate < 85").  Those rows were
+        # already restricted by the row-group filter above; apply the
+        # thresholds in Python so the drill matches exactly what the cell
+        # counted, not the whole row group.
+        if dyn_calc_thresholds and rows:
+            row_keys = list(rows[0].keys())
+            from dataexploration.school_year_utils import resolve_relative_column_key
 
-            if pg_before_val:
-                rows, before_col, after_col = filter_progress_growth_matrix_rows(
-                    rows, before_col, after_col, pg_before_val, pg_after_val,
-                )
-            else:
-                rows, before_col, after_col, rank = prepare_progress_growth_rows(
-                    rows, before_col, after_col, pl_scale=pl_scale or None,
-                )
+            def _norm_th_col(c):
+                return str(c).replace('-', '_').lower()
 
-            pg_display = cfg.get('pg_display', '')
-            x_col = cfg.get('x_col', '') if pg_display in ('stacked_bar', 'grouped_bar') else ''
-            if pg_x_blank_col:
-                blank_col = _resolve_row_column(list(rows[0].keys()) if rows else [], pg_x_blank_col)
-                rows = [r for r in rows if str(r.get(blank_col) or '').strip() in _BLANK_PL_VALS]
-            elif x_col and x_col not in drill_filters:
-                x_col = _resolve_row_column(list(rows[0].keys()) if rows else [], x_col)
-                rows = [r for r in rows if str(r.get(x_col) or '').strip() not in _BLANK_PL_VALS]
+            _th_key_map = {_norm_th_col(k): k for k in row_keys}
 
-            if pg_cat_filter:
+            def _resolve_th_col(col):
+                if not col:
+                    return col
+                norm = _norm_th_col(col)
+                if norm in _th_key_map:
+                    return _th_key_map[norm]
+                resolved = resolve_relative_column_key(col)
+                norm_res = _norm_th_col(resolved)
+                if norm_res in _th_key_map:
+                    return _th_key_map[norm_res]
+                clean = col.split('.')[-1]
+                norm_clean = _norm_th_col(clean)
+                if norm_clean in _th_key_map:
+                    return _th_key_map[norm_clean]
+                return col
+
+            def _th_num(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            _DRILL_THRESH_OPS = {'lt', 'lte', 'gt', 'gte', 'eq', 'neq'}
+
+            def _strip_th(v):
+                if v is None:
+                    return ''
+                return str(v).strip()
+
+            _th_cmp = {
+                'lt': lambda a, b: a < b,
+                'lte': lambda a, b: a <= b,
+                'gt': lambda a, b: a > b,
+                'gte': lambda a, b: a >= b,
+            }
+            for _t in dyn_calc_thresholds:
+                if not isinstance(_t, dict):
+                    continue
+                _tcol = _resolve_th_col(_t.get('col', ''))
+                _top = _t.get('op')
+                if not _tcol or _top not in _DRILL_THRESH_OPS:
+                    continue
+                if _top in ('eq', 'neq'):
+                    _tval = str(_t.get('val') or '').strip()
+                    if _tval == '':
+                        continue
+                    _raw_vals = [r.get(_tcol) for r in rows]
+                    _norms = [_strip_th(v) for v in _raw_vals]
+                    if _top == 'eq':
+                        rows = [r for r, n in zip(rows, _norms) if n == _tval]
+                    else:
+                        rows = [r for r, n in zip(rows, _norms) if n != _tval]
+                    continue
+                _tval = _th_num(_t.get('val'))
+                if _tval is None:
+                    continue
                 rows = [
                     r for r in rows
-                    if classify_progress_growth_row(r, before_col, after_col, rank) == pg_cat_filter
+                    if (lambda v: v is not None and _th_cmp[_top](v, _tval))(_th_num(r.get(_tcol)))
                 ]
 
-    # Keep a snapshot of all available columns before column restriction
-    all_columns = list(cols)
+        if rows and chart.chart_type == 'date_series' and (ds_date_val or ds_value_col_required or ds_active_enter_col):
+            row_keys = list(rows[0].keys())
+            from dataexploration.school_year_utils import resolve_relative_column_key
+
+            def _norm_ds_col(c):
+                return str(c).replace('-', '_').lower()
+
+            _ds_key_map = {_norm_ds_col(k): k for k in row_keys}
+
+            def _resolve_ds_col(col):
+                if not col:
+                    return col
+                norm = _norm_ds_col(col)
+                if norm in _ds_key_map:
+                    return _ds_key_map[norm]
+                resolved = resolve_relative_column_key(col)
+                norm_res = _norm_ds_col(resolved)
+                if norm_res in _ds_key_map:
+                    return _ds_key_map[norm_res]
+                clean = col.split('.')[-1]
+                norm_clean = _norm_ds_col(clean)
+                if norm_clean in _ds_key_map:
+                    return _ds_key_map[norm_clean]
+                return col
+
+            if ds_active_enter_col:
+                import pandas as pd
+                from dataviz.utils.chart_builder import _ds_bucket_label_range
+                date_bucket = (chart.config.get('ds_date_bucket') or 'day').strip().lower()
+                start, end = _ds_bucket_label_range(ds_date_val, date_bucket) if ds_date_val else (None, None)
+                enter_col = _resolve_ds_col(ds_active_enter_col)
+                leave_col = _resolve_ds_col(ds_active_leave_col) if ds_active_leave_col else None
+                if start is not None and enter_col:
+                    enter_dt = pd.Series([r.get(enter_col) for r in rows])
+                    enter_dt = pd.to_datetime(enter_dt, errors='coerce')
+                    if leave_col:
+                        leave_dt = pd.to_datetime(pd.Series([r.get(leave_col) for r in rows]), errors='coerce')
+                    else:
+                        leave_dt = pd.Series(pd.NaT, index=enter_dt.index)
+                    mask = enter_dt.notna() & (enter_dt <= end) & (leave_dt.isna() | (leave_dt >= start))
+                    rows = [r for r, keep in zip(rows, mask.tolist()) if keep]
+
+                _id_col = _find_id_col(rows[0]) if rows else None
+                if _id_col:
+                    _seen: set = set()
+                    _deduped: list = []
+                    for _r in rows:
+                        _k = _r.get(_id_col)
+                        if _k not in _seen:
+                            _seen.add(_k)
+                            _deduped.append(_r)
+                    rows = _deduped
+
+            if ds_date_val and not ds_active_enter_col:
+                date_col = _resolve_ds_col(chart.config.get('ds_date_col', ''))
+                if date_col:
+                    import pandas as pd
+                    from dataviz.utils.chart_builder import _bucket_date_column
+                    date_bucket = (chart.config.get('ds_date_bucket') or 'day').strip().lower()
+                    bucketed = _bucket_date_column(pd.Series([r.get(date_col) for r in rows]), date_bucket)
+                    rows = [r for r, b in zip(rows, bucketed) if b == ds_date_val]
+
+            if ds_value_col_required and rows:
+                value_col = _resolve_ds_col(ds_value_col_required)
+
+                def _has_ds_value(v):
+                    if v is None:
+                        return False
+                    s = str(v).strip()
+                    if not s or s in {'-', '—', '–', 'N/A', 'n/a', 'None', 'null', 'NULL'}:
+                        return False
+                    return True
+
+                rows = [r for r in rows if _has_ds_value(r.get(value_col))]
+
+        if rows and chart.chart_type == 'progress_growth' and (pg_cat_filter or pg_before_val):
+            cfg = chart.config
+            before_col = cfg.get('pg_before_col', '')
+            after_col = cfg.get('pg_after_col', '')
+            pl_scale = cfg.get('pl_scale', [])
+            if before_col and after_col:
+                from dataviz.utils.chart_builder import (
+                    _BLANK_PL_VALS,
+                    _resolve_row_column,
+                    classify_progress_growth_row,
+                    filter_progress_growth_matrix_rows,
+                    prepare_progress_growth_rows,
+                )
+
+                if pg_before_val:
+                    rows, before_col, after_col = filter_progress_growth_matrix_rows(
+                        rows, before_col, after_col, pg_before_val, pg_after_val,
+                    )
+                else:
+                    rows, before_col, after_col, rank = prepare_progress_growth_rows(
+                        rows, before_col, after_col, pl_scale=pl_scale or None,
+                    )
+
+                pg_display = cfg.get('pg_display', '')
+                x_col = cfg.get('x_col', '') if pg_display in ('stacked_bar', 'grouped_bar') else ''
+                if pg_x_blank_col:
+                    blank_col = _resolve_row_column(list(rows[0].keys()) if rows else [], pg_x_blank_col)
+                    rows = [r for r in rows if str(r.get(blank_col) or '').strip() in _BLANK_PL_VALS]
+                elif x_col and x_col not in drill_filters:
+                    x_col = _resolve_row_column(list(rows[0].keys()) if rows else [], x_col)
+                    rows = [r for r in rows if str(r.get(x_col) or '').strip() not in _BLANK_PL_VALS]
+
+                if pg_cat_filter:
+                    rows = [
+                        r for r in rows
+                        if classify_progress_growth_row(r, before_col, after_col, rank) == pg_cat_filter
+                    ]
+
+        all_columns = list(cols)
+        if not error:
+            cache.set(_drill_post_key, (rows, cols, all_columns), DRILL_CACHE_TTL)
 
     # Per-column filters (from header filter dropdowns)
     if column_filters and rows:
@@ -1016,8 +1236,8 @@ def execute_drill_query(
             allowed = set(fvals) if isinstance(fvals, list) else {fvals}
             rows = [r for r in rows if str(r.get(fkey, '')) in allowed]
 
-    # Sorting
-    if sort_by and rows:
+    # Sorting (skip when SQL already ordered the page)
+    if sort_by and rows and sql_total_rows is None:
         reverse = sort_dir.lower() == 'desc'
 
         def _sort_key(row):
@@ -1073,9 +1293,12 @@ def execute_drill_query(
             if k_clean in ('ssid', 'student_id', 'stu_annual_key') and k_clean not in r:
                 r[k_clean] = v
 
-    total = len(rows)
-    start = (page - 1) * per_page
-    paged = rows[start:start + per_page]
+    total = sql_total_rows if sql_total_rows is not None else len(rows)
+    if sql_total_rows is not None:
+        paged = rows
+    else:
+        start = (page - 1) * per_page
+        paged = rows[start:start + per_page]
 
     return {
         'rows': paged,
@@ -1093,11 +1316,17 @@ def get_column_distinct_values(chart, drill_filters: dict, column: str, user) ->
     Return the distinct non-empty values for *column* from the drill query
     result set.  Used to populate the header filter dropdowns.
     """
-    result = execute_drill_query(
-        chart, drill_filters, columns=[], user=user,
-        page=1, per_page=10000,
-    )
-    rows = result.get('rows', [])
+    user_part = _drill_user_part(user)
+    _fetch_hash = _drill_fetch_hash(chart, drill_filters, None)
+    updated_ts = int(chart.updated_at.timestamp())
+    _post_hash = _drill_post_hash(chart, _fetch_hash)
+    _drill_post_key = f"drill_post:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
+    cached = cache.get(_drill_post_key)
+    if cached is None:
+        execute_drill_query(chart, drill_filters, columns=[], user=user, page=1, per_page=50)
+        cached = cache.get(_drill_post_key)
+    rows = cached[0] if cached else []
+
     seen = set()
     out = []
     for r in rows:

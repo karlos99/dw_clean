@@ -3,6 +3,10 @@ from django.db import models
 from django.utils.text import slugify
 
 
+def _default_status_filter():
+    return []
+
+
 class SavedChart(models.Model):
     """A chart configuration saved by a user — can be powered by a Saved Query or raw SQL."""
 
@@ -36,6 +40,9 @@ class SavedChart(models.Model):
     # Drill-through config
     drill_through_columns    = models.JSONField(default=list, blank=True)  # column keys to show in drill table
     drill_through_filter_map = models.JSONField(default=dict, blank=True)  # {x_col: 'grade', series_col: 'race'}
+    # "User Charts" menu: admins can expose charts to all users via the navbar menu
+    is_user_menu    = models.BooleanField(default=False, help_text="Show this chart in the 'User Charts' navbar menu so any user can add it to their home dashboard")
+    user_menu_order = models.IntegerField(default=0, help_text="Order within the User Charts menu (lower first)")
     owner        = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -65,6 +72,8 @@ class SavedChart(models.Model):
             'school_filter_mode': self.school_filter_mode,
             'drill_through_columns':    self.drill_through_columns,
             'drill_through_filter_map': self.drill_through_filter_map,
+            'is_user_menu':    self.is_user_menu,
+            'user_menu_order': self.user_menu_order,
             'created_at':  self.created_at.isoformat(),
             'updated_at':  self.updated_at.isoformat(),
         }
@@ -75,6 +84,10 @@ class Dashboard(models.Model):
 
     name        = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    is_home     = models.BooleanField(
+        default=False,
+        help_text="Private per-user home dashboard shown on the landing page",
+    )
     owner       = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -88,6 +101,12 @@ class Dashboard(models.Model):
 
     def __str__(self):
         return self.name
+
+    @classmethod
+    def get_home(cls, user):
+        """Return the user's private home dashboard, creating it if needed."""
+        dash, _ = cls.objects.get_or_create(owner=user, is_home=True, defaults={'name': 'My Home Dashboard'})
+        return dash
 
     def to_dict(self, include_charts=False):
         d = {
@@ -153,6 +172,12 @@ class DashboardChart(models.Model):
     gs_y = models.IntegerField(default=0)
     gs_w = models.IntegerField(default=6)   # default half-width on 12-col grid
     gs_h = models.IntegerField(default=4)   # default height in row units
+    # System-forced slot (configured in Project Settings) — users can rearrange
+    # but not delete it.
+    is_forced = models.BooleanField(
+        default=False,
+        help_text='System-forced slot (configured in Project Settings) - users can rearrange but not delete it.',
+    )
 
     class Meta:
         ordering = ['position']
@@ -172,6 +197,7 @@ class DashboardChart(models.Model):
         d['gs_y'] = self.gs_y
         d['gs_w'] = self.gs_w
         d['gs_h'] = self.gs_h
+        d['is_forced'] = self.is_forced
         if self.chart:
             d['chart'] = self.chart.to_dict()
         else:
@@ -206,6 +232,7 @@ class DataVizPage(models.Model):
 
     title            = models.CharField(max_length=200)
     slug             = models.SlugField(max_length=200, unique=True, blank=True)
+    folder           = models.CharField(max_length=500, blank=True, default='')
     description      = models.TextField(blank=True)
     container_width  = models.CharField(max_length=10, default=CONTAINER_XL, choices=CONTAINER_CHOICES)
     show_header      = models.BooleanField(default=True)
@@ -245,6 +272,7 @@ class DataVizPage(models.Model):
             'id':               self.pk,
             'title':            self.title,
             'slug':             self.slug,
+            'folder':           self.folder or '',
             'description':      self.description,
             'status':           self.status,
             'container_width':  self.container_width,
@@ -258,6 +286,19 @@ class DataVizPage(models.Model):
         return d
 
 
+class DataVizPageFolder(models.Model):
+    """Empty folder placeholder so folders appear before any page is placed in them."""
+
+    path = models.CharField(max_length=500, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['path']
+
+    def __str__(self):
+        return self.path
+
+
 class DataVizPageRow(models.Model):
     """A layout row within a DataVizPage.
 
@@ -267,6 +308,7 @@ class DataVizPageRow(models.Model):
     """
 
     page     = models.ForeignKey(DataVizPage, on_delete=models.CASCADE, related_name='rows')
+    tab      = models.ForeignKey('DataVizPageTab', on_delete=models.SET_NULL, null=True, blank=True, related_name='rows')
     label    = models.CharField(max_length=200, blank=True, default='')
     position = models.IntegerField(default=0)
     bg_color  = models.CharField(max_length=30, blank=True, default='')  # e.g. '#f8fafc', 'bg-slate-50'
@@ -287,8 +329,23 @@ class DataVizPageRow(models.Model):
             'bg_color':  self.bg_color,
             'collapsed': self.collapsed,
             'col_guide': self.col_guide,
+            'tab_id':    self.tab_id,
             'sections':  [s.to_dict() for s in self.sections.select_related('chart', 'dashboard').all()],
         }
+
+
+class DataVizPageTab(models.Model):
+    """A tab at the top of a page used to group layout rows."""
+
+    page     = models.ForeignKey(DataVizPage, on_delete=models.CASCADE, related_name='tabs')
+    name     = models.CharField(max_length=120)
+    position = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['position', 'name']
+
+    def __str__(self):
+        return f"{self.page.title} — {self.name}"
 
 
 class DataVizPageSection(models.Model):
@@ -383,9 +440,22 @@ class DataVizPageSection(models.Model):
 
 
 class Dataset(models.Model):
-    """A visual dataset built by joining tables and applying filter rules."""
+    """A dataset from visual joins or a read-only custom SQL query."""
+
+    SOURCE_VISUAL = 'visual'
+    SOURCE_SQL = 'sql'
+    SOURCE_TYPE_CHOICES = [
+        (SOURCE_VISUAL, 'Visual Join'),
+        (SOURCE_SQL, 'Custom SQL'),
+    ]
 
     name = models.CharField(max_length=200)
+    source_type = models.CharField(
+        max_length=20,
+        choices=SOURCE_TYPE_CHOICES,
+        default=SOURCE_VISUAL,
+    )
+    source_sql = models.TextField(blank=True)
     description = models.TextField(blank=True)
     base_table = models.CharField(max_length=100, default='current_student')  # E.g. 'current_student'
     distinct = models.BooleanField(default=True)
@@ -395,12 +465,21 @@ class Dataset(models.Model):
     
     # filters: [{"column": "current_student.grade", "operator": "exact", "value": "12"}]
     filters = models.JSONField(default=list, blank=True)
+
+    # status_filter: explicitly selected student statuses, e.g. ["Active"].
+    # Empty means all statuses.
+    # Empty list ([]) = all statuses (no restriction). Applied when the dataset
+    # is rendered by charts/pages via prepare_interactive_filters.
+    status_filter = models.JSONField(default=_default_status_filter, blank=True)
     
     # columns: ["current_student.ssid", "current_student.student_name", "results.test_name", "results.ss"]
     columns = models.JSONField(default=list, blank=True)
     
     # column_mappings: {"tests.test_window": "test_window"}
     column_mappings = models.JSONField(default=dict, blank=True)
+    
+    # order_by: [{"column": "current_student.grade", "direction": "asc"}] or "desc"
+    order_by = models.JSONField(default=list, blank=True)
     
     sql_preview = models.TextField(blank=True)
     
@@ -423,13 +502,17 @@ class Dataset(models.Model):
         return {
             'id': self.pk,
             'name': self.name,
+            'source_type': self.source_type or self.SOURCE_VISUAL,
+            'source_sql': self.source_sql or '',
             'description': self.description,
             'base_table': self.base_table,
             'distinct': self.distinct,
             'joins': self.joins or [],
             'filters': self.filters or [],
+            'status_filter': self.status_filter or [],
             'columns': self.columns or [],
             'column_mappings': self.column_mappings or {},
+            'order_by': self.order_by or [],
             'sql_preview': self.sql_preview,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),

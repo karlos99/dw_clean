@@ -1,4 +1,6 @@
 """Visual Dataset views: list, canvas builder, save, delete, preview API."""
+import csv
+import io
 import json
 import logging
 
@@ -13,13 +15,76 @@ from dataviz.models import Dataset
 from dataviz.utils.compiler import (
     compile_dataset_to_sql, execute_compiled_query,
     COLUMN_WHITELIST, TABLE_WHITELIST,
-    generate_column_aliases,
+    generate_column_aliases, apply_column_aliases,
 )
+from dataviz.utils.data_loader import execute_sql_dataset
+from dataexploration.column_utils import export_cell
 from .mixins import ProjectAdminMixin, is_project_admin
 
 logger = logging.getLogger(__name__)
 
 FORBIDDEN = HttpResponseForbidden('Project Admins only.')
+
+
+def _is_sql_dataset(data: dict | None = None, dataset: Dataset | None = None) -> bool:
+    if data is not None:
+        return (data.get('source_type') or Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL
+    if dataset is not None:
+        return (getattr(dataset, 'source_type', None) or Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL
+    return False
+
+
+def _apply_sql_dataset_fields(ds: Dataset, data: dict) -> str | None:
+    """Populate *ds* from a SQL-mode save payload. Returns an error string or None."""
+    source_sql = (data.get('source_sql') or '').strip()
+    if not source_sql:
+        return 'SQL query is required for custom SQL datasets.'
+
+    columns = data.get('columns') or []
+    if not columns:
+        preview = execute_sql_dataset(source_sql, limit=1)
+        if preview.get('error'):
+            return preview['error']
+        columns = preview.get('columns') or []
+    if not columns:
+        return 'SQL query returned no columns.'
+
+    ds.source_type = Dataset.SOURCE_SQL
+    ds.source_sql = source_sql
+    ds.base_table = '_sql'
+    ds.distinct = False
+    ds.joins = []
+    ds.filters = []
+    ds.status_filter = []
+    ds.order_by = []
+    ds.columns = columns
+    user_mappings = data.get('column_mappings', {}) or {}
+    ds.column_mappings = generate_column_aliases(columns, user_mappings)
+    ds.sql_preview = source_sql
+    return None
+
+
+def _populate_visual_dataset_fields(ds: Dataset, data: dict) -> str | None:
+    base_table = data.get('base_table')
+    columns = data.get('columns', [])
+    if not base_table or not columns:
+        return 'Missing required fields (Name, Base Table, Columns)'
+
+    ds.source_type = Dataset.SOURCE_VISUAL
+    ds.source_sql = ''
+    ds.base_table = base_table
+    ds.distinct = data.get('distinct', True)
+    ds.joins = data.get('joins', [])
+    ds.filters = data.get('filters', [])
+    ds.status_filter = data.get('status_filter', []) or []
+    ds.columns = columns
+    ds.order_by = data.get('order_by', [])
+    user_mappings = data.get('column_mappings', {}) or {}
+    ds.column_mappings = generate_column_aliases(columns, user_mappings)
+    from dataviz.utils.status_filter import dataset_status_value
+    sql, _params = compile_dataset_to_sql(ds, user=None, status_filter=dataset_status_value(ds))
+    ds.sql_preview = sql
+    return None
 
 
 @login_required
@@ -163,6 +228,10 @@ class DatasetBuilderView(ProjectAdminMixin, TemplateView):
             'schema_json': json.dumps(schema_json),
             'tables': tables,
             'explorer_groups_json': json.dumps(explorer_groups),
+            'initial_source_mode': (
+                existing_dataset.source_type if existing_dataset
+                else ('sql' if self.request.GET.get('mode') == 'sql' else 'visual')
+            ),
         })
         return context
 
@@ -183,30 +252,21 @@ def dataset_save_api(request):
         data = json.loads(request.body)
         name = data.get('name')
         description = data.get('description', '')
-        base_table = data.get('base_table')
-        distinct = data.get('distinct', True)
-        joins = data.get('joins', [])
-        filters = data.get('filters', [])
-        columns = data.get('columns', [])
 
-        if not name or not base_table or not columns:
-            return JsonResponse({'success': False, 'error': 'Missing required fields (Name, Base Table, Columns)'}, status=400)
+        if not name:
+            return JsonResponse({'success': False, 'error': 'Dataset name is required.'}, status=400)
 
         ds = Dataset(owner=request.user)
         ds.name = name
         ds.description = description
-        ds.base_table = base_table
-        ds.distinct = distinct
-        ds.joins = joins
-        ds.filters = filters
-        ds.columns = columns
-        # Auto-generate clean aliases; user-provided overrides in the request body
-        # are preserved — generate_column_aliases only fills in unmapped columns.
-        user_mappings = data.get('column_mappings', {}) or {}
-        ds.column_mappings = generate_column_aliases(columns, user_mappings)
 
-        sql, params = compile_dataset_to_sql(ds, user=request.user)
-        ds.sql_preview = sql
+        if _is_sql_dataset(data):
+            err = _apply_sql_dataset_fields(ds, data)
+        else:
+            err = _populate_visual_dataset_fields(ds, data)
+        if err:
+            return JsonResponse({'success': False, 'error': err}, status=400)
+
         ds.save()
         return JsonResponse({'success': True, 'id': ds.pk, 'column_mappings': ds.column_mappings})
     except Exception as e:
@@ -235,29 +295,20 @@ def dataset_detail_api(request, dataset_id):
             data = json.loads(request.body)
             name = data.get('name')
             description = data.get('description', '')
-            base_table = data.get('base_table')
-            distinct = data.get('distinct', True)
-            joins = data.get('joins', [])
-            filters = data.get('filters', [])
-            columns = data.get('columns', [])
 
-            if not name or not base_table or not columns:
-                return JsonResponse({'success': False, 'error': 'Missing required fields'}, status=400)
+            if not name:
+                return JsonResponse({'success': False, 'error': 'Dataset name is required.'}, status=400)
 
             ds.name = name
             ds.description = description
-            ds.base_table = base_table
-            ds.distinct = distinct
-            ds.joins = joins
-            ds.filters = filters
-            ds.columns = columns
-            # Re-generate aliases when the column list changes; user-provided
-            # overrides in the request body are preserved.
-            user_mappings = data.get('column_mappings', ds.column_mappings or {}) or {}
-            ds.column_mappings = generate_column_aliases(columns, user_mappings)
 
-            sql, params = compile_dataset_to_sql(ds, user=request.user)
-            ds.sql_preview = sql
+            if _is_sql_dataset(data):
+                err = _apply_sql_dataset_fields(ds, data)
+            else:
+                err = _populate_visual_dataset_fields(ds, data)
+            if err:
+                return JsonResponse({'success': False, 'error': err}, status=400)
+
             ds.save()
             return JsonResponse({'success': True, 'id': ds.pk, 'column_mappings': ds.column_mappings})
         except Exception as e:
@@ -305,27 +356,45 @@ def dataset_preview_api(request):
 
     try:
         data = json.loads(request.body)
-        dataset = Dataset(
-            base_table=data.get('base_table'),
-            distinct=data.get('distinct', True),
-            joins=data.get('joins', []),
-            filters=data.get('filters', []),
-            columns=data.get('columns', [])
-        )
-        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=51)
-        res = execute_compiled_query(sql, params)
 
-        if res.get('error'):
-            return render(request, 'dataviz/partials/error.html', {'error': res['error']})
+        if _is_sql_dataset(data):
+            source_sql = (data.get('source_sql') or '').strip()
+            if not source_sql:
+                return render(request, 'dataviz/partials/error.html', {'error': 'No SQL provided.'})
+            res = execute_sql_dataset(source_sql)
+            if res.get('error'):
+                return render(request, 'dataviz/partials/error.html', {'error': res['error']})
+            rows = res.get('rows', [])
+            columns = res.get('columns', [])
+            total_rows = res.get('total_rows', len(rows))
+            has_more = res.get('has_more', False)
+        else:
+            dataset = Dataset(
+                base_table=data.get('base_table'),
+                distinct=data.get('distinct', True),
+                joins=data.get('joins', []),
+                filters=data.get('filters', []),
+                status_filter=data.get('status_filter', []) or [],
+                columns=data.get('columns', []),
+                order_by=data.get('order_by', []),
+            )
+            from dataviz.utils.status_filter import dataset_status_value
+            sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=51, status_filter=dataset_status_value(dataset))
+            res = execute_compiled_query(sql, params)
 
-        rows = res.get('rows', [])[:50]
-        columns = res.get('columns', [])
+            if res.get('error'):
+                return render(request, 'dataviz/partials/error.html', {'error': res['error']})
+
+            rows = res.get('rows', [])[:50]
+            columns = res.get('columns', [])
+            total_rows = res.get('row_count', 0)
+            has_more = total_rows > 50
 
         context = {
             'columns': columns,
             'rows': rows,
-            'total_rows': res.get('row_count', 0),
-            'has_more': res.get('row_count', 0) > 50,
+            'total_rows': total_rows,
+            'has_more': has_more,
         }
         return render(request, 'dataviz/datasets/partials/preview_table.html', context)
     except Exception as e:
@@ -341,32 +410,50 @@ def dataset_export_csv_api(request):
 
     try:
         data = json.loads(request.body)
-        dataset = Dataset(
-            base_table=data.get('base_table'),
-            distinct=data.get('distinct', True),
-            joins=data.get('joins', []),
-            filters=data.get('filters', []),
-            columns=data.get('columns', [])
-        )
-        sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=None)
-        res = execute_compiled_query(sql, params)
 
-        if res.get('error'):
-            from django.http import HttpResponse
-            return HttpResponse(res['error'], status=400)
+        if _is_sql_dataset(data):
+            source_sql = (data.get('source_sql') or '').strip()
+            if not source_sql:
+                from django.http import HttpResponse
+                return HttpResponse('No SQL provided.', status=400)
+            res = execute_sql_dataset(source_sql, limit=None)
+            if res.get('error'):
+                from django.http import HttpResponse
+                return HttpResponse(res['error'], status=400)
+            rows = res.get('rows', [])
+            columns = res.get('columns', [])
+        else:
+            dataset = Dataset(
+                base_table=data.get('base_table'),
+                distinct=data.get('distinct', True),
+                joins=data.get('joins', []),
+                filters=data.get('filters', []),
+                status_filter=data.get('status_filter', []) or [],
+                columns=data.get('columns', []),
+                order_by=data.get('order_by', []),
+            )
+            from dataviz.utils.status_filter import dataset_status_value
+            sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=None, status_filter=dataset_status_value(dataset))
+            res = execute_compiled_query(sql, params)
 
-        rows = res.get('rows', [])
-        columns = res.get('columns', [])
+            if res.get('error'):
+                from django.http import HttpResponse
+                return HttpResponse(res['error'], status=400)
+
+            rows = res.get('rows', [])
+            columns = res.get('columns', [])
 
         from django.http import StreamingHttpResponse
         def stream_csv():
-            yield ','.join(f'"{str(c).replace(chr(34), chr(34)+chr(34))}"' for c in columns) + '\n'
+            buffer = io.StringIO()
+            writer = csv.writer(buffer, quoting=csv.QUOTE_ALL, lineterminator='\n')
+            writer.writerow(columns)
+            yield buffer.getvalue()
             for row in rows:
-                yield ','.join(
-                    f'"{str(row.get(c, "")).replace(chr(34), chr(34)+chr(34))}"'
-                    if row.get(c) is not None else '""'
-                    for c in columns
-                ) + '\n'
+                buffer.seek(0)
+                buffer.truncate(0)
+                writer.writerow([export_cell(row.get(c)) for c in columns])
+                yield buffer.getvalue()
 
         response = StreamingHttpResponse(stream_csv(), content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="dataset_export.csv"'
@@ -451,10 +538,23 @@ def dataset_filter_options_api(request, dataset_id):
     import hashlib
     from dataviz.utils.compiler import (
         compile_dataset_to_sql, execute_compiled_query,
-        apply_column_aliases, resolve_dataset_filters,
-        generate_column_aliases,
+        apply_column_aliases, generate_column_aliases,
     )
+    from dataviz.utils.status_filter import prepare_interactive_filters
     ds = g4(Dataset, pk=dataset_id)
+
+    if getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL:
+        col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
+        res = execute_sql_dataset(ds.source_sql or '', limit=500)
+        if res.get('error'):
+            return JsonResponse({'options': {}, 'labels': col_mappings, 'error': res['error']}, status=400)
+        rows = res.get('rows') or []
+        options = {}
+        for col in (ds.columns or res.get('columns') or []):
+            vals = sorted({str(r.get(col)).strip() for r in rows if r.get(col) not in (None, '')})
+            if vals:
+                options[col_mappings.get(col, col)] = vals[:200]
+        return JsonResponse({'options': options, 'labels': col_mappings})
 
     current_filters_raw = request.GET.get('current_filters', '')
     current_filters = {}
@@ -464,9 +564,8 @@ def dataset_filter_options_api(request, dataset_id):
         except (json.JSONDecodeError, ValueError):
             pass
 
-    # Resolve alias-format filter keys to table.column for compile_dataset_to_sql
     active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-    resolved_filters = resolve_dataset_filters(current_filters, ds, active_tables) if current_filters else {}
+    resolved_filters, status_val = prepare_interactive_filters(current_filters, ds, active_tables)
 
     # Cache key: dataset id + updated_at + resolved filters hash
     filters_hash = hashlib.md5(json.dumps(resolved_filters, sort_keys=True).encode()).hexdigest()[:10]
@@ -501,7 +600,10 @@ def dataset_filter_options_api(request, dataset_id):
                     if not (fk == sql_col or fk.startswith(sql_col + '->'))
                 }
                 # Compile base SQL with the excluded filters
-                sql, params = compile_dataset_to_sql(ds, user=request.user, interactive_filters=col_filters, limit=1)
+                sql, params = compile_dataset_to_sql(
+                    ds, user=request.user, interactive_filters=col_filters,
+                    limit=1, status_filter=status_val,
+                )
                 # Strip the trailing LIMIT clause so the subquery is unlimited
                 sql_base = sql.rsplit(' LIMIT ', 1)[0]
 
@@ -581,6 +683,16 @@ def dataset_filter_options_api(request, dataset_id):
                     pass
 
         filter_labels = {k: k for k in filter_options}
+        # Expose the relative school-year aliases (This/Last/Two Years Prior…)
+        # as filter options, matching the query/columns sources. These resolve
+        # against the admin's current school year when the filter is applied.
+        from dataviz.views.api.query_api import (
+            _inject_school_year_aliases, _inject_relative_year_labels,
+        )
+        _inject_school_year_aliases(filter_options, filter_labels)
+        # Always offer every relative-year label, even for years with no data
+        # yet, so the options survive a data rollover to a new current year.
+        _inject_relative_year_labels(filter_options)
         result = {'filter_options': filter_options, 'filter_labels': filter_labels}
         try:
             cache.set(cache_key, result, 300)
@@ -722,4 +834,3 @@ def _dataset_filter_options_legacy(request, dataset_id):
         filter_labels[col_str] = col_str
 
     return JsonResponse({'filter_options': filter_options, 'filter_labels': filter_labels})
-

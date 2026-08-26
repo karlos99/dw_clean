@@ -12,6 +12,8 @@ import re
 from django.core.cache import cache
 from django.db import connections
 
+from dataexploration.column_utils import ap_column_key
+
 
 # ── SQL safety guards (copied verbatim from original views.py) ────────────────
 
@@ -24,6 +26,57 @@ _SQL_DANGER_RE = re.compile(
     re.IGNORECASE,
 )
 MAX_SQL_ROWS       = 2000   # safety cap for run_raw_sql (SQL Lab)
+DATASET_SQL_PREVIEW_ROWS = 50
+
+_YEAR_PLACEHOLDER_RE = re.compile(r'\{\{([^}]+)\}\}')
+
+
+def resolve_sql_year_placeholders(sql: str) -> tuple[str, str | None]:
+    """Replace ``{{This School Year}}`` / ``{{Last School Year}}`` style tokens.
+
+    Resolution order for each label:
+      1. ``relative_year.relative_label`` (DB table)
+      2. ProjectConfig via ``resolve_school_year()`` alias map
+
+    Returns (resolved_sql, error_or_none).
+    """
+    if not sql or '{{' not in sql:
+        return sql, None
+
+    from dataexploration.constants import SCHOOL_YEAR_ALIASES
+    from dataexploration.school_year_utils import resolve_school_year
+
+    label_to_year: dict[str, str] = {}
+
+    try:
+        from dataviz.models import RelativeYear
+        for row in RelativeYear.objects.all():
+            if row.relative_label and row.school_year:
+                label_to_year[row.relative_label.strip()] = row.school_year.strip()
+    except Exception:
+        pass
+
+    alias_by_label = {label: alias for alias, label in SCHOOL_YEAR_ALIASES.items()}
+    for label, alias in alias_by_label.items():
+        if label in label_to_year:
+            continue
+        resolved = resolve_school_year(alias)
+        if resolved and resolved != alias:
+            label_to_year[label] = resolved
+
+    resolved = sql
+    for match in _YEAR_PLACEHOLDER_RE.finditer(sql):
+        label = match.group(1).strip()
+        year = label_to_year.get(label)
+        if not year:
+            return sql, (
+                f"Unknown or unresolved school year '{{{{{label}}}}}'. "
+                f"Use labels like 'This School Year' or 'Last School Year', "
+                f"and ensure Project Settings has a default school year."
+            )
+        resolved = resolved.replace(match.group(0), year)
+
+    return resolved, None
 
 
 def run_raw_sql(sql: str) -> dict:
@@ -39,6 +92,10 @@ def run_raw_sql(sql: str) -> dict:
         return {'error': 'Only SELECT / WITH queries are allowed.'}
     if _SQL_DANGER_RE.search(sql):
         return {'error': 'Query contains disallowed keywords.'}
+
+    sql, placeholder_err = resolve_sql_year_placeholders(sql)
+    if placeholder_err:
+        return {'error': placeholder_err}
 
     cache_key = f"dv_raw_sql:{hashlib.md5(sql.encode()).hexdigest()}"
     cached = cache.get(cache_key)
@@ -77,6 +134,32 @@ def run_raw_sql(sql: str) -> dict:
         return {'error': str(exc)}
 
 
+def execute_sql_dataset(source_sql: str, limit: int | None = DATASET_SQL_PREVIEW_ROWS) -> dict:
+    """Run a read-only SQL dataset query; optionally truncate rows for preview."""
+    sql = (source_sql or '').strip()
+    if not sql:
+        return {'error': 'No SQL provided', 'columns': [], 'rows': [], 'row_count': 0}
+
+    result = run_raw_sql(sql)
+    if result.get('error'):
+        return result
+
+    rows = result.get('rows') or []
+    total_rows = len(rows)
+    has_more = bool(result.get('has_more')) or (limit is not None and total_rows > limit)
+    if limit is not None:
+        rows = rows[:limit]
+
+    return {
+        'columns': result.get('columns') or [],
+        'col_types': result.get('col_types') or {},
+        'rows': rows,
+        'row_count': len(rows),
+        'total_rows': total_rows,
+        'has_more': has_more,
+        'error': None,
+    }
+
 
 # All columns that exist directly in the current_student table
 _CS_COLUMNS = frozenset([
@@ -85,6 +168,9 @@ _CS_COLUMNS = frozenset([
     'sped', 'gate', 'in_504', 'dli', 'atendace_rate', 'suspension_indicator',
     'ltel', 'status', 'school_year',
 ])
+
+# Virtual columns resolved via JSON expressions (not real CS table columns)
+_VIRTUAL_CS_COLUMNS = frozenset(['race_list', 'avid', 'avid_type'])
 
 # Column-Picker fields that live in student_enroll, not current_student.
 # 'ell'/'grade' exist in both tables (see the COALESCE handling below); the
@@ -286,6 +372,238 @@ def _build_mark_columns_from_db(cursor, selected_mark_cols: list[str]) -> tuple[
     return result
 
 
+def _build_ap_exam_columns_from_db(cursor, selected_ap_cols: list[str]) -> tuple[list[dict], dict]:
+    """Map ``ap_*_PL`` column keys to AP exam metadata (year + subject).
+
+    Returns ``(infos_list, col_map_dict)``.  Uses a 10-minute cache.
+    """
+    if not selected_ap_cols:
+        return [], {}
+
+    cache_key = f"dv_ap_exam_cols:{hashlib.md5(json.dumps(sorted(selected_ap_cols)).encode()).hexdigest()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    normalized_to_original = {c.replace('-', '_'): c for c in selected_ap_cols}
+    years = sorted({y for y in (_parse_year(c, 'ap_') for c in selected_ap_cols) if y})
+    if not years:
+        return [], {}
+
+    cursor.execute(
+        """
+        SELECT DISTINCT r.admin_year, e.name
+        FROM "dataLoader_apexamresult" r
+        JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+        JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+        WHERE r.admin_year = ANY(%s) AND r.admin_year IS NOT NULL
+          AND il.is_published = true
+        """,
+        [years],
+    )
+
+    infos: list[dict] = []
+    col_map: dict[str, dict] = {}
+
+    for year, subject in cursor.fetchall():
+        year_val = (year or '').strip() or 'Unknown'
+        subject_val = (subject or '').strip() or 'Unknown'
+        ap_norm = ap_column_key(year_val, subject_val, 'exam').replace('-', '_')
+
+        original_key = normalized_to_original.get(ap_norm)
+        if not original_key:
+            continue
+        info = {
+            'col_name': original_key,
+            'year': year_val,
+            'subject': subject_val,
+        }
+        infos.append(info)
+        col_map[original_key] = info
+        col_map[original_key.replace('-', '_')] = info
+
+    result = (infos, col_map)
+    cache.set(cache_key, result, 600)
+    return result
+
+
+def _build_ap_award_columns_from_db(cursor, selected_award_cols: list[str]) -> tuple[list[dict], dict]:
+    """Map ``apaward_*`` / ``apawards_all_*`` column keys to AP award metadata.
+
+    ``apaward_{year}_{award}`` → individual award.
+    ``apawards_all_{year}``    → combined column listing every award that year.
+    Returns ``(infos_list, col_map_dict)``.  Uses a 10-minute cache.
+    """
+    if not selected_award_cols:
+        return [], {}
+
+    cache_key = f"dv_ap_award_cols:{hashlib.md5(json.dumps(sorted(selected_award_cols)).encode()).hexdigest()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    normalized_to_original = {c.replace('-', '_'): c for c in selected_award_cols}
+    years = set()
+    for c in selected_award_cols:
+        if c.startswith('apawards_all_'):
+            years.add(c[len('apawards_all_'):].replace('_', '-'))
+        else:
+            y = _parse_year(c, 'apaward_')
+            if y:
+                years.add(y)
+    years = sorted(years)
+    if not years:
+        return [], {}
+
+    cursor.execute(
+        """
+        SELECT DISTINCT a.award_year, t.description
+        FROM "dataLoader_apstudentaward" a
+        JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+        JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+        WHERE a.award_year = ANY(%s) AND a.award_year IS NOT NULL
+          AND il.is_published = true
+        """,
+        [years],
+    )
+
+    infos: list[dict] = []
+    col_map: dict[str, dict] = {}
+
+    for year, award in cursor.fetchall():
+        year_val = (year or '').strip() or 'Unknown'
+        award_val = (award or '').strip() or 'Unknown'
+
+        # Individual award column
+        ap_norm = ap_column_key(year_val, award_val, 'award').replace('-', '_')
+        original_key = normalized_to_original.get(ap_norm)
+        if original_key:
+            info = {
+                'col_name': original_key,
+                'year': year_val,
+                'award': award_val,
+            }
+            infos.append(info)
+            col_map[original_key] = info
+            col_map[original_key.replace('-', '_')] = info
+
+        # Combined "all awards" column for this year
+        all_norm = f"apawards_all_{year_val.replace('-', '_')}"
+        original_all = normalized_to_original.get(all_norm)
+        if original_all:
+            info_all = {
+                'col_name': original_all,
+                'year': year_val,
+                'award': '__ALL__',
+            }
+            infos.append(info_all)
+            col_map[original_all] = info_all
+            col_map[original_all.replace('-', '_')] = info_all
+
+    result = (infos, col_map)
+    cache.set(cache_key, result, 600)
+    return result
+
+
+def _fetch_ap_exam_data(students: list[dict], ap_exam_infos: list[dict]):
+    """Bulk-fetch AP exam grades from Postgres and merge into *students* in-place."""
+    if not students or not ap_exam_infos:
+        return
+    ssids = list({str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()})
+    if not ssids:
+        return
+
+    student_map = {}
+    for s in students:
+        ssid = str(s.get('ssid') or '').strip()
+        if ssid:
+            student_map[ssid] = s
+
+    infos_by_year: dict = {}
+    for info in ap_exam_infos:
+        infos_by_year.setdefault(info['year'], []).append(info)
+
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT r.ssid, r.admin_year, e.name, r.exam_grade
+                FROM "dataLoader_apexamresult" r
+                JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                WHERE r.ssid = ANY(%s) AND il.is_published = true
+                """,
+                [ssids],
+            )
+            for ssid, year, subject, grade in cursor.fetchall():
+                s_obj = student_map.get(str(ssid).strip())
+                if not s_obj:
+                    continue
+                year_val = (year or '').strip() or 'Unknown'
+                for info in infos_by_year.get(year_val, ()):
+                    if info['subject'].lower() == (subject or '').strip().lower():
+                        s_obj[info['col_name']] = str(grade).strip() if grade else '\u2014'
+    except Exception:
+        pass
+
+
+def _fetch_ap_award_data(students: list[dict], award_infos: list[dict]):
+    """Bulk-fetch AP awards from Postgres and merge into *students* in-place.
+
+    Individual columns get the award description; the combined ``apawards_all_{year}``
+    column gets a comma-separated list of every award earned that year.
+    """
+    if not students or not award_infos:
+        return
+    ssids = list({str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()})
+    if not ssids:
+        return
+
+    student_map = {}
+    for s in students:
+        ssid = str(s.get('ssid') or '').strip()
+        if ssid:
+            student_map[ssid] = s
+
+    infos_by_year: dict = {}
+    for info in award_infos:
+        infos_by_year.setdefault(info['year'], []).append(info)
+
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT a.ssid, a.award_year, t.description
+                FROM "dataLoader_apstudentaward" a
+                JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+                JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                WHERE a.ssid = ANY(%s) AND il.is_published = true
+                """,
+                [ssids],
+            )
+            all_by_year: dict = {}
+            for ssid, year, award in cursor.fetchall():
+                s_obj = student_map.get(str(ssid).strip())
+                if not s_obj:
+                    continue
+                year_val = (year or '').strip() or 'Unknown'
+                for info in infos_by_year.get(year_val, ()):
+                    if info['award'] == '__ALL__':
+                        all_by_year.setdefault((str(ssid).strip(), year_val), set()).add(award)
+                    elif info['award'].lower() == (award or '').strip().lower():
+                        s_obj[info['col_name']] = award or '\u2014'
+
+            for (ssid, year_val), awards in all_by_year.items():
+                s_obj = student_map.get(ssid)
+                if not s_obj:
+                    continue
+                for info in infos_by_year.get(year_val, ()):
+                    if info['award'] == '__ALL__':
+                        s_obj[info['col_name']] = ', '.join(sorted(awards))
+    except Exception:
+        pass
+
+
 def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict],
                      tested_school_codes: list[str] | None = None):
     """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place).
@@ -293,10 +611,10 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     ``tested_school_codes``: when provided, restricts results to rows where
     ``results.school_code`` is one of the given codes (tested/assessment school filter).
     """
-    if not test_cols_info or not student_ids:
+    if not test_cols_info:
         return
 
-    from dataexploration.column_utils import test_metadata_matches
+    from dataexploration.column_utils import test_metadata_matches, normalize_score_value
     from dataviz.utils.chart_builder import _record_pg_val
 
     # Compound key: (student_id, school_year) — a student may appear in
@@ -306,25 +624,30 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     student_map: dict[str, list] = {}
     student_ssid_map: dict[str, list] = {}
     for s in students:
-        sid = s.get('student_id')
-        ssid = s.get('ssid')
-        if sid:
+        sid = _get_row_val(s, 'student_id')
+        ssid = _get_row_val(s, 'ssid')
+        if sid and str(sid).strip():
             student_map.setdefault(str(sid).strip(), []).append(s)
-        if ssid:
+        if ssid and str(ssid).strip():
             student_ssid_map.setdefault(str(ssid).strip(), []).append(s)
+
+    student_ssids = list(student_ssid_map.keys())
+    student_ids = student_ids or list(student_map.keys())
+    if not student_ids and not student_ssids:
+        return
+
+    test_alias = 't'
     where_parts = []
     params = []
     for info in test_cols_info:
         part = (
-            "(r.school_year = %s AND LOWER(t.test_name) = LOWER(%s)"
-            " AND LOWER(t.subject) = LOWER(%s)"
+            f"(r.school_year = %s AND LOWER({test_alias}.test_name) = LOWER(%s)"
+            f" AND LOWER({test_alias}.subject) = LOWER(%s)"
         )
         part_params = [info['year'], info['test_name'], info['subject']]
         if info.get('test_window'):
-            part += " AND LOWER(t.test_window) = LOWER(%s)"
+            part += f" AND LOWER({test_alias}.test_window) = LOWER(%s)"
             part_params.append(info['test_window'])
-        else:
-            part += " AND (t.test_window IS NULL OR t.test_window = '')"
         part += ")"
         where_parts.append(part)
         params.extend(part_params)
@@ -336,17 +659,23 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
             tested_school_clause = f"AND r.school_code = ANY(%s)"
             params.append(codes)
 
-    student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
     sql = f"""
         SELECT r.local_student_id, r.ssid, r.ss, r.pl, r.other_info,
                r.school_year, t.test_name, t.subject, t.test_window
         FROM results r
         INNER JOIN tests t ON r.test_group_key = t.test_group_key
-        WHERE (r.local_student_id = ANY(%s) OR (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid = ANY(%s)))
+        WHERE (
+            (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND r.ssid = ANY(%s))
+            OR ((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = ANY(%s))
+          )
           AND ({" OR ".join(where_parts)})
           {tested_school_clause}
     """
-    cursor.execute(sql, [student_ids, student_ssids, *params])
+
+    from clickhouse_utils.executor import QueryExecutor
+    with QueryExecutor().pg_cursor() as cursor:
+        cursor.execute(sql, [student_ssids, student_ids, *params])
+        fetched_rows = cursor.fetchall()
 
     # Group infos by year so each row only scans the (small) subset of infos
     # that could possibly match its year, instead of every info every time.
@@ -356,24 +685,25 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     for info in test_cols_info:
         infos_by_year.setdefault(info['year'], []).append(info)
 
-    for row in cursor.fetchall():
+    for row in fetched_rows:
         sid, ssid, ss, pl, oi, ry, rt, rs, rw = row
-        # Look up by compound key. Try local_student_id first, then ssid
+        # Prefer SSID when present — local_student_id is reused across students.
         s_objs = []
-        if sid:
-            s_objs = student_map.get(str(sid).strip()) or []
-        if not s_objs and ssid:
+        if ssid:
             s_objs = student_ssid_map.get(str(ssid).strip()) or []
+        elif sid:
+            s_objs = student_map.get(str(sid).strip()) or []
         if not s_objs:
             continue
+        result_year = str(ry or '').strip()
         for info in infos_by_year.get(ry, ()):
             if test_metadata_matches(info, rt, rs, rw):
                 metric = info['metric']
                 col_name = info['col_name']
                 if metric == 'ss':
-                    val = str(ss).strip() if ss is not None else '\u2014'
+                    val = normalize_score_value(ss) or '\u2014'
                 elif metric == 'pl':
-                    val = str(pl).strip() if pl else '\u2014'
+                    val = normalize_score_value(pl) or '\u2014'
                 elif metric == 'oi' or metric == 'dfp':
                     oi_key = info.get('other_info_key')
                     if oi_key:
@@ -384,7 +714,7 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                                 oi = None
                         if isinstance(oi, dict):
                             v = oi.get(oi_key)
-                            val = str(v).strip() if v is not None else '\u2014'
+                            val = normalize_score_value(v) or '\u2014'
                         else:
                             val = '\u2014'
                     else:
@@ -392,6 +722,9 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                 else:
                     continue
                 for s_obj in s_objs:
+                    # Attach at student level on every enrollment row — matches data
+                    # exploration EXISTS filters (student has result), not only when
+                    # enrollment.school_year equals result.school_year.
                     s_obj[col_name] = val
                     _record_pg_val(s_obj, col_name, val)
 
@@ -444,6 +777,325 @@ def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str]
                 s_obj[info['col_name']] = (str(mark).strip() if mark else '\u2014')
 
 
+def _norm_col_key(c: str) -> str:
+    return str(c).replace('-', '_').lower()
+
+
+def _row_col_keys_norm(row: dict) -> set:
+    return {_norm_col_key(k) for k in row}
+
+
+def _get_row_val(row: dict, col: str):
+    norm = _norm_col_key(col)
+    for k, v in row.items():
+        if _norm_col_key(k) == norm:
+            return v
+    return None
+
+
+def _row_has_col(row: dict, col: str) -> bool:
+    return _norm_col_key(col) in _row_col_keys_norm(row)
+
+
+def _rows_have_value(rows: list[dict], col: str) -> bool:
+    return any(str(_get_row_val(r, col) or '').strip() for r in rows)
+
+
+def _fetch_base_columns_for_rows(
+    rows: list[dict],
+    missing_base: list[str],
+    filters: dict,
+    user=None,
+) -> tuple[list[dict], str | None]:
+    """Fetch missing base current_student columns keyed by row identifiers."""
+    if not rows or not missing_base:
+        return rows, None
+
+    id_key = None
+    ids = []
+    for candidate in ('stu_annual_key', 'ssid', 'student_id'):
+        ids = list({str(_get_row_val(r, candidate) or '').strip() for r in rows if _get_row_val(r, candidate)})
+        ids = [i for i in ids if i]
+        if ids:
+            id_key = candidate
+            break
+    if not ids:
+        return rows, None
+
+    fetch_cols = list(dict.fromkeys(missing_base))
+    for k in ('stu_annual_key', 'ssid', 'student_id'):
+        if k not in fetch_cols:
+            fetch_cols.insert(0, k)
+
+    config = {
+        'columns': fetch_cols,
+        'filters': {id_key: ids, **{k: v for k, v in filters.items() if k not in ('tested_school',)}},
+    }
+    result = _run_saved_query_sql(config, user=user)
+    if result.get('error'):
+        return rows, result['error']
+
+    lookup = {}
+    for r in result.get('rows', []):
+        val = str(_get_row_val(r, id_key) or '').strip()
+        if val:
+            lookup[val] = r
+
+    for row in rows:
+        match = str(_get_row_val(row, id_key) or '').strip()
+        if match and match in lookup:
+            for k, v in lookup[match].items():
+                if not _row_has_col(row, k) or _get_row_val(row, k) in (None, '', '\u2014'):
+                    row[k.split('.')[-1] if '.' in k else k] = v
+    return rows, None
+
+
+def _enrich_rows_test_mark(
+    rows: list[dict],
+    test_cols: list[str],
+    mark_cols: list[str],
+    filters: dict,
+    ap_cols: list[str] | None = None,
+    award_cols: list[str] | None = None,
+) -> str | None:
+    """Bulk-fetch test/mark/AP columns and merge into rows in-place."""
+    ap_cols = ap_cols or []
+    award_cols = award_cols or []
+    if not rows or (not test_cols and not mark_cols and not ap_cols and not award_cols):
+        return None
+
+    need_test = bool(test_cols)
+    need_mark = bool(mark_cols)
+    need_ap = bool(ap_cols)
+    need_award = bool(award_cols)
+    tested_school_filter = filters.get('tested_school')
+    if tested_school_filter and not isinstance(tested_school_filter, list):
+        tested_school_filter = [tested_school_filter]
+
+    try:
+        with connections['default'].cursor() as cursor:
+            _multi_years = (
+                filters.get('school_year')
+                if isinstance(filters.get('school_year'), list) and len(filters.get('school_year', [])) > 1
+                else None
+            )
+            test_infos = mark_infos = ap_exam_infos = award_infos = None
+            student_ids = student_keys = None
+
+            if need_test:
+                test_infos, _ = _build_test_columns_from_db(cursor, test_cols)
+                if _multi_years and test_infos:
+                    _seen = set()
+                    _expanded = []
+                    for _info in test_infos:
+                        col_year = _parse_year(_info['col_name'], 'test_')
+                        if col_year:
+                            _expanded.append({**_info, 'year': col_year})
+                        else:
+                            for _yr in _multi_years:
+                                _key = (_yr, _info['test_name'], _info['subject'], _info.get('test_window'), _info['metric'])
+                                if _key not in _seen:
+                                    _seen.add(_key)
+                                    _expanded.append({**_info, 'year': _yr})
+                    test_infos = _expanded
+                student_ids = list({
+                    str(_get_row_val(r, 'student_id') or '').strip()
+                    for r in rows
+                    if str(_get_row_val(r, 'student_id') or '').strip()
+                })
+
+            if need_mark:
+                mark_infos, _ = _build_mark_columns_from_db(cursor, mark_cols)
+                if _multi_years and mark_infos:
+                    _seen = set()
+                    _expanded = []
+                    for _info in mark_infos:
+                        col_year = _parse_year(_info['col_name'], 'mark_')
+                        if col_year:
+                            _expanded.append({**_info, 'year': col_year})
+                        else:
+                            for _yr in _multi_years:
+                                _key = (_yr, _info['subject'], _info['course_name'], _info.get('mark_period'))
+                                if _key not in _seen:
+                                    _seen.add(_key)
+                                    _expanded.append({**_info, 'year': _yr})
+                    mark_infos = _expanded
+                student_keys = [r.get('stu_annual_key') for r in rows if r.get('stu_annual_key')]
+
+            if need_ap:
+                ap_exam_infos, _ = _build_ap_exam_columns_from_db(cursor, ap_cols)
+            if need_award:
+                award_infos, _ = _build_ap_award_columns_from_db(cursor, award_cols)
+
+            from clickhouse_utils.executor import QueryExecutor
+            from clickhouse_utils.thread_pool import get_io_pool
+
+            if need_test and need_mark:
+                def _fetch_tests():
+                    _fetch_test_data(
+                        QueryExecutor().cursor(), test_infos, student_ids, rows,
+                        tested_school_codes=tested_school_filter,
+                    )
+
+                def _fetch_marks():
+                    _fetch_mark_data(QueryExecutor().cursor(), mark_infos, student_keys, rows)
+
+                pool = get_io_pool()
+                for f in [pool.submit(_fetch_tests), pool.submit(_fetch_marks)]:
+                    f.result()
+            elif need_test:
+                _fetch_test_data(
+                    QueryExecutor().cursor(), test_infos, student_ids, rows,
+                    tested_school_codes=tested_school_filter,
+                )
+            elif need_mark:
+                _fetch_mark_data(QueryExecutor().cursor(), mark_infos, student_keys, rows)
+
+        # AP data lives in Postgres (Django models), fetched separately from ClickHouse.
+        if need_ap:
+            _fetch_ap_exam_data(rows, ap_exam_infos)
+        if need_award:
+            _fetch_ap_award_data(rows, award_infos)
+    except Exception as exc:
+        return str(exc)
+    return None
+
+
+def _build_enriched_column_list(rows: list[dict], needed_columns: list[str]) -> list[str]:
+    cols = []
+    seen = set()
+    if rows:
+        for k in rows[0]:
+            if k not in seen:
+                cols.append(k)
+                seen.add(k)
+    for c in needed_columns:
+        bare = c.split('.')[-1]
+        if bare not in seen:
+            cols.append(bare)
+            seen.add(bare)
+    return cols
+
+
+def enrich_drill_rows(
+    rows: list[dict],
+    needed_columns: list[str],
+    filters: dict | None = None,
+    user=None,
+    dynamic_filters: dict | None = None,
+) -> tuple[list[dict], list[str], str | None]:
+    """
+    Enrich existing rows in-place with missing base and test/mark columns.
+    Avoids re-running the full explorer query for dataset drill-through.
+    """
+    if not rows:
+        return [], list(needed_columns or []), None
+
+    filters = dict(filters or {})
+    needed_columns = list(needed_columns or [])
+
+    try:
+        from dataexploration.school_year_utils import resolve_relative_column_key
+        resolved_needed = [resolve_relative_column_key(c) for c in needed_columns]
+    except Exception:
+        resolved_needed = list(needed_columns)
+
+    row_keys_norm = _row_col_keys_norm(rows[0])
+    missing_base: list[str] = []
+    test_cols: list[str] = []
+    mark_cols: list[str] = []
+    ap_cols: list[str] = []
+    award_cols: list[str] = []
+
+    for c, rc in zip(needed_columns, resolved_needed):
+        bare = c.split('.')[-1]
+        cn = _norm_col_key(bare)
+        if cn in row_keys_norm:
+            continue
+        if rc.startswith('apawards_all_') or rc.startswith('apaward_'):
+            award_cols.append(rc)
+        elif rc.startswith('ap_'):
+            ap_cols.append(rc)
+        elif rc.startswith('test_'):
+            test_cols.append(rc)
+        elif rc.startswith('mark_'):
+            mark_cols.append(rc)
+        elif bare in _CS_COLUMNS or bare in _ENROLL_FIELDS or bare in _VIRTUAL_CS_COLUMNS:
+            if _SAFE_IDENT_RE.match(bare) and bare not in missing_base:
+                missing_base.append(bare)
+
+    need_test = bool(test_cols)
+    need_mark = bool(mark_cols)
+    need_ap = bool(ap_cols)
+    need_award = bool(award_cols)
+
+    if not missing_base and not need_test and not need_mark and not need_ap and not need_award:
+        return rows, _build_enriched_column_list(rows, needed_columns), None
+
+    if need_test:
+        for k in ('student_id', 'school_year'):
+            if not _rows_have_value(rows, k) and k not in missing_base:
+                missing_base.append(k)
+    if need_mark:
+        if not _rows_have_value(rows, 'stu_annual_key') and 'stu_annual_key' not in missing_base:
+            missing_base.append('stu_annual_key')
+    if (need_ap or need_award):
+        if not _rows_have_value(rows, 'ssid') and 'ssid' not in missing_base:
+            missing_base.append('ssid')
+
+    if missing_base:
+        rows, err = _fetch_base_columns_for_rows(rows, missing_base, filters, user=user)
+        if err:
+            return rows, [], err
+
+    if need_test or need_mark or need_ap or need_award:
+        err = _enrich_rows_test_mark(rows, test_cols, mark_cols, filters, ap_cols=ap_cols, award_cols=award_cols)
+        if err:
+            return rows, [], err
+
+    dyn = dict(dynamic_filters or {})
+    for fkey, fval in filters.items():
+        bare = fkey.split('.')[-1]
+        if bare.startswith(('test_', 'mark_')):
+            dyn[bare] = fval
+
+    if dyn and rows:
+        rows = [
+            row for row in rows
+            if all(
+                _matches_dynamic_filter(_get_row_val(row, fk), fv)
+                for fk, fv in dyn.items()
+            )
+        ]
+
+    return rows, _build_enriched_column_list(rows, needed_columns), None
+
+
+def _matches_dynamic_filter(row_value, filter_value) -> bool:
+    blank_tokens = {'', '—', '(Blank)'}
+
+    def _normalize(value):
+        if value is None:
+            return ''
+        return str(value).strip()
+
+    normalized_row = _normalize(row_value)
+    if isinstance(filter_value, list):
+        selected = [_normalize(item) for item in filter_value if _normalize(item)]
+        if not selected:
+            return True
+        if '(Blank)' in selected and normalized_row in {'', '—'}:
+            return True
+        return normalized_row in {item for item in selected if item != '(Blank)'}
+
+    normalized_filter = _normalize(filter_value)
+    if not normalized_filter:
+        return True
+    if normalized_filter == '(Blank)':
+        return normalized_row in {'', '—'}
+    return normalized_row == normalized_filter
+
+
 # ── Public entry points ──────────────────────────────────────────────────────
 
 def run_saved_query_preview(saved_query) -> dict:
@@ -482,7 +1134,7 @@ def run_saved_query_preview(saved_query) -> dict:
         return {'error': str(exc), 'rows': [], 'columns': []}
 
 
-def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: list | None = None, apply_user_filters: bool = False) -> dict:
+def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: list | None = None, apply_user_filters: bool = False, limit: int | None = None, offset: int | None = None, order_by: str | None = None) -> dict:
     """
     Execute a ``dataexploration.SavedQuery`` and return rows as a list of dicts.
 
@@ -520,10 +1172,13 @@ def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: lis
                 existing_set.add(c)
         config['columns'] = existing
 
-    return _run_saved_query_sql(config, user=user if apply_user_filters else None)
+    return _run_saved_query_sql(
+        config, user=user if apply_user_filters else None,
+        limit=limit, offset=offset, order_by=order_by,
+    )
 
 
-def run_column_query(selected_columns: list[str], filters: dict | None = None, user=None, apply_user_filters: bool = False) -> dict:
+def run_column_query(selected_columns: list[str], filters: dict | None = None, user=None, apply_user_filters: bool = False, limit: int | None = None, offset: int | None = None, order_by: str | None = None) -> dict:
     """
     Execute a query using directly-selected columns (Column Picker source type).
 
@@ -539,10 +1194,13 @@ def run_column_query(selected_columns: list[str], filters: dict | None = None, u
         'columns': selected_columns,
         'filters': filters or {},
     }
-    return _run_saved_query_sql(config, user=user if apply_user_filters else None)
+    return _run_saved_query_sql(
+        config, user=user if apply_user_filters else None,
+        limit=limit, offset=offset, order_by=order_by,
+    )
 
 
-def _run_saved_query_sql(config: dict, user=None) -> dict:
+def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offset: int | None = None, order_by: str | None = None, count_only: bool = False) -> dict:
     """
     Execute a saved query config against ``current_student`` using raw SQL.
 
@@ -567,7 +1225,13 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
         school_id = active_school.state_id if active_school else 'All'
         user_part = f":u{user.pk}:r{role_name}:s{school_id}"
 
-    config_hash = hashlib.md5(json.dumps(config, sort_keys=True).encode()).hexdigest()
+    config_hash = hashlib.md5(json.dumps({
+        **config,
+        'limit': limit,
+        'offset': offset,
+        'order_by': order_by,
+        'count_only': count_only,
+    }, sort_keys=True).encode()).hexdigest()
     cache_key = f"dv_query_result:{config_hash}{user_part}"
     cached = cache.get(cache_key)
     if cached is not None:
@@ -596,9 +1260,15 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
     base_cols:  list[str] = []
     test_cols:  list[str] = []
     mark_cols:  list[str] = []
+    ap_cols:    list[str] = []
+    award_cols: list[str] = []
     for c in requested:
-        if (c in _CS_COLUMNS or c in _ENROLL_FIELDS) and _SAFE_IDENT_RE.match(c):
+        if (c in _CS_COLUMNS or c in _ENROLL_FIELDS or c in _VIRTUAL_CS_COLUMNS) and _SAFE_IDENT_RE.match(c):
             base_cols.append(c)
+        elif c.startswith('apawards_all_') or c.startswith('apaward_'):
+            award_cols.append(c)
+        elif c.startswith('ap_'):
+            ap_cols.append(c)
         elif c.startswith('test_'):
             test_cols.append(c)
         elif c.startswith('mark_'):
@@ -610,18 +1280,24 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
         from dataexploration.school_year_utils import resolve_relative_column_key
         test_cols = [resolve_relative_column_key(c) for c in test_cols]
         mark_cols = [resolve_relative_column_key(c) for c in mark_cols]
+        ap_cols = [resolve_relative_column_key(c) for c in ap_cols]
+        award_cols = [resolve_relative_column_key(c) for c in award_cols]
     except Exception:
         pass
 
     # Ensure we always have join keys so we can do bulk fetches
     need_test = bool(test_cols)
     need_mark = bool(mark_cols)
+    need_ap = bool(ap_cols)
+    need_award = bool(award_cols)
     if need_test and 'student_id' not in base_cols:
         base_cols.append('student_id')
     if need_test and 'school_year' not in base_cols:
         base_cols.append('school_year')
     if need_mark and 'stu_annual_key' not in base_cols:
         base_cols.append('stu_annual_key')
+    if (need_ap or need_award) and 'ssid' not in base_cols:
+        base_cols.append('ssid')
 
     if not base_cols:
         base_cols = ['student_id', 'student_name', 'grade', 'school', 'school_year']
@@ -670,18 +1346,19 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                 else:
                     where_parts.append("1=0")  # No students assigned
 
-        if hasattr(user, 'active_school') and user.active_school:
-            # Explicitly filtered to one school via the UI selector
-            where_parts.append("cs.school_state_id = %s")
-            params.append(user.active_school.state_id)
-        elif not is_unrestricted:
-            # Filter to the list of schools the user is permitted to see
-            user_schools = getattr(user, 'schools', [])
-            if isinstance(user_schools, list) and user_schools:
-                where_parts.append("cs.school_state_id = ANY(%s)")
-                params.append(user_schools)
+        if not is_unrestricted:
+            if hasattr(user, 'active_school') and user.active_school:
+                # Explicitly filtered to one school via the UI selector
+                where_parts.append("cs.school_state_id = %s")
+                params.append(user.active_school.state_id)
             else:
-                where_parts.append("1=0")  # Deny access if no schools assigned
+                # Filter to the list of schools the user is permitted to see
+                user_schools = getattr(user, 'schools', [])
+                if isinstance(user_schools, list) and user_schools:
+                    where_parts.append("cs.school_state_id = ANY(%s)")
+                    params.append(user_schools)
+                else:
+                    where_parts.append("1=0")  # Deny access if no schools assigned
 
     needs_enroll = False
 
@@ -744,7 +1421,7 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                 params.extend(others)
             if has_blank:
                 parts.append(f"({expr} IS NULL OR {expr} = '' OR {expr} = '—')")
-            
+
             if len(parts) > 1:
                 where_parts.append(f"({' OR '.join(parts)})")
             elif parts:
@@ -766,37 +1443,26 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
         if fkey == 'search':
             continue  # handled separately below
         if fkey.startswith(('test_', 'mark_')):
-            dynamic_filters[fkey] = fval
+            try:
+                from dataexploration.school_year_utils import resolve_relative_column_key
+                dynamic_filters[resolve_relative_column_key(fkey)] = fval
+            except Exception:
+                dynamic_filters[fkey] = fval
             continue  # dynamic columns are filtered after enrichment below
+        if fkey == 'race_list':
+            from dataexploration.view_modules.column_management import append_race_list_filter
+            vals = fval if isinstance(fval, list) else ([fval] if fval else [])
+            append_race_list_filter(where_parts, params, vals)
+            continue
         if fkey in _ENROLL_FIELDS:
             needs_enroll = True
             _add_filter(_ENROLL_FIELDS[fkey], fval)
         elif fkey in _CS_COLUMNS and _SAFE_IDENT_RE.match(fkey):
             _add_filter(f'cs.{fkey}', fval)
-
-    def _matches_dynamic_filter(row_value, filter_value) -> bool:
-        blank_tokens = {'', '—', '(Blank)'}
-
-        def _normalize(value):
-            if value is None:
-                return ''
-            return str(value).strip()
-
-        normalized_row = _normalize(row_value)
-        if isinstance(filter_value, list):
-            selected = [_normalize(item) for item in filter_value if _normalize(item)]
-            if not selected:
-                return True
-            if '(Blank)' in selected and normalized_row in {'', '—'}:
-                return True
-            return normalized_row in {item for item in selected if item != '(Blank)'}
-
-        normalized_filter = _normalize(filter_value)
-        if not normalized_filter:
-            return True
-        if normalized_filter == '(Blank)':
-            return normalized_row in {'', '—'}
-        return normalized_row == normalized_filter
+        elif fkey == 'avid':
+            _add_filter("(cs.add_data::jsonb->>'AVID')", fval)
+        elif fkey == 'avid_type':
+            _add_filter("(cs.add_data::jsonb->>'AVID_type')", fval)
 
     # Search filter
     search = filters.get('search', '')
@@ -838,18 +1504,68 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             select_exprs.append('COALESCE(se.grade, cs.grade) AS grade')
         elif c in _ENROLL_FIELDS and needs_enroll:
             select_exprs.append(f'{_ENROLL_FIELDS[c]} AS {c}')
+        elif c == 'race_list':
+            from dataexploration.view_modules.column_management import race_list_display_expr
+            select_exprs.append(f'{race_list_display_expr("cs")} AS race_list')
+        elif c == 'avid':
+            select_exprs.append("(cs.add_data::jsonb->>'AVID') AS avid")
+        elif c == 'avid_type':
+            select_exprs.append("(cs.add_data::jsonb->>'AVID_type') AS avid_type")
         else:
             select_exprs.append(f'cs.{c}')
 
+    # Hide school years disabled via Project Settings
+    try:
+        from landing.utils import get_disabled_school_years
+        _disabled_years = get_disabled_school_years()
+        if _disabled_years:
+            where_parts.append("cs.school_year NOT IN (%s)")
+            params.append(_disabled_years)
+    except Exception:
+        pass
+
     where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
     col_sql   = ', '.join(select_exprs)
-    sql       = f'SELECT {col_sql} FROM current_student cs{join_sql} {where_sql}'
+    from_sql  = f'FROM current_student cs{join_sql}'
+
+    order_sql = ''
+    if order_by and _SAFE_IDENT_RE.match(order_by.split('.')[-1]):
+        bare_ob = order_by.split('.')[-1]
+        if bare_ob in _CS_COLUMNS:
+            order_sql = f' ORDER BY cs.{bare_ob}'
+        elif bare_ob in _ENROLL_FIELDS and needs_enroll:
+            order_sql = f' ORDER BY {_ENROLL_FIELDS[bare_ob]}'
+
+    limit_sql = ''
+    if limit is not None and limit > 0:
+        limit_sql = f' LIMIT {int(limit)}'
+        if offset is not None and offset > 0:
+            limit_sql += f' OFFSET {int(offset)}'
+
+    count_sql = f'SELECT COUNT(*) AS cnt {from_sql} {where_sql}'
+    sql       = f'SELECT {col_sql} {from_sql} {where_sql}{order_sql}{limit_sql}'
 
     try:
         from clickhouse_utils.executor import QueryExecutor
 
-        # Phase 1: fetch base rows from current_student (ClickHouse when available)
         phase1_executor = QueryExecutor()
+        total_rows = None
+        if count_only or limit is not None:
+            count_result = phase1_executor.execute(count_sql, params)
+            if not count_result.get('error') and count_result.get('rows'):
+                total_rows = count_result['rows'][0].get('cnt', 0)
+
+        if count_only:
+            return {
+                'columns': base_cols,
+                'col_types': {},
+                'rows': [],
+                'row_count': total_rows or 0,
+                'total_rows': total_rows or 0,
+                'has_more': False,
+                'error': None,
+            }
+
         phase1_result = phase1_executor.execute(sql, params)
         if phase1_result['error']:
             return {'error': phase1_result['error'], 'rows': [], 'columns': []}
@@ -869,81 +1585,14 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             cache.set(cache_key, res, 1800)
             return res
 
-        # Phase 2: resolve test/mark column metadata & bulk-fetch (PostgreSQL — queries system catalogs)
-        if rows and (need_test or need_mark):
-            with connections['default'].cursor() as cursor:
-                # When multiple school years are selected, the column key encodes only
-                # the year that was visible in the picker (usually the most recent).
-                # Expand infos to cover all selected years so each enrolled-year row
-                # gets its matching assessment/mark data via the (student_id, year) key.
-                _multi_years = filters.get('school_year') if isinstance(filters.get('school_year'), list) and len(filters.get('school_year', [])) > 1 else None
-
-                test_infos = None
-                mark_infos = None
-                student_ids = None
-                student_keys = None
-
-                if need_test:
-                    test_infos, _ = _build_test_columns_from_db(cursor, test_cols)
-                    if _multi_years and test_infos:
-                        _seen = set()
-                        _expanded = []
-                        for _info in test_infos:
-                            col_key = _info['col_name']
-                            col_year = _parse_year(col_key, 'test_')
-                            if col_year:
-                                _expanded.append({**_info, 'year': col_year})
-                            else:
-                                for _yr in _multi_years:
-                                    _key = (_yr, _info['test_name'], _info['subject'], _info.get('test_window'), _info['metric'])
-                                    if _key not in _seen:
-                                        _seen.add(_key)
-                                        _expanded.append({**_info, 'year': _yr})
-                        test_infos = _expanded
-                    student_ids = [r['student_id'] for r in rows if r.get('student_id')]
-
-                if need_mark:
-                    mark_infos, _ = _build_mark_columns_from_db(cursor, mark_cols)
-                    if _multi_years and mark_infos:
-                        _seen = set()
-                        _expanded = []
-                        for _info in mark_infos:
-                            col_key = _info['col_name']
-                            col_year = _parse_year(col_key, 'mark_')
-                            if col_year:
-                                _expanded.append({**_info, 'year': col_year})
-                            else:
-                                for _yr in _multi_years:
-                                    _key = (_yr, _info['subject'], _info['course_name'], _info.get('mark_period'))
-                                    if _key not in _seen:
-                                        _seen.add(_key)
-                                        _expanded.append({**_info, 'year': _yr})
-                        mark_infos = _expanded
-                    student_keys = [r['stu_annual_key'] for r in rows if r.get('stu_annual_key')]
-
-                # Run test and mark data fetches in parallel when both are needed
-                from clickhouse_utils.executor import QueryExecutor
-                from clickhouse_utils.thread_pool import get_io_pool
-
-                if need_test and need_mark:
-                    def _fetch_tests():
-                        cur = QueryExecutor().cursor()
-                        _fetch_test_data(cur, test_infos, student_ids, rows,
-                                         tested_school_codes=tested_school_filter)
-
-                    def _fetch_marks():
-                        cur = QueryExecutor().cursor()
-                        _fetch_mark_data(cur, mark_infos, student_keys, rows)
-
-                    pool = get_io_pool()
-                    futures = [pool.submit(_fetch_tests), pool.submit(_fetch_marks)]
-                    for f in futures:
-                        f.result()  # wait for both, propagate exceptions
-                elif need_test:
-                    _fetch_test_data(QueryExecutor().cursor(), test_infos, student_ids, rows,
-                                     tested_school_codes=tested_school_filter)
-                elif need_mark:
-                    _fetch_mark_data(QueryExecutor().cursor(), mark_infos, student_keys, rows)
+        # Phase 2: test/mark/AP bulk fetch
+        if rows and (need_test or need_mark or need_ap or need_award):
+            enrich_filters = dict(filters)
+            if tested_school_filter:
+                enrich_filters['tested_school'] = tested_school_filter
+            err = _enrich_rows_test_mark(rows, test_cols, mark_cols, enrich_filters, ap_cols=ap_cols, award_cols=award_cols)
+            if err:
+                return {'error': err, 'rows': [], 'columns': []}
 
             if rows and dynamic_filters:
                 rows = [
@@ -951,7 +1600,7 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
                     if all(_matches_dynamic_filter(row.get(filter_key), filter_value) for filter_key, filter_value in dynamic_filters.items())
                 ]
 
-        # Build final ordered column list (base + test + mark)
+        # Build final ordered column list (base + test + mark + AP)
         all_cols = list(db_cols)
         for tc in test_cols:
             if tc not in all_cols:
@@ -959,6 +1608,9 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
         for mc in mark_cols:
             if mc not in all_cols:
                 all_cols.append(mc)
+        for ac in ap_cols + award_cols:
+            if ac not in all_cols:
+                all_cols.append(ac)
 
         col_types: dict = {}
         for col in all_cols:
@@ -974,6 +1626,7 @@ def _run_saved_query_sql(config: dict, user=None) -> dict:
             'col_types': col_types,
             'rows':      rows,
             'row_count': len(rows),
+            'total_rows': total_rows if total_rows is not None else len(rows),
             'has_more':  False,
             'error':     None,
         }

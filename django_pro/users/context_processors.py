@@ -1,4 +1,4 @@
-from .models_pages import Page
+from .models_pages import Page, NavbarConfig
 from mathr.view_modules.access_utils import can_user_access_mathr
 from placementcards.view_modules.card_data_utils import (
     can_user_access_placement_cards,
@@ -51,6 +51,27 @@ def _page_is_accessible(user, page, user_roles: set[str]) -> bool:
     return bool(user_roles & set(page.required_roles))
 
 
+def _navbar_config():
+    try:
+        return NavbarConfig.get()
+    except Exception:
+        return NavbarConfig()
+
+
+def _user_charts():
+    """Charts exposed in the 'User Charts' navbar menu."""
+    try:
+        from dataviz.models import SavedChart
+        return list(
+            SavedChart.objects
+            .filter(is_user_menu=True)
+            .order_by('user_menu_order', 'name')
+            .values('id', 'name', 'chart_type', 'description')
+        )
+    except Exception:
+        return []
+
+
 def _menu_target_allows(user, page, user_roles: set[str]) -> bool:
     if not user.is_authenticated:
         return False
@@ -69,6 +90,8 @@ def _menu_target_allows(user, page, user_roles: set[str]) -> bool:
 
 
 def _is_placeholder_page(page) -> bool:
+    if getattr(page, 'is_menu_category', False):
+        return True
     target = (page.url_path or '').strip()
     return target in {'', '#'}
 
@@ -201,6 +224,8 @@ def navigation_pages(request):
             'is_project_admin': False,
             'placement_cards_access': False,
             'default_school_year': default_school_year,
+            'navbar_config': _navbar_config(),
+            'user_charts': _user_charts(),
         }
 
     user_roles = _user_roles(request.user)
@@ -266,6 +291,8 @@ def navigation_pages(request):
         'is_project_admin': is_project_admin,
         'placement_cards_access': placement_cards_access,
         'default_school_year': default_school_year,
+        'navbar_config': _navbar_config(),
+        'user_charts': _user_charts(),
     }
 
 

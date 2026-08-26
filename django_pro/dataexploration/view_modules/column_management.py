@@ -7,9 +7,13 @@ from django.views.decorators.http import require_POST
 
 from ..models import DefaultColumnSelection
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
-from ..column_utils import get_test_columns, get_mark_columns
+from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns
 from ..survey_utils import get_survey_columns
-from ..utils import get_user_roles
+from ..utils import get_user_roles, _apply_de_school_filter
+
+# Virtual column: races from current_student.add_data->'l_race' (JSON array or string)
+RACE_LIST_COL = 'race_list'
+L_RACE_JSON_KEY = 'l_race'
 
 
 def get_saved_default_columns():
@@ -41,6 +45,9 @@ def get_enabled_columns():
     COLUMN_DEFINITIONS and COLUMN_CATEGORIES unchanged (safe default — no
     disruption to existing behaviour).
 
+    When an allowlist includes ``race`` but not ``race_list``, ``race_list`` is
+    auto-included so the new Race List column appears alongside Race/Ethnicity.
+
     Returns:
         tuple[dict, dict]: (filtered_definitions, filtered_categories)
     """
@@ -55,6 +62,9 @@ def get_enabled_columns():
         return COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 
     allowed_set = set(allowlist)
+    # New Race List column rides along with Race when allowlists predate it.
+    if 'race' in allowed_set and RACE_LIST_COL not in allowed_set:
+        allowed_set.add(RACE_LIST_COL)
 
     filtered_defs = {k: v for k, v in COLUMN_DEFINITIONS.items() if k in allowed_set}
 
@@ -65,6 +75,80 @@ def get_enabled_columns():
             filtered_cats[cat_key] = {**cat, 'columns': cols}
 
     return filtered_defs, filtered_cats
+
+
+def is_race_list_column(col: str) -> bool:
+    """True for the Race List virtual column or raw add_data->'l_race' paths."""
+    if not col or not isinstance(col, str):
+        return False
+    bare = col.split('.')[-1]
+    if bare == RACE_LIST_COL:
+        return True
+    return "add_data->'l_race'" in col or 'add_data->"l_race"' in col
+
+
+def race_list_add_data_ref(table_alias: str = 'cs') -> str:
+    """Return a SQL reference to the add_data column (alias or "table"."add_data")."""
+    if table_alias.startswith('"'):
+        return f'{table_alias}."add_data"'
+    return f'{table_alias}.add_data'
+
+
+def race_list_array_sql(table_alias: str = 'cs') -> str:
+    """
+    Normalize add_data->'l_race' to a text[] safely.
+
+    Supports:
+      - JSON array of scalars: ["White", "Asian"]
+      - JSON string (single or comma-separated): "White" / "White, Asian"
+    """
+    ref = race_list_add_data_ref(table_alias)
+    return (
+        f"(CASE "
+        f"WHEN {ref} IS NULL OR {ref}->'l_race' IS NULL OR jsonb_typeof({ref}->'l_race') = 'null' "
+        f"THEN ARRAY[]::text[] "
+        f"WHEN jsonb_typeof({ref}->'l_race') = 'array' "
+        f"THEN ARRAY(SELECT jsonb_array_elements_text({ref}->'l_race')) "
+        f"WHEN jsonb_typeof({ref}->'l_race') = 'string' AND BTRIM(COALESCE({ref}->>'l_race', '')) <> '' "
+        f"THEN regexp_split_to_array(BTRIM({ref}->>'l_race'), '[[:space:]]*,[[:space:]]*') "
+        f"ELSE ARRAY[]::text[] END)"
+    )
+
+
+def race_list_display_expr(table_alias: str = 'cs') -> str:
+    """Comma-joined race strings for SELECT / display."""
+    return f"array_to_string({race_list_array_sql(table_alias)}, ', ')"
+
+
+def race_list_overlap_sql(table_alias: str = 'cs') -> str:
+    """Array-overlap against filter values; caller supplies ONE %s text[] param."""
+    return f"({race_list_array_sql(table_alias)} && %s::text[])"
+
+
+def race_list_blank_sql(table_alias: str = 'cs') -> str:
+    """True when l_race is missing or yields no races."""
+    return f"(cardinality({race_list_array_sql(table_alias)}) = 0)"
+
+
+def append_race_list_filter(where_clauses, params, values, table_alias: str = 'cs') -> None:
+    """Append any-of race overlap filter (plus optional blank) for Race List."""
+    if not values:
+        return
+    has_blank = "" in values or '(Blank)' in values
+    real_values = [v for v in values if v not in ("", "(Blank)")]
+    conditions = []
+    if real_values:
+        conditions.append(race_list_overlap_sql(table_alias))
+        params.append(list(real_values))
+    if has_blank:
+        conditions.append(race_list_blank_sql(table_alias))
+    if conditions:
+        where_clauses.append(f"({' OR '.join(conditions)})")
+
+
+def race_list_unnest_select_expr(table_alias: str = 'cs') -> str:
+    """Set-returning expression of individual race values (for DISTINCT options)."""
+    return f"unnest({race_list_array_sql(table_alias)})"
 
 
 def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False, use_students=False, use_eht=False):
@@ -101,6 +185,8 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
         return "(cs.add_data::jsonb->>'AVID')", "avid"
     if col == 'avid_type':
         return "(cs.add_data::jsonb->>'AVID_type')", "avid_type"
+    if col == RACE_LIST_COL:
+        return race_list_display_expr('cs'), RACE_LIST_COL
     if col in db_columns:
         return f"cs.{col}", col
     return None, None
@@ -193,20 +279,7 @@ def load_column_structures(request):
     params = []
     user = request.user
     
-    user_roles = get_user_roles(user)
-    unrestricted_roles = {'District Admin', 'Project Admin', 'District View'}
-    is_unrestricted = user.is_superuser or bool(user_roles & unrestricted_roles)
-    
-    if hasattr(user, 'active_school') and user.active_school:
-        where_clauses.append("cs.school_state_id = %s")
-        params.append(user.active_school.state_id)
-    else:
-        if not is_unrestricted:
-            if hasattr(user, 'schools') and isinstance(user.schools, list) and user.schools:
-                where_clauses.append("cs.school_state_id = ANY(%s)")
-                params.append(user.schools)
-            else:
-                where_clauses.append("1=0")
+    _apply_de_school_filter(where_clauses, params, user)
 
     test_structure = get_test_columns(
         column_filters=column_filters,
@@ -219,14 +292,16 @@ def load_column_structures(request):
         extra_params=params
     )
     survey_structure = get_survey_columns()
+    ap_structure = get_ap_columns()
     
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
 
-    all_years = list(test_structure.keys()) + list(marks_structure.keys())
+    all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys())
     context = {
         'test_structure': test_structure,
         'marks_structure': marks_structure,
         'survey_structure': survey_structure.get('structure', {}),
+        'ap_structure': ap_structure,
         'column_definitions': COLUMN_DEFINITIONS,
         'year_labels': get_year_labels_map(all_years),
         'year_to_alias': get_year_alias_map(),

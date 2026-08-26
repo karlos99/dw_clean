@@ -15,7 +15,7 @@ from dataexploration.models import SavedQuery
 from dataexploration.utils import can_user_view_query
 from dataexploration.view_modules.column_management import get_saved_default_columns
 from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
-from dataexploration.constants import SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR
+from dataexploration.constants import SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR, SY_THREE_PRIOR, SY_FOUR_PRIOR, SY_FIVE_PRIOR
 
 from .mixins import ProjectAdminMixin, is_project_admin
 
@@ -190,6 +190,9 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             SY_THIS_YEAR: 'This School Year',
             SY_LAST_YEAR: 'Last School Year',
             SY_TWO_PRIOR: 'Two Years Prior',
+            SY_THREE_PRIOR: 'Three Years Prior',
+            SY_FOUR_PRIOR: 'Four Years Prior',
+            SY_FIVE_PRIOR: 'Five Years Prior',
         }
 
         # Build the resolved labels: show which concrete year each alias resolves to
@@ -234,6 +237,9 @@ class ChartBuilderView(ProjectAdminMixin, TemplateView):
             'sy_this_year':         SY_THIS_YEAR,
             'sy_last_year':         SY_LAST_YEAR,
             'sy_two_prior':         SY_TWO_PRIOR,
+            'sy_three_prior':       SY_THREE_PRIOR,
+            'sy_four_prior':        SY_FOUR_PRIOR,
+            'sy_five_prior':        SY_FIVE_PRIOR,
             'available_pages_json': json.dumps(available_pages),
             'available_datasets': available_datasets_qs,
             'available_datasets_json': available_datasets_json,

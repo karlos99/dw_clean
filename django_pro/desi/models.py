@@ -114,7 +114,7 @@ class Assessment(models.Model):
 
     class Meta:
         ordering = ['school_year', 'name']
-        unique_together = ('name', 'school_year')
+        unique_together = ('name', 'subject', 'school_year')
 
     def __str__(self):
         return f"{self.name} ({self.school_year})"
@@ -156,6 +156,12 @@ class StudentAccommodation(models.Model):
     """Student-level global accommodations. Assigned once, applies to all matching tests."""
     student_annual_key = models.CharField(max_length=32, unique=True, db_index=True)
     options = models.ManyToManyField(AccommodationOption, blank=True, related_name='students')
+    selected_accommodations = models.ManyToManyField(
+        Accommodation,
+        blank=True,
+        related_name='students_with_direct_support',
+        help_text='Supports with no configured options, stored as simple checkbox selections.',
+    )
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

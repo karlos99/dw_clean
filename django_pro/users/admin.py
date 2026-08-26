@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from .models import User, Role, School
-from .models_pages import Page
+from .models_pages import Page, NavbarConfig
 
 class CustomUserAdmin(UserAdmin):
     model = User
@@ -11,11 +11,15 @@ class CustomUserAdmin(UserAdmin):
     add_fieldsets = UserAdmin.add_fieldsets + (
         (None, {'fields': ('name', 'job_title', 'staff_id', 'roles', 'schools', 'preferences', 'email')}),
     )
-    list_display = ['username', 'email', 'name', 'staff_id', 'get_roles', 'is_staff']
+    list_display = ['username', 'email', 'name', 'staff_id', 'get_roles', 'get_school', 'is_staff']
     
     def get_roles(self, obj):
         return ", ".join([r.name for r in obj.roles.all()])
     get_roles.short_description = 'Roles'
+
+    def get_school(self, obj):
+        return obj.first_school_name
+    get_school.short_description = 'School'
 
 class PageAdmin(admin.ModelAdmin):
     list_display = ('name', 'slug', 'url_path', 'status', 'icon')
@@ -53,3 +57,15 @@ admin.site.register(User, CustomUserAdmin)
 admin.site.register(Role)
 admin.site.register(School)
 admin.site.register(Page, PageAdmin)
+
+
+@admin.register(NavbarConfig)
+class NavbarConfigAdmin(admin.ModelAdmin):
+    list_display = ('pk', 'navbar_style', 'sticky', 'label_case', 'submenu_style', 'updated_by', 'updated_at')
+    readonly_fields = ('updated_at',)
+
+    def has_add_permission(self, request):
+        return not NavbarConfig.objects.filter(pk=1).exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
