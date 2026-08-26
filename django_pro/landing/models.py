@@ -56,6 +56,24 @@ class ProjectConfig(models.Model):
         help_text="Allow users to build a personalized charts dashboard on the home page (drag charts from the User Charts panel).",
     )
 
+    home_forced_charts = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "List of SavedChart IDs that are forced onto every user's home "
+            "dashboard. Users cannot delete these charts, but they can rearrange "
+            "and resize them alongside charts they add themselves."
+        ),
+    )
+
+    home_max_charts = models.PositiveIntegerField(
+        default=0,
+        help_text=(
+            "Maximum number of charts a user may add to their own home dashboard. "
+            "Forced charts do not count toward this limit. 0 = unlimited."
+        ),
+    )
+
     # ── Available school years ──────────────────────────────────────────────
     disabled_school_years = models.JSONField(
         default=list,

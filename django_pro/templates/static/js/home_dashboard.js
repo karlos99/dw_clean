@@ -19,6 +19,10 @@
     var dropPreviewEl   = document.getElementById('home-grid-drop-preview');
     var toastEl         = document.getElementById('home-toast');
 
+    var maxCharts = parseInt(app.dataset.maxCharts || '0', 10) || 0;
+    var forcedChartIds = [];
+    try { forcedChartIds = JSON.parse(app.dataset.forcedChartIds || '[]') || []; } catch (e) { forcedChartIds = []; }
+
     var grid = null;
     var saveTimer = null;
     var skipNextChange = false;
@@ -65,6 +69,7 @@
         var h = opts.h || data.gs_h || 4;
         var x = opts.x != null ? opts.x : (data.gs_x != null ? data.gs_x : 0);
         var y = opts.y != null ? opts.y : (data.gs_y != null ? data.gs_y : 0);
+        var isForced = !!data.is_forced;
 
         var el = document.createElement('div');
         el.className = 'grid-stack-item';
@@ -75,11 +80,20 @@
         el.setAttribute('gs-h', String(h));
         el.setAttribute('gs-min-w', '4');
         el.setAttribute('gs-min-h', '3');
+        if (isForced) el.setAttribute('data-forced', '1');
+
+        var lockIcon = isForced
+            ? '<svg class="w-3 h-3 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="Required chart"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>'
+            : '';
+        var headerRight = isForced
+            ? '<span class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 ring-1 ring-amber-200 text-[10px] font-semibold">Required</span>'
+            : '<button type="button" class="home-slot-remove flex-shrink-0 w-6 h-6 rounded-md hover:bg-red-50 text-slate-400 hover:text-red-600 text-lg leading-none transition" aria-label="Remove chart">&times;</button>';
+
         el.innerHTML =
             '<div class="grid-stack-item-content bg-white rounded-xl shadow-sm ring-1 ring-slate-200 flex flex-col">' +
             '  <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl">' +
-            '    <span class="text-xs font-semibold text-slate-700 truncate" title="' + esc(data.title) + '">' + esc(data.title) + '</span>' +
-            '    <button type="button" class="home-slot-remove flex-shrink-0 w-6 h-6 rounded-md hover:bg-red-50 text-slate-400 hover:text-red-600 text-lg leading-none transition" aria-label="Remove chart">&times;</button>' +
+            '    <span class="flex items-center gap-1.5 min-w-0 text-xs font-semibold text-slate-700 truncate" title="' + esc(data.title) + '">' + lockIcon + '<span class="truncate">' + esc(data.title) + '</span></span>' +
+            '    ' + headerRight +
             '  </div>' +
             '  <div class="home-slot-body flex-1 min-h-0 p-2">' +
             (data.html ? data.html : '<div class="text-xs text-red-500 p-2">' + esc(data.error || 'Could not load chart') + '</div>') +
@@ -172,6 +186,10 @@
     }
 
     function removeSlot(node) {
+        if (node.getAttribute('data-forced') === '1') {
+            showToast('This chart is required by your administrator and cannot be removed.', 'error');
+            return;
+        }
         var slotId = node.getAttribute('gs-id') || node.getAttribute('data-gs-id');
         if (!slotId) {
             var nodes = grid.save(false) || [];
@@ -236,9 +254,23 @@
     }
 
     /* ── Direct Add Chart (One-Click or from Drag) ─────────────── */
+    function countUserPlacedCharts() {
+        if (!grid) return 0;
+        var count = 0;
+        gridEl.querySelectorAll('.grid-stack-item').forEach(function (el) {
+            if (el.getAttribute('data-forced') !== '1') count++;
+        });
+        return count;
+    }
+
     function addChartById(chartId, chartName, targetCoords) {
         chartId = parseInt(chartId, 10);
         if (!chartId) return;
+
+        if (maxCharts > 0 && countUserPlacedCharts() >= maxCharts) {
+            showToast('You have reached the maximum of ' + maxCharts + ' charts on your home dashboard. Remove a chart first or ask your admin to raise the limit.', 'error');
+            return;
+        }
 
         showToast('Adding ' + (chartName || 'chart') + '…');
         var payload = {
@@ -270,6 +302,7 @@
                         error: '',
                         gs_w: slot.gs_w || 6,
                         gs_h: slot.gs_h || 4,
+                        is_forced: !!slot.is_forced,
                     }, opts);
                     updateEmpty();
                     showToast('Added ' + (chart.name || chartName || 'chart') + ' to homepage!', 'success');
