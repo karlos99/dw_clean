@@ -252,8 +252,10 @@
       chart._drillMeta = option._drillMeta;
       delete option._drillMeta;
     }
-    if (option && option.__category_names__) {
-      chart._categoryNames = option.__category_names__;
+    const categoryNames = _categoryNamesFromContainer(container, option);
+    if (categoryNames) {
+      chart._categoryNames = categoryNames;
+      delete option.__category_names__;
     }
     if (option && option.__group_label_bands__) {
       chart._groupLabelBands = option.__group_label_bands__;
@@ -552,6 +554,56 @@
     }
   }
 
+  function _categoryNamesFromContainer(container, option) {
+    if (option && option.__category_names__) {
+      return option.__category_names__;
+    }
+    try {
+      var raw = container.dataset.categoryNames;
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function getDrillStatus(container) {
+    if (!container) {
+      return { canDrill: false, state: 'none', message: 'No chart loaded.' };
+    }
+    var chartId = container.dataset.chartId || '';
+    var drillEnabled = container.dataset.drillEnabled === '1';
+    var hasSavedChart = drillEnabled && chartId && chartId !== 'preview';
+    if (!hasSavedChart) {
+      return {
+        canDrill: false,
+        state: 'needs_save',
+        message: 'Save the chart to test drill-through in the builder.',
+      };
+    }
+    var drillableCells = container.querySelectorAll('td[data-rv]').length;
+    if (drillableCells > 0) {
+      return {
+        canDrill: true,
+        state: 'ready',
+        message: 'Drill ready — click a table cell (' + drillableCells + ' clickable). Save after edits.',
+      };
+    }
+    if (container._echartsInstance) {
+      return {
+        canDrill: true,
+        state: 'ready',
+        message: 'Drill ready — click a bar, point, or slice. Save after edits so drill matches preview.',
+      };
+    }
+    return {
+      canDrill: true,
+      state: 'ready',
+      message: 'Drill ready. Save after config changes so drill matches preview.',
+    };
+  }
+
   var _lazyObserver = null;
 
   function _getLazyObserver() {
@@ -600,4 +652,5 @@
   window.initAllCharts    = initAll;
   window.registerDrillThrough = registerDrillThrough;
   window.applyCenteredGroupLabels = applyCenteredGroupLabels;
+  window.getChartDrillStatus = getDrillStatus;
 }());

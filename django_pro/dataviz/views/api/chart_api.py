@@ -544,6 +544,9 @@ def chart_preview_api(request):
             'query_columns_json': json.dumps(query_columns),
             'chart_id':           _chart_id or 'preview',
             'drill_enabled':      '1' if _chart_id else '0',
+            'drill_source':       'chart_builder' if _chart_id else '',
+            'drill_source_id':    str(_chart_id) if _chart_id else '',
+            'drill_source_name':  'Chart Builder' if _chart_id else '',
         })
     except Exception as exc:
         return _error(f'Chart error: {exc}')
