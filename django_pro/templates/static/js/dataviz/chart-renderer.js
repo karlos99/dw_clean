@@ -513,7 +513,8 @@
         if (canDrill && Number.isFinite(cntNum) && cntNum !== 0) {
           var rvKey = rowVals.join(SEPS);
           var cvKey = cc ? (cc + SEPS + cv) : cv;
-          html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100"' + titleAttr + ' data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '">' + displayCellVal + '</td>';
+          var calcAttr = cc ? ' data-calc-id="' + _esc(cc) + '"' : '';
+          html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100"' + titleAttr + ' data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '"' + calcAttr + '>' + displayCellVal + '</td>';
         } else {
           html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500"' + titleAttr + '>' + (hasDisplayValue ? displayCellVal : '<span class="text-slate-300">\u2014</span>') + '</td>';
         }
@@ -538,7 +539,9 @@
         var totalDisplay = percentColumns.indexOf(totalColIdx) >= 0 && totalRow[t] !== '' ? String(totalRow[t]) + '%' : totalRow[t];
         var totalCv = colHeaderCols[totalColIdx] ? colHeaderCols[totalColIdx] + SEPS + colHeaders[totalColIdx] : colHeaders[totalColIdx];
         if (canDrill && totalDrillable && Number(totalRow[t]) !== 0) {
-          html += '<td class="border border-slate-200 px-2 py-1.5 text-center font-semibold text-sky-700 cursor-pointer hover:bg-sky-100" data-rv="" data-cv="' + _esc(totalCv) + '">' + totalDisplay + '</td>';
+          var totalCalcId = colHeaderCols[totalColIdx] || '';
+          var totalCalcAttr = totalCalcId ? ' data-calc-id="' + _esc(totalCalcId) + '"' : '';
+          html += '<td class="border border-slate-200 px-2 py-1.5 text-center font-semibold text-sky-700 cursor-pointer hover:bg-sky-100" data-rv="" data-cv="' + _esc(totalCv) + '"' + totalCalcAttr + '>' + totalDisplay + '</td>';
         } else {
           html += '<td class="border border-slate-200 px-2 py-1.5 text-center font-semibold text-slate-700">' + totalDisplay + '</td>';
         }
@@ -560,6 +563,7 @@
           var cv = td.dataset.cv;
           var url = '/dataviz/drill/' + chartId + '/?st_col_val=' + encodeURIComponent(cv);
           if (rv) url += '&st_row_val=' + encodeURIComponent(rv);
+          if (td.dataset.calcId) url += '&dyn_calc_id=' + encodeURIComponent(td.dataset.calcId);
           if (source)     url += '&source='      + encodeURIComponent(source);
           if (sourceId)   url += '&source_id='   + encodeURIComponent(sourceId);
           if (sourceName) url += '&source_name=' + encodeURIComponent(sourceName);

@@ -2646,6 +2646,7 @@ class DynamicSummaryTableOptionTests(TestCase):
         
         self.assertEqual(res['__type__'], 'table')
         self.assertEqual(res['col_headers'], ['My Count', 'My Avg'])
+        self.assertEqual(res['col_header_cols'], ['c0', 'c1'])
         self.assertEqual(res['rows'], [
             ['5', 2.0, 350.0],
             ['6', 1.0, 500.0],
@@ -3109,6 +3110,102 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual([s['name'] for s in res['series']], ['Total', 'Below', 'Pct Below'])
         self.assertEqual(res['series'][0]['stack'], 'total')
         self.assertEqual([s['data'] for s in res['series']], [[2.0, 1.0], [1.0, 0.0], [50.0, 0.0]])
+
+
+class DynamicSummaryTableDrillTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='drilluser', password='password', is_superuser=True)
+        self.chart = SavedChart.objects.create(
+            name='Dyn ST Drill',
+            chart_type='dynamic_summary_table',
+            source_type=SavedChart.SOURCE_SQL,
+            source_sql='SELECT ssid, grade, score FROM students',
+            owner=self.user,
+            config={
+                'dyn_col_mode': 'calculations',
+                'dyn_row_cols': ['grade'],
+                'dyn_calculations': [{
+                    'id': 'below',
+                    'calc_type': 'base',
+                    'agg_func': 'count',
+                    'value_col': 'ssid',
+                    'label': 'Below 80',
+                    'filters': [{'col': 'score', 'op': 'lt', 'val': 80}],
+                }],
+            },
+        )
+
+    def test_build_drill_filter_matches_calc_by_id(self):
+        from dataviz.utils.drill_through import build_drill_filter
+
+        filters = build_drill_filter(self.chart, {
+            'st_row_val': '5',
+            'st_col_val': 'below \u25b8 Below 80',
+            'dyn_calc_id': 'below',
+        })
+        self.assertEqual(filters.get('grade'), '5')
+        self.assertNotIn('dyn_calc_value_col', filters)
+        self.assertEqual(len(filters.get('dyn_calc_thresholds', [])), 1)
+        self.assertEqual(filters['dyn_calc_thresholds'][0]['col'], 'score')
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_execute_drill_query_applies_calc_thresholds(self, mock_run_sql):
+        mock_run_sql.return_value = {
+            'columns': ['ssid', 'grade', 'score'],
+            'rows': [
+                {'ssid': '1', 'grade': '5', 'score': 70},
+                {'ssid': '2', 'grade': '5', 'score': 90},
+                {'ssid': '3', 'grade': '5', 'score': 60},
+                {'ssid': '4', 'grade': '6', 'score': 55},
+            ],
+        }
+        from dataviz.utils.drill_through import build_drill_filter, execute_drill_query
+
+        drill_filters = build_drill_filter(self.chart, {
+            'st_row_val': '5',
+            'st_col_val': 'Below 80',
+            'dyn_calc_id': 'below',
+        })
+        result = execute_drill_query(self.chart, drill_filters, columns=['ssid', 'score'], user=self.user)
+        ssids = {r['ssid'] for r in result['rows']}
+        self.assertEqual(ssids, {'1', '3'})
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_execute_drill_query_thresholds_only_without_value_col(self, mock_run_sql):
+        """Count calcs with filter criteria set dyn_calc_thresholds but not dyn_calc_value_col."""
+        mock_run_sql.return_value = {
+            'columns': ['ssid', 'score'],
+            'rows': [
+                {'ssid': '1', 'score': 70},
+                {'ssid': '2', 'score': 90},
+            ],
+        }
+        from dataviz.utils.drill_through import execute_drill_query
+
+        result = execute_drill_query(
+            self.chart,
+            {
+                'dyn_calc_thresholds': [{'col': 'score', 'op': 'lt', 'val': 80}],
+            },
+            columns=['ssid', 'score'],
+            user=self.user,
+        )
+        self.assertEqual({r['ssid'] for r in result['rows']}, {'1'})
+
+    def test_apply_dyn_calc_threshold_rows_or_logic(self):
+        from dataviz.utils.drill_through import _apply_dyn_calc_threshold_rows
+
+        rows = [
+            {'score': 70},
+            {'score': 85},
+            {'score': 95},
+        ]
+        thresholds = [
+            {'col': 'score', 'op': 'lt', 'val': 75, 'logic': 'and'},
+            {'col': 'score', 'op': 'gt', 'val': 90, 'logic': 'or'},
+        ]
+        filtered = _apply_dyn_calc_threshold_rows(rows, thresholds, lambda c: c)
+        self.assertEqual([r['score'] for r in filtered], [70, 95])
 
 
 class PageDuplicateTests(TestCase):

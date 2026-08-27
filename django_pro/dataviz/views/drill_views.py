@@ -186,6 +186,7 @@ def drill_table(request, chart_id):
         'after_val':  request.GET.get('after_val', ''),
         'st_row_val': request.GET.get('st_row_val', ''),
         'st_col_val': request.GET.get('st_col_val', ''),
+        'dyn_calc_id':  request.GET.get('dyn_calc_id', ''),
     }
     raw_drill_filters = build_drill_filter(chart, params)
 

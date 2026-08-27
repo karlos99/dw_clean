@@ -667,6 +667,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             'col_label':   'Calculations',
             'num_row_labels': 1 if totals_only else len(valid_row),
             'col_headers': col_headers,
+            'col_header_cols': [c['id'] for c in output_calcs],
             'percent_columns': percent_columns,
             'rows':        rows_data,
             'total_row':   total_row,
