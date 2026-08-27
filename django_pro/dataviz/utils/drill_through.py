@@ -1138,7 +1138,7 @@ def execute_drill_query(
         if rows and drill_filters and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
             rows = _apply_drill_row_filters(rows, drill_filters)
 
-        if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
+        if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table') and not (dyn_calc_value_col or dyn_calc_thresholds):
             _id_col = _find_id_col(rows[0])
             if _id_col:
                 _seen: set = set()
@@ -1178,6 +1178,21 @@ def execute_drill_query(
                 return _resolve_drill_row_col(col, row_keys)
 
             rows = _apply_dyn_calc_threshold_rows(rows, dyn_calc_thresholds, _resolve_th_col)
+
+        # A calculation filter must be applied before collapsing joined rows;
+        # otherwise an unmatched duplicate can hide the student record that
+        # actually contributed to the calculation.
+        if (dyn_calc_value_col or dyn_calc_thresholds) and rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
+            _id_col = _find_id_col(rows[0])
+            if _id_col:
+                _seen = set()
+                _deduped = []
+                for _r in rows:
+                    _key = _r.get(_id_col)
+                    if _key not in _seen:
+                        _seen.add(_key)
+                        _deduped.append(_r)
+                rows = _deduped
 
         if rows and chart.chart_type == 'date_series' and (ds_date_val or ds_value_col_required or ds_active_enter_col):
             row_keys = list(rows[0].keys())
