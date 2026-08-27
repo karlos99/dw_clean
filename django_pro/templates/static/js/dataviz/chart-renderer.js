@@ -411,6 +411,7 @@
 
   function _renderSummaryTable(container, option) {
     const colHeaders = option.col_headers || [];
+    const colKeys    = option.col_header_raw || colHeaders;
     const percentColumns = option.percent_columns || [];
     const colHeaderGroups = option.col_header_groups || [];
     const colHeaderCols  = option.col_header_cols || [];
@@ -494,7 +495,7 @@
       }
       for (var c = 0; c < cells.length; c++) {
         var cnt = cells[c];
-        var cv  = colHeaders[c];
+        var cv  = colKeys[c];
         var cc  = colHeaderCols[c] || '';
         
         var cellVal = cnt;
@@ -537,7 +538,7 @@
       for (var t = numRowLbls; t < totalValueEnd; t++) {
         var totalColIdx = t - numRowLbls;
         var totalDisplay = percentColumns.indexOf(totalColIdx) >= 0 && totalRow[t] !== '' ? String(totalRow[t]) + '%' : totalRow[t];
-        var totalCv = colHeaderCols[totalColIdx] ? colHeaderCols[totalColIdx] + SEPS + colHeaders[totalColIdx] : colHeaders[totalColIdx];
+        var totalCv = colHeaderCols[totalColIdx] ? colHeaderCols[totalColIdx] + SEPS + colKeys[totalColIdx] : colKeys[totalColIdx];
         if (canDrill && totalDrillable && Number(totalRow[t]) !== 0) {
           var totalCalcId = colHeaderCols[totalColIdx] || '';
           var totalCalcAttr = totalCalcId ? ' data-calc-id="' + _esc(totalCalcId) + '"' : '';

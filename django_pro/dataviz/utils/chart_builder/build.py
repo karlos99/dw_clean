@@ -267,6 +267,10 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     _apply_x_value_map(option, cfg)
     option['__x_alias_keys__'] = x_alias_keys
 
+    # Alias summary/dynamic-table column headers. Raw values stay in
+    # col_header_raw / _drillMeta.colHeaders for drill-through.
+    _apply_col_header_aliases(option, cfg)
+
     # Apply category-axis label overrides (rotation, font size, truncation)
     x_label_style = _x_axis_label_style(cfg)
     

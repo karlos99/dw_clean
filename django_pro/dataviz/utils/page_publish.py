@@ -10,6 +10,9 @@ import re
 
 from django.utils.text import slugify
 
+from django.db.models import Q
+
+
 _SLUG_RE = re.compile(r'^[-a-zA-Z0-9_]+$')
 
 
@@ -75,6 +78,61 @@ def all_page_folder_paths() -> list[str]:
         DataVizPage.objects.exclude(folder='').values_list('folder', flat=True)
     )
     return sorted(p for p in paths if p)
+
+
+def folder_contents_q(field: str, path: str):
+    """Match *field* equal to *path* or nested under it."""
+    path = normalize_page_folder(path)
+    return Q(**{field: path}) | Q(**{f'{field}__startswith': path + ' / '})
+
+
+def rewrite_folder_prefix(old_path: str, new_path: str) -> int:
+    """Rename a folder prefix on pages and folder records. Returns pages updated."""
+    from dataviz.models import DataVizPage, DataVizPageFolder
+
+    old_path = normalize_page_folder(old_path)
+    new_path = normalize_page_folder(new_path)
+    if not old_path or not new_path or old_path == new_path:
+        return 0
+
+    def rewritten(current: str) -> str:
+        if current == old_path:
+            return new_path
+        if current.startswith(old_path + ' / '):
+            return new_path + current[len(old_path):]
+        return current
+
+    updated = 0
+    for page in DataVizPage.objects.filter(folder_contents_q('folder', old_path)):
+        nxt = rewritten(page.folder or '')
+        if nxt != page.folder:
+            page.folder = nxt
+            page.save(update_fields=['folder', 'updated_at'])
+            updated += 1
+
+    recs = list(DataVizPageFolder.objects.filter(folder_contents_q('path', old_path)))
+    new_paths = {rewritten(r.path) for r in recs}
+    if recs:
+        DataVizPageFolder.objects.filter(pk__in=[r.pk for r in recs]).delete()
+    for path in new_paths:
+        DataVizPageFolder.objects.get_or_create(path=path)
+    DataVizPageFolder.objects.get_or_create(path=new_path)
+    return updated
+
+
+def delete_folder_and_pages(path: str) -> int:
+    """Delete a folder, nested folders, and pages inside. Returns pages deleted."""
+    from dataviz.models import DataVizPage, DataVizPageFolder
+
+    path = normalize_page_folder(path)
+    if not path:
+        return 0
+    pages = list(DataVizPage.objects.filter(folder_contents_q('folder', path)))
+    for page in pages:
+        unpublish_page(page)
+        page.delete()
+    DataVizPageFolder.objects.filter(folder_contents_q('path', path)).delete()
+    return len(pages)
 
 
 def normalize_page_slug(raw: str) -> str:

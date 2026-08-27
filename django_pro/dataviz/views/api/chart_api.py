@@ -143,6 +143,14 @@ def _cfg_from_post(post):
     if not isinstance(x_value_map, dict):
         x_value_map = {}
 
+    cha_raw = post.get('col_header_aliases', '')
+    try:
+        col_header_aliases = json.loads(cha_raw) if cha_raw else {}
+    except (json.JSONDecodeError, ValueError):
+        col_header_aliases = {}
+    if not isinstance(col_header_aliases, dict):
+        col_header_aliases = {}
+
     # Parse stack_order JSON
     so_raw = post.get('stack_order', '')
     try:
@@ -276,6 +284,7 @@ def _cfg_from_post(post):
         'smooth':            bool(post.get('smooth')),
         'color_map':         color_map,
         'x_value_map':       x_value_map,
+        'col_header_aliases': col_header_aliases,
         # Stack order
         'stack_order':       stack_order,
         # Element toggles
@@ -533,6 +542,7 @@ def chart_preview_api(request):
         series_names    = option.pop('__series_names__', [])
         category_names  = option.pop('__category_names__', [])
         x_alias_keys    = option.pop('__x_alias_keys__', [])
+        col_header_keys = option.pop('__col_header_keys__', [])
         ac_avail_cats   = option.pop('__ac_avail_cats__', [])
         ac_avail_pl     = option.pop('__ac_avail_pl__', [])
         query_columns = list(rows[0].keys()) if rows else (result.get('columns', []))
@@ -541,6 +551,7 @@ def chart_preview_api(request):
             'series_names_json':  json.dumps(series_names),
             'category_names_json': json.dumps(category_names),
             'x_alias_keys_json':  json.dumps(x_alias_keys),
+            'col_header_keys_json': json.dumps(col_header_keys),
             'ac_avail_cats_json': json.dumps(ac_avail_cats),
             'ac_avail_pl_json':   json.dumps(ac_avail_pl),
             'query_columns_json': json.dumps(query_columns),

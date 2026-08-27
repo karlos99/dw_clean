@@ -3111,6 +3111,70 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res['series'][0]['stack'], 'total')
         self.assertEqual([s['data'] for s in res['series']], [[2.0, 1.0], [1.0, 0.0], [50.0, 0.0]])
 
+    def test_col_header_aliases_dynamic_pivot_keeps_raw_for_drill(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F', 'n': 2},
+            {'grade': '6', 'gender': 'M', 'n': 1},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['gender'],
+            'dyn_agg_func': 'count',
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'col_header_aliases': {'F': 'Female', 'M': 'Male'},
+        })
+        self.assertEqual(opt['col_headers'], ['Female', 'Male'])
+        self.assertEqual(opt['col_header_raw'], ['F', 'M'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['F', 'M'])
+        self.assertEqual(set(opt.get('__col_header_keys__') or []), {'F', 'M'})
+
+    def test_col_header_aliases_summary_table_pivot(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F'},
+            {'grade': '6', 'gender': 'M'},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_col_mode': 'values',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_agg_func': 'count',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'col_header_aliases': {'F': 'Female'},
+        })
+        self.assertEqual(opt['col_headers'], ['Female', 'M'])
+        self.assertEqual(opt['col_header_raw'], ['F', 'M'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['F', 'M'])
+
+    def test_col_header_aliases_dynamic_pivot_echarts_series(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F'},
+            {'grade': '6', 'gender': 'M'},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['gender'],
+            'dyn_agg_func': 'count',
+            'dyn_display_type': 'stacked_bar',
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'col_header_aliases': {'F': 'Female', 'M': 'Male'},
+        })
+        self.assertEqual([s['name'] for s in opt['series']], ['Female', 'Male'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['F', 'M'])
+
 
 class DynamicSummaryTableDrillTests(TestCase):
     def setUp(self):
@@ -3435,6 +3499,55 @@ class PageFolderTests(TestCase):
         self.assertEqual(response.json()['moved'], 2)
         self.assertEqual(DataVizPage.objects.get(slug='one').folder, 'New / Home')
         self.assertEqual(DataVizPage.objects.get(slug='two').folder, 'New / Home')
+
+    def test_rename_folder_updates_pages_and_nested(self):
+        import json
+        DataVizPage.objects.create(title='ELA', slug='ela', owner=self.user, folder='Reports / ELA')
+        DataVizPage.objects.create(title='Nested', slug='nested', owner=self.user, folder='Reports / ELA / Midyear')
+        DataVizPageFolder.objects.create(path='Reports / ELA')
+        response = self.client.post(
+            '/dataviz/api/pages/folders/rename/',
+            data=json.dumps({'folder': 'Reports / ELA', 'name': 'Literacy'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['folder'], 'Reports / Literacy')
+        self.assertEqual(DataVizPage.objects.get(slug='ela').folder, 'Reports / Literacy')
+        self.assertEqual(DataVizPage.objects.get(slug='nested').folder, 'Reports / Literacy / Midyear')
+        self.assertTrue(DataVizPageFolder.objects.filter(path='Reports / Literacy').exists())
+        self.assertFalse(DataVizPageFolder.objects.filter(path='Reports / ELA').exists())
+
+    def test_delete_folder_warns_via_count_and_deletes_pages(self):
+        import json
+        DataVizPage.objects.create(title='Keep', slug='keep', owner=self.user, folder='Reports')
+        DataVizPage.objects.create(title='Gone', slug='gone', owner=self.user, folder='Reports / ELA')
+        DataVizPage.objects.create(title='Nested', slug='nested', owner=self.user, folder='Reports / ELA / Midyear')
+        DataVizPageFolder.objects.create(path='Reports / ELA')
+        list_resp = self.client.get('/dataviz/pages/?folder=Reports')
+        self.assertContains(list_resp, '2 pages')
+        response = self.client.post(
+            '/dataviz/api/pages/folders/delete/',
+            data=json.dumps({'folder': 'Reports / ELA'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['deleted_pages'], 2)
+        self.assertFalse(DataVizPage.objects.filter(slug='gone').exists())
+        self.assertFalse(DataVizPage.objects.filter(slug='nested').exists())
+        self.assertTrue(DataVizPage.objects.filter(slug='keep').exists())
+        self.assertFalse(DataVizPageFolder.objects.filter(path='Reports / ELA').exists())
+
+    def test_delete_empty_folder(self):
+        import json
+        DataVizPageFolder.objects.create(path='Empty Box')
+        response = self.client.post(
+            '/dataviz/api/pages/folders/delete/',
+            data=json.dumps({'folder': 'Empty Box'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['deleted_pages'], 0)
+        self.assertFalse(DataVizPageFolder.objects.filter(path='Empty Box').exists())
 
 
 class DatasetExportCSVTests(TestCase):

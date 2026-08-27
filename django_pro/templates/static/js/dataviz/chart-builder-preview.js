@@ -63,6 +63,12 @@ function chartBuilderPreviewMethods(urls) {
             this.xValueAliasAvail = [];
           }
           try {
+            const headerKeys = JSON.parse(el.dataset.colHeaderKeys || '[]');
+            this.colHeaderAliasAvail = Array.isArray(headerKeys) ? headerKeys.map(String) : [];
+          } catch (_) {
+            this.colHeaderAliasAvail = [];
+          }
+          try {
             const availCats = JSON.parse(el.dataset.acAvailCats || '[]');
             const availPl   = JSON.parse(el.dataset.acAvailPl   || '[]');
             if (availCats.length) this.acAvailCats = availCats;
@@ -294,6 +300,7 @@ function chartBuilderPreviewMethods(urls) {
         smooth: this.smooth,
         color_map: this.colorMap,
         x_value_map: this.xValueMap,
+        col_header_aliases: this.colHeaderAliases,
         show_zoom: this.showZoom,
         show_toolbox: this.showToolbox,
         show_grid: this.showGrid,
