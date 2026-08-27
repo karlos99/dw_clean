@@ -266,6 +266,8 @@ function chartBuilderPreviewMethods(urls) {
         dyn_show_tooltips: this.dynShowTooltips,
         dyn_col_mode: this.dynColMode,
         dyn_calculations: this.dynCalculations,
+        dyn_drill_calc: this.dynDrillCalc,
+        dyn_totals_only: this.dynTotalsOnly,
         dyn_display_type: this.dynDisplayType,
         ds_date_col: this.dsDateCol,
         ds_date_bucket: this.dsDateBucket,

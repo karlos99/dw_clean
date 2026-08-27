@@ -248,10 +248,11 @@ def build_drill_filter(chart, params: dict) -> dict:
                     return '', []
                 _seen.add(_cid)
                 _vc = _c.get('value_col', '')
-                _f = _c.get('filter')
                 _thresholds = []
-                if isinstance(_f, dict) and _f.get('col') and _f.get('op'):
-                    _thresholds.append({'col': _f['col'], 'op': _f['op'], 'val': _f.get('val')})
+                _filters = _c.get('filters') if isinstance(_c.get('filters'), list) else [_c.get('filter')]
+                for _f in _filters:
+                    if isinstance(_f, dict) and _f.get('col') and _f.get('op'):
+                        _thresholds.append({'col': _f['col'], 'op': _f['op'], 'val': _f.get('val'), 'logic': _f.get('logic', 'and')})
                 if _vc:
                     return _vc, _thresholds
                 for _ref in (_c.get('ref_a'), _c.get('ref_b')):
@@ -262,10 +263,11 @@ def build_drill_filter(chart, params: dict) -> dict:
                             return _rvc, _rth + _thresholds
                 return '', _thresholds
 
+            selected_calc_id = str(chart.config.get('dyn_drill_calc') or '')
             for calc in chart.config.get('dyn_calculations', []):
                 if not isinstance(calc, dict):
                     continue
-                if _calc_label(calc) == col_val:
+                if (selected_calc_id and str(calc.get('id') or '') == selected_calc_id) or (not selected_calc_id and _calc_label(calc) == col_val):
                     vc, thresholds = _resolve_underlying(calc)
                     if vc:
                         filters['dyn_calc_value_col'] = vc

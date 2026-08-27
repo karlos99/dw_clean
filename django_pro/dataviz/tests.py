@@ -2651,6 +2651,82 @@ class DynamicSummaryTableOptionTests(TestCase):
             ['6', 1.0, 500.0],
         ])
 
+    def test_dynamic_summary_table_calculations_totals_only_and_hidden_columns(self):
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'score': 80.0},
+            {'grade': '6', 'ssid': '456', 'score': 90.0},
+        ])
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_totals_only': True,
+            'dyn_calculations': [
+                {'id': 'total', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Students'},
+                {'id': 'hidden', 'calc_type': 'base', 'agg_func': 'avg', 'value_col': 'score', 'label': 'Hidden', 'visible': False},
+                {'id': 'rate', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'total', 'ref_b': 'total', 'label': 'Rate', 'as_percent': True},
+            ],
+            'dyn_show_col_totals': True,
+            'dyn_show_row_totals': True,
+        }
+        res = _dynamic_summary_table_option(df, row_cols=[], col_cols=[], agg_func='count', value_col='', agg_decimals=None, cfg=cfg, col_defs=None)
+
+        self.assertEqual(res['rows'], [])
+        self.assertEqual(res['col_headers'], ['Students', 'Rate'])
+        self.assertEqual(res['total_row'], ['Total', 2.0, 100.0])
+
+    def test_dynamic_summary_table_calculation_multiple_filter_criteria(self):
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'score': 70.0},
+            {'grade': '5', 'ssid': '2', 'score': 85.0},
+            {'grade': '5', 'ssid': '3', 'score': 95.0},
+            {'grade': '6', 'ssid': '4', 'score': 90.0},
+        ])
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [{
+                'agg_func': 'count', 'value_col': 'ssid', 'label': '80 to 90',
+                'filters': [
+                    {'col': 'score', 'op': 'gte', 'val': 80},
+                    {'col': 'score', 'op': 'lte', 'val': 90},
+                ],
+            }],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+        res = _dynamic_summary_table_option(df, ['grade'], [], 'count', '', None, cfg, None)
+
+        self.assertEqual(res['rows'], [['5', 1.0], ['6', 1.0]])
+
+    def test_dynamic_summary_table_calculation_or_filter_criteria(self):
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'score': 70.0},
+            {'grade': '5', 'ssid': '2', 'score': 85.0},
+            {'grade': '5', 'ssid': '3', 'score': 95.0},
+        ])
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [{
+                'agg_func': 'count', 'value_col': 'ssid', 'label': 'Low or High',
+                'filters': [
+                    {'col': 'score', 'op': 'lt', 'val': 75},
+                    {'col': 'score', 'op': 'gt', 'val': 90, 'logic': 'or'},
+                ],
+            }],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+        res = _dynamic_summary_table_option(df, ['grade'], [], 'count', '', None, cfg, None)
+
+        self.assertEqual(res['rows'], [['5', 2.0]])
+
     def test_dynamic_summary_table_echarts_mode(self):
         import polars as pl
         from dataviz.utils.chart_builder import _dynamic_summary_table_option
@@ -3630,4 +3706,3 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         })
         data = sorted(zip(opt['xAxis']['data'], opt['series'][0]['data']))
         self.assertEqual(data, [('Above', 2.0), ('Below', 1.0)])
-

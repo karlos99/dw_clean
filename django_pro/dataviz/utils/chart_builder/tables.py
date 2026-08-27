@@ -407,10 +407,15 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         dyn_calculations = cfg.get('dyn_calculations', [])
         if not dyn_calculations:
             return _message_option('Dynamic Summary Table: add at least one calculation column', cfg)
-        if not row_cols:
+        totals_only = cfg.get('dyn_totals_only', False) in (True, 1, '1', 'true', 'True')
+        if totals_only:
+            # Totals-only mode is defined by its total row; keep it available
+            # even if an older saved config had column totals disabled.
+            st_show_col_totals = True
+        if not row_cols and not totals_only:
             return _message_option('Dynamic Summary Table: select at least one Row column', cfg)
         valid_row = [c for c in row_cols if c and c in df.columns]
-        if not valid_row:
+        if not valid_row and not totals_only:
             return _message_option('Dynamic Summary Table: no valid Row columns in data', cfg)
 
         # Normalize each calculation: assign a stable id (charts saved before ids
@@ -431,6 +436,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             parsed = dict(calc)
             parsed['id'] = cid
             parsed['calc_type'] = ctype
+            parsed['visible'] = calc.get('visible', True) is not False
             parsed_calcs.append(parsed)
 
         if not parsed_calcs:
@@ -446,9 +452,10 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         calc_value_cols = [c.get('value_col') for c in parsed_calcs
                            if c.get('calc_type') == 'base' and c.get('value_col') and c.get('value_col') in df.columns]
         filter_cols = [f.get('col') for c in parsed_calcs if c.get('calc_type') == 'base'
-                       for f in [c.get('filter')] if isinstance(f, dict) and f.get('col') and f.get('col') in df.columns]
+                       for f in (c.get('filters') if isinstance(c.get('filters'), list) else [c.get('filter')])
+                       if isinstance(f, dict) and f.get('col') and f.get('col') in df.columns]
         keep_cols = list(dict.fromkeys(valid_row + calc_value_cols + filter_cols + ([_dup_key] if _dup_key else [])))
-        work = df.filter(blank_filter_expr(valid_row, _BLANK)).select(keep_cols)
+        work = df.filter(blank_filter_expr(valid_row, _BLANK)).select(keep_cols) if valid_row else df.select(keep_cols)
         work = strip_str_cols(work, valid_row)
 
         if work.is_empty():
@@ -457,13 +464,15 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         row_val_lists = {}
         for c in valid_row:
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
-        row_combos = _build_row_combos(row_val_lists, valid_row)
+        row_combos = [()] if totals_only else _build_row_combos(row_val_lists, valid_row)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
         base_ids = [c['id'] for c in parsed_calcs if c['calc_type'] == 'base']
 
+        output_calcs = [c for c in parsed_calcs if c['visible']]
+        percent_columns = [i for i, c in enumerate(output_calcs) if c.get('as_percent')]
         col_headers = []
-        for idx, calc in enumerate(parsed_calcs):
+        for idx, calc in enumerate(output_calcs):
             lbl = calc.get('label', '').strip()
             if not lbl:
                 if calc['calc_type'] == 'derived':
@@ -496,10 +505,14 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 dec = _calc_decimals(calc)
 
                 csub = sub
-                f = calc.get('filter')
-                if isinstance(f, dict) and f.get('col') and f.get('op') in _DYN_FILTER_OPS:
+                filters = calc.get('filters') if isinstance(calc.get('filters'), list) else [calc.get('filter')]
+                filter_expr = None
+                for f in filters:
+                    if not isinstance(f, dict) or not f.get('col') or f.get('op') not in _DYN_FILTER_OPS:
+                        continue
                     fop = f['op']
                     fcol = f['col']
+                    expr = None
                     if fop in ('lt', 'lte', 'gt', 'gte'):
                         try:
                             fval = float(f['val'])
@@ -507,14 +520,17 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                             fval = None
                         if fval is not None and fcol in csub.columns:
                             expr = _dyn_filter_expr(fcol, fop, fval)
-                            if expr is not None:
-                                csub = csub.filter(expr)
                     else:  # eq / neq
                         fval = f.get('val')
                         if fval is not None and str(fval).strip() != '' and fcol in csub.columns:
                             expr = _dyn_filter_expr(fcol, fop, fval)
-                            if expr is not None:
-                                csub = csub.filter(expr)
+                    if expr is not None:
+                        if filter_expr is None or str(f.get('logic', 'and')).lower() != 'or':
+                            filter_expr = expr if filter_expr is None else (filter_expr & expr)
+                        else:
+                            filter_expr = filter_expr | expr
+                if filter_expr is not None:
+                    csub = csub.filter(filter_expr)
 
                 if fn == 'count':
                     if _dup_key:
@@ -577,7 +593,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 derived_vals[cid] = 0.0
 
             row_cells = []
-            for calc in parsed_calcs:
+            for calc in output_calcs:
                 if calc['calc_type'] == 'base':
                     row_cells.append(base_display[calc['id']])
                 else:
@@ -587,13 +603,17 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                         v = round(v, dec)
                     row_cells.append(v)
 
-            if st_show_row_totals:
+            if st_show_row_totals and not totals_only:
                 # Row total sums only base columns — a sum of derived values
                 # (rates/percentages) would be meaningless.
                 row_total = sum(base_raw[cid] for cid in base_ids)
                 rows_data.append(list(combo) + row_cells + [row_total])
-            else:
+            elif not totals_only:
                 rows_data.append(list(combo) + row_cells)
+            elif cfg.get('dyn_display_type', 'table') != 'table':
+                # Chart renderers need a category even though table view uses
+                # the dedicated total row below.
+                rows_data.append(['Total'] + row_cells)
 
         # Round base column totals, then recompute derived column totals from
         # their input totals so a rate column's Total is the rate of the totals
@@ -607,23 +627,34 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 if dec is not None:
                     v = round(v, dec)
                 col_total_display[cid] = v
-            else:
+        pending_totals = {c['id']: c for c in parsed_calcs if c['calc_type'] == 'derived'}
+        for _ in range(len(pending_totals) + 1):
+            if not pending_totals:
+                break
+            progressed = False
+            for cid, calc in list(pending_totals.items()):
                 ra = str(calc.get('ref_a') or '')
                 rb = str(calc.get('ref_b') or '')
-                if ra in col_total_display and rb in col_total_display:
-                    fn = _DYN_CALC_OPS.get(calc.get('op', 'add'), _DYN_CALC_OPS['add'])
-                    v = fn(col_total_display[ra], col_total_display[rb])
-                    if calc.get('as_percent'):
-                        v = v * 100
-                else:
-                    v = 0.0
+                if ra not in col_total_display or rb not in col_total_display:
+                    continue
+                fn = _DYN_CALC_OPS.get(calc.get('op', 'add'), _DYN_CALC_OPS['add'])
+                v = fn(col_total_display[ra], col_total_display[rb])
+                if calc.get('as_percent'):
+                    v = v * 100
                 if dec is not None:
                     v = round(v, dec)
                 col_total_display[cid] = v
+                del pending_totals[cid]
+                progressed = True
+            if not progressed:
+                break
+        for cid in pending_totals:
+            col_total_display[cid] = 0.0
 
-        ordered_totals = [col_total_display[c['id']] for c in parsed_calcs]
-        grand_total = sum(col_total_display[cid] for cid in base_ids)
-        total_row = (['Total'] + [''] * (len(valid_row) - 1) + ordered_totals + [grand_total]) if st_show_col_totals else []
+        ordered_totals = [col_total_display[c['id']] for c in output_calcs]
+        grand_total = sum(col_total_display[cid] for cid in base_ids if any(c['id'] == cid and c['visible'] for c in parsed_calcs))
+        total_row_values = ordered_totals if totals_only else ordered_totals + [grand_total]
+        total_row = (['Total'] + [''] * (len(valid_row) - 1) + total_row_values) if st_show_col_totals else []
         row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
 
         result = {
@@ -631,19 +662,22 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             '__series_names__': [],
             'row_col':     valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
             'col_col':     '__calc_cols__',
-            'row_labels':  row_labels,
-            'row_label':   row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels),
+            'row_labels':  ['Total'] if totals_only else row_labels,
+            'row_label':   'Total' if totals_only else (row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels)),
             'col_label':   'Calculations',
-            'num_row_labels': len(valid_row),
+            'num_row_labels': 1 if totals_only else len(valid_row),
             'col_headers': col_headers,
+            'percent_columns': percent_columns,
             'rows':        rows_data,
             'total_row':   total_row,
-            'st_show_row_totals': st_show_row_totals,
+            'total_row_has_grand_total': not totals_only,
+            'total_row_drillable': totals_only,
+            'st_show_row_totals': False if totals_only else st_show_row_totals,
             'st_show_col_totals': st_show_col_totals,
             'show_tooltips': show_tooltips,
             '_drillMeta': {
                 'stType':      'dynamic_summary_table',
-                'stRowCol':    valid_row[0],
+                'stRowCol':    valid_row[0] if valid_row else '__dynst_total__',
                 'stColCol':    '__calc_cols__',
                 'stRowCols':   valid_row,
                 'stColCols':   [],

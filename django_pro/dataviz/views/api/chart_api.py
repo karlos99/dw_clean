@@ -18,7 +18,7 @@ from dataviz.utils.chart_builder import build_option
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '10'
+_CHART_PIPELINE_VERSION = '11'
 
 
 def _effective_chart_cfg(chart) -> dict:
@@ -247,6 +247,8 @@ def _cfg_from_post(post):
         'dyn_show_tooltips':  post.get('dyn_show_tooltips', '1') == '1',
         'dyn_col_mode':      post.get('dyn_col_mode', 'pivot'),
         'dyn_calculations':  _parse_json_list('dyn_calculations'),
+        'dyn_drill_calc':    post.get('dyn_drill_calc', ''),
+        'dyn_totals_only':   post.get('dyn_totals_only', '0') == '1',
         'dyn_display_type':  post.get('dyn_display_type', 'table'),
         # Dates (date_series) fields
         'ds_date_col':       post.get('ds_date_col', ''),

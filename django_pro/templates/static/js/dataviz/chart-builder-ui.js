@@ -74,7 +74,9 @@ function chartBuilderUIMethods() {
         agg_func: 'count',
         label: '',
         decimals: null,
+        visible: true,
         filter: null,
+        filters: [],
         op: 'divide',
         ref_a: '',
         ref_b: '',
@@ -98,6 +100,14 @@ function chartBuilderUIMethods() {
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
     },
+    moveDynCalculation(idx, direction) {
+      const next = idx + direction;
+      if (next < 0 || next >= this.dynCalculations.length) return;
+      const items = [...this.dynCalculations];
+      [items[idx], items[next]] = [items[next], items[idx]];
+      this.dynCalculations = items;
+      this._schedulePreview(true);
+    },
     dynCalcLabel(calc) {
       if (!calc) return '';
       const lbl = (calc.label || '').trim();
@@ -119,12 +129,25 @@ function chartBuilderUIMethods() {
         .map(o => ({ id: o.c.id, label: this.dynCalcLabel(o.c) }));
     },
     toggleDynCalcFilter(calc) {
-      // Threshold filter ("only include rows where value col < 85").
-      if (calc.filter && typeof calc.filter === 'object') {
-        calc.filter = null;
-      } else {
-        calc.filter = { col: calc.value_col || '', op: 'lt', val: '' };
+      const filters = this.dynCalcFilters(calc);
+      if (filters.length) calc.filters = [];
+      else calc.filters = [{ col: calc.value_col || '', op: 'lt', val: '' }];
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    dynCalcFilters(calc) {
+      if (!Array.isArray(calc.filters)) {
+        calc.filters = calc.filter && typeof calc.filter === 'object' ? [calc.filter] : [];
       }
+      return calc.filters;
+    },
+    addDynCalcFilter(calc) {
+      this.dynCalcFilters(calc).push({ col: calc.value_col || '', op: 'lt', val: '', logic: 'and' });
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    removeDynCalcFilter(calc, filterIdx) {
+      this.dynCalcFilters(calc).splice(filterIdx, 1);
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
     },
