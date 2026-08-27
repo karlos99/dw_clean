@@ -665,7 +665,7 @@ def chart_save_api(request):
 
 @login_required
 def chart_detail_api(request, chart_id):
-    """GET a chart's full dict; PUT to update description; DELETE to remove it."""
+    """GET a chart's full dict; PUT to update description / user-menu flag; DELETE to remove it."""
     if not is_project_admin(request.user):
         return FORBIDDEN
 
@@ -678,11 +678,21 @@ def chart_detail_api(request, chart_id):
             body = json.loads(request.body)
         except (json.JSONDecodeError, ValueError):
             return JsonResponse({'error': 'Invalid JSON'}, status=400)
+        update_fields = []
         if 'description' in body:
             chart.description = body['description']
-            chart.save(update_fields=['description'])
-            return JsonResponse({'success': True, 'description': chart.description})
-        return JsonResponse({'error': 'No updatable fields provided'}, status=400)
+            update_fields.append('description')
+        if 'is_user_menu' in body:
+            chart.is_user_menu = bool(body['is_user_menu'])
+            update_fields.append('is_user_menu')
+        if not update_fields:
+            return JsonResponse({'error': 'No updatable fields provided'}, status=400)
+        chart.save(update_fields=update_fields)
+        return JsonResponse({
+            'success': True,
+            'description': chart.description,
+            'is_user_menu': chart.is_user_menu,
+        })
     if request.method == 'DELETE':
         chart.delete()
         return JsonResponse({'success': True})

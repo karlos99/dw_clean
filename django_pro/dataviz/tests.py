@@ -3803,3 +3803,108 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         })
         data = sorted(zip(opt['xAxis']['data'], opt['series'][0]['data']))
         self.assertEqual(data, [('Above', 2.0), ('Below', 1.0)])
+
+
+class ChartIndexListTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='chartadmin', password='password', is_superuser=True,
+        )
+        self.chart = SavedChart.objects.create(
+            name='Academics / Math / Very Long Chart Name That Used To Truncate',
+            description='Enrollment by grade',
+            chart_type='bar',
+            owner=self.user,
+        )
+        self.unused = SavedChart.objects.create(
+            name='Academics / Unused Chart',
+            chart_type='line',
+            owner=self.user,
+        )
+        self.page = DataVizPage.objects.create(
+            title='Math Overview', slug='math-overview', owner=self.user,
+        )
+        row = DataVizPageRow.objects.create(page=self.page, position=0)
+        DataVizPageSection.objects.create(
+            page=self.page, row=row, element_type=DataVizPageSection.TYPE_CHART,
+            chart=self.chart,
+        )
+        DataVizPageSection.objects.create(
+            page=self.page, row=row, element_type=DataVizPageSection.TYPE_CHART,
+            chart=self.chart,
+        )
+
+    def test_index_shows_full_name_and_page_usage(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?folder=Academics/Math')
+        self.assertEqual(resp.status_code, 200)
+        charts = list(resp.context['charts'])
+        self.assertEqual(len(charts), 1)
+        chart = charts[0]
+        self.assertEqual(chart.display_name, 'Very Long Chart Name That Used To Truncate')
+        self.assertEqual(chart.type_label, 'Bar')
+        self.assertEqual(len(chart.used_on_pages), 1)
+        self.assertEqual(chart.used_on_pages[0]['title'], 'Math Overview')
+        html = resp.content.decode()
+        self.assertIn('Very Long Chart Name That Used To Truncate', html)
+        self.assertIn('chart-row', html)
+        self.assertIn('chart-preview-canvas', html)
+        self.assertIn('Math Overview', html)
+
+    def test_folder_counts_include_nested_charts(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?folder=Academics')
+        self.assertEqual(resp.status_code, 200)
+        items = {i['name']: i['count'] for i in resp.context['subfolder_items']}
+        self.assertEqual(items.get('Math'), 1)
+        unused = [c for c in resp.context['charts'] if c.pk == self.unused.pk]
+        self.assertEqual(len(unused), 1)
+        self.assertEqual(unused[0].used_on_pages, [])
+        self.assertIn('Unused Chart', unused[0].search_blob)
+
+    def test_global_search_finds_nested_chart_from_root(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?q=Very+Long')
+        self.assertEqual(resp.status_code, 200)
+        charts = list(resp.context['charts'])
+        self.assertEqual([c.pk for c in charts], [self.chart.pk])
+        self.assertEqual(charts[0].folder_path, 'Academics / Math')
+        self.assertEqual(resp.context['search_q'], 'Very Long')
+        html = resp.content.decode()
+        self.assertIn('Very Long Chart Name That Used To Truncate', html)
+        self.assertIn('Academics / Math', html)
+
+    def test_global_search_matches_page_title(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?q=Math+Overview')
+        ids = [c.pk for c in resp.context['charts']]
+        self.assertIn(self.chart.pk, ids)
+        self.assertNotIn(self.unused.pk, ids)
+
+    def test_index_has_user_chart_checkbox(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?folder=Academics/Math')
+        html = resp.content.decode()
+        self.assertIn('toggleUserChart', html)
+        self.assertIn('User', html)
+
+    def test_put_toggles_user_menu_without_opening_builder(self):
+        self.client.force_login(self.user)
+        self.assertFalse(self.chart.is_user_menu)
+        resp = self.client.put(
+            f'/dataviz/api/charts/{self.chart.id}/',
+            data=json.dumps({'is_user_menu': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['is_user_menu'])
+        self.chart.refresh_from_db()
+        self.assertTrue(self.chart.is_user_menu)
+        resp = self.client.put(
+            f'/dataviz/api/charts/{self.chart.id}/',
+            data=json.dumps({'is_user_menu': False}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.chart.refresh_from_db()
+        self.assertFalse(self.chart.is_user_menu)
