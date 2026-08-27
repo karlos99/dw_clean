@@ -1,5 +1,7 @@
 """Column management utilities and views."""
 
+import re
+
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseForbidden
@@ -11,9 +13,27 @@ from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns
 from ..survey_utils import get_survey_columns
 from ..utils import get_user_roles, _apply_de_school_filter
 
-# Virtual column: races from current_student.add_data->'l_race' (JSON array or string)
+# Virtual columns sourced from current_student.add_data JSON.
+# List keys (array or comma-string) vs scalar keys (text / bool / number).
+JSON_LIST_COLUMNS = {
+    'race_list': 'l_race',
+}
+JSON_SCALAR_COLUMNS = {
+    'avid': 'AVID',
+    'avid_type': 'AVID_type',
+    'dsusd_fep': 'DSUSD_FEP',
+}
+JSON_LIST_KEYS = frozenset(JSON_LIST_COLUMNS.values())
+_JSON_VIRTUAL_AUTO_INCLUDE = {
+    'race_list': ('race',),
+    'dsusd_fep': ('ell', 'fep_date'),
+}
+_JSON_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
 RACE_LIST_COL = 'race_list'
 L_RACE_JSON_KEY = 'l_race'
+DSUSD_FEP_COL = 'dsusd_fep'
+DSUSD_FEP_JSON_KEY = 'DSUSD_FEP'
 
 
 def get_saved_default_columns():
@@ -45,8 +65,9 @@ def get_enabled_columns():
     COLUMN_DEFINITIONS and COLUMN_CATEGORIES unchanged (safe default — no
     disruption to existing behaviour).
 
-    When an allowlist includes ``race`` but not ``race_list``, ``race_list`` is
-    auto-included so the new Race List column appears alongside Race/Ethnicity.
+    When an allowlist includes a related column (e.g. ``race`` or ``ell``) but
+    not the matching JSON-list virtual column, that virtual column is
+    auto-included so it appears for allowlists that predate it.
 
     Returns:
         tuple[dict, dict]: (filtered_definitions, filtered_categories)
@@ -62,9 +83,9 @@ def get_enabled_columns():
         return COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 
     allowed_set = set(allowlist)
-    # New Race List column rides along with Race when allowlists predate it.
-    if 'race' in allowed_set and RACE_LIST_COL not in allowed_set:
-        allowed_set.add(RACE_LIST_COL)
+    for virt, related in _JSON_VIRTUAL_AUTO_INCLUDE.items():
+        if virt not in allowed_set and any(r in allowed_set for r in related):
+            allowed_set.add(virt)
 
     filtered_defs = {k: v for k, v in COLUMN_DEFINITIONS.items() if k in allowed_set}
 
@@ -77,14 +98,32 @@ def get_enabled_columns():
     return filtered_defs, filtered_cats
 
 
+def _safe_json_key(json_key: str) -> str:
+    if not json_key or not _JSON_KEY_RE.fullmatch(json_key):
+        raise ValueError(f'Invalid add_data JSON key: {json_key!r}')
+    return json_key
+
+
+def json_list_key_for_column(col: str) -> str | None:
+    """Return the add_data JSON key for a virtual column or add_data->'key' path."""
+    if not col or not isinstance(col, str):
+        return None
+    bare = col.split('.')[-1]
+    if bare in JSON_LIST_COLUMNS:
+        return JSON_LIST_COLUMNS[bare]
+    for key in JSON_LIST_KEYS:
+        if f"add_data->'{key}'" in col or f'add_data->"{key}"' in col:
+            return key
+    return None
+
+
+def is_json_list_column(col: str) -> bool:
+    return json_list_key_for_column(col) is not None
+
+
 def is_race_list_column(col: str) -> bool:
     """True for the Race List virtual column or raw add_data->'l_race' paths."""
-    if not col or not isinstance(col, str):
-        return False
-    bare = col.split('.')[-1]
-    if bare == RACE_LIST_COL:
-        return True
-    return "add_data->'l_race'" in col or 'add_data->"l_race"' in col
+    return json_list_key_for_column(col) == L_RACE_JSON_KEY
 
 
 def race_list_add_data_ref(table_alias: str = 'cs') -> str:
@@ -94,61 +133,103 @@ def race_list_add_data_ref(table_alias: str = 'cs') -> str:
     return f'{table_alias}.add_data'
 
 
-def race_list_array_sql(table_alias: str = 'cs') -> str:
+def known_add_data_json_paths():
+    """Dataset-builder paths for virtual add_data keys (always listed)."""
+    keys = list(JSON_LIST_COLUMNS.values()) + list(JSON_SCALAR_COLUMNS.values())
+    return [f"add_data->'{k}'" for k in keys]
+
+
+def json_scalar_expr(col: str, table_alias: str = 'cs') -> str:
+    """Text extract of a scalar add_data JSON key (string, bool, or number)."""
+    key = _safe_json_key(JSON_SCALAR_COLUMNS[col])
+    return f"({race_list_add_data_ref(table_alias)}::jsonb->>'{key}')"
+
+
+def json_list_array_sql(json_key: str, table_alias: str = 'cs') -> str:
     """
-    Normalize add_data->'l_race' to a text[] safely.
+    Normalize add_data->'key' to a text[] safely.
 
     Supports:
       - JSON array of scalars: ["White", "Asian"]
       - JSON string (single or comma-separated): "White" / "White, Asian"
     """
+    key = _safe_json_key(json_key)
     ref = race_list_add_data_ref(table_alias)
     return (
         f"(CASE "
-        f"WHEN {ref} IS NULL OR {ref}->'l_race' IS NULL OR jsonb_typeof({ref}->'l_race') = 'null' "
+        f"WHEN {ref} IS NULL OR {ref}->'{key}' IS NULL OR jsonb_typeof({ref}->'{key}') = 'null' "
         f"THEN ARRAY[]::text[] "
-        f"WHEN jsonb_typeof({ref}->'l_race') = 'array' "
-        f"THEN ARRAY(SELECT jsonb_array_elements_text({ref}->'l_race')) "
-        f"WHEN jsonb_typeof({ref}->'l_race') = 'string' AND BTRIM(COALESCE({ref}->>'l_race', '')) <> '' "
-        f"THEN regexp_split_to_array(BTRIM({ref}->>'l_race'), '[[:space:]]*,[[:space:]]*') "
+        f"WHEN jsonb_typeof({ref}->'{key}') = 'array' "
+        f"THEN ARRAY(SELECT jsonb_array_elements_text({ref}->'{key}')) "
+        f"WHEN jsonb_typeof({ref}->'{key}') = 'string' AND BTRIM(COALESCE({ref}->>'{key}', '')) <> '' "
+        f"THEN regexp_split_to_array(BTRIM({ref}->>'{key}'), '[[:space:]]*,[[:space:]]*') "
         f"ELSE ARRAY[]::text[] END)"
     )
 
 
-def race_list_display_expr(table_alias: str = 'cs') -> str:
-    """Comma-joined race strings for SELECT / display."""
-    return f"array_to_string({race_list_array_sql(table_alias)}, ', ')"
+def json_list_display_expr(json_key: str, table_alias: str = 'cs') -> str:
+    """Comma-joined strings for SELECT / display."""
+    return f"array_to_string({json_list_array_sql(json_key, table_alias)}, ', ')"
 
 
-def race_list_overlap_sql(table_alias: str = 'cs') -> str:
+def json_list_overlap_sql(json_key: str, table_alias: str = 'cs') -> str:
     """Array-overlap against filter values; caller supplies ONE %s text[] param."""
-    return f"({race_list_array_sql(table_alias)} && %s::text[])"
+    return f"({json_list_array_sql(json_key, table_alias)} && %s::text[])"
 
 
-def race_list_blank_sql(table_alias: str = 'cs') -> str:
-    """True when l_race is missing or yields no races."""
-    return f"(cardinality({race_list_array_sql(table_alias)}) = 0)"
+def json_list_blank_sql(json_key: str, table_alias: str = 'cs') -> str:
+    """True when the JSON key is missing or yields no values."""
+    return f"(cardinality({json_list_array_sql(json_key, table_alias)}) = 0)"
 
 
-def append_race_list_filter(where_clauses, params, values, table_alias: str = 'cs') -> None:
-    """Append any-of race overlap filter (plus optional blank) for Race List."""
+def append_json_list_filter(where_clauses, params, values, json_key: str, table_alias: str = 'cs') -> None:
+    """Append any-of overlap filter (plus optional blank) for a JSON-list column."""
     if not values:
         return
     has_blank = "" in values or '(Blank)' in values
     real_values = [v for v in values if v not in ("", "(Blank)")]
     conditions = []
     if real_values:
-        conditions.append(race_list_overlap_sql(table_alias))
+        conditions.append(json_list_overlap_sql(json_key, table_alias))
         params.append(list(real_values))
     if has_blank:
-        conditions.append(race_list_blank_sql(table_alias))
+        conditions.append(json_list_blank_sql(json_key, table_alias))
     if conditions:
         where_clauses.append(f"({' OR '.join(conditions)})")
 
 
+def json_list_unnest_select_expr(json_key: str, table_alias: str = 'cs') -> str:
+    """Set-returning expression of individual values (for DISTINCT options)."""
+    return f"unnest({json_list_array_sql(json_key, table_alias)})"
+
+
+def race_list_array_sql(table_alias: str = 'cs') -> str:
+    return json_list_array_sql(L_RACE_JSON_KEY, table_alias)
+
+
+def race_list_display_expr(table_alias: str = 'cs') -> str:
+    """Comma-joined race strings for SELECT / display."""
+    return json_list_display_expr(L_RACE_JSON_KEY, table_alias)
+
+
+def race_list_overlap_sql(table_alias: str = 'cs') -> str:
+    """Array-overlap against filter values; caller supplies ONE %s text[] param."""
+    return json_list_overlap_sql(L_RACE_JSON_KEY, table_alias)
+
+
+def race_list_blank_sql(table_alias: str = 'cs') -> str:
+    """True when l_race is missing or yields no races."""
+    return json_list_blank_sql(L_RACE_JSON_KEY, table_alias)
+
+
+def append_race_list_filter(where_clauses, params, values, table_alias: str = 'cs') -> None:
+    """Append any-of race overlap filter (plus optional blank) for Race List."""
+    append_json_list_filter(where_clauses, params, values, L_RACE_JSON_KEY, table_alias)
+
+
 def race_list_unnest_select_expr(table_alias: str = 'cs') -> str:
     """Set-returning expression of individual race values (for DISTINCT options)."""
-    return f"unnest({race_list_array_sql(table_alias)})"
+    return json_list_unnest_select_expr(L_RACE_JSON_KEY, table_alias)
 
 
 def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False, use_students=False, use_eht=False):
@@ -181,12 +262,11 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
         if use_enroll and enroll_columns and col in enroll_columns:
             return "se.migrant", "migrant"
         return None, None
-    if col == 'avid':
-        return "(cs.add_data::jsonb->>'AVID')", "avid"
-    if col == 'avid_type':
-        return "(cs.add_data::jsonb->>'AVID_type')", "avid_type"
-    if col == RACE_LIST_COL:
-        return race_list_display_expr('cs'), RACE_LIST_COL
+    if col in JSON_SCALAR_COLUMNS:
+        return json_scalar_expr(col), col
+    json_key = JSON_LIST_COLUMNS.get(col)
+    if json_key:
+        return json_list_display_expr(json_key, 'cs'), col
     if col in db_columns:
         return f"cs.{col}", col
     return None, None

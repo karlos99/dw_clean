@@ -164,6 +164,12 @@ class DatasetBuilderView(ProjectAdminMixin, TemplateView):
             except Exception:
                 pass
 
+        from dataexploration.view_modules.column_management import known_add_data_json_paths
+        if isinstance(schema_json, dict) and 'current_student' in schema_json:
+            cs_cols = set(schema_json['current_student'])
+            cs_cols.update(known_add_data_json_paths())
+            schema_json['current_student'] = sorted(cs_cols)
+
         # Build a flat list of explorer column options grouped by category
         explorer_groups = [
             {

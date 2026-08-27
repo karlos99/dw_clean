@@ -24,8 +24,8 @@ from .student_data_utils import (
 from .column_management import (
     get_saved_default_columns,
     get_column_expression,
-    is_race_list_column,
-    append_race_list_filter,
+    json_list_key_for_column,
+    append_json_list_filter,
 )
 
 @login_required
@@ -379,9 +379,9 @@ def get_column_statistics(request):
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
             
-            # Race List (add_data.l_race) — any-of overlap
-            if is_race_list_column(col):
-                append_race_list_filter(where_clauses, params, values)
+            json_key = json_list_key_for_column(col)
+            if json_key:
+                append_json_list_filter(where_clauses, params, values, json_key)
                 continue
 
             # Standard

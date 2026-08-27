@@ -82,55 +82,56 @@ def translate_pg_to_clickhouse(sql, params):
     #   3. Apply JSON translation only to unquoted segments.
     #   4. Reassemble.
 
-    # Race List idioms (before general JSON rewrite) — keep CH on the fast path.
-    # Matches the CASE text[] normalizer from race_list_array_sql().
+    # JSON-list idioms (before general JSON rewrite) — keep CH on the fast path.
+    # Matches the CASE text[] normalizer from json_list_array_sql().
     _rl_ref = r'((?:\"[^\"]+\"|\w+)(?:\.(?:\"[^\"]+\"|\w+))?)'
+    _rl_key = r'([A-Za-z_][A-Za-z0-9_]*)'
     _rl_case = (
         rf'\(\s*CASE\s+'
-        rf'WHEN\s+{_rl_ref}\s+IS\s+NULL\s+OR\s+\1->\'l_race\'\s+IS\s+NULL\s+'
-        rf'OR\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'null\'\s+'
+        rf'WHEN\s+{_rl_ref}\s+IS\s+NULL\s+OR\s+\1->\'{_rl_key}\'\s+IS\s+NULL\s+'
+        rf'OR\s+jsonb_typeof\s*\(\s*\1->\'\2\'\s*\)\s*=\s*\'null\'\s+'
         rf'THEN\s+ARRAY\s*\[\s*\]\s*::\s*text\s*\[\s*\]\s+'
-        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'array\'\s+'
-        rf'THEN\s+ARRAY\s*\(\s*SELECT\s+jsonb_array_elements_text\s*\(\s*\1->\'l_race\'\s*\)\s*\)\s+'
-        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'string\'\s+'
-        rf'AND\s+BTRIM\s*\(\s*COALESCE\s*\(\s*\1->>\'l_race\'\s*,\s*\'\'\s*\)\s*\)\s*<>\s*\'\'\s+'
-        rf'THEN\s+regexp_split_to_array\s*\(\s*BTRIM\s*\(\s*\1->>\'l_race\'\s*\)\s*,\s*'
+        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'\2\'\s*\)\s*=\s*\'array\'\s+'
+        rf'THEN\s+ARRAY\s*\(\s*SELECT\s+jsonb_array_elements_text\s*\(\s*\1->\'\2\'\s*\)\s*\)\s+'
+        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'\2\'\s*\)\s*=\s*\'string\'\s+'
+        rf'AND\s+BTRIM\s*\(\s*COALESCE\s*\(\s*\1->>\'\2\'\s*,\s*\'\'\s*\)\s*\)\s*<>\s*\'\'\s+'
+        rf'THEN\s+regexp_split_to_array\s*\(\s*BTRIM\s*\(\s*\1->>\'\2\'\s*\)\s*,\s*'
         rf'\'\[\[:space:\]\]\*,\[\[:space:\]\]\*\'\s*\)\s+'
         rf'ELSE\s+ARRAY\s*\[\s*\]\s*::\s*text\s*\[\s*\]\s+END\s*\)'
     )
 
-    def _ch_race_list_arr(ref: str) -> str:
+    def _ch_json_list_arr(ref: str, key: str) -> str:
         r = _strip_pg_casts(ref)
         return (
-            f"if(JSONType(JSONExtractRaw({r}, 'l_race')) = 'Array', "
-            f"JSONExtract({r}, 'l_race', 'Array(String)'), "
-            f"if(JSONType(JSONExtractRaw({r}, 'l_race')) = 'String' "
-            f"AND trim(BOTH ' ' FROM JSONExtractString({r}, 'l_race')) != '', "
-            f"splitByRegexp('\\\\s*,\\\\s*', trim(BOTH ' ' FROM JSONExtractString({r}, 'l_race'))), "
+            f"if(JSONType(JSONExtractRaw({r}, '{key}')) = 'Array', "
+            f"JSONExtract({r}, '{key}', 'Array(String)'), "
+            f"if(JSONType(JSONExtractRaw({r}, '{key}')) = 'String' "
+            f"AND trim(BOTH ' ' FROM JSONExtractString({r}, '{key}')) != '', "
+            f"splitByRegexp('\\\\s*,\\\\s*', trim(BOTH ' ' FROM JSONExtractString({r}, '{key}'))), "
             f"CAST([] AS Array(String))))"
         )
 
     sql = re.sub(
         rf'array_to_string\s*\(\s*{_rl_case}\s*,\s*\',\s*\'\s*\)',
-        lambda m: f"arrayStringConcat({_ch_race_list_arr(m.group(1))}, ', ')",
+        lambda m: f"arrayStringConcat({_ch_json_list_arr(m.group(1), m.group(2))}, ', ')",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
     sql = re.sub(
         rf'\(\s*{_rl_case}\s*&&\s*%s::text\s*\[\s*\]\s*\)',
-        lambda m: f"hasAny({_ch_race_list_arr(m.group(1))}, __HASANY_ARR__%s)",
+        lambda m: f"hasAny({_ch_json_list_arr(m.group(1), m.group(2))}, __HASANY_ARR__%s)",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
     sql = re.sub(
         rf'\(\s*cardinality\s*\(\s*{_rl_case}\s*\)\s*=\s*0\s*\)',
-        lambda m: f"empty({_ch_race_list_arr(m.group(1))})",
+        lambda m: f"empty({_ch_json_list_arr(m.group(1), m.group(2))})",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
     sql = re.sub(
         rf'unnest\s*\(\s*{_rl_case}\s*\)',
-        lambda m: f"arrayJoin({_ch_race_list_arr(m.group(1))})",
+        lambda m: f"arrayJoin({_ch_json_list_arr(m.group(1), m.group(2))})",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )

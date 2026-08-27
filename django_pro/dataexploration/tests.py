@@ -238,3 +238,19 @@ class SchoolYearUtilsTests(SimpleTestCase):
 	def test_resolve_relative_column_key_no_alias(self, mock_resolve):
 		res = resolve_relative_column_key("test_2025_2026_iready_reading_ss")
 		self.assertEqual(res, "test_2025_2026_iready_reading_ss")
+
+
+class JsonListColumnTests(SimpleTestCase):
+	def test_json_list_key_for_column(self):
+		from dataexploration.view_modules.column_management import (
+			json_list_key_for_column,
+			get_column_expression,
+		)
+		self.assertEqual(json_list_key_for_column('race_list'), 'l_race')
+		self.assertIsNone(json_list_key_for_column('dsusd_fep'))
+		self.assertIsNone(json_list_key_for_column('avid'))
+
+		expr, alias = get_column_expression('dsusd_fep', db_columns=set())
+		self.assertEqual(alias, 'dsusd_fep')
+		self.assertIn("->>'DSUSD_FEP'", expr)
+		self.assertNotIn('array_to_string', expr)
