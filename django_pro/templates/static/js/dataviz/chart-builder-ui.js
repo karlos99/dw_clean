@@ -217,6 +217,33 @@ function chartBuilderUIMethods() {
     plColLabel(col) {
       return this.colLabel(col);
     },
+    tableHeaderAliasOptions() {
+      const seen = new Set();
+      const out = [];
+      const add = (key, label) => {
+        if (key == null || key === '') return;
+        const k = String(key);
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push({ key: k, label: String(label || k) });
+      };
+      const addCol = (c) => { if (c) add(c, this.colLabel(c) || c); };
+      if (this.chartType === 'summary_table') {
+        addCol(this.stRowCol);
+        if (this.stColMode === 'columns') (this.stColCols || []).forEach(addCol);
+      } else if (this.chartType === 'dynamic_summary_table') {
+        (this.dynRowCols || []).forEach(addCol);
+        if (this.dynColMode === 'pivot') (this.dynColCols || []).forEach(addCol);
+        else (this.dynCalculations || []).forEach(c => {
+          if (c && c.visible !== false) {
+            const lbl = this.dynCalcLabel(c);
+            if (lbl) add(lbl, lbl);
+          }
+        });
+      }
+      (this.colHeaderAliasAvail || []).forEach(v => add(v, v));
+      return out;
+    },
     colLabel(col) {
       if (!col) return '';
       if (this.explorerStructure?.definitions?.[col]) {
