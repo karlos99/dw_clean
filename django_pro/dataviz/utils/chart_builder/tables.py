@@ -26,10 +26,57 @@ def _norm_in_vals(val):
         return []
     if isinstance(val, (list, tuple, set)):
         return [str(v).strip() for v in val if v is not None and str(v).strip() != '']
+    if isinstance(val, dict):
+        return _norm_in_vals(list(val.values()))
     s = str(val).strip()
     if not s:
         return []
+    if s.startswith('['):
+        try:
+            parsed = json.loads(s)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, list):
+            return _norm_in_vals(parsed)
     return [p.strip() for p in s.split(',') if p.strip()]
+
+
+def _in_match_vals(vals):
+    """Expand IN values so school codes match with or without leading zeros."""
+    out = []
+    seen = set()
+    for v in vals:
+        for cand in (v, v.lstrip('0') or '0'):
+            if cand not in seen:
+                seen.add(cand)
+                out.append(cand)
+    return out
+
+
+def _resolve_work_col(col, columns):
+    """Map a filter/value column name onto an actual dataframe column."""
+    if not col:
+        return ''
+    cols = list(columns)
+    if col in cols:
+        return col
+    key = col.lower().replace('-', '_')
+    by_norm = {c.lower().replace('-', '_'): c for c in cols}
+    if key in by_norm:
+        return by_norm[key]
+    suffix = col.split('.')[-1]
+    if suffix in cols:
+        return suffix
+    sk = suffix.lower().replace('-', '_')
+    if sk in by_norm:
+        return by_norm[sk]
+    return ''
+
+
+def _calc_filter_list(calc):
+    if isinstance(calc.get('filters'), list):
+        return calc['filters']
+    return [calc.get('filter')]
 
 
 def _dyn_filter_expr(col: str, op: str, val):
@@ -46,9 +93,9 @@ def _dyn_filter_expr(col: str, op: str, val):
     if op == 'neq':
         return stripped != str(val).strip()
     if op in ('in', 'nin'):
-        vals = _norm_in_vals(val)
+        vals = _in_match_vals(_norm_in_vals(val))
         if not vals:
-            return None
+            return pl.lit(False) if op == 'in' else pl.lit(True)
         expr = stripped.is_in(vals)
         return expr if op == 'in' else ~expr
     x = pl.col(col).cast(pl.Float64, strict=False)
@@ -361,14 +408,8 @@ def _convert_table_to_echarts(result, cfg, valid_row):
             s_obj['stack'] = 'total'
         series_list.append(s_obj)
 
-    title_text = (cfg.get('chart_title') or cfg.get('title') or '').strip()
     echarts_option = {
-        'title': {
-            'show': _chart_title_shown(cfg),
-            'text': title_text,
-            'left': 'center',
-            'textStyle': {'fontSize': int(cfg.get('title_font_size', 16) or 16), 'color': '#334155'}
-        },
+        'title': _echarts_title(cfg),
         'tooltip': {
             'trigger': 'axis',
             'axisPointer': {'type': 'shadow' if stype == 'bar' else 'line'}
@@ -478,14 +519,32 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             except (ValueError, TypeError):
                 return None
 
-        calc_value_cols = [c.get('value_col') for c in parsed_calcs
-                           if c.get('calc_type') == 'base' and c.get('value_col') and c.get('value_col') in df.columns]
-        filter_cols = [f.get('col') for c in parsed_calcs if c.get('calc_type') == 'base'
-                       for f in (c.get('filters') if isinstance(c.get('filters'), list) else [c.get('filter')])
-                       if isinstance(f, dict) and f.get('col') and f.get('col') in df.columns]
+        calc_value_cols = []
+        for c in parsed_calcs:
+            if c.get('calc_type') != 'base':
+                continue
+            vc = _resolve_work_col(c.get('value_col'), df.columns)
+            if vc:
+                c['value_col'] = vc
+                calc_value_cols.append(vc)
+        filter_cols = []
+        for c in parsed_calcs:
+            if c.get('calc_type') != 'base':
+                continue
+            resolved_filters = []
+            for f in _calc_filter_list(c):
+                if not isinstance(f, dict):
+                    continue
+                ff = dict(f)
+                rc = _resolve_work_col(ff.get('col'), df.columns)
+                ff['col'] = rc
+                resolved_filters.append(ff)
+                if rc:
+                    filter_cols.append(rc)
+            c['filters'] = resolved_filters
         keep_cols = list(dict.fromkeys(valid_row + calc_value_cols + filter_cols + ([_dup_key] if _dup_key else [])))
         work = df.filter(blank_filter_expr(valid_row, _BLANK)).select(keep_cols) if valid_row else df.select(keep_cols)
-        work = strip_str_cols(work, valid_row)
+        work = strip_str_cols(work, list(dict.fromkeys(c for c in (valid_row + filter_cols) if c in work.columns)))
 
         if work.is_empty():
             return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
@@ -536,27 +595,28 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 dec = _calc_decimals(calc)
 
                 csub = sub
-                filters = calc.get('filters') if isinstance(calc.get('filters'), list) else [calc.get('filter')]
+                filters = _calc_filter_list(calc)
                 filter_expr = None
                 for f in filters:
-                    if not isinstance(f, dict) or not f.get('col') or f.get('op') not in _DYN_FILTER_OPS:
+                    if not isinstance(f, dict) or f.get('op') not in _DYN_FILTER_OPS:
                         continue
                     fop = f['op']
-                    fcol = f['col']
-                    expr = None
-                    if fop in ('lt', 'lte', 'gt', 'gte'):
+                    fcol = f.get('col') or ''
+                    if not fcol or fcol not in csub.columns:
+                        expr = pl.lit(False)
+                    elif fop in ('lt', 'lte', 'gt', 'gte'):
                         try:
                             fval = float(f['val'])
                         except (TypeError, ValueError):
                             fval = None
-                        if fval is not None and fcol in csub.columns:
-                            expr = _dyn_filter_expr(fcol, fop, fval)
+                        expr = _dyn_filter_expr(fcol, fop, fval) if fval is not None else None
                     elif fop in ('in', 'nin'):
-                        if fcol in csub.columns:
-                            expr = _dyn_filter_expr(fcol, fop, f.get('val'))
+                        expr = _dyn_filter_expr(fcol, fop, f.get('val'))
                     else:  # eq / neq
                         fval = f.get('val')
-                        if fval is not None and str(fval).strip() != '' and fcol in csub.columns:
+                        if fval is None or str(fval).strip() == '':
+                            expr = None
+                        else:
                             expr = _dyn_filter_expr(fcol, fop, fval)
                     if expr is not None:
                         if filter_expr is None or str(f.get('logic', 'and')).lower() != 'or':

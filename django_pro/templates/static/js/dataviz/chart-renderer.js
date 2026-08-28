@@ -442,10 +442,15 @@
     const titleText = String(option.title_text || '').trim();
     const titleSize = Number(option.title_font_size) || 16;
     const titleShow = option.title_show !== false && !!titleText;
+    const subText = String(option.subtitle_text || '').trim();
+    const subShow = option.subtitle_show === true && !!subText;
     let html = '<div class="flex flex-col w-full h-full min-h-[200px]">';
     html += '<div class="dv-table-title text-center font-semibold text-slate-800 px-3 pt-2 pb-1 shrink-0"'
          + (titleShow ? ' style="font-size:' + titleSize + 'px"' : ' style="display:none"') + '>'
          + _esc(titleText) + '</div>';
+    html += '<p class="dv-table-subtitle text-center font-normal text-slate-500 px-4 pb-2 shrink-0"'
+         + (subShow ? ' style="font-size:11px;line-height:1.45;white-space:pre-wrap"' : ' style="display:none"') + '>'
+         + _esc(subText) + '</p>';
     html += '<div class="overflow-auto w-full flex-1 min-h-0"><table class="min-w-full text-xs border-collapse">';
 
     // Header rows (single row, or two rows if col_header_groups present)

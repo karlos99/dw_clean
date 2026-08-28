@@ -1112,10 +1112,49 @@ def _chart_title_shown(cfg: dict) -> bool:
     return bool(text) and (not cfg or cfg.get('show_title', True) is not False)
 
 
+def _chart_subtitle_shown(cfg: dict) -> bool:
+    text = (cfg.get('chart_subtitle') or '').strip() if cfg else ''
+    return bool(text) and bool(cfg and cfg.get('show_subtitle'))
+
+
+def _title_grid_top(cfg: dict) -> int:
+    if _chart_subtitle_shown(cfg):
+        return 96
+    if _chart_title_shown(cfg):
+        return 60
+    return 36
+
+
+def _echarts_title(cfg: dict, t: dict | None = None) -> dict:
+    t = t or _theme(cfg)
+    title_on = _chart_title_shown(cfg)
+    sub = (cfg.get('chart_subtitle') or '').strip() if _chart_subtitle_shown(cfg) else ''
+    return {
+        'show': title_on or bool(sub),
+        'text': (cfg.get('chart_title') or cfg.get('title') or '').strip() if title_on else '',
+        'subtext': sub,
+        'left': cfg.get('title_left') or 'center',
+        'top': cfg.get('title_top') or 'auto',
+        'itemGap': 6 if sub else 8,
+        'textStyle': {
+            'color': t['text'],
+            'fontSize': int(cfg.get('title_font_size', 16) or 16),
+            'fontWeight': 600,
+        },
+        'subtextStyle': {
+            'color': t['text'],
+            'fontSize': 11,
+            'fontWeight': 'normal',
+            'lineHeight': 16,
+            'width': 560,
+            'overflow': 'break',
+        },
+    }
+
+
 def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
     t = _theme(cfg)
-    title_text = cfg.get('chart_title', '') or cfg.get('title', '')
-    title_show = _chart_title_shown(cfg)
+    default_top = _title_grid_top(cfg)
     show_toolbox = cfg.get('show_toolbox', True) is not False
     show_tooltip = cfg.get('show_tooltip', True) is not False
     animate      = cfg.get('animation', True) is not False
@@ -1125,13 +1164,7 @@ def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
         'backgroundColor': t['bg'],
         'aria': {'enabled': True},
         'textStyle': {'color': t['text'], 'fontFamily': 'Inter, system-ui, sans-serif'},
-        'title': {
-            'show': title_show,
-            'text': title_text,
-            'left': cfg.get('title_left', 'center') if cfg.get('title_left') else 'center',
-            'top':  cfg.get('title_top',  'auto')   if cfg.get('title_top')  else 'auto',
-            'textStyle': {'color': t['text'], 'fontSize': int(cfg.get('title_font_size', 16) or 16), 'fontWeight': 600},
-        },
+        'title': _echarts_title(cfg, t),
         'legend': _legend(cfg, t['text']),
         'tooltip': {
             'show': show_tooltip,
@@ -1150,7 +1183,7 @@ def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
         'grid': {
             'left':   int(cfg.get('grid_left',   55) or 55),
             'right':  int(cfg.get('grid_right',  20) or 20),
-            'top':    int(cfg.get('grid_top',    60 if title_show else 36) or (60 if title_show else 36)),
+            'top':    int(cfg.get('grid_top',    default_top) or default_top),
             'bottom': int(cfg.get('grid_bottom', 80) or 80),
             'containLabel': True,
         },
@@ -1373,6 +1406,7 @@ def _message_option(text: str, cfg: dict, error: bool = False) -> dict:
     opt['series'] = []
     opt['title']['show'] = True
     opt['title']['text'] = text
+    opt['title']['subtext'] = ''
     opt['title']['textStyle']['color'] = '#dc2626' if error else _theme(cfg)['text']
     opt['title']['top'] = 'middle'
     opt['__is_message__'] = True

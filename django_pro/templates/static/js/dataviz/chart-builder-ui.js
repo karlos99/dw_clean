@@ -212,15 +212,24 @@ function chartBuilderUIMethods() {
       if (this._calcFilterLoading && this._calcFilterLoading[col]) return;
       this._calcFilterLoading = { ...(this._calcFilterLoading || {}), [col]: true };
       const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
-      fetch('/dataviz/api/columns/filter-options/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-        body: JSON.stringify({ columns: [col], filters: this.cleanSourceFilters ? this.cleanSourceFilters() : {} })
-      })
-        .then(r => r.json())
+      const filters = this.cleanSourceFilters ? this.cleanSourceFilters() : {};
+      let req;
+      if (this.sourceType === 'dataset' && this.datasetSourceId) {
+        req = fetch('/dataviz/api/datasets/' + this.datasetSourceId + '/filter-options/?current_filters=' + encodeURIComponent(JSON.stringify(filters)), {
+          credentials: 'same-origin',
+        });
+      } else {
+        req = fetch('/dataviz/api/columns/filter-options/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+          body: JSON.stringify({ columns: [col], filters: filters })
+        });
+      }
+      req.then(r => r.json())
         .then(d => {
-          if (d.filter_options) {
-            this.filterOptions = { ...this.filterOptions, ...d.filter_options };
+          const opts = d.filter_options || d.options || {};
+          if (opts && typeof opts === 'object') {
+            this.filterOptions = { ...this.filterOptions, ...opts };
           }
         })
         .catch(e => console.error('Fetch calc filter options:', e))
@@ -439,7 +448,7 @@ function chartBuilderUIMethods() {
                          'tooltipShowPct','tooltipShowCount','tooltipValuePct',
                          'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS','groupGapPct',
                          'centerGroupLabels'];
-      const styleProps = ['chartTitle','showTitle','titleFontSize','showLegend','showLabels',
+      const styleProps = ['chartTitle','showTitle','chartSubtitle','showSubtitle','titleFontSize','showLegend','showLabels',
                           'legendPos','legendItemGap','legendFontSize','legendIconSize','legendOffset',
                           'labelPosition','labelFontSize','background','opacity',
                           'barBorderRadius','showPoints','smooth',
@@ -483,14 +492,21 @@ function chartBuilderUIMethods() {
 
     _applyTableTitleLive(el) {
       const t = el.querySelector('.dv-table-title');
-      if (!t) return;
-      const text = (this.chartTitle || '').trim();
-      t.textContent = text;
-      if (text && this.showTitle !== false) {
-        t.style.display = '';
-        t.style.fontSize = (+this.titleFontSize || 16) + 'px';
-      } else {
-        t.style.display = 'none';
+      if (t) {
+        const text = (this.chartTitle || '').trim();
+        t.textContent = text;
+        if (text && this.showTitle !== false) {
+          t.style.display = '';
+          t.style.fontSize = (+this.titleFontSize || 16) + 'px';
+        } else {
+          t.style.display = 'none';
+        }
+      }
+      const s = el.querySelector('.dv-table-subtitle');
+      if (s) {
+        const sub = (this.chartSubtitle || '').trim();
+        s.textContent = sub;
+        s.style.display = (sub && this.showSubtitle) ? '' : 'none';
       }
     },
     _applyStyleLive() {
@@ -509,10 +525,14 @@ function chartBuilderUIMethods() {
       const bgMap = { white: '#ffffff', light: '#f8fafc', dark: '#1e293b' };
       opt.backgroundColor = bgMap[this.background] || '#ffffff';
 
+      const sub = (this.showSubtitle && (this.chartSubtitle || '').trim()) ? this.chartSubtitle.trim() : '';
       opt.title = [{
-        show: !!(this.chartTitle && this.showTitle),
-        text: this.chartTitle || '',
+        show: !!(this.chartTitle && this.showTitle) || !!sub,
+        text: (this.showTitle && this.chartTitle) ? this.chartTitle : '',
+        subtext: sub,
+        itemGap: 6,
         textStyle: { fontSize: +this.titleFontSize || 16 },
+        subtextStyle: { fontSize: 11, fontWeight: 'normal', lineHeight: 16, width: 560, overflow: 'break' },
         ...(this.titleLeft != null ? { left: this.titleLeft } : {}),
         ...(this.titleTop  != null ? { top:  this.titleTop  } : {}),
       }];

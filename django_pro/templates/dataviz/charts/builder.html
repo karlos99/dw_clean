@@ -1753,12 +1753,12 @@
                                 <option :value="String(opt)" x-text="opt"></option>
                               </template>
                             </select>
-                            <div x-show="['in','nin'].includes(filter.op)" class="relative" x-data="{ open: false }">
-                              <button type="button" @click="open=!open; if(filter.col) _loadCalcFilterOptions(filter.col)"
+                            <div x-show="['in','nin'].includes(filter.op)" class="relative">
+                              <button type="button" @click="dynInOpen = dynInOpen === (idx+'_'+filterIdx) ? '' : (idx+'_'+filterIdx); if(filter.col) _loadCalcFilterOptions(filter.col)"
                                       class="w-full text-left text-xs border border-slate-300 rounded px-2 py-1 bg-white truncate focus:outline-none focus:ring-1 focus:ring-amber-400">
                                 <span x-text="dynFilterInLabel(filter)"></span>
                               </button>
-                              <div x-show="open" @click.outside="open=false"
+                              <div x-show="dynInOpen === (idx+'_'+filterIdx)" @click.outside="dynInOpen = ''"
                                    class="absolute z-30 mt-1 left-0 right-0 min-w-[10rem] bg-white border border-slate-200 rounded shadow-lg max-h-44 overflow-y-auto p-1.5 space-y-0.5">
                                 <div class="flex justify-between sticky top-0 bg-white pb-1 mb-0.5 border-b border-slate-100">
                                   <button type="button" class="text-[9px] font-bold text-teal-700 uppercase"
@@ -2469,6 +2469,19 @@
                  class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
           <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="titleFontSize+'px'"></span>
         </div>
+      </div>
+
+      {# DESCRIPTION #}
+      <div class="px-3 py-3 border-b border-slate-100">
+        <div class="flex items-center justify-between mb-1.5">
+          <label class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Description</label>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" x-model="showSubtitle" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+            <span class="text-[9px] text-slate-500">Show</span>
+          </label>
+        </div>
+        <textarea x-model="chartSubtitle" rows="3" placeholder="Optional paragraph under the title"
+                  class="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white resize-y"></textarea>
       </div>
 
       {# APPEARANCE #}
@@ -3343,6 +3356,8 @@
     <input type="hidden" name="name"           x-bind:value="name">
     <input type="hidden" name="chart_title"    x-bind:value="chartTitle">
     <input type="hidden" name="show_title"     x-bind:value="showTitle ? '1' : ''">
+    <input type="hidden" name="chart_subtitle" x-bind:value="chartSubtitle">
+    <input type="hidden" name="show_subtitle"  x-bind:value="showSubtitle ? '1' : ''">
     <input type="hidden" name="title_font_size" x-model="titleFontSize">
     <input type="hidden" name="source_type"    x-bind:value="sourceType">
     <input type="hidden" name="source_id"      x-bind:value="sourceType === 'dataset' ? datasetSourceId : savedQueryId">
@@ -3585,6 +3600,8 @@ function chartBuilder() {
     name:         existing?.name ?? '',
     chartTitle:   existing?.config?.chart_title ?? '',
     showTitle:    existing ? (existing.config?.show_title !== false) : true,
+    chartSubtitle: existing?.config?.chart_subtitle ?? '',
+    showSubtitle: existing ? existing.config?.show_subtitle === true : false,
     sourceType:   existing ? (existing.source_type === 'sql' ? 'sql' : existing.source_type === 'columns' ? 'columns' : existing.source_type === 'dataset' ? 'dataset' : 'query') : 'query',
     savedQueryId: existing && existing.source_type === 'query' ? String(existing.source_id ?? '') : '',
     datasetSourceId: existing?.source_type === 'dataset' ? String(existing.source_id ?? '') : '',
@@ -3639,6 +3656,7 @@ function chartBuilder() {
     dynShowTooltips:  existing ? (existing.config?.dyn_show_tooltips !== false) : true,
     dynColMode:       existing?.config?.dyn_col_mode ?? 'pivot',
     dynCalculations:  existing?.config?.dyn_calculations ?? [],
+    dynInOpen:        '',
     dynDrillCalc:     existing?.config?.dyn_drill_calc ?? '',
     dynTotalsOnly:    existing?.config?.dyn_totals_only === true,
     dynDisplayType:   existing?.config?.dyn_display_type ?? 'table',
@@ -3863,6 +3881,7 @@ function chartBuilder() {
           const baseOk = calc.agg_func === 'count' || !!calc.value_col;
           return baseOk && filters.every(f => {
             if (!f || !f.op || !f.col) return false;
+            if (['in', 'nin'].includes(f.op)) return Array.isArray(f.val) && f.val.length > 0;
             if (f.val === '' || f.val === null || f.val === undefined) return false;
             return !['lt', 'lte', 'gt', 'gte'].includes(f.op) || !Number.isNaN(Number(f.val));
           });

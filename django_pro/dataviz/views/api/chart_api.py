@@ -233,6 +233,34 @@ def _progress_growth_query_columns(chart_type: str, chart_cfg: dict) -> list:
     return cols
 
 
+def _dyn_calc_query_columns(chart_cfg: dict) -> list:
+    """Value/filter columns calculation-mode tables need beyond the explorer selection."""
+    cols = []
+    seen = set()
+    for calc in (chart_cfg or {}).get('dyn_calculations') or []:
+        if not isinstance(calc, dict):
+            continue
+        vc = calc.get('value_col')
+        if vc and vc not in seen:
+            seen.add(vc)
+            cols.append(vc)
+        flist = calc.get('filters') if isinstance(calc.get('filters'), list) else [calc.get('filter')]
+        for f in flist:
+            col = f.get('col') if isinstance(f, dict) else None
+            if col and col not in seen:
+                seen.add(col)
+                cols.append(col)
+    return cols
+
+
+def _chart_extra_query_columns(chart_cfg: dict) -> list:
+    extras = _progress_growth_query_columns((chart_cfg or {}).get('chart_type', ''), chart_cfg)
+    for col in _dyn_calc_query_columns(chart_cfg):
+        if col not in extras:
+            extras.append(col)
+    return extras
+
+
 def _augment_chart_result_rows(chart_type: str, chart_cfg: dict, col_mappings: dict, result: dict) -> dict:
     from dataviz.utils.assessment_enrichment import augment_chart_result_rows
     return augment_chart_result_rows(chart_type, chart_cfg, col_mappings, result)
@@ -464,6 +492,8 @@ def _cfg_from_post(post):
         'label_distance':   _parse_int(post.get('label_distance'),   None),
         'chart_title':      post.get('chart_title', '').strip(),
         'show_title':       bool(post.get('show_title', '1')),
+        'chart_subtitle':   post.get('chart_subtitle', '').strip(),
+        'show_subtitle':    bool(post.get('show_subtitle')),
         'container_width':  _parse_int(post.get('container_width'),  None),
         'container_height': _parse_int(post.get('container_height'), None),
         'parliament_dot_scale': _parse_float(post.get('parliament_dot_scale'), None),
@@ -570,12 +600,19 @@ def chart_preview_api(request):
             _sel_cols = json.loads(_sel_raw) if isinstance(_sel_raw, str) else _sel_raw
         except (json.JSONDecodeError, ValueError):
             _sel_cols = []
+        if not isinstance(_sel_cols, list):
+            _sel_cols = []
+        _sel_cols = list(_sel_cols)
+        for _c in _chart_extra_query_columns(cfg):
+            if _c not in _sel_cols:
+                _sel_cols.append(_c)
     preview_source_hash = hashlib.md5(json.dumps({
         'st': source_type,
         'sid': source_id,
         'ssql': source_sql,
         'sf': source_filters,
         'sc': _sel_cols,
+        'xc': _chart_extra_query_columns(cfg),
         'one_row_per_stu_annual_key': bool(cfg.get('one_row_per_stu_annual_key')),
         'x': cfg.get('x_col'),
         'y': cfg.get('y_col'),
@@ -594,15 +631,7 @@ def chart_preview_api(request):
     elif source_type == 'sql':
         result = run_raw_sql(source_sql)
     elif source_type == 'columns':
-        # Column Picker source: selected_columns come from POST or JSON
-        if 'application/json' in content_type:
-            sel_cols_raw = body.get('selected_columns', '[]')
-        else:
-            sel_cols_raw = request.POST.get('selected_columns', '[]')
-        try:
-            selected_columns = json.loads(sel_cols_raw) if isinstance(sel_cols_raw, str) else sel_cols_raw
-        except (json.JSONDecodeError, ValueError):
-            selected_columns = []
+        selected_columns = _sel_cols or []
         if not selected_columns:
             return _error('Select at least one column in the Explorer')
         result = run_column_query(selected_columns, source_filters)
@@ -659,10 +688,10 @@ def chart_preview_api(request):
     else:
         if not source_id:
             return _error('Select a data source first')
-        pg_extra = _progress_growth_query_columns(cfg.get('chart_type', ''), cfg)
+        extra_cols = _chart_extra_query_columns(cfg)
         result = run_saved_query(
             source_id, source_filters, request.user,
-            extra_columns=pg_extra or None,
+            extra_columns=extra_cols or None,
             apply_user_filters=False,
         )
         result = _augment_chart_result_rows(cfg.get('chart_type', ''), cfg, {}, result)
@@ -1019,17 +1048,19 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # Layer 1 – Data cache: raw rows keyed by source + filters
     sel_cols_hash = ""
     if chart.source_type == SavedChart.SOURCE_COLUMNS:
-        sel_cols_hash = hashlib.md5(json.dumps(chart.config.get('selected_columns', []), sort_keys=True).encode()).hexdigest()[:8]
+        _sel_for_hash = list(chart.config.get('selected_columns', []))
+        for _c in _chart_extra_query_columns(chart.config):
+            if _c not in _sel_for_hash:
+                _sel_for_hash.append(_c)
+        sel_cols_hash = hashlib.md5(json.dumps(_sel_for_hash, sort_keys=True).encode()).hexdigest()[:8]
 
-    pg_extra_hash = ''
-    if chart.chart_type == 'progress_growth':
-        pg_extra_hash = hashlib.md5(
-            json.dumps(_progress_growth_query_columns(chart.chart_type, chart.config), sort_keys=True).encode()
-        ).hexdigest()[:8]
+    extra_cols_hash = hashlib.md5(
+        json.dumps(_chart_extra_query_columns(chart.config), sort_keys=True).encode()
+    ).hexdigest()[:8]
 
     source_part = (
         f'{_CHART_PIPELINE_VERSION}:{chart.source_type}:{chart.source_id or "_"}:'
-        f'{chart.source_sql or "_"}:{sel_cols_hash}:{pg_extra_hash}:{pf_hash}:{updated_ts}:'
+        f'{chart.source_sql or "_"}:{sel_cols_hash}:{extra_cols_hash}:{pf_hash}:{updated_ts}:'
         f'{sync_version}'
     )
     data_cache_key = f'chart_data:{source_part}'
@@ -1082,7 +1113,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             result = run_raw_sql(chart.source_sql)
         elif chart.source_type == SavedChart.SOURCE_COLUMNS:
             selected_columns = list(chart.config.get('selected_columns', []))
-            for c in _progress_growth_query_columns(chart.chart_type, chart.config):
+            for c in _chart_extra_query_columns(chart.config):
                 if c not in selected_columns:
                     selected_columns.append(c)
             merged_filters = dict(chart.source_filters or {})
@@ -1189,10 +1220,10 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             merged_filters = dict(chart.source_filters or {})
             merged_filters.update(pf_filters)
             user = getattr(request, 'user', None)
-            pg_extra = _progress_growth_query_columns(chart.chart_type, chart_cfg)
+            extra_cols = _chart_extra_query_columns(chart_cfg)
             result = run_saved_query(
                 chart.source_id, merged_filters, user,
-                extra_columns=pg_extra or None,
+                extra_columns=extra_cols or None,
                 apply_user_filters=False,
             )
             result = _augment_chart_result_rows(
