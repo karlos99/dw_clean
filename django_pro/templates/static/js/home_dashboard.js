@@ -52,9 +52,14 @@
         }).then(function (r) { return r.json(); });
     }
 
+    var schoolId = app.dataset.schoolId || '';
+    var showLocation = app.dataset.showLocation !== '0';
+
     function renderUrl(chartId) {
-        return renderUrlTpl.replace('999999999', String(chartId)) +
+        var url = renderUrlTpl.replace('999999999', String(chartId)) +
             '?source=dashboard&source_id=home&source_name=' + encodeURIComponent('My Charts');
+        if (schoolId && schoolId !== 'all') url += '&school_id=' + encodeURIComponent(schoolId);
+        return url;
     }
 
     function esc(s) {
@@ -85,15 +90,20 @@
         var lockIcon = isForced
             ? '<svg class="w-3 h-3 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="Required chart"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>'
             : '';
-        var headerRight = isForced
+        var requiredBadge = isForced
             ? '<span class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 ring-1 ring-amber-200 text-[10px] font-semibold">Required</span>'
-            : '<button type="button" class="home-slot-remove flex-shrink-0 w-6 h-6 rounded-md hover:bg-red-50 text-slate-400 hover:text-red-600 text-lg leading-none transition" aria-label="Remove chart">&times;</button>';
+            : '';
+        var tools = isForced
+            ? ''
+            : '<div class="home-slot-tools absolute top-1.5 right-1.5 z-20 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">' +
+              '<button type="button" class="home-slot-remove w-6 h-6 rounded-md bg-white/90 shadow-sm ring-1 ring-slate-200 hover:bg-red-50 text-slate-400 hover:text-red-600 text-lg leading-none" aria-label="Remove chart">&times;</button></div>';
 
         el.innerHTML =
-            '<div class="grid-stack-item-content bg-white rounded-xl shadow-sm ring-1 ring-slate-200 flex flex-col">' +
-            '  <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl">' +
+            '<div class="grid-stack-item-content bg-white rounded-xl shadow-sm ring-1 ring-slate-200 flex flex-col relative group">' +
+            tools +
+            '  <div class="home-slot-location flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl' + (showLocation ? '' : ' hidden') + '">' +
             '    <span class="flex items-center gap-1.5 min-w-0 text-xs font-semibold text-slate-700 truncate" title="' + esc(data.title) + '">' + lockIcon + '<span class="truncate">' + esc(data.title) + '</span></span>' +
-            '    ' + headerRight +
+            '    ' + requiredBadge +
             '  </div>' +
             '  <div class="home-slot-body flex-1 min-h-0 p-2">' +
             (data.html ? data.html : '<div class="text-xs text-red-500 p-2">' + esc(data.error || 'Could not load chart') + '</div>') +
@@ -126,8 +136,7 @@
         var node = grid.addWidget(el, cfg);
         if (!node) node = el;
         node.setAttribute('gs-id', String(data.slot_id));
-        var rm = node.querySelector('.home-slot-remove');
-        if (rm) rm.addEventListener('click', function () { removeSlot(node); });
+        wireSlotControls(node);
         
         // Initialize the chart directly on insertion
         var c = node.querySelector('.chart-container');
@@ -183,6 +192,14 @@
     function debouncedSave() {
         clearTimeout(saveTimer);
         saveTimer = setTimeout(saveLayout, 400);
+    }
+
+    function wireSlotControls(node) {
+        var rm = node.querySelector('.home-slot-remove');
+        if (rm && !rm._wired) {
+            rm._wired = true;
+            rm.addEventListener('click', function () { removeSlot(node); });
+        }
     }
 
     function removeSlot(node) {
@@ -246,8 +263,7 @@
     function wireExisting() {
         if (!gridEl) return;
         gridEl.querySelectorAll('.grid-stack-item').forEach(function (node) {
-            var rm = node.querySelector('.home-slot-remove');
-            if (rm) rm.addEventListener('click', function () { removeSlot(node); });
+            wireSlotControls(node);
         });
         updateEmpty();
         if (window.initAllCharts) window.initAllCharts();

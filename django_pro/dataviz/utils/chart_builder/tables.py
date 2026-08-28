@@ -17,8 +17,19 @@ from .common import *  # noqa: F401,F403
 # Comparison operators available to a dynamic-summary-table calculation
 # column's optional threshold filter.  lt/lte/gt/gte are numeric ranges
 # (e.g. "count students with attendance_rate < 85"); eq/neq match a specific
-# value (e.g. gender == "F"), whose options are prepopulated from the column.
-_DYN_FILTER_OPS = frozenset({'lt', 'lte', 'gt', 'gte', 'eq', 'neq'})
+# value (e.g. gender == "F"); in/nin match any of several values (SQL IN).
+_DYN_FILTER_OPS = frozenset({'lt', 'lte', 'gt', 'gte', 'eq', 'neq', 'in', 'nin'})
+
+
+def _norm_in_vals(val):
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple, set)):
+        return [str(v).strip() for v in val if v is not None and str(v).strip() != '']
+    s = str(val).strip()
+    if not s:
+        return []
+    return [p.strip() for p in s.split(',') if p.strip()]
 
 
 def _dyn_filter_expr(col: str, op: str, val):
@@ -29,10 +40,17 @@ def _dyn_filter_expr(col: str, op: str, val):
     aggregations skip invalid values elsewhere.  Equality compares the raw
     (stripped) string value so categorical columns like gender work too.
     """
+    stripped = pl.col(col).cast(pl.Utf8).str.strip_chars()
     if op == 'eq':
-        return pl.col(col).cast(pl.Utf8).str.strip_chars() == str(val).strip()
+        return stripped == str(val).strip()
     if op == 'neq':
-        return pl.col(col).cast(pl.Utf8).str.strip_chars() != str(val).strip()
+        return stripped != str(val).strip()
+    if op in ('in', 'nin'):
+        vals = _norm_in_vals(val)
+        if not vals:
+            return None
+        expr = stripped.is_in(vals)
+        return expr if op == 'in' else ~expr
     x = pl.col(col).cast(pl.Float64, strict=False)
     if op == 'lt':
         return x < val
@@ -43,6 +61,15 @@ def _dyn_filter_expr(col: str, op: str, val):
     if op == 'gte':
         return x >= val
     return None
+
+
+def _order_row_vals(vals, cfg):
+    """Apply Aggregation & Sort (manual / label) to a table's first row column."""
+    mode = (cfg.get('sort_col') or '').strip() if cfg else ''
+    if not mode:
+        return vals
+    orig = {str(v): v for v in vals}
+    return [orig.get(s, s) for s in _ordered_categories([str(v) for v in vals], cfg or {})]
 
 
 _DYN_CALC_OPS = {
@@ -107,7 +134,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         if work.is_empty():
             return _message_option('Summary Table: no data after filtering blanks', cfg)
 
-        row_vals = _auto_detect_pl_scale(work[row_col].unique().to_list())
+        row_vals = _order_row_vals(_auto_detect_pl_scale(work[row_col].unique().to_list()), cfg)
         col_vals = [_label(c, col_defs) if col_defs else c for c in st_col_cols]
 
         rows_data = []
@@ -214,7 +241,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     if _dup_key and st_agg_func == 'count':
         work = work.unique(subset=[_dup_key, row_col, col_col], keep='first')
 
-    row_vals = _auto_detect_pl_scale(work[row_col].unique().to_list())
+    row_vals = _order_row_vals(_auto_detect_pl_scale(work[row_col].unique().to_list()), cfg)
     col_vals = _auto_detect_pl_scale(work[col_col].unique().to_list())
 
     ct_alt_lookup = None
@@ -334,12 +361,13 @@ def _convert_table_to_echarts(result, cfg, valid_row):
             s_obj['stack'] = 'total'
         series_list.append(s_obj)
 
-    title_text = cfg.get('title', '')
+    title_text = (cfg.get('chart_title') or cfg.get('title') or '').strip()
     echarts_option = {
         'title': {
+            'show': _chart_title_shown(cfg),
             'text': title_text,
             'left': 'center',
-            'textStyle': {'fontSize': 14, 'color': '#334155'}
+            'textStyle': {'fontSize': int(cfg.get('title_font_size', 16) or 16), 'color': '#334155'}
         },
         'tooltip': {
             'trigger': 'axis',
@@ -377,7 +405,8 @@ def _convert_table_to_echarts(result, cfg, valid_row):
             'stRowVals':   result.get('_drillMeta', {}).get('stRowVals', []),
             'colHeaders':  result.get('col_headers', []),
             'colHeaderCols': result.get('col_header_cols', []),
-        }
+        },
+        '__category_names__': x_data,
     }
     return echarts_option
 
@@ -464,6 +493,8 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         row_val_lists = {}
         for c in valid_row:
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
+        if valid_row:
+            row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
         row_combos = [()] if totals_only else _build_row_combos(row_val_lists, valid_row)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
@@ -520,6 +551,9 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                             fval = None
                         if fval is not None and fcol in csub.columns:
                             expr = _dyn_filter_expr(fcol, fop, fval)
+                    elif fop in ('in', 'nin'):
+                        if fcol in csub.columns:
+                            expr = _dyn_filter_expr(fcol, fop, f.get('val'))
                     else:  # eq / neq
                         fval = f.get('val')
                         if fval is not None and str(fval).strip() != '' and fcol in csub.columns:
@@ -728,6 +762,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         row_val_lists = {}
         for c in valid_row:
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
+        row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
         row_combos = _build_row_combos(row_val_lists, valid_row)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
@@ -888,6 +923,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     row_val_lists = {}
     for c in valid_row:
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
+    row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
 
     row_combos = _build_row_combos(row_val_lists, valid_row)
 

@@ -236,6 +236,7 @@
 
     // Summary table: render as HTML cross-tab instead of ECharts
     if (option.__type__ === 'table') {
+      container._isTable = true;
       _renderSummaryTable(container, option);
       return null;
     }
@@ -438,7 +439,14 @@
 
     var SEPS = ' \u25b8 ';
 
-    let html = '<div class="overflow-auto w-full h-full min-h-[200px]"><table class="min-w-full text-xs border-collapse">';
+    const titleText = String(option.title_text || '').trim();
+    const titleSize = Number(option.title_font_size) || 16;
+    const titleShow = option.title_show !== false && !!titleText;
+    let html = '<div class="flex flex-col w-full h-full min-h-[200px]">';
+    html += '<div class="dv-table-title text-center font-semibold text-slate-800 px-3 pt-2 pb-1 shrink-0"'
+         + (titleShow ? ' style="font-size:' + titleSize + 'px"' : ' style="display:none"') + '>'
+         + _esc(titleText) + '</div>';
+    html += '<div class="overflow-auto w-full flex-1 min-h-0"><table class="min-w-full text-xs border-collapse">';
 
     // Header rows (single row, or two rows if col_header_groups present)
     html += '<thead>';
@@ -556,7 +564,7 @@
       }
       html += '</tr>';
     }
-    html += '</tbody></table></div>';
+    html += '</tbody></table></div></div>';
 
     container.innerHTML = html;
 

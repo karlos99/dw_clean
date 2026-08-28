@@ -1107,9 +1107,15 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
     option.setdefault('dv', {})['category_axis'] = 'x'
 
 
+def _chart_title_shown(cfg: dict) -> bool:
+    text = (cfg.get('chart_title') or cfg.get('title') or '').strip() if cfg else ''
+    return bool(text) and (not cfg or cfg.get('show_title', True) is not False)
+
+
 def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
     t = _theme(cfg)
     title_text = cfg.get('chart_title', '') or cfg.get('title', '')
+    title_show = _chart_title_shown(cfg)
     show_toolbox = cfg.get('show_toolbox', True) is not False
     show_tooltip = cfg.get('show_tooltip', True) is not False
     animate      = cfg.get('animation', True) is not False
@@ -1120,7 +1126,7 @@ def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
         'aria': {'enabled': True},
         'textStyle': {'color': t['text'], 'fontFamily': 'Inter, system-ui, sans-serif'},
         'title': {
-            'show': bool(title_text),
+            'show': title_show,
             'text': title_text,
             'left': cfg.get('title_left', 'center') if cfg.get('title_left') else 'center',
             'top':  cfg.get('title_top',  'auto')   if cfg.get('title_top')  else 'auto',
@@ -1144,7 +1150,7 @@ def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
         'grid': {
             'left':   int(cfg.get('grid_left',   55) or 55),
             'right':  int(cfg.get('grid_right',  20) or 20),
-            'top':    int(cfg.get('grid_top',    60 if title_text else 36) or (60 if title_text else 36)),
+            'top':    int(cfg.get('grid_top',    60 if title_show else 36) or (60 if title_show else 36)),
             'bottom': int(cfg.get('grid_bottom', 80) or 80),
             'containLabel': True,
         },

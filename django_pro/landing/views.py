@@ -103,6 +103,7 @@ def index(request):
             'home_max_charts': home_max_charts,
             'home_forced_chart_ids': home_forced_chart_ids,
             'home_forced_chart_ids_json': json.dumps(home_forced_chart_ids),
+            'home_show_chart_location': bool(getattr(cfg, 'home_show_chart_location', True)),
             'user_schools': user_schools,
             'active_school_id': active_school_id,
             'active_school_name': active_school.school_name if active_school else '',
@@ -163,6 +164,7 @@ def project_settings(request):
         cfg.enabled_columns = enabled_columns if enabled_columns else None
         cfg.enabled_dataset_tables = enabled_tables if enabled_tables else None
         cfg.enable_home_charts = request.POST.get('enable_home_charts') == 'on'
+        cfg.home_show_chart_location = request.POST.get('home_show_chart_location') == 'on'
         cfg.disabled_school_years = request.POST.getlist('disabled_school_years')
 
         raw_forced = request.POST.get('home_forced_charts_json', '')
@@ -214,6 +216,7 @@ def project_settings(request):
         'dataset_tables':              TABLE_CHOICES,
         'enabled_dataset_tables':      cfg.enabled_dataset_tables or [],
         'enable_home_charts':          cfg.enable_home_charts,
+        'home_show_chart_location':    bool(getattr(cfg, 'home_show_chart_location', True)),
         'disabled_school_years':       [str(sy) for sy in (cfg.disabled_school_years or [])],
         'chart_choices':               chart_choices,
         'chart_choices_json':          _json.dumps(chart_choices),

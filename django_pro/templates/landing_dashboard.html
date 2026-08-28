@@ -111,7 +111,9 @@
      data-render-url-template="{% url 'dataviz:chart_render' 999999999 %}"
      data-csrf="{{ csrf_token }}"
      data-max-charts="{{ home_max_charts }}"
-     data-forced-chart-ids="{{ home_forced_chart_ids_json }}">
+     data-forced-chart-ids="{{ home_forced_chart_ids_json }}"
+     data-school-id="{{ active_school_id }}"
+     data-show-location="{% if home_show_chart_location %}1{% else %}0{% endif %}">
 
     <!-- Header (compact) -->
     <header class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -174,8 +176,13 @@
 
                 {% for slot in home_slots %}
                 <div class="grid-stack-item" gs-id="{{ slot.pk }}" gs-x="{{ slot.gs_x }}" gs-y="{{ slot.gs_y }}" gs-w="{{ slot.gs_w }}" gs-h="{{ slot.gs_h }}" {% if slot.is_forced %}data-forced="1"{% endif %}>
-                    <div class="grid-stack-item-content bg-white rounded-xl shadow-sm ring-1 ring-slate-200 flex flex-col">
-                        <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl">
+                    <div class="grid-stack-item-content bg-white rounded-xl shadow-sm ring-1 ring-slate-200 flex flex-col relative group">
+                        {% if not slot.is_forced %}
+                        <div class="home-slot-tools absolute top-1.5 right-1.5 z-20 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
+                            <button type="button" class="home-slot-remove w-6 h-6 rounded-md bg-white/90 shadow-sm ring-1 ring-slate-200 hover:bg-red-50 text-slate-400 hover:text-red-600 text-lg leading-none" data-slot-id="{{ slot.pk }}" aria-label="Remove chart">&times;</button>
+                        </div>
+                        {% endif %}
+                        <div class="home-slot-location flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl{% if not home_show_chart_location %} hidden{% endif %}">
                             <span class="flex items-center gap-1.5 min-w-0">
                                 {% if slot.is_forced %}
                                 <svg class="w-3 h-3 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="Required chart"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
@@ -184,8 +191,6 @@
                             </span>
                             {% if slot.is_forced %}
                             <span class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 ring-1 ring-amber-200 text-[10px] font-semibold">Required</span>
-                            {% else %}
-                            <button type="button" class="home-slot-remove flex-shrink-0 w-6 h-6 rounded-md hover:bg-red-50 text-slate-400 hover:text-red-600 text-lg leading-none" data-slot-id="{{ slot.pk }}" aria-label="Remove chart">&times;</button>
                             {% endif %}
                         </div>
                         <div class="home-slot-body flex-1 min-h-0 p-2">

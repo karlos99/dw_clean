@@ -74,6 +74,14 @@ class ProjectConfig(models.Model):
         ),
     )
 
+    home_show_chart_location = models.BooleanField(
+        default=True,
+        help_text=(
+            "Show the chart name bar (location) on every user's home dashboard. "
+            "When off, home charts show only the visual and its in-chart title."
+        ),
+    )
+
     # ── Available school years ──────────────────────────────────────────────
     disabled_school_years = models.JSONField(
         default=list,
