@@ -135,13 +135,55 @@ def dashboard_slots_api(request, dashboard_id):
     return JsonResponse({'error': 'Invalid action'}, status=400)
 
 
+def sync_home_dashboard(user):
+    """Ensure the user's home dashboard contains every globally-forced chart.
+
+    Creates ``is_forced=True`` slots for forced charts (from Project Settings)
+    that are missing, and releases (``is_forced=False``) slots whose chart was
+    removed from the forced list by a Project Admin. Returns (dashboard, cfg).
+    """
+    from landing.utils import get_project_config
+    cfg = get_project_config()
+    forced_ids = [int(c) for c in (cfg.home_forced_charts or [])]
+
+    dash = Dashboard.get_home(user)
+    existing = list(dash.chart_slots.select_related('chart').order_by('position'))
+    existing_by_chart = {s.chart_id: s for s in existing if s.chart_id}
+
+    for cid in forced_ids:
+        slot = existing_by_chart.get(cid)
+        if slot is not None:
+            if not slot.is_forced:
+                slot.is_forced = True
+                slot.save()
+            continue
+        try:
+            chart = SavedChart.objects.get(pk=cid)
+        except SavedChart.DoesNotExist:
+            continue
+        DashboardChart.objects.create(
+            dashboard=dash,
+            chart=chart,
+            position=dash.chart_slots.count(),
+            gs_w=6, gs_h=4,
+            is_forced=True,
+        )
+
+    for slot in existing:
+        if slot.is_forced and slot.chart_id not in forced_ids:
+            slot.is_forced = False
+            slot.save()
+
+    return dash, cfg
+
+
 @login_required
 def home_dashboard_api(request):
     """Per-user private home dashboard used on the landing page.
 
     Any authenticated user has their own home Dashboard (is_home=True).
 
-    GET  → {dashboard, slots}
+    GET  → {dashboard, slots, max_charts, forced_chart_ids}
     POST actions (JSON body):
       add_chart: {action, chart_id, gs_w?, gs_h?}
       remove:    {action, slot_id}
@@ -164,13 +206,17 @@ def home_dashboard_api(request):
             status=403,
         )
 
-    dash = Dashboard.get_home(request.user)
+    dash, cfg = sync_home_dashboard(request.user)
+    max_charts = int(getattr(cfg, 'home_max_charts', 0) or 0)
+    forced_ids = [int(c) for c in (cfg.home_forced_charts or [])]
 
     if request.method == 'GET':
         slots = list(dash.chart_slots.select_related('chart').order_by('position'))
         return JsonResponse({
             'dashboard': dash.to_dict(),
             'slots': [s.to_dict() for s in slots],
+            'max_charts': max_charts,
+            'forced_chart_ids': forced_ids,
             'success': True,
         })
 
@@ -197,20 +243,34 @@ def home_dashboard_api(request):
         if existing:
             return JsonResponse({'error': 'This chart is already on your home dashboard.'}, status=400)
 
+        is_forced = chart.pk in forced_ids
+        # Forced charts are added by the system and don't count toward the user limit.
+        if not is_forced and max_charts and dash.chart_slots.exclude(is_forced=True).count() >= max_charts:
+            return JsonResponse({
+                'error': f'You have reached the maximum of {max_charts} charts on your home dashboard. Remove a chart first or ask your admin to raise the limit.',
+            }, status=400)
+
         slot = DashboardChart.objects.create(
             dashboard=dash,
             chart=chart,
             position=dash.chart_slots.count(),
             gs_w=int(body.get('gs_w') or 6),
             gs_h=int(body.get('gs_h') or 4),
+            is_forced=is_forced,
         )
-        return JsonResponse({'slot': slot.to_dict(), 'success': True})
+        return JsonResponse({'slot': slot.to_dict(), 'success': True, 'max_charts': max_charts})
 
     if action == 'remove':
         try:
             slot_id = int(body.get('slot_id'))
         except (TypeError, ValueError):
             return JsonResponse({'error': 'Invalid slot_id'}, status=400)
+        slot = dash.chart_slots.filter(pk=slot_id).first()
+        if slot and slot.is_forced:
+            return JsonResponse(
+                {'error': 'This chart is required by your administrator and cannot be removed.'},
+                status=400,
+            )
         deleted = DashboardChart.objects.filter(pk=slot_id, dashboard=dash).delete()[0]
         if not deleted:
             return JsonResponse({'error': 'Slot not found'}, status=404)

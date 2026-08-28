@@ -5,7 +5,10 @@ from django.shortcuts import get_object_or_404, render
 from django.views.generic import TemplateView
 
 from dataviz.models import DataVizPage, Dashboard, SavedChart, DataVizPageRow, DataVizPageTab, DataVizPageFolder
-from dataviz.utils.page_publish import build_page_tree, folder_path_from_url, collect_folder_paths, all_page_folder_paths
+from dataviz.utils.page_publish import (
+    build_page_tree, folder_path_from_url, collect_folder_paths, all_page_folder_paths,
+    folder_contents_q,
+)
 
 from .mixins import ProjectAdminMixin, is_project_admin
 
@@ -55,7 +58,13 @@ def page_index(request):
     for name in subfolders:
         full_path = f"{parent_folder} / {name}".strip(' / ') if parent_folder else name
         url_path = f"{current_path}/{name}" if current_path else name
-        subfolder_items.append({'name': name, 'full_path': full_path, 'url_path': url_path})
+        page_count = DataVizPage.objects.filter(folder_contents_q('folder', full_path)).count()
+        subfolder_items.append({
+            'name': name,
+            'full_path': full_path,
+            'url_path': url_path,
+            'page_count': page_count,
+        })
 
     all_folders = sorted(set(collect_folder_paths(root)) | set(all_page_folder_paths()))
 

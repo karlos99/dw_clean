@@ -38,6 +38,16 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'schedule_list', 'relative_year', 'mathr_recommendation',
 })
 
+# Keys newly written to Postgres add_data can be missing from the ClickHouse
+# mirror. JSONExtract on stale CH returns empty strings without error, so we
+# keep those extracts on Postgres until CH is re-synced.
+_PG_ADD_DATA_KEYS = ('dsusd_fep', 'DSUSD_FEP')
+
+
+def _sql_uses_pg_add_data_key(sql: str) -> bool:
+    text = sql or ''
+    return any(k in text for k in _PG_ADD_DATA_KEYS)
+
 
 class QueryExecutor:
     """
@@ -88,6 +98,8 @@ class QueryExecutor:
         """
         if self.ch_client is not None:
             from .translator import SQLTranslationError
+            if _sql_uses_pg_add_data_key(sql):
+                return self._execute_postgres(sql, params)
             try:
                 return self._execute_clickhouse(sql, params)
             except SQLTranslationError as exc:
@@ -112,6 +124,8 @@ class QueryExecutor:
         """
         if self.ch_client is not None:
             from .translator import SQLTranslationError
+            if _sql_uses_pg_add_data_key(sql):
+                return self._execute_postgres_fetchall(sql, params)
             try:
                 result = self._execute_clickhouse(sql, params)
                 if result['error']:

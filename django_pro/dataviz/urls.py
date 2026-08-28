@@ -14,7 +14,7 @@ from .views import (
     # Column Picker (Explorer) API
     column_structures_api, column_filter_options_api,
     # Page API
-    page_save_api, page_duplicate_api, page_delete_api, page_folders_list_api, page_folder_create_api, page_batch_move_api, page_publish_api, page_unpublish_api, page_move_api, page_sections_api, page_filter_options_api,
+    page_save_api, page_duplicate_api, page_delete_api, page_folders_list_api, page_folder_create_api, page_folder_rename_api, page_folder_delete_api, page_batch_move_api, page_publish_api, page_unpublish_api, page_move_api, page_sections_api, page_filter_options_api,
     page_filter_columns_api, section_detail_api, clear_cache_api,
     # Row API
     row_detail_api,
@@ -104,6 +104,8 @@ urlpatterns = [
     path('api/pages/save/',                                      page_save_api,           name='page_save'),
     path('api/pages/folders/',                                   page_folders_list_api,  name='page_folders_list'),
     path('api/pages/folders/create/',                            page_folder_create_api, name='page_folder_create'),
+    path('api/pages/folders/rename/',                            page_folder_rename_api, name='page_folder_rename'),
+    path('api/pages/folders/delete/',                            page_folder_delete_api, name='page_folder_delete'),
     path('api/pages/move-batch/',                                page_batch_move_api,    name='page_batch_move'),
     path('api/pages/<slug>/duplicate/',                         page_duplicate_api,     name='page_duplicate'),
     path('api/pages/<slug>/publish/',                           page_publish_api,       name='page_publish'),

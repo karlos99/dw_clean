@@ -539,6 +539,97 @@ def _alias_category_label(label, value_map: dict, sep: str = _X_COMP_SEP):
     return label
 
 
+_TABLE_HEADER_SEP = ' \u25b8 '
+
+
+def _col_header_alias_map(cfg: dict) -> dict:
+    raw_map = cfg.get('col_header_aliases') or {}
+    if not isinstance(raw_map, dict):
+        return {}
+    return {
+        str(k): str(v)
+        for k, v in raw_map.items()
+        if k is not None and str(k).strip() != '' and v is not None and str(v).strip() != ''
+    }
+
+
+def _alias_header_label(label, value_map: dict):
+    aliased = _alias_category_label(label, value_map)
+    if aliased != label:
+        return aliased
+    return _alias_category_label(label, value_map, sep=_TABLE_HEADER_SEP)
+
+
+def _collect_col_header_keys(option: dict) -> list:
+    keys = []
+    seen = set()
+
+    def _add(v):
+        if v is None:
+            return
+        s = str(v)
+        if s and s not in seen:
+            seen.add(s)
+            keys.append(s)
+
+    for h in option.get('col_headers') or []:
+        _add(h)
+    for g in option.get('col_header_groups') or []:
+        if isinstance(g, dict):
+            _add(g.get('label'))
+            for h in g.get('headers') or []:
+                _add(h)
+    meta = option.get('_drillMeta') or {}
+    if isinstance(meta, dict):
+        for h in meta.get('colHeaders') or []:
+            _add(h)
+    return keys
+
+
+def _apply_col_header_aliases(option: dict, cfg: dict) -> None:
+    """Replace table/pivot column-header *display* labels.
+
+    Raw values stay in ``col_header_raw`` and ``_drillMeta.colHeaders``
+    for drill-through.
+    """
+    st_type = (option.get('_drillMeta') or {}).get('stType')
+    is_table = option.get('__type__') == 'table' or st_type in (
+        'summary_table', 'dynamic_summary_table',
+    )
+    if not is_table:
+        option['__col_header_keys__'] = []
+        return
+
+    option['__col_header_keys__'] = _collect_col_header_keys(option)
+    value_map = _col_header_alias_map(cfg)
+    if not value_map:
+        return
+
+    headers = option.get('col_headers')
+    if isinstance(headers, list) and headers:
+        option['col_header_raw'] = list(headers)
+        option['col_headers'] = [_alias_header_label(h, value_map) for h in headers]
+
+    groups = option.get('col_header_groups')
+    if isinstance(groups, list):
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            if 'label' in g:
+                g['label'] = _alias_header_label(g.get('label'), value_map)
+            hs = g.get('headers')
+            if isinstance(hs, list):
+                g['headers'] = [_alias_header_label(h, value_map) for h in hs]
+
+    legend = option.get('legend')
+    if isinstance(legend, dict) and isinstance(legend.get('data'), list):
+        legend['data'] = [_alias_header_label(n, value_map) for n in legend['data']]
+
+    for s in option.get('series') or []:
+        if isinstance(s, dict) and 'name' in s:
+            s['name'] = _alias_header_label(s['name'], value_map)
+
+
 def _apply_x_value_map(option: dict, cfg: dict) -> None:
     """Replace category-axis *display* labels using ``cfg['x_value_map']``.
 

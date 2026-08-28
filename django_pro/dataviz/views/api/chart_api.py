@@ -18,7 +18,7 @@ from dataviz.utils.chart_builder import build_option
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '10'
+_CHART_PIPELINE_VERSION = '11'
 
 
 def _effective_chart_cfg(chart) -> dict:
@@ -143,6 +143,14 @@ def _cfg_from_post(post):
     if not isinstance(x_value_map, dict):
         x_value_map = {}
 
+    cha_raw = post.get('col_header_aliases', '')
+    try:
+        col_header_aliases = json.loads(cha_raw) if cha_raw else {}
+    except (json.JSONDecodeError, ValueError):
+        col_header_aliases = {}
+    if not isinstance(col_header_aliases, dict):
+        col_header_aliases = {}
+
     # Parse stack_order JSON
     so_raw = post.get('stack_order', '')
     try:
@@ -247,6 +255,8 @@ def _cfg_from_post(post):
         'dyn_show_tooltips':  post.get('dyn_show_tooltips', '1') == '1',
         'dyn_col_mode':      post.get('dyn_col_mode', 'pivot'),
         'dyn_calculations':  _parse_json_list('dyn_calculations'),
+        'dyn_drill_calc':    post.get('dyn_drill_calc', ''),
+        'dyn_totals_only':   post.get('dyn_totals_only', '0') == '1',
         'dyn_display_type':  post.get('dyn_display_type', 'table'),
         # Dates (date_series) fields
         'ds_date_col':       post.get('ds_date_col', ''),
@@ -274,6 +284,7 @@ def _cfg_from_post(post):
         'smooth':            bool(post.get('smooth')),
         'color_map':         color_map,
         'x_value_map':       x_value_map,
+        'col_header_aliases': col_header_aliases,
         # Stack order
         'stack_order':       stack_order,
         # Element toggles
@@ -531,6 +542,7 @@ def chart_preview_api(request):
         series_names    = option.pop('__series_names__', [])
         category_names  = option.pop('__category_names__', [])
         x_alias_keys    = option.pop('__x_alias_keys__', [])
+        col_header_keys = option.pop('__col_header_keys__', [])
         ac_avail_cats   = option.pop('__ac_avail_cats__', [])
         ac_avail_pl     = option.pop('__ac_avail_pl__', [])
         query_columns = list(rows[0].keys()) if rows else (result.get('columns', []))
@@ -539,11 +551,15 @@ def chart_preview_api(request):
             'series_names_json':  json.dumps(series_names),
             'category_names_json': json.dumps(category_names),
             'x_alias_keys_json':  json.dumps(x_alias_keys),
+            'col_header_keys_json': json.dumps(col_header_keys),
             'ac_avail_cats_json': json.dumps(ac_avail_cats),
             'ac_avail_pl_json':   json.dumps(ac_avail_pl),
             'query_columns_json': json.dumps(query_columns),
             'chart_id':           _chart_id or 'preview',
             'drill_enabled':      '1' if _chart_id else '0',
+            'drill_source':       'chart_builder' if _chart_id else '',
+            'drill_source_id':    str(_chart_id) if _chart_id else '',
+            'drill_source_name':  'Chart Builder' if _chart_id else '',
         })
     except Exception as exc:
         return _error(f'Chart error: {exc}')
@@ -660,7 +676,7 @@ def chart_save_api(request):
 
 @login_required
 def chart_detail_api(request, chart_id):
-    """GET a chart's full dict; PUT to update description; DELETE to remove it."""
+    """GET a chart's full dict; PUT to update description / user-menu flag; DELETE to remove it."""
     if not is_project_admin(request.user):
         return FORBIDDEN
 
@@ -673,11 +689,21 @@ def chart_detail_api(request, chart_id):
             body = json.loads(request.body)
         except (json.JSONDecodeError, ValueError):
             return JsonResponse({'error': 'Invalid JSON'}, status=400)
+        update_fields = []
         if 'description' in body:
             chart.description = body['description']
-            chart.save(update_fields=['description'])
-            return JsonResponse({'success': True, 'description': chart.description})
-        return JsonResponse({'error': 'No updatable fields provided'}, status=400)
+            update_fields.append('description')
+        if 'is_user_menu' in body:
+            chart.is_user_menu = bool(body['is_user_menu'])
+            update_fields.append('is_user_menu')
+        if not update_fields:
+            return JsonResponse({'error': 'No updatable fields provided'}, status=400)
+        chart.save(update_fields=update_fields)
+        return JsonResponse({
+            'success': True,
+            'description': chart.description,
+            'is_user_menu': chart.is_user_menu,
+        })
     if request.method == 'DELETE':
         chart.delete()
         return JsonResponse({'success': True})

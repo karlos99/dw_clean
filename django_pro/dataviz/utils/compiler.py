@@ -284,8 +284,27 @@ def get_columns_for_table(table_name: str) -> set:
                     keys = [row[0] for row in cursor.fetchall() if row[0]]
                     for k in keys:
                         final_cols.add(f"{c}->'{k}'")
+                    if table_name == 'current_student' and c == 'add_data' and 'school_year' in base_cols:
+                        cursor.execute(
+                            'SELECT DISTINCT jsonb_object_keys('
+                            "CASE WHEN jsonb_typeof(add_data) = 'object' THEN add_data "
+                            "WHEN jsonb_typeof(add_data) = 'string' "
+                            "AND left(BTRIM(add_data #>> '{}'), 1) = '{' "
+                            "THEN (add_data #>> '{}')::jsonb ELSE NULL END"
+                            ') AS key FROM current_student '
+                            'WHERE add_data IS NOT NULL AND school_year = ('
+                            'SELECT MAX(school_year) FROM current_student'
+                            ')'
+                        )
+                        for row in cursor.fetchall():
+                            if row[0]:
+                                final_cols.add(f"add_data->'{row[0]}'")
     except Exception:
         logger.warning(f"Failed to extract JSON columns for table {table_name}", exc_info=True)
+
+    if table_name == 'current_student':
+        from dataexploration.view_modules.column_management import known_add_data_json_paths
+        final_cols.update(known_add_data_json_paths())
 
     return final_cols
 
@@ -392,21 +411,31 @@ def format_column_expr(tbl, col):
     Given a table name and a column name, returns the SQL expression.
     If the column name contains a JSON path like 'other_info->\'lexile\'',
     formats it as '"table"."other_info"->>\'lexile\''.
-    Race-list arrays (add_data->'l_race') are rendered as comma-joined text.
+    JSON-list arrays (add_data->'l_race') are rendered as comma-joined text.
     """
     if '->' in col:
         base_col, key = col.split('->', 1)
         key_clean = key.strip("'\"")
-        if base_col == 'add_data' and key_clean == 'l_race':
-            from dataexploration.view_modules.column_management import race_list_display_expr
-            return race_list_display_expr(f'"{tbl}"')
+        if base_col == 'add_data':
+            from dataexploration.view_modules.column_management import (
+                json_list_key_for_column,
+                json_list_display_expr,
+                JSON_SCALAR_COLUMNS,
+                json_scalar_expr,
+            )
+            json_key = json_list_key_for_column(f"add_data->'{key_clean}'")
+            if json_key:
+                return json_list_display_expr(json_key, f'"{tbl}"')
+            virt = next((c for c, k in JSON_SCALAR_COLUMNS.items() if k == key_clean), None)
+            if virt:
+                return json_scalar_expr(virt, f'"{tbl}"')
         return f'"{tbl}"."{base_col}"->>\'{key_clean}\''
     return f'"{tbl}"."{col}"'
 
 
-def _append_dataset_l_race_filter(where_parts, params, tbl, val, operator='in'):
-    """Any-of overlap filter for current_student.add_data->'l_race'."""
-    from dataexploration.view_modules.column_management import append_race_list_filter
+def _append_dataset_json_list_filter(where_parts, params, tbl, json_key, val, operator='in'):
+    """Any-of overlap filter for current_student.add_data JSON-list keys."""
+    from dataexploration.view_modules.column_management import append_json_list_filter
     alias = f'"{tbl}"'
     if operator == 'exact':
         values = [val] if val not in (None, '') else []
@@ -414,7 +443,7 @@ def _append_dataset_l_race_filter(where_parts, params, tbl, val, operator='in'):
         values = val
     else:
         values = [val] if val not in (None, '') else []
-    append_race_list_filter(where_parts, params, values, table_alias=alias)
+    append_json_list_filter(where_parts, params, values, json_key, table_alias=alias)
 
 
 def find_stu_annual_key_column(active_tables, columns_list=None) -> str | None:
@@ -691,9 +720,10 @@ def compile_dataset_to_sql(
         
         tbl, col = validate_column_identifier(col_str, active_tables)
 
-        from dataexploration.view_modules.column_management import is_race_list_column
-        if is_race_list_column(col_str) or is_race_list_column(col):
-            _append_dataset_l_race_filter(where_parts, params, tbl, val, operator)
+        from dataexploration.view_modules.column_management import json_list_key_for_column
+        json_key = json_list_key_for_column(col_str) or json_list_key_for_column(col)
+        if json_key:
+            _append_dataset_json_list_filter(where_parts, params, tbl, json_key, val, operator)
             continue
 
         expr = format_column_expr(tbl, col)
@@ -816,9 +846,10 @@ def compile_dataset_to_sql(
             if ftbl not in allowed_tables or base_col not in get_columns_for_table(ftbl):
                 continue
 
-            from dataexploration.view_modules.column_management import is_race_list_column
-            if is_race_list_column(fname) or is_race_list_column(fkey):
-                _append_dataset_l_race_filter(where_parts, params, ftbl, fval, 'in')
+            from dataexploration.view_modules.column_management import json_list_key_for_column
+            json_key = json_list_key_for_column(fname) or json_list_key_for_column(fkey)
+            if json_key:
+                _append_dataset_json_list_filter(where_parts, params, ftbl, json_key, fval, 'in')
                 continue
             
             # Add filter condition
@@ -882,6 +913,17 @@ def compile_dataset_to_sql(
     order_parts = []
     if sak_expr:
         order_parts.append(f'{sak_expr} ASC')
+        # one_row_per_stu_annual_key: DISTINCT ON (stu_annual_key) picks ONE row
+        # per student — among duplicate `results` rows (one carries the JSON
+        # value e.g. dfp, one doesn't) it must prefer the populated row, or the
+        # chart/drill show a blank DFP for that student.
+        for col_str in results_json_cols:
+            _tbl, _col = validate_column_identifier(col_str, active_tables)
+            _expr = format_column_expr(_tbl, _col)
+            if '->' in col_str:
+                order_parts.append(f'(NULLIF({_expr}, \'\') IS NOT NULL) DESC')
+            else:
+                order_parts.append(f'({_expr} IS NOT NULL) DESC')
     if order_list:
         for ob in order_list:
             col_str = ob.get('column')
@@ -994,9 +1036,10 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
         operator = f.get('operator', 'exact').lower()
         val = f.get('value')
         tbl, col = validate_column_identifier(col_str, active_tables)
-        from dataexploration.view_modules.column_management import is_race_list_column
-        if is_race_list_column(col_str) or is_race_list_column(col):
-            _append_dataset_l_race_filter(where_parts, params, tbl, val, operator)
+        from dataexploration.view_modules.column_management import json_list_key_for_column
+        json_key = json_list_key_for_column(col_str) or json_list_key_for_column(col)
+        if json_key:
+            _append_dataset_json_list_filter(where_parts, params, tbl, json_key, val, operator)
             continue
         expr = format_column_expr(tbl, col)
         if operator == 'exact':

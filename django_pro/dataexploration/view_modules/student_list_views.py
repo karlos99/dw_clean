@@ -32,10 +32,9 @@ from .column_management import (
     get_saved_default_columns,
     get_column_expression,
     get_enabled_columns,
-    is_race_list_column,
-    append_race_list_filter,
-    race_list_unnest_select_expr,
-    RACE_LIST_COL,
+    json_list_key_for_column,
+    append_json_list_filter,
+    json_list_unnest_select_expr,
 )
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
 from landing.utils import get_project_config
@@ -842,9 +841,9 @@ def load_students(request):
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
 
-            # Race List (add_data.l_race JSON array) — match students with ANY selected race
-            if is_race_list_column(col):
-                append_race_list_filter(where_clauses, params, values)
+            json_key = json_list_key_for_column(col)
+            if json_key:
+                append_json_list_filter(where_clauses, params, values, json_key)
                 continue
 
             # Standard columns
@@ -2031,17 +2030,17 @@ def load_students(request):
                 _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
-                # Race List options: unnest individual races from the JSON array/string
-                if is_race_list_column(col):
+                json_key = json_list_key_for_column(col)
+                if json_key:
                     try:
-                        unnest_expr = race_list_unnest_select_expr('cs')
+                        unnest_expr = json_list_unnest_select_expr(json_key, 'cs')
                         options_query = f"""
                             SELECT DISTINCT v FROM (
                                 SELECT {unnest_expr} AS v
                                 FROM current_student cs
                                 {join_sql}
                                 WHERE {option_where_sql}
-                            ) _race_opts
+                            ) _json_list_opts
                             WHERE v IS NOT NULL AND BTRIM(v) != ''
                             ORDER BY v ASC
                             LIMIT 100
@@ -2049,12 +2048,10 @@ def load_students(request):
                         cursor.execute(options_query, option_params)
                         rows = cursor.fetchall()
                         values = [row[0] for row in rows if row[0] is not None and str(row[0]).strip()]
-                        # Always expose filter options for Race List when any values exist
                         if values:
                             filter_options[col] = values
                             cache.set(cache_key, values, 300)
                     except Exception:
-                        # Don't let Race List options take down the whole table load
                         pass
                     continue
 

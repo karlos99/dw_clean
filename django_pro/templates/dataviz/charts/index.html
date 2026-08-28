@@ -1,6 +1,38 @@
 {% extends "base.html" %}
-{% load dataviz_tags %}
+{% load static %}
 {% block title %}Charts – DataViz{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+<style>
+  .chart-row.is-selected {
+    border-color: #3b82f6;
+    background: #f8fbff;
+    box-shadow: inset 3px 0 0 #3b82f6;
+  }
+  .chart-name { overflow-wrap: anywhere; word-break: break-word; }
+  .chart-actions-menu { position: relative; }
+  .chart-menu-panel {
+    position: absolute; right: 0; top: calc(100% + 4px); min-width: 11rem;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 0.75rem;
+    box-shadow: 0 10px 25px rgba(15,23,42,.12); z-index: 30; padding: 0.25rem 0;
+  }
+  .chart-menu-item {
+    display: flex; align-items: center; gap: 0.5rem; width: 100%;
+    padding: 0.5rem 0.875rem; font-size: 0.6875rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em; color: #475569;
+    text-align: left; background: transparent; border: 0; cursor: pointer;
+    transition: background .12s ease, color .12s ease; text-decoration: none;
+  }
+  .chart-menu-item:hover { background: #f8fafc; color: #0f172a; }
+  .chart-menu-item svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+  .chart-menu-item-danger { color: #dc2626; }
+  .chart-menu-item-danger:hover { background: #fef2f2; color: #b91c1c; }
+  .chart-menu-divider { height: 1px; background: #f1f5f9; margin: 0.25rem 0; }
+  #chart-preview-canvas .chart-container { min-height: 360px !important; }
+  #chart-preview-canvas table { font-size: 12px; }
+</style>
+{% endblock %}
 
 {% block content %}
 {% include "dataviz/submenu.html" %}
@@ -8,16 +40,33 @@
 
   <!-- Top bar -->
   <div class="bg-white border-b border-slate-200 px-6 py-4">
-    <div class="max-w-7xl mx-auto flex items-center justify-between">
-      <div class="flex items-center gap-3">
+    <div class="max-w-[1600px] mx-auto flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 flex-shrink-0">
         <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
         </svg>
         <div>
           <h1 class="text-sm font-semibold uppercase tracking-widest text-slate-900">Charts</h1>
-          <p class="text-xs text-slate-400 mt-0.5">Build and manage saved charts</p>
+          <p class="text-xs text-slate-400 mt-0.5">Select a chart to preview · search and filter to organize</p>
         </div>
       </div>
+      <form method="get" action="{% url 'dataviz:index' %}" id="global-chart-search-form"
+            class="flex-1 max-w-xl mx-4 hidden sm:flex items-center gap-2">
+        <label class="relative block flex-1">
+          <span class="sr-only">Search all charts</span>
+          <svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z"/>
+          </svg>
+          <input id="global-chart-search" type="search" name="q" value="{{ search_q }}"
+                 placeholder="Search all charts by name, folder, type, or page…"
+                 {% if search_q %}autofocus{% endif %}
+                 class="w-full text-sm pl-9 pr-3 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400">
+        </label>
+        <button type="submit"
+                class="flex-shrink-0 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50">
+          Search
+        </button>
+      </form>
       <div class="flex items-center gap-2">
         <a href="{% url 'dataviz:page_index' %}"
            class="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white border border-slate-300 rounded shadow-sm hover:bg-slate-50 transition-all">
@@ -37,9 +86,9 @@
     </div>
   </div>
 
-  <!-- Breadcrumbs & Navigation -->
+  <!-- Breadcrumbs -->
   <div class="bg-white border-b border-slate-200 px-6 py-2 shadow-sm">
-    <div class="max-w-7xl mx-auto flex items-center gap-2 text-xs">
+    <div class="max-w-[1600px] mx-auto flex items-center gap-2 text-xs">
       <a href="{% url 'dataviz:index' %}" class="flex items-center gap-1.5 text-slate-500 hover:text-blue-600 transition">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
         Root
@@ -50,128 +99,410 @@
         {{ crumb.name }}
       </a>
       {% endfor %}
+      {% if search_q %}
+      <svg class="w-3 h-3 text-slate-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+      <span class="text-slate-700 font-medium">Search results</span>
+      {% endif %}
     </div>
   </div>
 
-  <!-- Content -->
-  <div class="max-w-7xl mx-auto px-6 py-8">
-    
-    <!-- Folders Grid -->
-    {% if subfolders %}
-    <div class="mb-8">
-      <h2 class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-4 px-1">Folders</h2>
-      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
-        {% for folder in subfolders %}
-        <a href="?folder={% if current_path %}{{ current_path }}/{% endif %}{{ folder|urlencode }}" 
-           class="group flex flex-col items-center p-4 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all">
-          <svg class="w-10 h-10 text-blue-400 group-hover:text-blue-500 transition-colors" fill="currentColor" viewBox="0 0 24 24">
+  <form method="get" action="{% url 'dataviz:index' %}" class="sm:hidden bg-white border-b border-slate-200 px-4 py-2">
+    <input type="search" name="q" value="{{ search_q }}"
+           placeholder="Search all charts…"
+           class="w-full text-sm px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+  </form>
+
+  <div class="max-w-[1600px] mx-auto px-6 py-6">
+
+    {% if subfolder_items %}
+    <div class="mb-5">
+      <h2 class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2 px-1">Folders</h2>
+      <div class="flex flex-wrap gap-2">
+        {% for folder in subfolder_items %}
+        <a href="?folder={% if current_path %}{{ current_path }}/{% endif %}{{ folder.name|urlencode }}"
+           title="{{ folder.name }}"
+           class="inline-flex items-center gap-2 max-w-full px-3 py-2 bg-white border border-slate-200 rounded-lg hover:border-blue-300 hover:shadow-sm transition-all">
+          <svg class="w-4 h-4 text-blue-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
             <path d="M20 18H4V8h16v10zm0-12h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
           </svg>
-          <span class="mt-2 text-xs font-semibold text-slate-700 text-center truncate w-full px-1">{{ folder }}</span>
+          <span class="text-xs font-semibold text-slate-700 chart-name">{{ folder.name }}</span>
+          <span class="text-[10px] font-bold tabular-nums text-slate-400 bg-slate-100 rounded px-1.5 py-0.5 flex-shrink-0">{{ folder.count }}</span>
         </a>
         {% endfor %}
       </div>
     </div>
     {% endif %}
 
-    <!-- Charts Grid -->
-    <div>
-      <h2 class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-4 px-1">Charts</h2>
-      {% if charts %}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {% for chart in charts %}
-        <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md hover:border-slate-300 transition-all flex flex-col group/card">
-          <div class="flex items-start justify-between mb-3">
-            <div class="flex-1 min-w-0">
-              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-900 truncate">{{ chart.display_name }}</h3>
-              <p class="text-[10px] text-slate-400 mt-0.5 font-mono">{{ chart.chart_type }}</p>
-            </div>
-            <span class="ml-2 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 flex-shrink-0 group-hover/card:bg-blue-100 group-hover/card:text-blue-700 transition-colors">{{ chart.chart_type }}</span>
-          </div>
-          {# Inline-editable description #}
-          <div class="text-xs text-slate-500 flex-1 leading-relaxed relative group/desc">
-            <p class="cursor-text hover:bg-slate-50 rounded px-1 py-0.5 -mx-1 -my-0.5 transition-colors line-clamp-2"
-               title="Click to edit description"
-               onclick="editDescription(this, {{ chart.id }})">{{ chart.description|default:'No description — click to add one' }}</p>
-          </div>
+    {% if charts or search_q %}
+    <div class="grid grid-cols-1 lg:grid-cols-[minmax(280px,420px)_minmax(0,1fr)] gap-5 items-start">
 
-          {# Page usage badges #}
-          {% with pages=page_usage|get_item:chart.id %}
-          {% if pages %}
-          <div class="mt-2 flex flex-wrap gap-1">
-            <span class="text-[9px] font-bold uppercase tracking-wider text-slate-400">Pages:</span>
-            {% for p in pages|slice:":4" %}
-            {% if p.slug %}
-            <a href="{% url 'dataviz:page_view' p.slug %}" title="{{ p.title }}"
-               class="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 transition-colors truncate max-w-[140px]">{{ p.title }}</a>
-            {% else %}
-            <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100 truncate max-w-[140px]">{{ p.title }}</span>
-            {% endif %}
-            {% endfor %}
-            {% if pages|length > 4 %}
-            <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100">+{{ pages|length|add:"-4" }} more</span>
+      <!-- Chart list -->
+      <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+              {% if search_q %}Matching charts{% else %}Charts{% endif %}
+              <span id="chart-visible-count" class="font-normal normal-case tracking-normal text-slate-400">{{ charts|length }}</span>
+              <span class="font-normal normal-case tracking-normal text-slate-300">/ {{ charts|length }}</span>
+            </h2>
+            {% if search_q %}
+            <a href="{% url 'dataviz:index' %}" class="text-[10px] font-bold uppercase tracking-wider text-blue-600 hover:text-blue-800">Clear</a>
             {% endif %}
           </div>
+          {% if search_q %}
+          <p class="text-xs text-slate-500">Results for “{{ search_q }}” across all folders</p>
           {% endif %}
-          {% endwith %}
-          
-          <div class="mt-4 flex items-center gap-1.5 border-t border-slate-100 pt-3">
-            <a href="{% url 'dataviz:chart_view' chart.id %}"
-               class="flex-1 text-center inline-flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100 transition-all">
-              View
-            </a>
-            <a href="{% url 'dataviz:chart_edit' chart.id %}"
-               class="flex-1 text-center inline-flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded shadow-sm hover:bg-slate-50 transition-all">
-              Edit
-            </a>
-            <button hx-post="{% url 'dataviz:chart_duplicate' chart.id %}"
-                    hx-on::after-request="if(event.detail.successful) window.location.reload()"
-                    class="flex-1 text-center inline-flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-blue-600 border border-blue-200 rounded shadow-sm hover:bg-blue-50 transition-all">
-              Copy
-            </button>
-            <button onclick="moveChart({{ chart.id }}, '{{ chart.name|escapejs }}')"
-                    class="flex-1 text-center inline-flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded shadow-sm hover:bg-slate-50 transition-all">
-              Move
-            </button>
-            <button hx-delete="{% url 'dataviz:chart_detail' chart.id %}"
-                    hx-confirm="Delete '{{ chart.name }}'?"
-                    hx-target="closest div.bg-white"
-                    hx-swap="outerHTML swap:300ms"
-                    class="inline-flex items-center justify-center gap-1 p-1.5 text-red-600 hover:bg-red-50 rounded transition-all"
-                    title="Delete">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-              </svg>
-            </button>
+          <div class="flex items-center gap-1">
+            <button type="button" data-usage="all" onclick="setUsageFilter('all')"
+                    class="usage-filter px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md bg-slate-900 text-white">All</button>
+            <button type="button" data-usage="used" onclick="setUsageFilter('used')"
+                    class="usage-filter px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md text-slate-500 hover:bg-slate-100">On a page</button>
+            <button type="button" data-usage="unused" onclick="setUsageFilter('unused')"
+                    class="usage-filter px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md text-slate-500 hover:bg-slate-100">Unused</button>
           </div>
         </div>
-        {% endfor %}
+
+        <div id="charts-list" class="divide-y divide-slate-100 max-h-[min(70vh,720px)] overflow-y-auto focus:outline-none" tabindex="0">
+          {% for chart in charts %}
+          <div id="chart-{{ chart.id }}"
+               class="chart-row px-3 py-2.5 hover:bg-slate-50 transition-colors flex items-start gap-2 cursor-pointer"
+               data-id="{{ chart.id }}"
+               data-name="{{ chart.name|escape }}"
+               data-display-name="{{ chart.display_name|escape }}"
+               data-type-label="{{ chart.type_label|escape }}"
+               data-description="{{ chart.description|escape }}"
+               data-page-count="{{ chart.used_on_pages|length }}"
+               data-folder-path="{{ chart.folder_path|escape }}"
+               data-folder-url="{{ chart.folder_url|escape }}"
+               data-search="{{ chart.search_blob|escape }}"
+               data-view-url="{% url 'dataviz:chart_view' chart.id %}"
+               data-edit-url="{% url 'dataviz:chart_edit' chart.id %}"
+               data-duplicate-url="{% url 'dataviz:chart_duplicate' chart.id %}"
+               data-delete-url="{% url 'dataviz:chart_detail' chart.id %}"
+               data-render-url="{% url 'dataviz:chart_render' chart.id %}?source=chart_view&amp;source_id={{ chart.id }}&amp;source_name={{ chart.name|urlencode }}"
+               onclick="selectChart(this, true)">
+            <div class="min-w-0 flex-1">
+              <p class="chart-name text-sm font-semibold text-slate-900 leading-snug">{{ chart.display_name }}</p>
+              {% if search_q and chart.folder_path %}
+              <a href="?folder={{ chart.folder_url|urlencode }}" onclick="event.stopPropagation()"
+                 class="mt-0.5 inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-blue-600">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M20 18H4V8h16v10zm0-12h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>
+                {{ chart.folder_path }}
+              </a>
+              {% endif %}
+              <div class="mt-1 flex flex-wrap items-center gap-1.5">
+                <span class="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{{ chart.type_label }}</span>
+                {% if chart.used_on_pages %}
+                  {% for p in chart.used_on_pages %}
+                    {% if p.slug %}
+                    <a href="{% url 'dataviz:page_view' p.slug %}" title="{{ p.title }}"
+                       onclick="event.stopPropagation()"
+                       class="chart-page-chip text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 transition-colors{% if forloop.counter > 3 %} hidden{% endif %}">{{ p.title }}</a>
+                    {% else %}
+                    <span class="chart-page-chip text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100{% if forloop.counter > 3 %} hidden{% endif %}">{{ p.title }}</span>
+                    {% endif %}
+                  {% endfor %}
+                  {% if chart.used_on_pages|length > 3 %}
+                  <span class="chart-more-chip text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100">+{{ chart.used_on_pages|length|add:"-3" }} more</span>
+                  {% endif %}
+                {% else %}
+                <span class="chart-page-chip text-[10px] text-slate-400">Not on a page</span>
+                {% endif %}
+              </div>
+            </div>
+            <label class="flex-shrink-0 inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 cursor-pointer select-none"
+                   title="Show this chart in the User Charts menu so any user can add it to their home dashboard"
+                   onclick="event.stopPropagation()">
+              <input type="checkbox" class="user-chart-cb h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                     {% if chart.is_user_menu %}checked{% endif %}
+                     onchange="toggleUserChart({{ chart.id }}, this)">
+              <span>User</span>
+            </label>
+            <div class="chart-actions-menu flex-shrink-0" onclick="event.stopPropagation()">
+              <button type="button" onclick="toggleChartMenu(event, {{ chart.id }})"
+                      class="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md"
+                      title="Actions" aria-label="Chart actions">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+              </button>
+              <div id="chart-menu-{{ chart.id }}" class="chart-menu-panel hidden">
+                <a href="{% url 'dataviz:chart_view' chart.id %}" class="chart-menu-item">
+                  <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                  View
+                </a>
+                <a href="{% url 'dataviz:chart_edit' chart.id %}" class="chart-menu-item">
+                  <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  Edit
+                </a>
+                <button type="button" class="chart-menu-item"
+                        hx-post="{% url 'dataviz:chart_duplicate' chart.id %}"
+                        hx-on::after-request="if(event.detail.successful) window.location.reload()">
+                  <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                  Copy
+                </button>
+                <button type="button" class="chart-menu-item"
+                        onclick="closeAllChartMenus(); moveChart({{ chart.id }}, '{{ chart.name|escapejs }}')">
+                  <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 7h5l2 2h11v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+                  Move to folder…
+                </button>
+                <div class="chart-menu-divider"></div>
+                <button type="button" class="chart-menu-item chart-menu-item-danger"
+                        hx-delete="{% url 'dataviz:chart_detail' chart.id %}"
+                        hx-confirm="Delete '{{ chart.name }}'?"
+                        hx-target="closest .chart-row"
+                        hx-swap="delete"
+                        hx-on::after-request="if(event.detail.successful) setTimeout(syncPreviewAfterDelete, 50)">
+                  <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <p id="chart-filter-empty" class="{% if charts %}hidden {% endif %}px-4 py-8 text-center text-sm text-slate-400">{% if search_q %}No charts match “{{ search_q }}”.{% else %}No charts match this filter.{% endif %}</p>
       </div>
-      {% elif not subfolders %}
-      <div class="text-center py-20 bg-white border border-dashed border-slate-300 rounded-2xl">
-        <svg class="w-12 h-12 text-slate-200 mx-auto mb-4" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24">
-          <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-        </svg>
-        <h3 class="text-sm font-semibold text-slate-900 mb-1">No charts in this folder</h3>
-        <p class="text-xs text-slate-400 mb-6">Create a chart or move one here using the naming convention.</p>
-        <a href="{% url 'dataviz:chart_new' %}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-blue-700 shadow-md shadow-blue-200 transition-all">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
-          Create New Chart
-        </a>
+
+      <!-- Live preview -->
+      <div id="chart-preview-panel" class="bg-white border border-slate-200 rounded-xl shadow-sm lg:sticky lg:top-24 overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100">
+          <p id="preview-name" class="chart-name text-sm font-semibold text-slate-900">Select a chart</p>
+          <div class="mt-1 flex flex-wrap items-center gap-2">
+            <span id="preview-type" class="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 hidden"></span>
+            <div id="preview-pages" class="flex flex-wrap gap-1"></div>
+          </div>
+          <p id="preview-desc"
+             class="mt-2 text-xs text-slate-500 cursor-text hover:bg-slate-50 rounded px-1 py-0.5 -mx-1 transition-colors hidden"
+             title="Click to edit description"></p>
+          <div id="preview-actions" class="mt-3 hidden flex-wrap items-center gap-1.5"></div>
+        </div>
+        <div id="chart-preview-canvas" class="p-3 min-h-[380px] bg-slate-50/60">
+          <div id="preview-empty" class="flex flex-col items-center justify-center h-[360px] text-slate-400">
+            <svg class="w-12 h-12 mb-3 text-slate-200" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+              <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+            <p class="text-sm font-medium text-slate-500">Select a chart to preview</p>
+            <p class="text-xs text-slate-400 mt-1">Click any row — the live chart loads here</p>
+          </div>
+        </div>
       </div>
-      {% endif %}
     </div>
+
+    {% elif not subfolders %}
+    <div class="text-center py-20 bg-white border border-dashed border-slate-300 rounded-2xl">
+      <svg class="w-12 h-12 text-slate-200 mx-auto mb-4" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24">
+        <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+      </svg>
+      <h3 class="text-sm font-semibold text-slate-900 mb-1">No charts in this folder</h3>
+      <p class="text-xs text-slate-400 mb-6">Create a chart or move one here using the naming convention.</p>
+      <a href="{% url 'dataviz:chart_new' %}" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-xs font-bold uppercase tracking-wider rounded-lg hover:bg-blue-700 shadow-md shadow-blue-200 transition-all">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4"/></svg>
+        Create New Chart
+      </a>
+    </div>
+    {% else %}
+    <div class="text-center py-12 bg-white border border-dashed border-slate-200 rounded-xl">
+      <p class="text-sm font-semibold text-slate-700">No charts in this folder</p>
+      <p class="text-xs text-slate-400 mt-1">Open a subfolder above, or move a chart here.</p>
+    </div>
+    {% endif %}
 
   </div>
 </div>
 
+<script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
 <script>
+  let usageFilter = 'all';
+  let previewSeq = 0;
+  let previewAbort = null;
+
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  function closeAllChartMenus() {
+    document.querySelectorAll('.chart-menu-panel').forEach(el => el.classList.add('hidden'));
+  }
+
+  function toggleChartMenu(event, chartId) {
+    event.stopPropagation();
+    const panel = document.getElementById('chart-menu-' + chartId);
+    const wasOpen = panel && !panel.classList.contains('hidden');
+    closeAllChartMenus();
+    if (panel && !wasOpen) panel.classList.remove('hidden');
+  }
+
+  document.addEventListener('click', closeAllChartMenus);
+
+  function setUsageFilter(value) {
+    usageFilter = value;
+    document.querySelectorAll('.usage-filter').forEach(btn => {
+      const on = btn.dataset.usage === value;
+      btn.classList.toggle('bg-slate-900', on);
+      btn.classList.toggle('text-white', on);
+      btn.classList.toggle('text-slate-500', !on);
+      btn.classList.toggle('hover:bg-slate-100', !on);
+    });
+    applyChartFilters();
+  }
+
+  function applyChartFilters() {
+    const rows = document.querySelectorAll('.chart-row');
+    let visible = 0;
+    rows.forEach(row => {
+      const pages = Number(row.dataset.pageCount || 0);
+      const show = usageFilter === 'all'
+        || (usageFilter === 'used' && pages > 0)
+        || (usageFilter === 'unused' && pages === 0);
+      row.classList.toggle('hidden', !show);
+      if (show) visible += 1;
+    });
+    const countEl = document.getElementById('chart-visible-count');
+    if (countEl) countEl.textContent = visible;
+    const empty = document.getElementById('chart-filter-empty');
+    if (empty) empty.classList.toggle('hidden', visible > 0);
+    const selected = document.querySelector('.chart-row.is-selected');
+    if (selected && selected.classList.contains('hidden')) {
+      const first = document.querySelector('.chart-row:not(.hidden)');
+      if (first) selectChart(first);
+      else showEmptyPreview();
+    }
+  }
+
+  function disposePreview() {
+    const canvas = document.getElementById('chart-preview-canvas');
+    if (!canvas) return;
+    canvas.querySelectorAll('.chart-container').forEach(el => {
+      if (el._echartsInstance) {
+        try { el._echartsInstance.dispose(); } catch (e) {}
+        el._echartsInstance = null;
+      }
+    });
+  }
+
+  function showEmptyPreview() {
+    document.querySelectorAll('.chart-row.is-selected').forEach(r => r.classList.remove('is-selected'));
+    document.getElementById('preview-name').textContent = 'Select a chart';
+    document.getElementById('preview-type').classList.add('hidden');
+    document.getElementById('preview-pages').innerHTML = '';
+    document.getElementById('preview-desc').classList.add('hidden');
+    document.getElementById('preview-actions').classList.add('hidden');
+    document.getElementById('preview-actions').classList.remove('flex');
+    document.getElementById('preview-actions').innerHTML = '';
+    disposePreview();
+    const canvas = document.getElementById('chart-preview-canvas');
+    canvas.innerHTML = `
+      <div class="flex flex-col items-center justify-center h-[360px] text-slate-400">
+        <p class="text-sm font-medium text-slate-500">Select a chart to preview</p>
+        <p class="text-xs text-slate-400 mt-1">Click any row — the live chart loads here</p>
+      </div>`;
+  }
+
+  function selectChart(row, focusList) {
+    if (!row) return;
+    if (focusList) document.getElementById('charts-list')?.focus({ preventScroll: true });
+    document.querySelectorAll('.chart-row.is-selected').forEach(r => r.classList.remove('is-selected'));
+    row.classList.add('is-selected');
+    row.scrollIntoView({ block: 'nearest' });
+
+    const id = row.dataset.id;
+    const displayName = row.dataset.displayName || '';
+    const typeLabel = row.dataset.typeLabel || '';
+    const desc = row.dataset.description || '';
+    history.replaceState(null, '', '#chart-' + id);
+
+    document.getElementById('preview-name').textContent = displayName;
+    const typeEl = document.getElementById('preview-type');
+    typeEl.textContent = typeLabel;
+    typeEl.classList.remove('hidden');
+
+    const pagesHost = document.getElementById('preview-pages');
+    pagesHost.innerHTML = '';
+    row.querySelectorAll('.chart-page-chip').forEach(el => {
+      const clone = el.cloneNode(true);
+      clone.classList.remove('hidden');
+      pagesHost.appendChild(clone);
+    });
+
+    const descEl = document.getElementById('preview-desc');
+    descEl.classList.remove('hidden');
+    descEl.textContent = desc || 'No description — click to add one';
+    descEl.onclick = function () { editDescription(descEl, Number(id)); };
+
+    const actions = document.getElementById('preview-actions');
+    actions.classList.remove('hidden');
+    actions.classList.add('flex');
+    actions.innerHTML = `
+      <a href="${row.dataset.viewUrl}"
+         class="inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100">View</a>
+      <a href="${row.dataset.editUrl}"
+         class="inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded hover:bg-slate-50">Edit</a>
+      <button type="button"
+              hx-post="${row.dataset.duplicateUrl}"
+              hx-on::after-request="if(event.detail.successful) window.location.reload()"
+              class="inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-blue-600 border border-blue-200 rounded hover:bg-blue-50">Copy</button>
+      <button type="button" onclick="moveChart(${id}, ${JSON.stringify(row.dataset.name)})"
+              class="inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-slate-700 border border-slate-300 rounded hover:bg-slate-50">Move</button>
+      <button type="button"
+              hx-delete="${row.dataset.deleteUrl}"
+              hx-confirm="Delete '${(row.dataset.name || '').replace(/'/g, "\\'")}'?"
+              hx-target="#chart-${id}"
+              hx-swap="delete"
+              hx-on::after-request="if(event.detail.successful) setTimeout(syncPreviewAfterDelete, 50)"
+              class="inline-flex items-center justify-center text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-white text-red-600 border border-red-200 rounded hover:bg-red-50">Delete</button>`;
+    if (window.htmx) htmx.process(actions);
+
+    loadPreview(row.dataset.renderUrl);
+  }
+
+  async function loadPreview(url) {
+    const canvas = document.getElementById('chart-preview-canvas');
+    if (!canvas || !url) return;
+    const seq = ++previewSeq;
+    if (previewAbort) previewAbort.abort();
+    previewAbort = new AbortController();
+    disposePreview();
+    canvas.innerHTML = '<div class="flex items-center justify-center h-[360px] text-sm text-slate-400">Loading preview…</div>';
+    try {
+      const resp = await fetch(url, {
+        signal: previewAbort.signal,
+        headers: { 'HX-Request': 'true' },
+      });
+      const html = await resp.text();
+      if (seq !== previewSeq) return;
+      canvas.innerHTML = html;
+      if (window.initAllCharts) window.initAllCharts();
+    } catch (err) {
+      if (err.name === 'AbortError' || seq !== previewSeq) return;
+      canvas.innerHTML = '<div class="flex items-center justify-center h-[360px] text-sm text-red-500">Could not load preview.</div>';
+    }
+  }
+
+  function syncPreviewAfterDelete() {
+    applyChartFilters();
+    const selected = document.querySelector('.chart-row.is-selected');
+    if (selected) return;
+    const first = document.querySelector('.chart-row:not(.hidden)');
+    if (first) selectChart(first);
+    else showEmptyPreview();
+  }
+
   async function moveChart(chartId, currentFullName) {
     const lastSlashIndex = currentFullName.lastIndexOf(' / ');
     const currentFolder = lastSlashIndex !== -1 ? currentFullName.substring(0, lastSlashIndex) : "";
     const newFolder = prompt("Enter new folder path (e.g. 'Academics / Math'):", currentFolder);
 
-    if (newFolder === null) return; // Cancelled
+    if (newFolder === null) return;
 
     try {
       const response = await fetch(`/dataviz/api/charts/${chartId}/move/`, {
@@ -194,19 +525,22 @@
     }
   }
 
-  function getCookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-      const cookies = document.cookie.split(';');
-      for (let i = 0; i < cookies.length; i++) {
-        const cookie = cookies[i].trim();
-        if (cookie.substring(0, name.length + 1) === (name + '=')) {
-          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-          break;
-        }
-      }
+  async function toggleUserChart(chartId, el) {
+    const on = el.checked;
+    el.disabled = true;
+    try {
+      const resp = await fetch(`/dataviz/api/charts/${chartId}/`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+        body: JSON.stringify({ is_user_menu: on }),
+      });
+      if (!resp.ok) throw new Error('save failed');
+    } catch (err) {
+      el.checked = !on;
+      alert('Failed to save User Charts option.');
+    } finally {
+      el.disabled = false;
     }
-    return cookieValue;
   }
 
   async function editDescription(el, chartId) {
@@ -230,6 +564,12 @@
         });
         if (resp.ok) {
           el.textContent = desc || 'No description — click to add one';
+          const row = document.querySelector('.chart-row[data-id="' + chartId + '"]');
+          if (row) {
+            row.dataset.description = desc;
+            const blob = row.dataset.search || '';
+            row.dataset.search = blob.replace(current, desc);
+          }
         }
       } catch (e) {
         el.textContent = current;
@@ -241,5 +581,25 @@
       if (e.key === 'Escape') { input.value = isPlaceholder ? '' : current; input.blur(); }
     });
   }
+
+  document.getElementById('charts-list')?.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const rows = [...document.querySelectorAll('.chart-row:not(.hidden)')];
+    if (!rows.length) return;
+    const current = document.querySelector('.chart-row.is-selected');
+    const idx = rows.indexOf(current);
+    const next = e.key === 'ArrowDown'
+      ? rows[Math.min(idx + 1, rows.length - 1)]
+      : rows[Math.max(idx - 1, 0)];
+    if (next) selectChart(next, true);
+  });
+
+  (function initSelection() {
+    const hash = (location.hash || '').replace('#', '');
+    const fromHash = hash && document.getElementById(hash);
+    const first = fromHash || document.querySelector('.chart-row');
+    if (first) selectChart(first);
+  })();
 </script>
 {% endblock %}

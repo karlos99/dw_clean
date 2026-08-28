@@ -8,6 +8,13 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 
 from dataviz.utils.data_loader import run_raw_sql, run_saved_query
+from dataexploration.view_modules.column_management import (
+    JSON_LIST_COLUMNS,
+    JSON_SCALAR_COLUMNS,
+    append_json_list_filter,
+    json_list_unnest_select_expr,
+    json_scalar_expr,
+)
 
 from ..mixins import is_project_admin, FORBIDDEN
 
@@ -209,7 +216,7 @@ def query_columns_api(request, query_id):
 # Columns that make sense as discrete multi-select filters in the chart builder.
 # Excludes unique / high-cardinality identifiers.
 _FILTERABLE_COLUMNS = frozenset([
-    'school_year', 'grade', 'school', 'gender', 'race', 'race_list', 'ell', 'sed',
+    'school_year', 'grade', 'school', 'gender', 'race', 'race_list', 'dsusd_fep', 'ell', 'sed',
     'foster', 'homeless', 'sped', 'gate', 'in_504', 'dli', 'ltel',
     'status', 'suspension_indicator', 'atendace_rate',
     'birth_date', 'us_enter_date', 'fep_date',
@@ -367,13 +374,15 @@ def _build_where_clause(filters_dict: dict, exclude_col: str = None) -> tuple[li
             continue
         
         # Determine SQL expression for the column
-        if fkey == 'race_list':
-            from dataexploration.view_modules.column_management import append_race_list_filter
+        json_key = JSON_LIST_COLUMNS.get(fkey)
+        if json_key:
             vals = fval if isinstance(fval, list) else ([fval] if fval else [])
-            append_race_list_filter(where_parts, params, vals)
+            append_json_list_filter(where_parts, params, vals, json_key)
             continue
         if fkey in _enroll_keys:
             expr = _ENROLL_FILTER_EXPRS[fkey]
+        elif fkey in JSON_SCALAR_COLUMNS:
+            expr = json_scalar_expr(fkey)
         elif _SAFE_COL_RE.match(fkey):
             expr = f'cs.{fkey}'
         else:
@@ -534,24 +543,24 @@ def query_filter_options_api(request, query_id):
                 union_parts = []
                 union_params: list = []
                 for col in filter_cols:
-                    # Race List: distinct individual values from JSON array
-                    if col == 'race_list':
-                        from dataexploration.view_modules.column_management import (
-                            race_list_unnest_select_expr,
-                        )
+                    json_key = JSON_LIST_COLUMNS.get(col)
+                    if json_key:
                         col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
                         col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts) if col_where_parts else ''
-                        unnest = race_list_unnest_select_expr('cs')
+                        unnest = json_list_unnest_select_expr(json_key, 'cs')
                         union_parts.append(
                             f"(SELECT DISTINCT v AS val, %s AS col_name FROM ("
                             f" SELECT {unnest} AS v FROM current_student cs{join_sql} {col_where_sql}"
-                            f") _rl WHERE v IS NOT NULL AND v != '' ORDER BY val)"
+                            f") _jl WHERE v IS NOT NULL AND v != '' ORDER BY val)"
                         )
                         union_params.append(col)
                         union_params.extend(col_params)
                         continue
 
-                    expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
+                    expr = (
+                        json_scalar_expr(col) if col in JSON_SCALAR_COLUMNS
+                        else _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
+                    )
                     
                     # Build dynamic cascading WHERE clause excluding the current column itself
                     col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
@@ -977,23 +986,24 @@ def column_filter_options_api(request):
                 union_parts = []
                 union_params: list = []
                 for col in filter_cols:
-                    if col == 'race_list':
-                        from dataexploration.view_modules.column_management import (
-                            race_list_unnest_select_expr,
-                        )
+                    json_key = JSON_LIST_COLUMNS.get(col)
+                    if json_key:
                         col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
                         col_where_sql = 'WHERE ' + ' AND '.join(col_where_parts) if col_where_parts else ''
-                        unnest = race_list_unnest_select_expr('cs')
+                        unnest = json_list_unnest_select_expr(json_key, 'cs')
                         union_parts.append(
                             f"(SELECT DISTINCT v AS val, %s AS col_name FROM ("
                             f" SELECT {unnest} AS v FROM current_student cs{join_sql} {col_where_sql}"
-                            f") _rl WHERE v IS NOT NULL AND v != '' ORDER BY val)"
+                            f") _jl WHERE v IS NOT NULL AND v != '' ORDER BY val)"
                         )
                         union_params.append(col)
                         union_params.extend(col_params)
                         continue
 
-                    expr = _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
+                    expr = (
+                        json_scalar_expr(col) if col in JSON_SCALAR_COLUMNS
+                        else _ENROLL_FILTER_EXPRS.get(col, f'cs.{col}')
+                    )
                     col_where_parts, col_params = _build_where_clause(merged_filters, exclude_col=col)
                     is_numeric = _is_numeric_filter_col(col)
                     is_date = _is_date_filter_col(col)

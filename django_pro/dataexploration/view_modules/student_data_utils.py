@@ -108,9 +108,10 @@ def _build_student_info_for_ssid(ssid: str):
         'avid': None,
         'avid_type': None,
         'race_list': None,
+        'dsusd_fep': None,
     }
 
-    # Extract JSON add_data fields (AVID, Race List)
+    # Extract JSON add_data fields (AVID, Race List, DSUSD FEP)
     if cs_latest and getattr(cs_latest, 'add_data', None):
         try:
             import json
@@ -125,6 +126,13 @@ def _build_student_info_for_ssid(ssid: str):
                     student_info['race_list'] = ', '.join(str(r) for r in l_race if r is not None)
                 elif l_race:
                     student_info['race_list'] = str(l_race)
+                dsusd_fep = add_data.get('DSUSD_FEP', add_data.get('dsusd_fep'))
+                if dsusd_fep is None:
+                    student_info['dsusd_fep'] = None
+                elif isinstance(dsusd_fep, list):
+                    student_info['dsusd_fep'] = ', '.join(str(v) for v in dsusd_fep if v is not None)
+                else:
+                    student_info['dsusd_fep'] = str(dsusd_fep)
         except (json.JSONDecodeError, TypeError):
             pass
 

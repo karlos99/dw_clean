@@ -14,8 +14,8 @@ from ..constants import COLUMN_DEFINITIONS
 from ..utils import can_user_view_query
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
 from dataexploration.view_modules.column_management import (
-    is_race_list_column,
-    append_race_list_filter,
+    json_list_key_for_column,
+    append_json_list_filter,
 )
 from ..view_modules.student_list_views import _apply_nyl_school_filter
 from users.decorators import page_access_required
@@ -358,8 +358,9 @@ def export_students_csv(request):
                         where_clauses.append(f"({' OR '.join(conds)})")
                 continue
 
-            if is_race_list_column(col):
-                append_race_list_filter(where_clauses, params, values)
+            json_key = json_list_key_for_column(col)
+            if json_key:
+                append_json_list_filter(where_clauses, params, values, json_key)
                 continue
 
             # Resolve column expression

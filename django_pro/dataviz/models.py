@@ -172,6 +172,12 @@ class DashboardChart(models.Model):
     gs_y = models.IntegerField(default=0)
     gs_w = models.IntegerField(default=6)   # default half-width on 12-col grid
     gs_h = models.IntegerField(default=4)   # default height in row units
+    # System-forced slot (configured in Project Settings) — users can rearrange
+    # but not delete it.
+    is_forced = models.BooleanField(
+        default=False,
+        help_text='System-forced slot (configured in Project Settings) - users can rearrange but not delete it.',
+    )
 
     class Meta:
         ordering = ['position']
@@ -191,6 +197,7 @@ class DashboardChart(models.Model):
         d['gs_y'] = self.gs_y
         d['gs_w'] = self.gs_w
         d['gs_h'] = self.gs_h
+        d['is_forced'] = self.is_forced
         if self.chart:
             d['chart'] = self.chart.to_dict()
         else:

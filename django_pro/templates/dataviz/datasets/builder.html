@@ -112,7 +112,7 @@
         <p class="text-xs text-slate-500 mb-3">Write a read-only <code class="bg-slate-100 px-1">SELECT</code> or <code class="bg-slate-100 px-1">WITH</code> query. Results become the dataset columns charts can use.</p>
         <textarea x-model="sourceSql" rows="12"
                   class="w-full text-xs font-mono border border-slate-300 rounded-none px-3 py-2 bg-white resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="SELECT cs.ssid, cs.student_name&#10;FROM current_student cs&#10;WHERE cs.school_year = '{{This School Year}}'"></textarea>
+                  placeholder="SELECT cs.ssid, cs.student_name&#10;FROM current_student cs&#10;WHERE cs.school_year = '{% verbatim %}{{This School Year}}{% endverbatim %}'"></textarea>
         <p class="text-[10px] text-slate-400 mt-2">
           School years: <code class="bg-slate-100 px-1">{% verbatim %}{{Last School Year}}{% endverbatim %}</code>,
           <code class="bg-slate-100 px-1">{% verbatim %}{{This School Year}}{% endverbatim %}</code> — resolved at run time.
