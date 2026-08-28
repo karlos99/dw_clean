@@ -226,6 +226,53 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertIn("LIKE '%%ifep%%'", PL_SORT_SQL)
 		self.assertNotIn("LIKE 'novice%'", PL_SORT_SQL.replace('%%', ''))
 
+	def test_enrich_students_tests_marks_one_round_trip(self):
+		from dataexploration.column_utils import enrich_students_tests_marks
+		from unittest.mock import patch, MagicMock
+
+		students = [
+			{'ssid': 'A', 'student_id': '1', 'stu_annual_key': 'k1'},
+			{'ssid': 'B', 'student_id': '2', 'stu_annual_key': 'k2'},
+		]
+		test_info = {
+			'col_name': 'test_2025_2026_CAASPP_Math_SS',
+			'year': '2025-2026', 'test_name': 'CAASPP', 'subject': 'Math',
+			'metric': 'ss',
+		}
+		mark_info = {
+			'col_name': 'mark_x', 'year': '2025-2026',
+			'subject': 'Math', 'course_name': 'Math 8', 'mark_period': 'Q1',
+		}
+		test_result = {
+			'error': None,
+			'rows': [
+				{
+					'local_student_id': '1', 'ssid': 'A', 'school_year': '2025-2026',
+					'test_name': 'CAASPP', 'subject': 'Math', 'test_window': None,
+					'ss': '2400', 'pl': '3', 'other_info': None,
+				},
+			],
+		}
+		mark_result = {
+			'error': None,
+			'rows': [
+				{
+					'stu_annual_key': 'k2', 'school_year': '2025-2026',
+					'subject': 'Mathematics', 'course_name': 'Math 8 HP',
+					'mark_period': 'Q1', 'mark': 'A',
+				},
+			],
+		}
+		exec_mock = MagicMock()
+		exec_mock.execute.side_effect = [test_result, mark_result]
+		with patch('clickhouse_utils.executor.QueryExecutor', return_value=exec_mock):
+			enrich_students_tests_marks(students, [test_info], [mark_info])
+		self.assertEqual(exec_mock.execute.call_count, 2)
+		self.assertEqual(students[0]['test_2025_2026_CAASPP_Math_SS'], '2400')
+		self.assertEqual(students[1]['mark_x'], 'A')
+		self.assertEqual(students[1]['test_2025_2026_CAASPP_Math_SS'], '—')
+		self.assertEqual(students[0]['mark_x'], '—')
+
 
 class SchoolYearUtilsTests(SimpleTestCase):
 	@patch("dataexploration.school_year_utils.resolve_school_year")

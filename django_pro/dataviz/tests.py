@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 import json
-from django.test import SimpleTestCase, TestCase
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from dataviz.models import (
     SavedChart, Dataset, DataVizPage, DataVizPageRow, DataVizPageSection, DataVizPageFolder,
@@ -44,6 +47,95 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertIn('SELECT DISTINCT ON ("current_student"."stu_annual_key")', sql)
         self.assertIn('ORDER BY "current_student"."stu_annual_key" ASC', sql)
         self.assertFalse(sql.startswith('SELECT DISTINCT "'))
+
+    def test_compile_aggregated_avg_casts_strings_to_float(self):
+        from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['results.pl', 'results.school_year'],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_aggregated_dataset_to_sql(
+                dataset, ['results.school_year'], 'results.pl', 'avg',
+            )
+
+        self.assertIn('AVG(toFloat64OrNull(nullIf(toString("results"."pl"), \'\')))', sql)
+        self.assertNotIn('AVG("results"."pl")', sql)
+
+    def test_compile_aggregated_one_row_per_student_wraps_sak(self):
+        from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['results.pl', 'results.stu_annual_key'],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'pl', 'stu_annual_key'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_aggregated_dataset_to_sql(
+                dataset, ['results.pl'], None, 'count',
+                one_row_per_stu_annual_key=True,
+            )
+
+        self.assertIn('GROUP BY "results"."stu_annual_key"', sql)
+        self.assertIn('FROM (', sql)
+        self.assertIn('AS _sak', sql)
+        self.assertIn('COUNT(*)', sql)
+
+    def test_compile_aggregated_date_bucket_month(self):
+        from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['results.test_date'],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_aggregated_dataset_to_sql(
+                dataset, ['results.test_date'], None, 'count',
+                date_bucket='month',
+            )
+
+        self.assertIn("formatDateTime(", sql)
+        self.assertIn('%Y-%m', sql)
 
     def test_dedupe_rows_by_stu_annual_key(self):
         from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
@@ -2486,7 +2578,7 @@ class DrillCacheTests(TestCase):
             owner=self.user,
         )
 
-    @patch('dataviz.utils.data_loader.run_column_query')
+    @patch('dataviz.utils.drill_through.run_column_query')
     def test_drill_tier2_hit_on_page_change(self, mock_run_query):
         mock_run_query.return_value = {
             'rows': [{'student_id': str(i), 'grade': 'K'} for i in range(5)],
@@ -2500,7 +2592,7 @@ class DrillCacheTests(TestCase):
         self.assertEqual(len(r2['rows']), 2)
         self.assertEqual(mock_run_query.call_count, 1)
 
-    @patch('dataviz.utils.data_loader.run_column_query')
+    @patch('dataviz.utils.drill_through.run_column_query')
     def test_drill_source_filters_bust_tier1(self, mock_run_query):
         mock_run_query.return_value = {
             'rows': [{'student_id': '1', 'grade': 'K'}],
@@ -2569,6 +2661,142 @@ class ChartRenderCacheTests(TestCase):
         req5.user = self.user
         resp5 = chart_render_api(req5, chart.id)
         self.assertEqual(resp5.get('X-Chart-Cache'), 'MISS')
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_warm_published_page_charts_skips_drafts(self, mock_run_query):
+        mock_run_query.return_value = {
+            'rows': [{'student_id': '1', 'grade': 'K'}],
+            'columns': ['student_id', 'grade'],
+        }
+        chart = SavedChart.objects.create(
+            name="Warm Chart",
+            chart_type="bar",
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['student_id', 'grade'], 'chart_type': 'bar'},
+            owner=self.user,
+        )
+        active = DataVizPage.objects.create(
+            title='Active Page', slug='warm-active', owner=self.user,
+            status=DataVizPage.STATUS_ACTIVE,
+        )
+        DataVizPageSection.objects.create(
+            page=active, element_type=DataVizPageSection.TYPE_CHART, chart=chart,
+        )
+        draft = DataVizPage.objects.create(
+            title='Draft Page', slug='warm-draft', owner=self.user,
+            status=DataVizPage.STATUS_DRAFT,
+        )
+        DataVizPageSection.objects.create(
+            page=draft, element_type=DataVizPageSection.TYPE_CHART, chart=chart,
+        )
+        from dataviz.views.api.chart_api import warm_published_page_charts
+        mock_run_query.reset_mock()
+        n = warm_published_page_charts()
+        self.assertEqual(n, 1)
+        self.assertEqual(mock_run_query.call_count, 1)
+
+    @patch('dataviz.views.api.chart_api.build_option')
+    @patch('dataviz.views.api.chart_api._clickhouse_aggregate_dataset')
+    def test_render_keeps_clickhouse_aggregate_cfg(self, mock_agg, mock_build):
+        mock_build.return_value = {'title': {'text': 't'}}
+        compact_rows = [{'school_year': '2024-2025', 'pl': '1', '__dv_value': 6500}]
+        mock_agg.return_value = (
+            {'rows': compact_rows, 'columns': ['school_year', 'pl', '__dv_value'], 'row_count': 1},
+            {
+                'chart_type': 'bar', 'x_col': 'school_year', 'x_cols': ['school_year'],
+                'y_col': '__dv_value', 'agg': 'sum', 'stack_col': 'pl', 'series_col': 'pl',
+            },
+        )
+        ds = Dataset.objects.create(
+            name='Agg DS', owner=self.user, base_table='results',
+            columns=['results.pl', 'current_student.school_year'],
+            column_mappings={
+                'results.pl': 'pl',
+                'current_student.school_year': 'school_year',
+            },
+        )
+        chart = SavedChart.objects.create(
+            name='CAASPP-like',
+            chart_type='bar',
+            source_type=SavedChart.SOURCE_DATASET,
+            source_id=ds.id,
+            config={
+                'chart_type': 'bar', 'x_col': 'school_year', 'y_col': 'pl',
+                'agg': 'avg', 'stack_col': 'pl', 'one_row_per_stu_annual_key': True,
+            },
+            owner=self.user,
+        )
+        from django.test import RequestFactory
+        from dataviz.views.api.chart_api import chart_render_api
+
+        req = RequestFactory().get(f'/api/charts/{chart.id}/render/')
+        req.user = self.user
+        resp = chart_render_api(req, chart.id)
+        self.assertEqual(resp.status_code, 200)
+        _rows, _coldefs, cfg = mock_build.call_args.args
+        self.assertEqual(cfg.get('y_col'), '__dv_value')
+        self.assertEqual(cfg.get('agg'), 'sum')
+        self.assertEqual(_rows[0]['__dv_value'], 6500)
+
+
+class ChartRenderSingleFlightTests(TransactionTestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='flightadmin', password='password', is_staff=True, is_superuser=True,
+        )
+        from django.core.cache import cache
+        cache.clear()
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_concurrent_renders_share_one_query(self, mock_run_query):
+        gate = threading.Event()
+
+        def slow_query(*args, **kwargs):
+            gate.wait(timeout=2)
+            time.sleep(0.15)
+            return {
+                'rows': [{'student_id': '1', 'grade': 'K'}],
+                'columns': ['student_id', 'grade'],
+            }
+
+        mock_run_query.side_effect = slow_query
+        chart = SavedChart.objects.create(
+            name="Flight Chart",
+            chart_type="bar",
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['student_id', 'grade'], 'chart_type': 'bar'},
+            owner=self.user,
+        )
+
+        from django.db import close_old_connections
+        from django.test import RequestFactory
+        from dataviz.views.api.chart_api import chart_render_api
+
+        rf = RequestFactory()
+        # 20 threads is enough to prove stampede coalescing. 100 OS threads each
+        # open a Postgres connection and trip max_connections; real 100-user
+        # traffic shares gunicorn's 8×4 slots instead.
+        burst = 20
+
+        def worker():
+            close_old_connections()
+            req = rf.get(f'/api/charts/{chart.id}/render/')
+            req.user = self.user
+            try:
+                return chart_render_api(req, chart.id)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=burst) as pool:
+            futs = [pool.submit(worker) for _ in range(burst)]
+            gate.set()
+            resps = [f.result(timeout=15) for f in futs]
+
+        self.assertTrue(all(r.status_code == 200 for r in resps))
+        self.assertEqual(mock_run_query.call_count, 1)
+        statuses = [r.get('X-Chart-Cache') for r in resps]
+        self.assertIn('MISS', statuses)
+        self.assertGreaterEqual(statuses.count('HIT'), burst - 1)
 
 
 class ChartAccessControlTests(TestCase):
@@ -3705,9 +3933,10 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         mock_base.assert_called_once()
         self.assertIn('student_id', mock_base.call_args[0][1])
 
+    @patch('dataviz.utils.data_loader._analytics_rows', return_value=None)
     @patch('clickhouse_utils.executor.QueryExecutor.pg_cursor')
     @patch('dataviz.utils.chart_builder._record_pg_val')
-    def test_fetch_test_data_uses_ssid_when_student_id_missing(self, _mock_pg, mock_pg_cursor):
+    def test_fetch_test_data_uses_ssid_when_student_id_missing(self, _mock_pg, mock_pg_cursor, _ch):
         from unittest.mock import MagicMock
         from dataviz.utils.data_loader import _fetch_test_data
 
@@ -3752,7 +3981,8 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         cursor.fetchall.return_value = [
             ('loc1', '123', None, '3', None, '2024-2025', 'CAASPP', 'ELA', 'Spring'),
         ]
-        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor, \
+        with patch('dataviz.utils.data_loader._analytics_rows', return_value=None), \
+             patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor, \
              patch('dataviz.utils.chart_builder._record_pg_val'):
             mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
             mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
@@ -3781,7 +4011,8 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         cursor.fetchall.return_value = [
             ('loc1', '123', None, '2', None, '2024-2025', 'ELPAC', 'summative', 'Regular'),
         ]
-        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
+        with patch('dataviz.utils.data_loader._analytics_rows', return_value=None), \
+             patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
             mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
             mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
             _fetch_test_data(None, test_infos, [], students)
@@ -3791,9 +4022,10 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         self.assertEqual(students[1][col], '2')
         self.assertEqual(mock_record.call_count, 2)
 
+    @patch('dataviz.utils.data_loader._analytics_rows', return_value=None)
     @patch('clickhouse_utils.executor.QueryExecutor.pg_cursor')
     @patch('dataviz.utils.chart_builder._record_pg_val')
-    def test_fetch_test_data_blank_sentinel_scores(self, _mock_pg, mock_record):
+    def test_fetch_test_data_blank_sentinel_scores(self, _mock_pg, mock_pg_cursor, _ch):
         from unittest.mock import MagicMock, patch
         from dataviz.utils.data_loader import _fetch_test_data
 
@@ -3824,10 +4056,9 @@ class AssessmentEnrichmentRegressionTests(TestCase):
             ('loc1', '123', None, 'NaN', None, '2024-2025', 'CAASPP', 'ELA', ''),
             ('loc1', '123', 'NS', None, None, '2024-2025', 'CAASPP', 'Math', ''),
         ]
-        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
-            mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-            mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
-            _fetch_test_data(None, test_infos, [], students)
+        mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+        mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+        _fetch_test_data(None, test_infos, [], students)
 
         self.assertEqual(students[0]['test_2024_2025_CAASPP_ELA_PL'], '\u2014')
         self.assertEqual(students[0]['test_2024_2025_CAASPP_Math_SS'], '\u2014')

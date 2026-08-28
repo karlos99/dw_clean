@@ -242,51 +242,66 @@ def get_survey_data_for_students(student_ids, school_year=None):
     """
     if not student_ids:
         return {}
-    
+
+    params = [list(student_ids)]
+    year_sql = ""
+    if school_year:
+        year_sql = " AND school_year = %s"
+        params.append(school_year)
+
+    from dataviz.utils.data_loader import _analytics_rows
+    rows = _analytics_rows(
+        "SELECT student_id, survey_type, school_year, testing_window, grade_range, "
+        "question_order, value FROM analytics_survey_responses "
+        f"WHERE student_id = ANY(%s){year_sql}",
+        params,
+    )
+    if rows is None:
+        with connections['default'].cursor() as cursor:
+            where_clauses = ["sr.student_id = ANY(%s)"]
+            pg_params = [list(student_ids)]
+            if school_year:
+                where_clauses.append("sd.school_year = %s")
+                pg_params.append(school_year)
+            where_clauses.append("il.ready_for_exploration = true")
+            where_clauses.append("il.status = 'COMPLETED'")
+            where_clauses.append("sd.is_active = true")
+            cursor.execute(f"""
+                SELECT
+                    sr.student_id,
+                    sd.survey_type,
+                    sd.school_year,
+                    sd.testing_window,
+                    sd.grade_range,
+                    sq."order",
+                    sr.value
+                FROM "dataLoader_surveyresponse" sr
+                INNER JOIN "dataLoader_surveyquestion" sq ON sr.question_id = sq.id
+                INNER JOIN "dataLoader_surveydefinition" sd ON sq.survey_definition_id = sd.id
+                INNER JOIN "dataLoader_importlog" il ON sr.import_log_id = il.id
+                WHERE {" AND ".join(where_clauses)}
+                ORDER BY sr.student_id, sq."order"
+            """, pg_params)
+            rows = [
+                {
+                    'student_id': r[0], 'survey_type': r[1], 'school_year': r[2],
+                    'testing_window': r[3], 'grade_range': r[4],
+                    'question_order': r[5], 'value': r[6],
+                }
+                for r in cursor.fetchall()
+            ]
+
     results = {}
-    
-    with connections['default'].cursor() as cursor:
-        # Build query - use ANY() for psycopg3 compatibility
-        params = [list(student_ids)]
-        where_clauses = ["sr.student_id = ANY(%s)"]
-        
-        if school_year:
-            where_clauses.append("sd.school_year = %s")
-            params.append(school_year)
-        
-        # Only get data from published imports
-        where_clauses.append("il.ready_for_exploration = true")
-        where_clauses.append("il.status = 'COMPLETED'")
-        where_clauses.append("sd.is_active = true")
-        
-        where_sql = " AND ".join(where_clauses)
-        
-        cursor.execute(f"""
-            SELECT 
-                sr.student_id,
-                sd.survey_type,
-                sd.school_year,
-                sd.testing_window,
-                sd.grade_range,
-                sq."order",
-                sr.value
-            FROM "dataLoader_surveyresponse" sr
-            INNER JOIN "dataLoader_surveyquestion" sq ON sr.question_id = sq.id
-            INNER JOIN "dataLoader_surveydefinition" sd ON sq.survey_definition_id = sd.id
-            INNER JOIN "dataLoader_importlog" il ON sr.import_log_id = il.id
-            WHERE {where_sql}
-            ORDER BY sr.student_id, sq."order"
-        """, params)
-        
-        for row in cursor.fetchall():
-            student_id, survey_type, sy, window, grade_range, order, value = row
-            
-            if student_id not in results:
-                results[student_id] = {}
-            
-            col_key = _generate_survey_column_key(survey_type, sy, window, order, grade_range)
-            results[student_id][col_key] = value
-    
+    for row in rows:
+        student_id = row.get('student_id')
+        bucket = results.setdefault(student_id, {})
+        if str(student_id) != student_id:
+            results[str(student_id)] = bucket
+        col_key = _generate_survey_column_key(
+            row.get('survey_type'), row.get('school_year'), row.get('testing_window'),
+            row.get('question_order'), row.get('grade_range') or '',
+        )
+        bucket[col_key] = row.get('value')
     return results
 
 

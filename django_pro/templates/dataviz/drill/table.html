@@ -547,11 +547,13 @@ function drillTable() {
     },
 
     /* ── HTMX helper: build URL and swap table ──────────── */
-    _buildApiUrl(page) {
+    _buildApiUrl(page, cursor) {
       const p = new URLSearchParams(window.location.search);
       p.set('page', page);
       p.set('sort_by', this.sortBy);
       p.set('sort_dir', this.sortDir);
+      if (cursor) p.set('cursor', cursor);
+      else p.delete('cursor');
       if (this.visibleCols.length) {
         p.set('cols', this.visibleCols.join(','));
       } else {
@@ -559,8 +561,8 @@ function drillTable() {
       }
       return `/dataviz/api/drill/${chartId}/rows/?${p}`;
     },
-    loadRows(page) {
-      const url = this._buildApiUrl(page || 1);
+    loadRows(page, cursor) {
+      const url = this._buildApiUrl(page || 1, cursor || '');
       htmx.ajax('GET', url, {target: '#drill-table-wrapper', swap: 'innerHTML'});
     },
     applyColumns() {

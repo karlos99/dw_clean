@@ -521,7 +521,7 @@ def page_filter_options_api(request, slug, filter_id):
         try:
             # Only route through ClickHouse when this table is actually mirrored
             # there — otherwise the data doesn't exist and Postgres is correct.
-            cursor_ctx = QueryExecutor().cursor() if table in CLICKHOUSE_SYNCED_TABLES else connections['default'].cursor()
+            cursor_ctx = QueryExecutor(analytics=True).cursor() if table in CLICKHOUSE_SYNCED_TABLES else connections['default'].cursor()
             with cursor_ctx as cursor:
                 cursor.execute(
                     f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}"'

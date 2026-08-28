@@ -305,21 +305,32 @@
                 const totalPages = Math.max(1, Number(firstPayload.total_pages || 1));
                 setLoadProgress(20 + Math.round(60 / totalPages), `Page 1 of ${totalPages} • ${allRows.length.toLocaleString()} rows`);
 
-                for (let pageNum = 2; pageNum <= totalPages; pageNum += 1) {
-                    const pageParams = new URLSearchParams(params.toString());
-                    pageParams.set('page', String(pageNum));
-                    const pct = 20 + Math.round((pageNum / totalPages) * 60);
-                    setLoadProgress(pct, `Page ${pageNum} of ${totalPages} • ${allRows.length.toLocaleString()} rows loaded...`);
-
-                    const pageResponse = await fetch(`${loadStudentsUrl}?${pageParams.toString()}`);
-                    const pagePayload = await readJsonResponse(pageResponse, `Students API (page ${pageNum})`);
-                    if (!pageResponse.ok || !Array.isArray(pagePayload.students)) {
-                        throw new Error(`Failed to load page ${pageNum}`);
-                    }
-
-                    allRows.push(...pagePayload.students);
-                    mergedDefinitions = { ...mergedDefinitions, ...(pagePayload.column_definitions || {}) };
-                    setLoadProgress(pct + Math.round(60 / totalPages), `Page ${pageNum} of ${totalPages} • ${allRows.length.toLocaleString()} rows...`);
+                // Preserve the complete result set, but fetch independent
+                // pages concurrently. The old sequential loop made large
+                // explorer loads pay one network round-trip per page.
+                const pageNumbers = [];
+                for (let pageNum = 2; pageNum <= totalPages; pageNum += 1) pageNumbers.push(pageNum);
+                const pageBatchSize = 4;
+                for (let start = 0; start < pageNumbers.length; start += pageBatchSize) {
+                    const batch = pageNumbers.slice(start, start + pageBatchSize);
+                    const payloads = await Promise.all(batch.map(async (pageNum) => {
+                        const pageParams = new URLSearchParams(params.toString());
+                        pageParams.set('page', String(pageNum));
+                        const pageResponse = await fetch(`${loadStudentsUrl}?${pageParams.toString()}`);
+                        const pagePayload = await readJsonResponse(pageResponse, `Students API (page ${pageNum})`);
+                        if (!pageResponse.ok || !Array.isArray(pagePayload.students)) {
+                            throw new Error(`Failed to load page ${pageNum}`);
+                        }
+                        return { pageNum, payload: pagePayload };
+                    }));
+                    payloads.sort((a, b) => a.pageNum - b.pageNum);
+                    payloads.forEach(({ pageNum, payload }) => {
+                        allRows.push(...payload.students);
+                        mergedDefinitions = { ...mergedDefinitions, ...(payload.column_definitions || {}) };
+                    });
+                    const loadedPage = Math.min(totalPages, start + batch.length + 1);
+                    const pct = 20 + Math.round((loadedPage / totalPages) * 60);
+                    setLoadProgress(pct, `Page ${loadedPage} of ${totalPages} • ${allRows.length.toLocaleString()} rows loaded...`);
                 }
 
                 state.rows = allRows;
@@ -496,4 +507,3 @@
                 applyFilters();
             });
         }
-

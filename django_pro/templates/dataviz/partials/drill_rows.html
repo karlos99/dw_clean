@@ -112,7 +112,7 @@
     {% endif %}
     <span class="px-2 py-1">Page {{ page }}</span>
     {% if page|multiply:per_page < total_rows %}
-    <button @click="loadRows({{ page|add:'1' }})"
+    <button @click="loadRows({{ page|add:'1' }}{% if next_cursor %}, '{{ next_cursor }}'{% endif %})"
             class="px-3 py-1 bg-slate-100 rounded hover:bg-slate-200 transition">
       Next &rarr;
     </button>

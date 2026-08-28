@@ -7,6 +7,7 @@ import json
 
 from django.core.cache import cache
 
+from clickhouse_utils.timing import timed_fn
 from .data_loader import run_saved_query, run_raw_sql, run_column_query, enrich_drill_rows
 
 
@@ -69,11 +70,15 @@ def _drill_needs_post_filter_cache(chart, drill_filters: dict) -> bool:
 def _can_sql_paginate_drill(chart, drill_filters: dict, sort_by: str) -> bool:
     if _drill_needs_post_filter_cache(chart, drill_filters):
         return False
-    if chart.source_type not in ('query', 'columns'):
+    if chart.source_type not in ('query', 'columns', 'dataset'):
+        return False
+    if chart.source_type == 'dataset' and (chart.config or {}).get('one_row_per_stu_annual_key'):
         return False
     if sort_by:
         bare = sort_by.split('.')[-1]
         if bare.startswith(('test_', 'mark_')):
+            return False
+        if chart.source_type == 'dataset' and '.' not in sort_by:
             return False
     return True
 
@@ -741,6 +746,7 @@ def _apply_user_access_filter(rows, cols, user):
     return filtered, cols
 
 
+@timed_fn('execute_drill_query')
 def execute_drill_query(
     chart,
     drill_filters: dict,
@@ -752,6 +758,7 @@ def execute_drill_query(
     sort_dir: str = 'asc',
     column_filters: dict | None = None,
     extra_columns: list | None = None,
+    cursor: str | None = None,
 ) -> dict:
     """
     Run the chart's underlying query with drill_filters merged in.
@@ -843,8 +850,12 @@ def execute_drill_query(
     # returned for the same chart+filters.
     user_part = _drill_user_part(user)
     _fetch_hash = _drill_fetch_hash(chart, drill_filters, extra_columns)
+    sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by)
+    if sql_paginate:
+        _fetch_hash = f"{_fetch_hash}:p{page}:c{cursor or ''}:n{per_page}:s{sort_by}:{sort_dir}"
     updated_ts = int(chart.updated_at.timestamp())
-    _drill_cache_key = f"drill_fetch:{chart.pk}:{updated_ts}:{chart.source_type}:{_fetch_hash}{user_part}"
+    sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+    _drill_cache_key = f"drill_fetch:{sync_v}:{chart.pk}:{updated_ts}:{chart.source_type}:{_fetch_hash}{user_part}"
     _cached_fetch = cache.get(_drill_cache_key)
     sql_total_rows = None
 
@@ -873,8 +884,9 @@ def execute_drill_query(
         result = run_column_query(
             selected_columns, merged_filters, user=user, apply_user_filters=True,
             limit=per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
-            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
+            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) and not cursor else None,
             order_by=sort_by if _can_sql_paginate_drill(chart, drill_filters, sort_by) and sort_by else None,
+            cursor=cursor if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
         )
         rows = result.get('rows', [])
         cols = result.get('columns', [])
@@ -997,10 +1009,31 @@ def execute_drill_query(
             
                 mock_ds = MockDataset(ds, dataset_columns)
                 one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
+                ds_page = sql_paginate and not one_per_sak
+                ds_order = None
+                if ds_page and sort_by and '.' in sort_by:
+                    ds_order = [{'column': sort_by, 'direction': (sort_dir or 'asc')}]
+                if ds_page:
+                    count_sql, count_params = compile_dataset_to_sql(
+                        mock_ds, user=user, interactive_filters=dataset_filters,
+                        limit=None, status_filter=status_val,
+                        one_row_per_stu_annual_key=False, order_by=ds_order,
+                    )
+                    count_result = execute_compiled_query(
+                        f'SELECT COUNT(*) AS n FROM ({count_sql}) AS _drill_cnt',
+                        count_params,
+                    )
+                    if count_result.get('error') or not count_result.get('rows'):
+                        ds_page = False
+                    else:
+                        sql_total_rows = int(next(iter(count_result['rows'][0].values())) or 0)
                 sql, params = compile_dataset_to_sql(
                     mock_ds, user=user, interactive_filters=dataset_filters,
-                    limit=None, status_filter=status_val,
+                    limit=per_page if ds_page else None,
+                    offset=(page - 1) * per_page if ds_page else None,
+                    status_filter=status_val,
                     one_row_per_stu_annual_key=one_per_sak,
+                    order_by=ds_order,
                 )
                 # Use aliased executor so column_mappings are applied to result keys
                 _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
@@ -1096,8 +1129,9 @@ def execute_drill_query(
             extra_columns=extra_columns,
             apply_user_filters=True,
             limit=per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
-            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
+            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) and not cursor else None,
             order_by=sort_by if _can_sql_paginate_drill(chart, drill_filters, sort_by) and sort_by else None,
+            cursor=cursor if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
         )
         rows = result.get('rows', [])
         cols = result.get('columns', [])
@@ -1110,7 +1144,7 @@ def execute_drill_query(
 
     # Tier-2 cache: post-filtered row set (before UI column_filters / sort / page)
     _post_hash = _drill_post_hash(chart, _fetch_hash)
-    _drill_post_key = f"drill_post:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
+    _drill_post_key = f"drill_post:{sync_v}:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
     _cached_post = cache.get(_drill_post_key)
 
     if _cached_post is not None:
@@ -1383,6 +1417,10 @@ def execute_drill_query(
         start = (page - 1) * per_page
         paged = rows[start:start + per_page]
 
+    from clickhouse_utils.pagination import cursor_from_row
+    sort_key = (sort_by.split('.')[-1] if sort_by else '') or 'stu_annual_key'
+    next_cursor = cursor_from_row(paged[-1], sort_key, sort_dir) if paged else ''
+
     return {
         'rows': paged,
         'columns': cols,
@@ -1390,6 +1428,7 @@ def execute_drill_query(
         'total_rows': total,
         'page': page,
         'per_page': per_page,
+        'next_cursor': next_cursor,
         'error': error,
     }
 
@@ -1403,7 +1442,8 @@ def get_column_distinct_values(chart, drill_filters: dict, column: str, user) ->
     _fetch_hash = _drill_fetch_hash(chart, drill_filters, None)
     updated_ts = int(chart.updated_at.timestamp())
     _post_hash = _drill_post_hash(chart, _fetch_hash)
-    _drill_post_key = f"drill_post:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
+    sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+    _drill_post_key = f"drill_post:{sync_v}:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
     cached = cache.get(_drill_post_key)
     if cached is None:
         execute_drill_query(chart, drill_filters, columns=[], user=user, page=1, per_page=50)

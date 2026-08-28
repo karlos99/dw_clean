@@ -175,6 +175,115 @@ def lookup_result_value(student, by_id, by_ssid, blank='—'):
     return blank
 
 
+def _json_key_value(raw, key):
+    if raw is None or not key:
+        return None
+    if isinstance(raw, dict):
+        return raw.get(key)
+    try:
+        obj = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return obj.get(key) if isinstance(obj, dict) else None
+
+
+def _fold(val):
+    return (str(val) if val is not None else '').strip().casefold()
+
+
+def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=None, blank='—'):
+    """Fill test_* / mark_* cells with one ClickHouse round-trip each."""
+    if not students:
+        return
+    from clickhouse_utils.executor import QueryExecutor
+
+    test_cols_info = test_cols_info or []
+    mark_cols_info = mark_cols_info or []
+    exec_ = QueryExecutor(analytics=True)
+
+    if test_cols_info:
+        student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
+        student_ids = [s.get('student_id') for s in students if s.get('student_id')]
+        years = list({info['year'] for info in test_cols_info if info.get('year')})
+        result = exec_.execute(
+            f"SELECT r.local_student_id, r.ssid, r.school_year, r.test_name, r.subject, "
+            f"r.test_window, r.ss, r.pl, r.other_info "
+            f"FROM analytics_student_results r "
+            f"WHERE {RESULTS_BULK_MATCH_SQL} AND r.school_year = ANY(%s)",
+            [student_ssids, student_ids, years],
+        )
+        rows = []
+        if not result.get('error'):
+            for row in result.get('rows') or []:
+                rows.append((
+                    row.get('local_student_id'), row.get('ssid'), row.get('school_year'),
+                    row.get('test_name'), row.get('subject'), row.get('test_window'),
+                    row.get('ss'), row.get('pl'), row.get('other_info'),
+                ))
+        for test_info in test_cols_info:
+            want_year = _fold(test_info.get('year'))
+            want_name = _fold(test_info.get('test_name'))
+            want_subj = _fold(test_info.get('subject'))
+            want_win = _fold(test_info.get('test_window')) if test_info.get('test_window') else None
+            metric = test_info.get('metric')
+            matched = []
+            for local_id, ssid, year, tname, subj, window, ss, pl, other in rows:
+                if _fold(year) != want_year or _fold(tname) != want_name or _fold(subj) != want_subj:
+                    continue
+                if want_win is not None and _fold(window) != want_win:
+                    continue
+                if metric == 'ss':
+                    val = ss
+                elif metric == 'pl':
+                    val = pl
+                else:
+                    val = _json_key_value(other, test_info.get('other_info_key', ''))
+                matched.append((local_id, ssid, val))
+            by_id, by_ssid = assign_result_value_maps(matched)
+            for student in students:
+                student[test_info['col_name']] = lookup_result_value(
+                    student, by_id, by_ssid, blank=blank,
+                )
+
+    if mark_cols_info:
+        student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
+        years = list({info['year'] for info in mark_cols_info if info.get('year')})
+        result = exec_.execute(
+            "SELECT sm.stu_annual_key, sm.school_year, sm.subject, sm.course_name, "
+            "sm.mark_period, sm.mark FROM analytics_student_marks sm "
+            "WHERE sm.stu_annual_key = ANY(%s) AND sm.school_year = ANY(%s)",
+            [student_keys, years],
+        )
+        rows = []
+        if not result.get('error'):
+            for row in result.get('rows') or []:
+                rows.append((
+                    row.get('stu_annual_key'), row.get('school_year'), row.get('subject'),
+                    row.get('course_name'), row.get('mark_period'), row.get('mark'),
+                ))
+        for mark_info in mark_cols_info:
+            want_year = _fold(mark_info.get('year'))
+            subj_needle = _fold(mark_info.get('subject'))
+            course_needle = _fold(mark_info.get('course_name'))
+            want_period = _fold(mark_info['mark_period']) if mark_info.get('mark_period') else None
+            mark_data = {}
+            for sak, year, subject, course, period, mark in rows:
+                if _fold(year) != want_year:
+                    continue
+                if subj_needle not in _fold(subject) or course_needle not in _fold(course):
+                    continue
+                if want_period is None:
+                    if _fold(period):
+                        continue
+                elif _fold(period) != want_period:
+                    continue
+                mark_data[sak] = mark
+            for student in students:
+                student[mark_info['col_name']] = mark_data.get(
+                    student.get('stu_annual_key'), blank,
+                )
+
+
 def _generate_cache_key(prefix, filters, extra_hash_str=""):
     """Generate a consistent cache key from filters and extra conditions."""
     if filters:
