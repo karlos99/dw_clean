@@ -450,7 +450,7 @@ def get_column_statistics(request):
     results_data = {}
 
     from clickhouse_utils.executor import QueryExecutor
-    with QueryExecutor().cursor() as cursor:
+    with QueryExecutor(analytics=True).cursor() as cursor:
         # Build test map
         test_col_map = {}
         if all_related_test_cols:

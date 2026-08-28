@@ -262,7 +262,19 @@
       delete option.__group_label_bands__;
     }
 
-    chart.setOption(option);
+    // Large charts are already reduced by the server-side aggregation path;
+    // avoid ECharts' expensive tweening when a chart still contains many
+    // points. This preserves animation for ordinary charts.
+    var pointCount = 0;
+    if (Array.isArray(option.series)) {
+      option.series.forEach(function (series) {
+        if (series && Array.isArray(series.data)) pointCount += series.data.length;
+      });
+    }
+    if (pointCount > 5000 && option.animation !== false) {
+      option.animation = false;
+    }
+    chart.setOption(option, { lazyUpdate: true });
     applyCenteredGroupLabels(chart);
 
     if (option && option.__is_parliament__) {
@@ -279,9 +291,6 @@
       chart.resize();
       if (option && option.__is_parliament__) {
         adjustParliamentAspectRatio(chart, container, option);
-      }
-      if (option) {
-        chart.setOption(option);
       }
       applyCenteredGroupLabels(chart);
     }
@@ -309,11 +318,6 @@
       // Debounce setOption to prevent lag during active resizing, but ensure legend layout updates
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        if (option) {
-          try {
-            chart.setOption(option);
-          } catch (e) {}
-        }
         applyCenteredGroupLabels(chart);
       }, 100);
     });
@@ -653,6 +657,18 @@
     });
   }
 
+  function disposeChartsIn(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('.chart-container').forEach(function (el) {
+      if (el._echartsInstance) {
+        try { el._echartsInstance.dispose(); } catch (e) { /* ignore */ }
+        el._echartsInstance = null;
+      }
+      el._echartsInited = false;
+      el._echartsObserved = false;
+    });
+  }
+
   // Run on initial load and after HTMX swaps
   function onReady() {
     initAll();
@@ -671,6 +687,7 @@
   // Expose globally for manual calls
   window.initChart        = initChart;
   window.initAllCharts    = initAll;
+  window.disposeChartsIn  = disposeChartsIn;
   window.registerDrillThrough = registerDrillThrough;
   window.applyCenteredGroupLabels = applyCenteredGroupLabels;
   window.getChartDrillStatus = getDrillStatus;

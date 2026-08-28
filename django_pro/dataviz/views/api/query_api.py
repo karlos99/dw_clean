@@ -537,7 +537,7 @@ def query_filter_options_api(request, query_id):
     test_col_map: dict[str, dict] = {}
     mark_col_map: dict[str, dict] = {}
     try:
-        with QueryExecutor().cursor() as cursor:
+        with QueryExecutor(analytics=True).cursor() as cursor:
             # ── Base demographic columns from current_student ──
             if filter_cols:
                 union_parts = []
@@ -981,7 +981,7 @@ def column_filter_options_api(request):
     from clickhouse_utils.executor import QueryExecutor
 
     try:
-        with QueryExecutor().cursor() as cursor:
+        with QueryExecutor(analytics=True).cursor() as cursor:
             if filter_cols:
                 union_parts = []
                 union_params: list = []

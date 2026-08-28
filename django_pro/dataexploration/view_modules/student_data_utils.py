@@ -220,7 +220,7 @@ def _fetch_test_records_for_ssid(ssid: str):
         WHERE r.ssid = %s
         ORDER BY r.school_year DESC, t.test_name, t.subject
     """
-    result = QueryExecutor().execute(sql, [ssid])
+    result = QueryExecutor(analytics=True).execute(sql, [ssid])
     if result.get('error'):
         return []
     
