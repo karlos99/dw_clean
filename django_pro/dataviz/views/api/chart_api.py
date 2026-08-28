@@ -76,7 +76,7 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings):
 
     from dataviz.utils.compiler import (
         build_dataset_col_index, compile_aggregated_dataset_to_sql,
-        execute_compiled_query, SQLCompilationError,
+        execute_compiled_query, SQLCompilationError, resolve_dataset_filters,
     )
     index = build_dataset_col_index(ds)
 
@@ -93,11 +93,8 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings):
     if not x_full or (series_col and not series_full) or (y_col and not y_full):
         return None
 
-    resolved_interactive = {}
-    for key, value in (filters or {}).items():
-        full_key = resolve(key)
-        if full_key:
-            resolved_interactive[full_key] = value
+    active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
+    resolved_interactive = resolve_dataset_filters(filters or {}, ds, active_tables)
     try:
         sql, params = compile_aggregated_dataset_to_sql(
             ds, [x_full], y_full, aggregation, series_col=series_full,
@@ -185,6 +182,14 @@ def _remap_config_cols(config: dict, column_mappings: dict | None) -> dict:
                     f = new_item.get('filter')
                     if isinstance(f, dict) and f.get('col') and isinstance(f['col'], str):
                         new_item['filter'] = {**f, 'col': column_mappings.get(f['col'], f['col'])}
+                    filters = new_item.get('filters')
+                    if isinstance(filters, list):
+                        new_item['filters'] = [
+                            {**ff, 'col': column_mappings.get(ff['col'], ff['col'])}
+                            if isinstance(ff, dict) and isinstance(ff.get('col'), str)
+                            else ff
+                            for ff in filters
+                        ]
                     new_calcs.append(new_item)
                 else:
                     new_calcs.append(item)
@@ -458,6 +463,7 @@ def _cfg_from_post(post):
         'title_font_size': _parse_int(post.get('title_font_size'), 16),
         'label_distance':   _parse_int(post.get('label_distance'),   None),
         'chart_title':      post.get('chart_title', '').strip(),
+        'show_title':       bool(post.get('show_title', '1')),
         'container_width':  _parse_int(post.get('container_width'),  None),
         'container_height': _parse_int(post.get('container_height'), None),
         'parliament_dot_scale': _parse_float(post.get('parliament_dot_scale'), None),

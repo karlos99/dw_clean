@@ -243,7 +243,7 @@ def _apply_dyn_calc_threshold_rows(rows, thresholds, resolve_col):
     if not rows or not thresholds:
         return rows
 
-    _DRILL_THRESH_OPS = {'lt', 'lte', 'gt', 'gte', 'eq', 'neq'}
+    _DRILL_THRESH_OPS = {'lt', 'lte', 'gt', 'gte', 'eq', 'neq', 'in', 'nin'}
 
     def _th_num(v):
         try:
@@ -269,6 +269,18 @@ def _apply_dyn_calc_threshold_rows(rows, thresholds, resolve_col):
         if not tcol or top not in _DRILL_THRESH_OPS:
             return True
         raw = row.get(tcol)
+        if top in ('in', 'nin'):
+            raw_val = threshold.get('val')
+            if isinstance(raw_val, (list, tuple, set)):
+                wanted = [str(v).strip() for v in raw_val if v is not None and str(v).strip() != '']
+            elif raw_val is not None and str(raw_val).strip():
+                wanted = [p.strip() for p in str(raw_val).split(',') if p.strip()]
+            else:
+                wanted = []
+            if not wanted:
+                return True
+            norm = _strip_th(raw)
+            return (norm in wanted) if top == 'in' else (norm not in wanted)
         if top in ('eq', 'neq'):
             tval = str(threshold.get('val') or '').strip()
             if tval == '':

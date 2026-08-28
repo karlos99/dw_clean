@@ -137,6 +137,49 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertIn("formatDateTime(", sql)
         self.assertIn('%Y-%m', sql)
 
+    def test_resolve_dataset_filters_maps_bare_school_state_id(self):
+        from dataviz.utils.compiler import resolve_dataset_filters
+        ds = SimpleNamespace(
+            base_table='results', joins=[], columns=['results.pl'], column_mappings={},
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables',
+                   return_value={'results', 'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value=set()):
+            out = resolve_dataset_filters({'school_state_id': 'S1'}, ds, {'results'})
+        self.assertEqual(out.get('current_student.school_state_id'), 'S1')
+
+    def test_compile_aggregated_applies_school_filter_join(self):
+        from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
+        dataset = SimpleNamespace(
+            base_table='results', distinct=False, joins=[], filters=[],
+            columns=['results.pl'],
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        def fake_cols(tbl):
+            if tbl == 'current_student':
+                return {'school_state_id', 'ssid', 'stu_annual_key', 'school_year'}
+            return {'pl', 'ssid', 'school_year'}
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables',
+                   return_value={'results', 'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', side_effect=fake_cols), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, params = compile_aggregated_dataset_to_sql(
+                dataset, ['results.pl'], None, 'count',
+                interactive_filters={'current_student.school_state_id': 'S1'},
+            )
+        self.assertIn('LEFT JOIN "current_student"', sql)
+        self.assertIn('"current_student"."school_state_id"', sql)
+        self.assertIn('S1', params)
+
     def test_dedupe_rows_by_stu_annual_key(self):
         from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
 
@@ -3235,6 +3278,120 @@ class DynamicSummaryTableOptionTests(TestCase):
         # Grade 6: F=0, not F=1, none exactly 85.0
         self.assertEqual(res['rows'][1], ['6', 0.0, 1.0, 0.0])
 
+    def test_dynamic_summary_table_in_filter(self):
+        """in/nin match any of several values (SQL IN), including comma-separated strings."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'gender': 'F'},
+            {'grade': '5', 'ssid': '2', 'gender': 'M'},
+            {'grade': '5', 'ssid': '3', 'gender': 'NB'},
+            {'grade': '6', 'ssid': '4', 'gender': 'M'},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'any', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'F or NB',
+                 'filter': {'col': 'gender', 'op': 'in', 'val': ['F', 'NB']}},
+                {'id': 'notm', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Not M',
+                 'filter': {'col': 'gender', 'op': 'nin', 'val': 'M'}},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['col_headers'], ['F or NB', 'Not M'])
+        # Grade 5: F+NB=2, not M=2; Grade 6: neither F nor NB, not M=0
+        self.assertEqual(res['rows'][0], ['5', 2.0, 2.0])
+        self.assertEqual(res['rows'][1], ['6', 0.0, 0.0])
+
+    def test_dynamic_summary_table_first_column_sort(self):
+        """Manual and A→Z sort_col reorder the first row-dimension values."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1'},
+            {'grade': '6', 'ssid': '2'},
+            {'grade': 'K', 'ssid': '3'},
+        ])
+        calcs = [
+            {'id': 'n', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'N'},
+        ]
+        base = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': calcs,
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        manual = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None,
+            cfg={**base, 'sort_col': '__manual__', 'category_order': ['K', '6', '5']},
+            col_defs=None,
+        )
+        self.assertEqual([r[0] for r in manual['rows']], ['K', '6', '5'])
+
+        az = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None,
+            cfg={**base, 'sort_col': '_label', 'sort_dir': 'asc'},
+            col_defs=None,
+        )
+        self.assertEqual([r[0] for r in az['rows']], ['5', '6', 'K'])
+
+    def test_table_chart_title_on_summary_and_dynamic(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F', 'n': 2},
+            {'grade': '6', 'gender': 'M', 'n': 1},
+        ]
+        st = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'chart_title': 'Enrollment',
+            'title_font_size': 18,
+        })
+        self.assertEqual(st.get('title_text'), 'Enrollment')
+        self.assertEqual(st.get('title_font_size'), 18)
+        self.assertTrue(st.get('title_show'))
+
+        hidden = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'chart_title': 'Enrollment',
+            'show_title': False,
+        })
+        self.assertEqual(hidden.get('title_text'), 'Enrollment')
+        self.assertFalse(hidden.get('title_show'))
+
+        dyn = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['gender'],
+            'dyn_agg_func': 'count',
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'chart_title': 'By Grade',
+        })
+        self.assertEqual(dyn.get('title_text'), 'By Grade')
+
     def test_dynamic_summary_table_equality_derived(self):
         """Equals/not-equals filtered counts compose into a derived ratio."""
         import polars as pl
@@ -3585,6 +3742,23 @@ class DynamicSummaryTableDrillTests(TestCase):
         ]
         filtered = _apply_dyn_calc_threshold_rows(rows, thresholds, lambda c: c)
         self.assertEqual([r['score'] for r in filtered], [70, 95])
+
+    def test_apply_dyn_calc_threshold_rows_in_nin(self):
+        from dataviz.utils.drill_through import _apply_dyn_calc_threshold_rows
+
+        rows = [
+            {'gender': 'F'},
+            {'gender': 'M'},
+            {'gender': 'NB'},
+        ]
+        inn = _apply_dyn_calc_threshold_rows(
+            rows, [{'col': 'gender', 'op': 'in', 'val': ['F', 'NB']}], lambda c: c,
+        )
+        self.assertEqual([r['gender'] for r in inn], ['F', 'NB'])
+        nin = _apply_dyn_calc_threshold_rows(
+            rows, [{'col': 'gender', 'op': 'nin', 'val': 'M'}], lambda c: c,
+        )
+        self.assertEqual([r['gender'] for r in nin], ['F', 'NB'])
 
 
 class PageDuplicateTests(TestCase):

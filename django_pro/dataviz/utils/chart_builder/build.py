@@ -262,6 +262,17 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Apply colour mapping (user overrides + semantic defaults) to all chart types
     _apply_color_map(option, cfg)
 
+    if option.get('__type__') == 'table':
+        if not option.get('__category_names__'):
+            rows = option.get('rows') or []
+            option['__category_names__'] = [str(r[0]) for r in rows if r]
+        option['title_text'] = (cfg.get('chart_title') or cfg.get('title') or '').strip()
+        option['title_show'] = _chart_title_shown(cfg)
+        try:
+            option['title_font_size'] = int(cfg.get('title_font_size', 16) or 16)
+        except (TypeError, ValueError):
+            option['title_font_size'] = 16
+
     # Alias category-axis display labels (bar / category charts). Raw values stay
     # in __category_names__ for drill-through.
     _apply_x_value_map(option, cfg)

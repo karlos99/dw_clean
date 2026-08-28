@@ -108,6 +108,20 @@ function chartBuilderUIMethods() {
       this.dynCalculations = items;
       this._schedulePreview(true);
     },
+    duplicateDynCalculation(idx) {
+      const src = this.dynCalculations[idx];
+      if (!src) return;
+      const used = new Set(this.dynCalculations.map(c => String(c.id || '')));
+      this._dynCalcSeq = (this._dynCalcSeq || this.dynCalculations.length) + 1;
+      while (used.has('c' + this._dynCalcSeq)) this._dynCalcSeq += 1;
+      const copy = JSON.parse(JSON.stringify(src));
+      copy.id = 'c' + this._dynCalcSeq;
+      const lbl = (copy.label || this.dynCalcLabel(src) || '').trim();
+      copy.label = lbl ? lbl + ' (copy)' : '';
+      this.dynCalculations.splice(idx + 1, 0, copy);
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
     dynCalcLabel(calc) {
       if (!calc) return '';
       const lbl = (calc.label || '').trim();
@@ -145,6 +159,42 @@ function chartBuilderUIMethods() {
       this.dynCalcFilters(calc).push({ col: calc.value_col || '', op: 'lt', val: '', logic: 'and' });
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
+    },
+    onDynCalcFilterOpChange(filter) {
+      if (['in', 'nin'].includes(filter.op)) {
+        if (!Array.isArray(filter.val)) filter.val = (filter.val !== '' && filter.val != null) ? [String(filter.val)] : [];
+      } else if (Array.isArray(filter.val)) {
+        filter.val = filter.val[0] || '';
+      }
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    dynFilterInLabel(filter) {
+      const vals = Array.isArray(filter.val) ? filter.val : [];
+      if (!vals.length) return 'Select values…';
+      if (vals.length === 1) return vals[0];
+      return vals.length + ' selected';
+    },
+    toggleDynFilterInVal(filter, opt) {
+      if (!Array.isArray(filter.val)) filter.val = [];
+      const s = String(opt);
+      const i = filter.val.map(String).indexOf(s);
+      if (i >= 0) filter.val.splice(i, 1);
+      else filter.val.push(s);
+      filter.val = [...filter.val];
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    dynFilterInChecked(filter, opt) {
+      return Array.isArray(filter.val) && filter.val.map(String).includes(String(opt));
+    },
+    moveCategoryOrder(idx, direction) {
+      const next = idx + direction;
+      if (next < 0 || next >= this.categoryOrder.length) return;
+      const items = [...this.categoryOrder];
+      [items[idx], items[next]] = [items[next], items[idx]];
+      this.categoryOrder = items;
+      this._schedulePreview();
     },
     removeDynCalcFilter(calc, filterIdx) {
       this.dynCalcFilters(calc).splice(filterIdx, 1);
@@ -389,7 +439,7 @@ function chartBuilderUIMethods() {
                          'tooltipShowPct','tooltipShowCount','tooltipValuePct',
                          'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS','groupGapPct',
                          'centerGroupLabels'];
-      const styleProps = ['chartTitle','titleFontSize','showLegend','showLabels',
+      const styleProps = ['chartTitle','showTitle','titleFontSize','showLegend','showLabels',
                           'legendPos','legendItemGap','legendFontSize','legendIconSize','legendOffset',
                           'labelPosition','labelFontSize','background','opacity',
                           'barBorderRadius','showPoints','smooth',
@@ -431,11 +481,28 @@ function chartBuilderUIMethods() {
       }, 250);
     },
 
+    _applyTableTitleLive(el) {
+      const t = el.querySelector('.dv-table-title');
+      if (!t) return;
+      const text = (this.chartTitle || '').trim();
+      t.textContent = text;
+      if (text && this.showTitle !== false) {
+        t.style.display = '';
+        t.style.fontSize = (+this.titleFontSize || 16) + 'px';
+      } else {
+        t.style.display = 'none';
+      }
+    },
     _applyStyleLive() {
       const c = this.$refs.previewContainer;
       if (!c) return;
       const chartEl = c.querySelector('.chart-container');
-      if (!chartEl || !chartEl._echartsInstance) return;
+      if (!chartEl) return;
+      if (chartEl._isTable || chartEl.querySelector('.dv-table-title')) {
+        this._applyTableTitleLive(chartEl);
+        return;
+      }
+      if (!chartEl._echartsInstance) return;
       const chart = chartEl._echartsInstance;
       const opt = {};
 
@@ -443,6 +510,7 @@ function chartBuilderUIMethods() {
       opt.backgroundColor = bgMap[this.background] || '#ffffff';
 
       opt.title = [{
+        show: !!(this.chartTitle && this.showTitle),
         text: this.chartTitle || '',
         textStyle: { fontSize: +this.titleFontSize || 16 },
         ...(this.titleLeft != null ? { left: this.titleLeft } : {}),

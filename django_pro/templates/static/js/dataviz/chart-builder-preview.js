@@ -346,6 +346,7 @@ function chartBuilderPreviewMethods(urls) {
         container_width: this.containerWidth,
         container_height: this.containerHeight,
         chart_title: this.chartTitle,
+        show_title: this.showTitle !== false,
         stack_order: this.stackOrder,
         parliament_dot_scale: this.parliamentDotScale,
         parliament_shape: this.parliamentShape,

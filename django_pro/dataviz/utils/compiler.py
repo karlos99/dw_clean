@@ -558,6 +558,45 @@ def _is_results_json_column(col_str: str) -> bool:
     return '->' in col_str or col_str == 'results.other_info'
 
 
+def _inject_student_filter_joins(joins_list, active_tables, interactive_filters):
+    """LEFT JOIN current_student / student_enroll when a filter needs those tables."""
+    if not interactive_filters:
+        return joins_list, active_tables
+    joins_list = list(joins_list or [])
+    active_tables = set(active_tables)
+    for target_tbl in ('current_student', 'student_enroll'):
+        has_filter = any(str(fkey).startswith(f'{target_tbl}.') for fkey in interactive_filters)
+        if not has_filter or target_tbl in active_tables:
+            continue
+        join_target = None
+        join_col = None
+        for col in ('stu_annual_key', 'student_id', 'ssid'):
+            for t in active_tables:
+                if col in _allowed(t) and col in _allowed(target_tbl):
+                    join_target, join_col = t, col
+                    break
+            if join_target:
+                break
+        if not join_target:
+            continue
+        extra = []
+        if 'school_year' in _allowed(join_target) and 'school_year' in _allowed(target_tbl):
+            extra.append({
+                'on_left': f'{target_tbl}.school_year',
+                'on_right': f'{join_target}.school_year',
+            })
+        joins_list.append({
+            'table': target_tbl,
+            'join_type': 'left',
+            'conditions': [{
+                'on_left': f'{target_tbl}.{join_col}',
+                'on_right': f'{join_target}.{join_col}',
+            }] + extra,
+        })
+        active_tables.add(target_tbl)
+    return joins_list, active_tables
+
+
 @timed_fn('compile_dataset_to_sql')
 def compile_dataset_to_sql(
     dataset,
@@ -620,59 +659,10 @@ def compile_dataset_to_sql(
             raise SQLCompilationError(f"Joined table '{join_table}' is not whitelisted.")
         active_tables.add(join_table)
 
-    # Dynamic join injection for unjoined whitelisted tables referenced in filters
-    if interactive_filters:
-        for target_tbl in ('current_student', 'student_enroll'):
-            has_filter = any(fkey.startswith(f'{target_tbl}.') for fkey in interactive_filters)
-            if has_filter and target_tbl not in active_tables:
-                join_target = None
-                join_col_self = None
-                join_col_target = None
-                
-                # Priority 1: stu_annual_key
-                for t in active_tables:
-                    if 'stu_annual_key' in _allowed(t) and 'stu_annual_key' in _allowed(target_tbl):
-                        join_target = t
-                        join_col_self = 'stu_annual_key'
-                        join_col_target = 'stu_annual_key'
-                        break
-                # Priority 2: student_id
-                if not join_target:
-                    for t in active_tables:
-                        if 'student_id' in _allowed(t) and 'student_id' in _allowed(target_tbl):
-                            join_target = t
-                            join_col_self = 'student_id'
-                            join_col_target = 'student_id'
-                            break
-                # Priority 3: ssid
-                if not join_target:
-                    for t in active_tables:
-                        if 'ssid' in _allowed(t) and 'ssid' in _allowed(target_tbl):
-                            join_target = t
-                            join_col_self = 'ssid'
-                            join_col_target = 'ssid'
-                            break
-                            
-                if join_target:
-                    extra_join_conds = []
-                    if 'school_year' in _allowed(join_target) and 'school_year' in _allowed(target_tbl):
-                        extra_join_conds.append({
-                            'on_left': f'{target_tbl}.school_year',
-                            'on_right': f'{join_target}.school_year'
-                        })
-                    joins_list = list(joins_list)
-                    joins_list.append({
-                        'table': target_tbl,
-                        'join_type': 'left',
-                        'conditions': [
-                            {
-                                'on_left': f'{target_tbl}.{join_col_self}',
-                                'on_right': f'{join_target}.{join_col_target}'
-                            }
-                        ] + extra_join_conds
-                    })
-                    active_tables.add(target_tbl)
-        
+    joins_list, active_tables = _inject_student_filter_joins(
+        joins_list, active_tables, interactive_filters,
+    )
+
     columns_list = list(dataset.columns or [])
     if not columns_list:
         raise SQLCompilationError("Dataset has no select columns specified.")
@@ -1053,6 +1043,10 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
         if join_table not in allowed_tables:
             raise SQLCompilationError(f"Joined table '{join_table}' is not whitelisted.")
         active_tables.add(join_table)
+
+    joins_list, active_tables = _inject_student_filter_joins(
+        joins_list, active_tables, interactive_filters,
+    )
 
     all_group_cols = list(group_by_cols)
     if series_col and series_col not in all_group_cols:
