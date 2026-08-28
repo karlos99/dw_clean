@@ -553,11 +553,74 @@ def _col_header_alias_map(cfg: dict) -> dict:
     }
 
 
+def _pretty_col_key(col) -> str:
+    """JS ``colLabel`` fallback: strip prefix, underscores → spaces, title-ish."""
+    s = str(col).split('.')[-1]
+    for p in ('test_', 'mark_'):
+        if s.startswith(p):
+            s = s[len(p):]
+            break
+    s = s.replace('_', ' ')
+    return (s[:1].upper() + s[1:]) if s else s
+
+
+def _lookup_header_alias(value_map: dict, *candidates):
+    """Resolve an alias from raw keys, dotted tails, or colLabel-style names."""
+    if not value_map:
+        return None
+    tried = []
+    for c in candidates:
+        if c is None:
+            continue
+        s = str(c)
+        if not s:
+            continue
+        tried.append(s)
+        tail = s.split('.')[-1]
+        if tail != s:
+            tried.append(tail)
+        pretty = _pretty_col_key(s)
+        if pretty and pretty != s:
+            tried.append(pretty)
+    expanded = dict(value_map)
+    for k, v in value_map.items():
+        tail = str(k).split('.')[-1]
+        expanded.setdefault(tail, v)
+        pretty = _pretty_col_key(k)
+        if pretty:
+            expanded.setdefault(pretty, v)
+    for s in tried:
+        if s in expanded:
+            return expanded[s]
+    lower = {str(k).lower(): v for k, v in expanded.items()}
+    for s in tried:
+        hit = lower.get(s.lower())
+        if hit is not None:
+            return hit
+    norm = {str(k).lower().replace('_', ' '): v for k, v in expanded.items()}
+    for s in tried:
+        hit = norm.get(s.lower().replace('_', ' '))
+        if hit is not None:
+            return hit
+    return None
+
+
 def _alias_header_label(label, value_map: dict):
     aliased = _alias_category_label(label, value_map)
     if aliased != label:
         return aliased
+    found = _lookup_header_alias(value_map, label)
+    if found is not None:
+        return found
     return _alias_category_label(label, value_map, sep=_TABLE_HEADER_SEP)
+
+
+def _alias_with_orig(label, orig_key, value_map: dict):
+    """Alias by original column key first, then by the displayed header."""
+    found = _lookup_header_alias(value_map, orig_key, label)
+    if found is not None:
+        return found
+    return _alias_header_label(label, value_map)
 
 
 def _collect_col_header_keys(option: dict) -> list:
@@ -574,15 +637,26 @@ def _collect_col_header_keys(option: dict) -> list:
 
     for h in option.get('col_headers') or []:
         _add(h)
+    for h in option.get('row_labels') or []:
+        _add(h)
+    _add(option.get('row_label'))
     for g in option.get('col_header_groups') or []:
         if isinstance(g, dict):
             _add(g.get('label'))
+            _add(g.get('col'))
             for h in g.get('headers') or []:
                 _add(h)
     meta = option.get('_drillMeta') or {}
     if isinstance(meta, dict):
         for h in meta.get('colHeaders') or []:
             _add(h)
+        _add(meta.get('stRowCol'))
+        for c in meta.get('stRowCols') or []:
+            _add(c)
+        # Dataset columns used as headers (columns-mode / calc-mode), not pivot sources.
+        if meta.get('stColCol') in ('__st_cols__', '__calc_cols__'):
+            for c in meta.get('stColCols') or []:
+                _add(c)
     return keys
 
 
@@ -590,7 +664,8 @@ def _apply_col_header_aliases(option: dict, cfg: dict) -> None:
     """Replace table/pivot column-header *display* labels.
 
     Raw values stay in ``col_header_raw`` and ``_drillMeta.colHeaders``
-    for drill-through.
+    for drill-through. Row-dimension headers and dataset-column headers
+    can be aliased by displayed label or original column key.
     """
     st_type = (option.get('_drillMeta') or {}).get('stType')
     is_table = option.get('__type__') == 'table' or st_type in (
@@ -605,10 +680,34 @@ def _apply_col_header_aliases(option: dict, cfg: dict) -> None:
     if not value_map:
         return
 
+    meta = option.get('_drillMeta') if isinstance(option.get('_drillMeta'), dict) else {}
+    orig_rows = list(meta.get('stRowCols') or [])
+    if not orig_rows and meta.get('stRowCol'):
+        orig_rows = [meta.get('stRowCol')]
+    orig_cols = list(meta.get('stColCols') or [])
+    calc_ids = list(option.get('col_header_cols') or [])
+    # 1:1 original keys only when headers are dataset/calc columns, not pivot values.
+    header_orig = calc_ids if meta.get('stColCol') == '__calc_cols__' else (
+        orig_cols if meta.get('stColCol') == '__st_cols__' else []
+    )
+
+    row_labels = option.get('row_labels')
+    if isinstance(row_labels, list) and row_labels:
+        option['row_labels'] = [
+            _alias_with_orig(h, orig_rows[i] if i < len(orig_rows) else None, value_map)
+            for i, h in enumerate(row_labels)
+        ]
+    if option.get('row_label') is not None:
+        orig = orig_rows[0] if len(orig_rows) == 1 else None
+        option['row_label'] = _alias_with_orig(option['row_label'], orig, value_map)
+
     headers = option.get('col_headers')
     if isinstance(headers, list) and headers:
         option['col_header_raw'] = list(headers)
-        option['col_headers'] = [_alias_header_label(h, value_map) for h in headers]
+        option['col_headers'] = [
+            _alias_with_orig(h, header_orig[i] if i < len(header_orig) else None, value_map)
+            for i, h in enumerate(headers)
+        ]
 
     groups = option.get('col_header_groups')
     if isinstance(groups, list):
@@ -616,7 +715,7 @@ def _apply_col_header_aliases(option: dict, cfg: dict) -> None:
             if not isinstance(g, dict):
                 continue
             if 'label' in g:
-                g['label'] = _alias_header_label(g.get('label'), value_map)
+                g['label'] = _alias_with_orig(g.get('label'), g.get('col'), value_map)
             hs = g.get('headers')
             if isinstance(hs, list):
                 g['headers'] = [_alias_header_label(h, value_map) for h in hs]

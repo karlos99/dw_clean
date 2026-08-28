@@ -2278,8 +2278,8 @@
         </div>
       </section>
 
-      {# Column Header Aliases — summary table + dynamic summary table pivot #}
-      <section x-show="chartType==='summary_table' || (chartType==='dynamic_summary_table' && dynColMode==='pivot')"
+      {# Column Header Aliases — any column on summary / dynamic summary tables #}
+      <section x-show="chartType==='summary_table' || chartType==='dynamic_summary_table'"
                x-data="{ open: Object.keys(colHeaderAliases).length > 0 }"
                class="border-b border-slate-100">
         <button type="button" @click="open=!open"
@@ -2298,12 +2298,12 @@
         </button>
         <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-2 border-t border-slate-50">
           <p class="text-[10px] text-slate-400 leading-snug">
-            Select a column header value, then enter its display alias. Drill-through still uses original values.
+            Alias any table column — row labels, selected columns, pivot values, or calculations. Drill-through still uses original values.
           </p>
 
-          <p x-show="!colHeaderAliasAvail.length"
+          <p x-show="!tableHeaderAliasOptions().length"
              class="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
-            Run a preview first so column headers can load into the list.
+            Select row/column fields (and run a preview for pivot values) so headers can load into the list.
           </p>
 
           <template x-for="key in Object.keys(colHeaderAliases)" :key="'cha_'+key">
@@ -2318,12 +2318,12 @@
             </div>
           </template>
 
-          <div class="flex items-center gap-1 pt-1" x-show="colHeaderAliasAvail.filter(c => !(c in colHeaderAliases)).length">
+          <div class="flex items-center gap-1 pt-1" x-show="tableHeaderAliasOptions().filter(o => !(o.key in colHeaderAliases)).length">
             <select x-model="colHeaderAliasNewKey"
                     class="w-36 max-w-[45%] text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300">
               <option value="">Select header…</option>
-              <template x-for="v in colHeaderAliasAvail.filter(c => !(c in colHeaderAliases))" :key="'cha_av_'+v">
-                <option :value="v" x-text="v"></option>
+              <template x-for="opt in tableHeaderAliasOptions().filter(o => !(o.key in colHeaderAliases))" :key="'cha_av_'+opt.key">
+                <option :value="opt.key" x-text="opt.label"></option>
               </template>
             </select>
             <input type="text" x-model="colHeaderAliasNewAlias" placeholder="Alias label…"

@@ -3359,7 +3359,8 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(opt['col_headers'], ['Female', 'Male'])
         self.assertEqual(opt['col_header_raw'], ['F', 'M'])
         self.assertEqual(opt['_drillMeta']['colHeaders'], ['F', 'M'])
-        self.assertEqual(set(opt.get('__col_header_keys__') or []), {'F', 'M'})
+        keys = set(opt.get('__col_header_keys__') or [])
+        self.assertTrue({'F', 'M', 'grade'}.issubset(keys))
 
     def test_col_header_aliases_summary_table_pivot(self):
         from dataviz.utils.chart_builder import build_option
@@ -3402,6 +3403,92 @@ class DynamicSummaryTableOptionTests(TestCase):
         })
         self.assertEqual([s['name'] for s in opt['series']], ['Female', 'Male'])
         self.assertEqual(opt['_drillMeta']['colHeaders'], ['F', 'M'])
+
+    def test_col_header_aliases_any_table_column(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'attendance_rate': 90, 'test_score': 80},
+            {'grade': '6', 'attendance_rate': 85, 'test_score': 70},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_col_mode': 'columns',
+            'st_row_col': 'grade',
+            'st_col_cols': ['attendance_rate', 'test_score'],
+            'st_agg_func': 'avg',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'col_header_aliases': {
+                'grade': 'Grade Level',
+                'attendance_rate': 'Attendance %',
+            },
+        })
+        self.assertEqual(opt['row_label'], 'Grade Level')
+        self.assertEqual(opt['col_headers'], ['Attendance %', 'test_score'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['attendance_rate', 'test_score'])
+        keys = set(opt.get('__col_header_keys__') or [])
+        self.assertTrue({'grade', 'attendance_rate', 'test_score'}.issubset(keys))
+
+    def test_col_header_aliases_dynamic_calculations_row_and_calc(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'ssid': 'a', 'score': 70},
+            {'grade': '6', 'ssid': 'b', 'score': 90},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'calculations',
+            'dyn_row_cols': ['grade'],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'dyn_calculations': [{
+                'id': 'total',
+                'calc_type': 'base',
+                'agg_func': 'count',
+                'value_col': 'ssid',
+                'label': 'Student Count',
+            }],
+            'col_header_aliases': {
+                'grade': 'Grade Level',
+                'Student Count': 'N Students',
+            },
+        })
+        self.assertEqual(opt['row_labels'], ['Grade Level'])
+        self.assertEqual(opt['col_headers'], ['N Students'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['Student Count'])
+
+    def test_col_header_aliases_row_label_matches_pretty_and_dotted_keys(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F'},
+            {'grade': '6', 'gender': 'M'},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_col_mode': 'values',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_agg_func': 'count',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'col_header_aliases': {'Grade': 'Grade Level'},
+        })
+        self.assertEqual(opt['row_label'], 'Grade Level')
+
+        opt2 = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['gender'],
+            'dyn_agg_func': 'count',
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'col_header_aliases': {'students.grade': 'Year Group'},
+        })
+        self.assertEqual(opt2['row_labels'], ['Year Group'])
 
 
 class DynamicSummaryTableDrillTests(TestCase):

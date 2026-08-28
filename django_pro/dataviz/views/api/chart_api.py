@@ -189,6 +189,17 @@ def _remap_config_cols(config: dict, column_mappings: dict | None) -> dict:
                 else:
                     new_calcs.append(item)
             res[k] = new_calcs
+        elif k == 'col_header_aliases' and isinstance(v, dict):
+            expanded = {}
+            for ak, av in v.items():
+                expanded[ak] = av
+                if isinstance(ak, str):
+                    mapped = column_mappings.get(ak)
+                    if mapped and mapped != ak:
+                        expanded[mapped] = av
+                    if '.' in ak:
+                        expanded[ak.split('.')[-1]] = av
+            res[k] = expanded
         else:
             res[k] = v
     return res
