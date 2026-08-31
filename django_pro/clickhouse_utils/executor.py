@@ -53,6 +53,11 @@ def _sql_uses_pg_add_data_key(sql: str) -> bool:
     return any(k in text for k in _PG_ADD_DATA_KEYS)
 
 
+def _sql_requires_postgres(sql: str) -> bool:
+    """PostgreSQL-only idioms that must not go through the CH translator."""
+    return 'jsonb_object_keys' in (sql or '').lower()
+
+
 class QueryExecutor:
     """
     Executes a SQL query, routing to ClickHouse when available and enabled.
@@ -121,6 +126,8 @@ class QueryExecutor:
 
         if self.ch_client is not None:
             from .translator import SQLTranslationError
+            if _sql_requires_postgres(sql):
+                return self._execute_postgres(sql, params)
             if _sql_uses_pg_add_data_key(sql) and not self.analytics:
                 return self._execute_postgres(sql, params)
             try:
@@ -159,6 +166,8 @@ class QueryExecutor:
 
         if self.ch_client is not None:
             from .translator import SQLTranslationError
+            if _sql_requires_postgres(sql):
+                return self._execute_postgres_fetchall(sql, params)
             if _sql_uses_pg_add_data_key(sql) and not self.analytics:
                 return self._execute_postgres_fetchall(sql, params)
             try:

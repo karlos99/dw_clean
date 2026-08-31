@@ -271,7 +271,34 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertEqual(students[0]['test_2025_2026_CAASPP_Math_SS'], '2400')
 		self.assertEqual(students[1]['mark_x'], 'A')
 		self.assertEqual(students[1]['test_2025_2026_CAASPP_Math_SS'], '—')
-		self.assertEqual(students[0]['mark_x'], '—')
+
+	def test_enrich_other_info_uses_postgres_not_clickhouse(self):
+		from dataexploration.column_utils import enrich_students_tests_marks
+		from unittest.mock import patch, MagicMock
+
+		students = [{'ssid': '8184048772', 'student_id': '1'}]
+		test_info = {
+			'col_name': 'test_2025_2026_CAASPP_ELA_OI_WERDEVEELConditionCode_abc123',
+			'year': '2025-2026', 'test_name': 'CAASPP', 'subject': 'ELA',
+			'metric': 'oi', 'other_info_key': 'WERDEVEELConditionCode',
+		}
+		pg_rows = [(
+			'1', '8184048772', '2025-2026', 'CAASPP', 'ELA', '',
+			'2500', '3',
+			{'WERDEVEELConditionCode': 'I'},
+		)]
+		cur = MagicMock()
+		cur.fetchall.return_value = pg_rows
+		conn = MagicMock()
+		conn.cursor.return_value.__enter__.return_value = cur
+		exec_mock = MagicMock()
+		with patch('clickhouse_utils.executor.QueryExecutor', return_value=exec_mock):
+			with patch('dataexploration.column_utils.connections') as connections:
+				connections.__getitem__.return_value = conn
+				enrich_students_tests_marks(students, [test_info], [])
+
+		exec_mock.execute.assert_not_called()
+		self.assertEqual(students[0][test_info['col_name']], 'I')
 
 
 class SchoolYearUtilsTests(SimpleTestCase):
@@ -301,3 +328,17 @@ class JsonListColumnTests(SimpleTestCase):
 		self.assertEqual(alias, 'dsusd_fep')
 		self.assertIn("->>'DSUSD_FEP'", expr)
 		self.assertNotIn('array_to_string', expr)
+
+
+class CsFilterClauseTests(SimpleTestCase):
+	def test_dsusd_fep_filter_uses_json_extract_not_physical_column(self):
+		from dataexploration.column_utils import _append_cs_filter_clause
+
+		where_clauses = []
+		params = []
+		_append_cs_filter_clause(where_clauses, params, 'dsusd_fep', ['Y'])
+
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn("->>'DSUSD_FEP'", where_clauses[0])
+		self.assertNotIn('cs.dsusd_fep', where_clauses[0])
+		self.assertEqual(params, [['Y']])

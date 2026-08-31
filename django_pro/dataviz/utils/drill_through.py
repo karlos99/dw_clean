@@ -278,7 +278,9 @@ def _apply_dyn_calc_threshold_rows(rows, thresholds, resolve_col):
             else:
                 wanted = []
             if not wanted:
-                return True
+                return top != 'in'
+            from dataviz.utils.chart_builder.tables import _in_match_vals
+            wanted = _in_match_vals(wanted)
             norm = _strip_th(raw)
             return (norm in wanted) if top == 'in' else (norm not in wanted)
         if top in ('eq', 'neq'):

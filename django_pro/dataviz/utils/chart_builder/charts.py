@@ -508,7 +508,7 @@ def _parliament_option(df, x_col, y_col, agg, cfg, col_defs=None):
     option['grid'] = {
         'left': 40,
         'right': 40,
-        'top': 60 if _chart_title_shown(cfg) else 20,
+        'top': _title_grid_top(cfg) if (_chart_title_shown(cfg) or _chart_subtitle_shown(cfg)) else 20,
         'bottom': 60 if show_legend else 20,
         'containLabel': False
     }

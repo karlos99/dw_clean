@@ -3312,6 +3312,60 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res['rows'][0], ['5', 2.0, 2.0])
         self.assertEqual(res['rows'][1], ['6', 0.0, 0.0])
 
+    def test_dynamic_summary_table_independent_school_in_filters(self):
+        """Each calc column's IN list is applied on its own — different school
+        sets must not collapse to the same unfiltered count."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option, build_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'school_state_id': '0110791'},
+            {'grade': '5', 'ssid': '2', 'school_state_id': '0110791'},
+            {'grade': '5', 'ssid': '3', 'school_state_id': '0220002'},
+            {'grade': '6', 'ssid': '4', 'school_state_id': '0110791'},
+            {'grade': '6', 'ssid': '5', 'school_state_id': '0330003'},
+        ])
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'a', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid',
+                 'label': 'School A', 'filters': [
+                     {'col': 'current_student.school_state_id', 'op': 'in',
+                      'val': ['0110791']}]},
+                {'id': 'b', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid',
+                 'label': 'School B', 'filters': [
+                     {'col': 'school_state_id', 'op': 'in',
+                      'val': ['0220002', '0330003']}]},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+        self.assertEqual(res['col_headers'], ['School A', 'School B'])
+        self.assertEqual(res['rows'][0], ['5', 2.0, 1.0])
+        self.assertEqual(res['rows'][1], ['6', 1.0, 1.0])
+
+        # Leading-zero codes in the filter still match unpadded stored values.
+        padded = build_option(
+            [{'grade': '5', 'ssid': '1', 'school_state_id': '110791'}],
+            {},
+            {
+                'chart_type': 'dynamic_summary_table',
+                'dyn_col_mode': 'calculations',
+                'dyn_row_cols': ['grade'],
+                'dyn_calculations': [{
+                    'id': 'a', 'calc_type': 'base', 'agg_func': 'count',
+                    'filters': [{'col': 'school_state_id', 'op': 'in', 'val': ['0110791']}],
+                }],
+                'dyn_show_row_totals': False,
+                'dyn_show_col_totals': False,
+            },
+        )
+        self.assertEqual(padded['rows'][0][1], 1.0)
+
     def test_dynamic_summary_table_first_column_sort(self):
         """Manual and A→Z sort_col reorder the first row-dimension values."""
         import polars as pl
@@ -3391,6 +3445,42 @@ class DynamicSummaryTableOptionTests(TestCase):
             'chart_title': 'By Grade',
         })
         self.assertEqual(dyn.get('title_text'), 'By Grade')
+
+        with_sub = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'chart_title': 'Enrollment',
+            'chart_subtitle': 'Counts by grade and gender.',
+            'show_subtitle': True,
+        })
+        self.assertEqual(with_sub.get('subtitle_text'), 'Counts by grade and gender.')
+        self.assertTrue(with_sub.get('subtitle_show'))
+
+        sub_off = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'chart_title': 'Enrollment',
+            'chart_subtitle': 'Hidden by default.',
+        })
+        self.assertEqual(sub_off.get('subtitle_text'), 'Hidden by default.')
+        self.assertFalse(sub_off.get('subtitle_show'))
+
+        bar_off = build_option(rows, {}, {
+            'chart_type': 'bar', 'x_col': 'grade', 'y_col': 'n', 'agg': 'sum',
+            'chart_subtitle': 'Note',
+        })
+        self.assertFalse(bar_off.get('title', {}).get('subtext'))
+        bar_on = build_option(rows, {}, {
+            'chart_type': 'bar', 'x_col': 'grade', 'y_col': 'n', 'agg': 'sum',
+            'chart_subtitle': 'Note', 'show_subtitle': True,
+        })
+        self.assertEqual(bar_on.get('title', {}).get('subtext'), 'Note')
 
     def test_dynamic_summary_table_equality_derived(self):
         """Equals/not-equals filtered counts compose into a derived ratio."""
