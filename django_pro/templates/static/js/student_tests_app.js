@@ -1549,6 +1549,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const colEl = document.querySelector(`col[data-col="${cssEscape(resizeState.col)}"]`);
         if (colEl) colEl.style.width = `${newWidth}px`;
+        updateTopScrollWidth();
+        syncTableToTopBar();
     };
 
     const endResize = () => {
@@ -2196,19 +2198,42 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     let _scrollSyncResizeObserver = null;
-    let _scrollSyncInitialized = false;
+    let _scrollSyncMainEl = null;
     let _scrollSyncTopScrolling = false;
     let _scrollSyncMainScrolling = false;
 
-    // The table is wrapped in `.table-container` (overflow-x: auto) which is
-    // what actually scrolls horizontally — NOT the outer #table-scroll-container.
     const getTableScrollEl = () => {
         const inner = document.querySelector('#student-table .table-container');
-        if (inner) return inner;
-        const table = document.querySelector('#student-table table');
-        if (table && table.closest('.table-container')) return table.closest('.table-container');
-        return document.getElementById('table-scroll-container');
+        const outer = document.getElementById('table-scroll-container');
+        const candidates = [inner, outer].filter(Boolean);
+        for (const el of candidates) {
+            if (el.scrollWidth > el.clientWidth + 1) return el;
+        }
+        return inner || outer;
     };
+
+    const syncTopBarToTable = () => {
+        const topScrollBar = document.getElementById('h-scroll-top');
+        const scrollEl = getTableScrollEl();
+        if (!topScrollBar || !scrollEl || _scrollSyncMainScrolling) return;
+        _scrollSyncTopScrolling = true;
+        scrollEl.scrollLeft = topScrollBar.scrollLeft;
+        updateScrollIndicators();
+        window.setTimeout(() => { _scrollSyncTopScrolling = false; }, 50);
+    };
+
+    const syncTableToTopBar = () => {
+        const topScrollBar = document.getElementById('h-scroll-top');
+        const scrollEl = getTableScrollEl();
+        if (!topScrollBar || !scrollEl || _scrollSyncTopScrolling) return;
+        _scrollSyncMainScrolling = true;
+        topScrollBar.scrollLeft = scrollEl.scrollLeft;
+        updateScrollIndicators();
+        window.setTimeout(() => { _scrollSyncMainScrolling = false; }, 50);
+    };
+
+    const onTopScrollBarScroll = () => syncTopBarToTable();
+    const onTableScrollElScroll = () => syncTableToTopBar();
 
     const updateTopScrollWidth = () => {
         const topScrollBar = document.getElementById('h-scroll-top');
@@ -2245,39 +2270,32 @@ document.addEventListener('DOMContentLoaded', () => {
             _scrollSyncResizeObserver = null;
         }
 
-        // Only attach scroll listeners once
-        if (!_scrollSyncInitialized) {
-            _scrollSyncInitialized = true;
-
-            topScrollBar.addEventListener('scroll', () => {
-                if (_scrollSyncMainScrolling) return;
-                _scrollSyncTopScrolling = true;
-                scrollEl.scrollLeft = topScrollBar.scrollLeft;
-                updateScrollIndicators();
-                setTimeout(() => { _scrollSyncTopScrolling = false; }, 50);
-            });
-
-            scrollEl.addEventListener('scroll', () => {
-                if (_scrollSyncTopScrolling) return;
-                _scrollSyncMainScrolling = true;
-                topScrollBar.scrollLeft = scrollEl.scrollLeft;
-                updateScrollIndicators();
-                setTimeout(() => { _scrollSyncMainScrolling = false; }, 50);
-            });
+        if (_scrollSyncMainEl && _scrollSyncMainEl !== scrollEl) {
+            _scrollSyncMainEl.removeEventListener('scroll', onTableScrollElScroll);
         }
+        _scrollSyncMainEl = scrollEl;
+
+        if (!topScrollBar.dataset.scrollSyncBound) {
+            topScrollBar.addEventListener('scroll', onTopScrollBarScroll);
+            topScrollBar.dataset.scrollSyncBound = '1';
+        }
+        scrollEl.removeEventListener('scroll', onTableScrollElScroll);
+        scrollEl.addEventListener('scroll', onTableScrollElScroll);
 
         // Wait for layout, then set width and observe the scroll container
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 updateTopScrollWidth();
+                syncTableToTopBar();
                 updateScrollIndicators();
-                if (scrollEl) {
-                    _scrollSyncResizeObserver = new ResizeObserver(() => {
-                        updateTopScrollWidth();
-                        updateScrollIndicators();
-                    });
-                    _scrollSyncResizeObserver.observe(scrollEl);
-                }
+                const table = scrollEl.querySelector('table');
+                _scrollSyncResizeObserver = new ResizeObserver(() => {
+                    updateTopScrollWidth();
+                    syncTableToTopBar();
+                    updateScrollIndicators();
+                });
+                _scrollSyncResizeObserver.observe(scrollEl);
+                if (table) _scrollSyncResizeObserver.observe(table);
             });
         });
     };

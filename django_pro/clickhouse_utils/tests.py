@@ -12,6 +12,17 @@ class AnalyticsRoutingTests(SimpleTestCase):
 
         self.assertIn('ClickHouse analytics service is unavailable', result['error'])
 
+    def test_analytics_executor_routes_jsonb_object_keys_to_postgres(self):
+        executor = QueryExecutor(analytics=True)
+        with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):
+            with patch.object(executor, '_execute_postgres', return_value={'columns': ['key'], 'rows': [], 'row_count': 0, 'error': None}) as postgres:
+                with patch.object(executor, '_execute_clickhouse') as clickhouse:
+                    sql = "SELECT k.key FROM results r CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)"
+                    executor.execute(sql, [])
+
+        postgres.assert_called_once()
+        clickhouse.assert_not_called()
+
     def test_analytics_executor_does_not_fallback_on_clickhouse_failure(self):
         executor = QueryExecutor(analytics=True)
         with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):

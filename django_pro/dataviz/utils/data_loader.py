@@ -710,7 +710,9 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
           AND ({" OR ".join(where_r)})
           {tested_school_clause}
     """
-    fetched_rows = _analytics_rows(ch_sql, [student_ssids, student_ids, *params_r, *school_params])
+    fetched_rows = None
+    if not any(info.get('metric') not in ('ss', 'pl') for info in test_cols_info):
+        fetched_rows = _analytics_rows(ch_sql, [student_ssids, student_ids, *params_r, *school_params])
     if fetched_rows is None:
         where_t, params_t = _test_where('t')
         sql = f"""
