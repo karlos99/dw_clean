@@ -77,7 +77,7 @@ def apply_column_filters(
         return
 
     for col, values in filters_to_apply.items():
-        if col in {'search', 'school_year', 'grade', 'status', 'school_state_id'}:
+        if col == 'search':
             continue
         if not values:
             continue
