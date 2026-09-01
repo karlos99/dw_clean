@@ -3,21 +3,20 @@
 from django.contrib.auth.decorators import login_required
 from django.http import StreamingHttpResponse
 from django.db import connections
-from django.core.cache import cache
 import json
 import csv
 import hashlib
-import re
 
 from ..models import SavedQuery, StudentList
 from ..constants import COLUMN_DEFINITIONS
 from ..column_utils import (
     _get_display_name,
-    RESULTS_BLANK_SSID_SQL,
     export_cell,
     enrich_students_tests_marks,
 )
-from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
+from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
+from .student_list_views import _append_school_year_filter
+from .filter_sql import apply_column_filters
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -25,10 +24,26 @@ from .student_data_utils import (
 from .column_management import (
     get_saved_default_columns,
     get_column_expression,
-    json_list_key_for_column,
-    append_json_list_filter,
 )
 from dataexploration.school_year_utils import resolve_relative_column_key
+
+
+def _parse_multi(param_val, fallback):
+    """Parse a URL parameter that may be a plain string or a JSON-encoded list."""
+    if not param_val:
+        return fallback
+    if isinstance(param_val, list):
+        return param_val if param_val else fallback
+    val_str = str(param_val).strip()
+    if val_str.startswith('['):
+        try:
+            parsed = json.loads(val_str)
+            if isinstance(parsed, list) and parsed:
+                return parsed
+            return fallback
+        except Exception:
+            pass
+    return val_str if val_str else fallback
 
 @login_required
 def export_students_csv(request):
@@ -91,20 +106,38 @@ def export_students_csv(request):
     try:
         from dataexploration.school_year_utils import resolve_school_year
         if school_year:
-            school_year = resolve_school_year(school_year)
+            if isinstance(school_year, list):
+                school_year = [resolve_school_year(y) for y in school_year]
+            else:
+                school_year = resolve_school_year(school_year)
     except Exception:
         pass
-    grade = request.GET.get('grade', '') or saved_filters.get('grade', '') or saved_config.get('grade', '')
-    
+    grade = _parse_multi(
+        request.GET.get('grade', ''),
+        _parse_multi(saved_filters.get('grade', ''), _parse_multi(saved_config.get('grade', ''), '')),
+    )
+
     status_param = request.GET.get('status')
     if status_param is not None:
-        status = status_param
+        status = _parse_multi(status_param, '')
     elif 'status' in saved_filters:
-        status = saved_filters['status']
+        status = _parse_multi(saved_filters['status'], '')
     elif 'status' in saved_config:
-        status = saved_config['status']
+        status = _parse_multi(saved_config['status'], '')
     else:
         status = 'Active'
+
+    search_ids = None
+    search_ids_param = request.GET.get('search_ids', '')
+    if search_ids_param:
+        try:
+            parsed_ids = json.loads(search_ids_param)
+            if isinstance(parsed_ids, list):
+                search_ids = [str(s).strip() for s in parsed_ids if str(s).strip()]
+                if not search_ids:
+                    search_ids = None
+        except Exception:
+            search_ids = None
 
     sort_by = request.GET.get('sort_by', '') or saved_config.get('sort_by', '')
     sort_dir = request.GET.get('sort_dir', 'asc').lower()
@@ -125,157 +158,6 @@ def export_students_csv(request):
     if isinstance(filters, dict):
         filters = {resolve_relative_column_key(k): v for k, v in filters.items()}
 
-    # Helper for column filters (Duplicated from load_students to avoid refactoring risk)
-    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
-        if not isinstance(filters_to_apply, dict): return
-        for col, values in filters_to_apply.items():
-            if not values: continue
-
-            if col == 'atendace_rate':
-                expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
-                if expr:
-                    conditions = []
-                    for val in values:
-                        val_str = str(val).strip()
-                        if not val_str:
-                            conditions.append(f"({expr} IS NULL)")
-                            continue
-
-                        match = re.match(r'^([<>]=?|=)?\s*(\d+(?:\.\d+)?)$', val_str)
-                        if match:
-                            op = match.group(1) or '='
-                            num = match.group(2)
-                            conditions.append(f"{expr} {op} %s")
-                            params.append(num)
-                            continue
-
-                        match_range = re.match(r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$', val_str)
-                        if match_range:
-                            low, high = match_range.groups()
-                            conditions.append(f"{expr} BETWEEN %s AND %s")
-                            params.extend([low, high])
-                            continue
-
-                        conditions.append(f"{expr} = %s")
-                        params.append(val)
-
-                    if conditions:
-                        where_clauses.append(f"({' OR '.join(conditions)})")
-                    continue
-
-            # Handle blank values (represented by empty string)
-            has_blank = "" in values
-            real_values = [v for v in values if v != ""]
-
-            if col.startswith('test_'):
-                test_info = test_col_map.get(col) or test_col_map.get(col.replace('-', '_'))
-                if not test_info: continue
-                metric_col = test_info['metric']
-                window_clause = ""
-                window_params = []
-                if test_info.get('test_window'):
-                    window_clause = "AND LOWER(t.test_window) = LOWER(%s) "
-                    window_params = [test_info['test_window']]
-
-                id_subquery_base = (
-                    "SELECT r.local_student_id FROM results r "
-                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.school_year = %s "
-                    f"AND {RESULTS_BLANK_SSID_SQL} "
-                    "AND LOWER(t.test_name) = LOWER(%s) "
-                    "AND LOWER(t.subject) = LOWER(%s) "
-                    f"{window_clause}"
-                )
-                ssid_subquery_base = (
-                    "SELECT r.ssid FROM results r "
-                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' "
-                    "AND r.school_year = %s "
-                    "AND LOWER(t.test_name) = LOWER(%s) "
-                    "AND LOWER(t.subject) = LOWER(%s) "
-                    f"{window_clause}"
-                )
-                base_params = [
-                    test_info['year'], test_info['test_name'], test_info['subject'],
-                    *window_params,
-                ]
-
-                conditions = []
-
-                if real_values:
-                    val_id = id_subquery_base
-                    val_ssid = ssid_subquery_base
-                    if metric_col in {'ss', 'pl'}:
-                        val_id += f"AND r.{metric_col} = ANY(%s)"
-                        val_ssid += f"AND r.{metric_col} = ANY(%s)"
-                    else:
-                        val_id += "AND (r.other_info ->> %s) = ANY(%s)"
-                        val_ssid += "AND (r.other_info ->> %s) = ANY(%s)"
-                    
-                    val_id_params = list(base_params)
-                    val_ssid_params = list(base_params)
-                    if metric_col in {'oi', 'dfp'}:
-                         val_id_params.append(test_info.get('other_info_key', ''))
-                         val_ssid_params.append(test_info.get('other_info_key', ''))
-                    val_id_params.append(real_values)
-                    val_ssid_params.append(real_values)
-                    
-                    conditions.append(f"(cs.student_id IN ({val_id}) OR cs.ssid IN ({val_ssid}))")
-                    params.extend(val_id_params + val_ssid_params)
-
-                if has_blank:
-                    blank_subconditions = []
-                    
-                    # 1. No record exists
-                    blank_subconditions.append(
-                        f"(cs.student_id NOT IN ({id_subquery_base}) AND cs.ssid NOT IN ({ssid_subquery_base}))"
-                    )
-                    params.extend(base_params + base_params)
-
-                    # 2. Record exists but value is NULL
-                    null_id = id_subquery_base
-                    null_ssid = ssid_subquery_base
-                    null_id_params = list(base_params)
-                    null_ssid_params = list(base_params)
-                    
-                    if metric_col in {'ss', 'pl'}:
-                        null_id += f"AND r.{metric_col} IS NULL"
-                        null_ssid += f"AND r.{metric_col} IS NULL"
-                    else:
-                        null_id += "AND (r.other_info ->> %s) IS NULL"
-                        null_ssid += "AND (r.other_info ->> %s) IS NULL"
-                        null_id_params.append(test_info.get('other_info_key', ''))
-                        null_ssid_params.append(test_info.get('other_info_key', ''))
-                    
-                    blank_subconditions.append(f"(cs.student_id IN ({null_id}) OR cs.ssid IN ({null_ssid}))")
-                    params.extend(null_id_params + null_ssid_params)
-                    
-                    conditions.append(f"({' OR '.join(blank_subconditions)})")
-                
-                if conditions:
-                    where_clauses.append(f"({' OR '.join(conditions)})")
-                continue
-
-            json_key = json_list_key_for_column(col)
-            if json_key:
-                append_json_list_filter(where_clauses, params, values, json_key)
-                continue
-
-            expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
-            if expr:
-                 conditions = []
-                 if real_values:
-                      conditions.append(f"{expr} = ANY(%s)")
-                      params.append(real_values)
-                 if has_blank:
-                      if col in {'birth_date', 'us_enter_date', 'fep_date'}:
-                           conditions.append(f"{expr} IS NULL")
-                      else:
-                           conditions.append(f"({expr} IS NULL OR {expr} = '')")
-                 
-                 if conditions:
-                      where_clauses.append(f"({' OR '.join(conditions)})")
-
     # 2. Preparation for Query
     db_columns = get_current_student_columns()
     enroll_columns = get_student_enroll_columns()
@@ -287,10 +169,23 @@ def export_students_csv(request):
         [k for k in filter_keys if isinstance(k, str) and k.startswith('test_')]
     ))
     selected_mark_cols = list(set(
-        [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_')] +
-        [k for k in filter_keys if isinstance(k, str) and k.startswith('mark_')]
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('mark_') and not c.startswith('markall_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('mark_') and not k.startswith('markall_')]
     ))
-    base_cols = [c for c in selected_columns if isinstance(c, str) and (not c.startswith(('test_', 'mark_'))) and c in COLUMN_DEFINITIONS]
+    selected_ap_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_') and not c.startswith('apall_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('ap_') and not k.startswith('apaward_') and not k.startswith('apawards_all_') and not k.startswith('apall_')]
+    ))
+    selected_award_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and (c.startswith('apaward_') or c.startswith('apawards_all_'))] +
+        [k for k in filter_keys if isinstance(k, str) and (k.startswith('apaward_') or k.startswith('apawards_all_'))]
+    ))
+    base_cols = [
+        c for c in selected_columns
+        if isinstance(c, str)
+        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_')))
+        and c in COLUMN_DEFINITIONS
+    ]
 
     enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
     needs_enroll = (
@@ -300,12 +195,7 @@ def export_students_csv(request):
     )
 
     # Determine if we need students join (for ltel overrides)
-    students_fields = {'ltel'}
-    needs_students = (
-        any(c in students_fields for c in selected_columns)
-        or (isinstance(filters, dict) and any(k in students_fields for k in filters.keys()))
-        or sort_by in students_fields
-    )
+    needs_students = False
 
     # Determine if we need elementary_homeroom_teacher join
     needs_eht = (
@@ -521,6 +411,22 @@ def export_students_csv(request):
                                 mark_col_map[original_key] = info
                                 mark_col_map[original_key.replace('-', '_')] = info
 
+                ap_exam_infos = []
+                ap_award_infos = []
+                if selected_ap_cols or selected_award_cols:
+                    try:
+                        from dataviz.utils.data_loader import (
+                            _build_ap_exam_columns_from_db,
+                            _build_ap_award_columns_from_db,
+                        )
+                        with connections['default'].cursor() as ap_meta_cursor:
+                            if selected_ap_cols:
+                                ap_exam_infos, _ = _build_ap_exam_columns_from_db(ap_meta_cursor, selected_ap_cols)
+                            if selected_award_cols:
+                                ap_award_infos, _ = _build_ap_award_columns_from_db(ap_meta_cursor, selected_award_cols)
+                    except Exception:
+                        ap_exam_infos = ap_award_infos = []
+
                 # Prepare Dynamic Headers
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
                 if test_cols_info:
@@ -553,6 +459,7 @@ def export_students_csv(request):
 
                 # Local copies for streaming scope
                 search_value = search
+                search_ids_value = search_ids
                 school_year_value = school_year
                 grade_value = grade
                 status_value = status
@@ -593,23 +500,42 @@ def export_students_csv(request):
 
                             # Override user-driven filters; the list defines membership.
                             search_value = None
+                            search_ids_value = None
                             school_year_value = None
                             grade_value = None
                             status_value = None
                             filters_value = {}
 
-                if search_value:
+                search_ids_value = search_ids
+                if search_ids_value:
+                    base_where_clauses.append("(cs.ssid = ANY(%s) OR cs.student_id = ANY(%s))")
+                    base_params.extend([search_ids_value, search_ids_value])
+                elif search_value:
                     base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
-                    base_params.extend([f'%{search_value}%']*3)
-                if school_year_value:
-                    base_where_clauses.append("cs.school_year = %s")
-                    base_params.append(school_year_value)
+                    base_params.extend([f'%{search_value}%'] * 3)
+                _append_school_year_filter(base_where_clauses, base_params, school_year_value)
                 if grade_value:
-                    base_where_clauses.append("cs.grade = %s")
-                    base_params.append(grade_value)
+                    if isinstance(grade_value, list):
+                        if len(grade_value) == 1:
+                            base_where_clauses.append("cs.grade = %s")
+                            base_params.append(grade_value[0])
+                        elif len(grade_value) > 1:
+                            base_where_clauses.append("cs.grade = ANY(%s)")
+                            base_params.append(grade_value)
+                    else:
+                        base_where_clauses.append("cs.grade = %s")
+                        base_params.append(grade_value)
                 if status_value:
-                    base_where_clauses.append("cs.status = %s")
-                    base_params.append(status_value)
+                    if isinstance(status_value, list):
+                        if len(status_value) == 1:
+                            base_where_clauses.append("cs.status = %s")
+                            base_params.append(status_value[0])
+                        elif len(status_value) > 1:
+                            base_where_clauses.append("cs.status = ANY(%s)")
+                            base_params.append(status_value)
+                    else:
+                        base_where_clauses.append("cs.status = %s")
+                        base_params.append(status_value)
 
                 # Apply active school context or enforce school permissions
                 _apply_de_school_filter(base_where_clauses, base_params, request.user)
@@ -627,7 +553,48 @@ def export_students_csv(request):
 
                 where_clauses = list(base_where_clauses)
                 params = list(base_params)
-                _apply_column_filters(where_clauses, params, filters_value, test_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
+                apply_column_filters(
+                    where_clauses, params, filters_value, test_col_map, mark_col_map,
+                    db_columns, enroll_columns, needs_enroll, needs_students, needs_eht,
+                    ap_exam_infos, ap_award_infos,
+                )
+
+                survey_filters = {
+                    k: v for k, v in (filters_value or {}).items()
+                    if isinstance(k, str) and k.startswith('survey_') and v
+                }
+                if survey_filters:
+                    from ..survey_utils import get_survey_columns
+                    _survey_col_meta = get_survey_columns().get('col_meta', {})
+                    for _sr_col_key, _sr_values in survey_filters.items():
+                        _sr_meta = _survey_col_meta.get(_sr_col_key)
+                        if not _sr_meta:
+                            continue
+                        _sr_has_blank = '' in _sr_values
+                        _sr_real_values = [v for v in _sr_values if v != '']
+                        _sr_conditions = []
+                        _sr_base_query = (
+                            'SELECT sr.student_id FROM "dataLoader_surveyresponse" sr '
+                            'INNER JOIN "dataLoader_surveyquestion" sq ON sr.question_id = sq.id '
+                            'INNER JOIN "dataLoader_surveydefinition" sd ON sq.survey_definition_id = sd.id '
+                            'INNER JOIN "dataLoader_importlog" il ON sr.import_log_id = il.id '
+                            "WHERE sd.survey_type = %s AND sd.school_year = %s "
+                            "AND sd.testing_window = %s AND sd.grade_range = %s AND sq.\"order\" = %s "
+                            "AND (il.ready_for_exploration = true OR sd.ready_for_exploration = true) AND il.status = 'COMPLETED'"
+                        )
+                        _sr_base_params = [
+                            _sr_meta['survey_type'], _sr_meta['school_year'], _sr_meta['window'],
+                            _sr_meta.get('grade_range', ''), _sr_meta['question_order'],
+                        ]
+                        if _sr_real_values:
+                            _sr_conditions.append(f"cs.student_id IN ({_sr_base_query} AND sr.value = ANY(%s))")
+                            params.extend(_sr_base_params + [_sr_real_values])
+                        if _sr_has_blank:
+                            _sr_conditions.append(f"cs.student_id NOT IN ({_sr_base_query})")
+                            params.extend(_sr_base_params)
+                        if _sr_conditions:
+                            where_clauses.append(f"({' OR '.join(_sr_conditions)})")
+
                 where_sql = " AND ".join(where_clauses)
                 
                 # Fetch Loop

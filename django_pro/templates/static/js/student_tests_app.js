@@ -422,6 +422,47 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    const appendStudentQueryParams = (url, { includeEmptyFilters = false } = {}) => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const savedQueryId = urlParams.get('saved_query');
+        const studentListId = urlParams.get('student_list');
+        if (savedQueryId) url.searchParams.set('saved_query', savedQueryId);
+        if (studentListId) url.searchParams.set('student_list', studentListId);
+
+        const isSavedQueryLoad = Boolean(savedQueryId);
+        const isInitialSavedQueryLoad = isSavedQueryLoad && lastPayload === null;
+        if (!isInitialSavedQueryLoad) {
+            if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
+                url.searchParams.set('columns', JSON.stringify(selectedColumns));
+            }
+            if (sortBy) {
+                url.searchParams.set('sort_by', sortBy);
+                url.searchParams.set('sort_dir', sortDir);
+            }
+            if (filters && Object.keys(filters).length > 0) {
+                url.searchParams.set('filters', JSON.stringify(filters));
+            } else if (includeEmptyFilters || lastPayload !== null) {
+                url.searchParams.set('filters', '{}');
+            }
+        }
+
+        const searchInput = document.getElementById('search');
+        const schoolYearSelect = document.getElementById('school_year');
+        const gradeSelect = document.getElementById('grade');
+        const statusInput = document.getElementById('status');
+
+        if (!isInitialSavedQueryLoad) {
+            if (pastedIdList && pastedIdList.length) {
+                url.searchParams.set('search_ids', JSON.stringify(pastedIdList));
+            } else if (searchInput && searchInput.value) {
+                url.searchParams.set('search', searchInput.value);
+            }
+            if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
+            if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
+            if (statusInput) url.searchParams.set('status', statusInput.value);
+        }
+    };
+
     const getCurrentQueryConfigForSave = () => {
         return {
             columns: selectedColumns,
@@ -1233,45 +1274,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         refreshColumnStructures();
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const savedQueryId = urlParams.get('saved_query');
-        const studentListId = urlParams.get('student_list');
-        if (savedQueryId) url.searchParams.set('saved_query', savedQueryId);
-        if (studentListId) url.searchParams.set('student_list', studentListId);
-
-        const isSavedQueryLoad = Boolean(savedQueryId);
-        const isInitialSavedQueryLoad = isSavedQueryLoad && lastPayload === null;
-        if (!isInitialSavedQueryLoad) {
-            if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
-                url.searchParams.set('columns', JSON.stringify(selectedColumns));
-            }
-            if (sortBy) {
-                url.searchParams.set('sort_by', sortBy);
-                url.searchParams.set('sort_dir', sortDir);
-            }
-            if (filters && Object.keys(filters).length > 0) {
-                url.searchParams.set('filters', JSON.stringify(filters));
-            } else if (lastPayload !== null) {
-                url.searchParams.set('filters', '{}');
-            }
-        }
+        appendStudentQueryParams(url);
         url.searchParams.set('format', 'json');
-
-        const searchInput = document.getElementById('search');
-        const schoolYearSelect = document.getElementById('school_year');
-        const gradeSelect = document.getElementById('grade');
-        const statusInput = document.getElementById('status');
-
-        if (!isInitialSavedQueryLoad) {
-            if (pastedIdList && pastedIdList.length) {
-                url.searchParams.set('search_ids', JSON.stringify(pastedIdList));
-            } else if (searchInput && searchInput.value) {
-                url.searchParams.set('search', searchInput.value);
-            }
-            if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
-            if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
-            if (statusInput) url.searchParams.set('status', statusInput.value);
-        }
 
         const urlStr = url.toString();
         if (inFlightUrl === urlStr) return;
@@ -1851,7 +1855,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const exportBtn = event.target.closest('[data-action="export-csv"]');
         if (exportBtn) {
             showLoading('Preparing CSV export...');
-            
+
             const baseUrl = appDataEl.dataset.exportCsvUrl;
             if (!baseUrl) {
                 hideLoading();
@@ -1859,35 +1863,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const url = new URL(baseUrl, window.location.origin);
-            const params = new URLSearchParams(window.location.search);
-            const savedQueryId = params.get('saved_query');
-            const studentListId = params.get('student_list');
-
-            if (savedQueryId) url.searchParams.set('saved_query', savedQueryId);
-            if (studentListId) url.searchParams.set('student_list', studentListId);
-
-            if (Array.isArray(selectedColumns) && selectedColumns.length > 0) {
-                url.searchParams.set('columns', JSON.stringify(selectedColumns));
-            }
-            if (sortBy) {
-                url.searchParams.set('sort_by', sortBy);
-                url.searchParams.set('sort_dir', sortDir);
-            }
-            if (filters && Object.keys(filters).length > 0) {
-                url.searchParams.set('filters', JSON.stringify(filters));
-            }
-
-            const searchInput = document.getElementById('search');
-            const schoolYearSelect = document.getElementById('school_year');
-            const statusInput = document.getElementById('status');
-
-            if (pastedIdList && pastedIdList.length) {
-                url.searchParams.set('search_ids', JSON.stringify(pastedIdList));
-            } else if (searchInput && searchInput.value) {
-                url.searchParams.set('search', searchInput.value);
-            }
-            if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
-            if (statusInput) url.searchParams.set('status', statusInput.value);
+            appendStudentQueryParams(url, { includeEmptyFilters: true });
 
             window.location.href = url.toString();
             
