@@ -99,10 +99,16 @@ def export_students_csv(request):
     _sy_in_export_url = 'school_year' in request.GET
     if _sy_in_export_url:
         school_year = request.GET.get('school_year', '')
-    elif _project_default_year:
-        school_year = _project_default_year
     else:
-        school_year = saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+        # A saved query's own school year wins over the project default, so
+        # exporting a saved query still targets the year it was built for.
+        _saved_school_year = saved_filters.get('school_year', '') or saved_config.get('school_year', '')
+        if saved_query_id and _saved_school_year:
+            school_year = _saved_school_year
+        elif _project_default_year:
+            school_year = _project_default_year
+        else:
+            school_year = _saved_school_year
 
     # Resolve school-year aliases (e.g. '__sy_this__') to concrete year strings
     try:
@@ -797,9 +803,32 @@ def export_students_csv(request):
                                             if i <= len(courses):
                                                 course_name = list(courses.keys())[i - 1]
                                                 periods = courses[course_name]
-                                                marks_str = ', '.join(
-                                                    f"{p}: {m}" for p, m in periods if p and m
-                                                )
+                                                # If this pair column is filtered by marking period
+                                                # and/or mark, only those entries are shown — mirror
+                                                # what load_students renders in the table.
+                                                col_filters = filters_value.get(marks_key) if isinstance(filters_value, dict) else None
+                                                if col_filters:
+                                                    sel_periods = [str(v).split(':', 1)[1] for v in col_filters if str(v).startswith('period:')]
+                                                    sel_marks = [str(v).split(':', 1)[1] for v in col_filters if str(v).startswith('mark:')]
+                                                    if sel_periods or sel_marks:
+                                                        kept = []
+                                                        for p, m in periods:
+                                                            if not p or not m:
+                                                                continue
+                                                            if sel_periods and p not in sel_periods:
+                                                                continue
+                                                            if sel_marks and m not in sel_marks:
+                                                                continue
+                                                            kept.append(f"{p}: {m}")
+                                                        marks_str = ', '.join(kept)
+                                                    else:
+                                                        marks_str = ', '.join(
+                                                            f"{p}: {m}" for p, m in periods if p and m
+                                                        )
+                                                else:
+                                                    marks_str = ', '.join(
+                                                        f"{p}: {m}" for p, m in periods if p and m
+                                                    )
                                                 student[course_key] = course_name
                                                 student[marks_key] = marks_str
                                             else:

@@ -461,6 +461,15 @@ def get_ap_columns(column_filters=None):
 
 def _append_cs_filter_clause(where_clauses, params, col, raw_val):
     """Apply a Data Explorer base-column filter against current_student (cs)."""
+    # Dynamic assessment/mark/AP filter keys describe test/mark rows, not
+    # current_student columns. They are never usable as a base-student filter
+    # (and some, like the "All Marks" umbrella, are bookkeeping only), so skip
+    # them entirely — otherwise they fall through to a bogus cs.<col> predicate.
+    if isinstance(col, str) and col.startswith(
+        ('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_')
+    ):
+        return
+
     if isinstance(raw_val, (list, tuple, set)):
         vals = [str(v).strip() for v in raw_val if v is not None and str(v).strip()]
     elif raw_val and str(raw_val).strip() and str(raw_val).strip() != 'All':

@@ -464,13 +464,19 @@ def load_students(request):
     if _sy_in_url:
         _sy_raw = request.GET.get('school_year', '')
         school_year = _parse_multi(_sy_raw, '')
-    elif _project_default_year:
-        school_year = _project_default_year
     else:
-        school_year = _parse_multi(
+        # A saved query's own school year wins over the project default, so
+        # reopening a query still targets the year it was built for.
+        _saved_school_year = _parse_multi(
             saved_filters.get('school_year', ''),
             _parse_multi(saved_config.get('school_year', ''), '')
         )
+        if saved_query_id and _saved_school_year:
+            school_year = _saved_school_year
+        elif _project_default_year:
+            school_year = _project_default_year
+        else:
+            school_year = _saved_school_year
 
     if not school_year:
         school_year = '__sy_this__'
