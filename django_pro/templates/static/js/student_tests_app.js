@@ -320,6 +320,119 @@ document.addEventListener('DOMContentLoaded', () => {
         syncCheckboxes();
     }
 
+    // ─── "All Marks" course picker ────────────────────────────────────────
+    // Selecting the All Marks umbrella adds one course/marks wide pair per course
+    // the student has in that subject. The course picker below the umbrella lets
+    // the user uncheck courses they don't want included; deselected courses are
+    // stored on the umbrella key as 'exclude:<course>' values in the filters map.
+    const normMarkallToken = (value) => String(value || '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+    // Homeroom courses are never part of the Elementary subject's All Marks view.
+    const isMarkallHiddenCourse = (subject, name) => String(subject || '') === 'Elementary'
+        && /Homeroom/i.test(String(name || ''));
+    const markallUmbrellaKey = (year, subject) => {
+        const yr = String(year || '').replace(/-/g, '_').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+        return `markall_${yr}_${normMarkallToken(subject)}`;
+    };
+    // From an umbrella OR an already-expanded pair key, return the specific
+    // umbrella key (e.g. "markall_2025_2026_Math"), or '' when unparseable.
+    const markallUmbrellaKeyFromColumn = (colKey) => {
+        const rest = String(colKey || '').slice('markall_'.length);
+        const parts = rest.split('_');
+        if (parts.length < 2 || !/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) return '';
+        let tail = parts.slice(2);
+        if (tail.length >= 2 && /^\d+$/.test(tail[tail.length - 2])
+            && (tail[tail.length - 1] === 'COURSE' || tail[tail.length - 1] === 'MARKS')) {
+            tail = tail.slice(0, -2);
+        }
+        return `markall_${parts[0]}_${parts[1]}_${tail.join('_')}`;
+    };
+    const isMarkallPairKey = (col) => String(col || '').startsWith('markall_')
+        && (String(col).endsWith('_COURSE') || String(col).endsWith('_MARKS'));
+    const markallUmbrellaActive = (year, subject) => {
+        const umbrella = markallUmbrellaKey(year, subject);
+        const prefix = `${umbrella}_`;
+        return selectedColumns.some((sc) => {
+            const n = normaliseKey(sc);
+            return n === umbrella || n.startsWith(prefix);
+        });
+    };
+    const markallExcludeSet = (umbrellaKey) => {
+        const set = new Set();
+        const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        vals.forEach((v) => {
+            const s = String(v);
+            if (s.startsWith('exclude:')) set.add(s.slice('exclude:'.length));
+        });
+        return set;
+    };
+
+    const syncMarkallCourseControls = () => {
+        document.querySelectorAll('input[data-markall="1"]').forEach((cb) => {
+            const container = cb.closest('[data-category^="marks_"]');
+            const box = container ? container.querySelector('[data-markall-course-box]') : null;
+            if (!box) return;
+            const year = cb.dataset.markallYear || '';
+            const subject = cb.dataset.markallSubject || '';
+            const active = markallUmbrellaActive(year, subject);
+            box.classList.toggle('hidden', !active);
+            const hint = box.querySelector('[data-markall-course-hint]');
+            if (!active) {
+                if (hint) hint.textContent = '';
+                return;
+            }
+            const umbrellaKey = markallUmbrellaKey(year, subject);
+            const excluded = markallExcludeSet(umbrellaKey);
+            const courseInputs = Array.from(box.querySelectorAll('input[data-markall-course]'));
+            courseInputs.forEach((ci) => {
+                const name = ci.dataset.markallCourseName || '';
+                const hidden = isMarkallHiddenCourse(subject, name);
+                const label = ci.closest('label');
+                if (label) label.style.display = hidden ? 'none' : '';
+                if (hidden) {
+                    ci.checked = false;
+                    return;
+                }
+                ci.checked = !excluded.has(name);
+            });
+            const visible = courseInputs.filter((ci) => !isMarkallHiddenCourse(subject, ci.dataset.markallCourseName || ''));
+            const checked = visible.filter((ci) => ci.checked).length;
+            if (hint) hint.textContent = visible.length ? `${checked}/${visible.length} selected` : '';
+        });
+    };
+
+    const handleMarkallCourseToggle = (courseCb) => {
+        const container = courseCb.closest('[data-category^="marks_"]');
+        const box = container ? container.querySelector('[data-markall-course-box]') : null;
+        if (!box) return;
+        const year = courseCb.dataset.markallYear || '';
+        const subject = courseCb.dataset.markallSubject || '';
+        const name = String(courseCb.dataset.markallCourseName || '').trim();
+        if (isMarkallHiddenCourse(subject, name)) {
+            courseCb.checked = false;
+            return;
+        }
+        if (!markallUmbrellaActive(year, subject)) {
+            syncMarkallCourseControls();
+            return;
+        }
+        const umbrellaKey = markallUmbrellaKey(year, subject);
+        if (!name) return;
+        const excluded = markallExcludeSet(umbrellaKey);
+        if (courseCb.checked) {
+            excluded.delete(name);
+        } else {
+            excluded.add(name);
+        }
+        if (excluded.size) {
+            filters[umbrellaKey] = Array.from(excluded).map((n) => `exclude:${n}`);
+        } else {
+            delete filters[umbrellaKey];
+        }
+        resetPage();
+        syncMarkallCourseControls();
+        triggerLoadData();
+    };
+
     // Wire toggle buttons (may not be in DOM yet when column sidebar loads via HTMX)
     document.addEventListener('click', e => {
         const btn = e.target.closest('[data-year-mode-btn]');
@@ -615,6 +728,7 @@ document.addEventListener('DOMContentLoaded', () => {
             topicCb.checked = selectedCount === cols.length;
             topicCb.indeterminate = selectedCount > 0 && selectedCount < cols.length;
         });
+        syncMarkallCourseControls();
     };
 
     const renderSelectedColumns = () => {
@@ -907,6 +1021,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             Object.keys(filters).forEach(col => {
                 const vals = filters[col];
+                // Umbrella-level course exclusions are represented by the course
+                // picker, not as an active-filter chip.
+                if (String(col || '').startsWith('markall_') && !isMarkallPairKey(col)) return;
                 if (Array.isArray(vals) && vals.length > 0) {
                     hasActiveFilters = true;
                     let colLabel = getColumnLabel(col);
@@ -920,6 +1037,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const s = String(v);
                         if (s.startsWith('period:')) return s.slice('period:'.length);
                         if (s.startsWith('mark:')) return s.slice('mark:'.length);
+                        if (s.startsWith('exclude:')) return s.slice('exclude:'.length);
                         return s;
                     }).join(', ');
                     if (valText.length > 20) valText = `${vals.length} selected`;
@@ -1330,35 +1448,57 @@ document.addEventListener('DOMContentLoaded', () => {
         const key = storageKey(col);
         const normKey = normaliseKey(key);
 
-        // "All Marks" AP mark umbrella handling
+        // "All Marks" mark umbrella handling
         if (normKey.startsWith('markall_')) {
-            // Parse year + subject from markall_<year>_<subject>
-            const rest = normKey.slice('markall_'.length);
-            const parts = rest.split('_');
-            const yrKey = `${parts[0]}_${parts[1]}`;
-            const yr = yrKey.replace('_', '-');
-            const isSelected = selectedColumns.some(sc => normaliseKey(sc) === normKey
-                || normaliseKey(sc).startsWith(`${normKey}_`));
+            const umbrella = markallUmbrellaKeyFromColumn(normKey);
+            if (!umbrella) {
+                // Malformed key — fall back to plain toggle behavior
+                const isSelectedPlain = selectedColumns.some(c => normaliseKey(c) === normKey);
+                if (isSelectedPlain) {
+                    if (selectedColumns.length <= 1) return;
+                    selectedColumns = selectedColumns.filter(c => normaliseKey(c) !== normKey);
+                    if (filters[key]) delete filters[key];
+                } else {
+                    selectedColumns.push(key);
+                }
+                resetPage();
+                renderSelectedColumns();
+                triggerLoadData();
+                return;
+            }
+            const prefix = `${umbrella}_`;
+            const yearUs = umbrella.slice('markall_'.length, 'markall_'.length + 9);
+            const yearHyphen = yearUs.replace('_', '-');
+            const subjNorm = umbrella.slice('markall_'.length + 10);
+            const isSelected = selectedColumns.some(sc => {
+                const n = normaliseKey(sc);
+                return n === umbrella || n.startsWith(prefix);
+            });
             if (isSelected) {
                 // Uncheck: remove umbrella + expanded pairs
                 selectedColumns = selectedColumns.filter(sc => {
                     const n = normaliseKey(sc);
-                    return n !== normKey && !n.startsWith(`${normKey}_`);
+                    return n !== umbrella && !n.startsWith(prefix);
                 });
             } else {
-                // Check: unselect individual mark_<year>_<subject>_* columns for this subject
+                // Check: unselect individual mark_<year>_<subject>_* columns for this subject,
+                // then select the umbrella (all courses included).
                 selectedColumns = selectedColumns.filter(sc => {
                     const n = normaliseKey(sc);
                     if (!n.startsWith('mark_') || n.startsWith('markall_')) return true;
                     const tail = n.slice('mark_'.length);
                     const tp = tail.split('_');
                     if (tp.length >= 2 && /^\d{4}$/.test(tp[0]) && /^\d{4}$/.test(tp[1])) {
-                        return `${tp[0]}-${tp[1]}` !== yr;
+                        if (`${tp[0]}-${tp[1]}` !== yearHyphen) return true;
+                        const restNorm = '_'.join(tp.slice(2));
+                        return !restNorm.startsWith(`${subjNorm}_`);
                     }
                     return true;
                 });
                 selectedColumns.push(key);
             }
+            // Starting fresh with "All Marks" (or removing it) clears any course excludes.
+            delete filters[umbrella];
             resetPage();
             renderSelectedColumns();
             triggerLoadData();
@@ -1438,6 +1578,12 @@ document.addEventListener('DOMContentLoaded', () => {
             resetPage();
             renderSelectedColumns();
             triggerLoadData();
+            return;
+        }
+
+        const courseCheckbox = event.target.closest('input[data-markall-course]');
+        if (courseCheckbox) {
+            handleMarkallCourseToggle(courseCheckbox);
             return;
         }
 

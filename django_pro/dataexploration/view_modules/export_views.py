@@ -13,10 +13,12 @@ from ..column_utils import (
     _get_display_name,
     export_cell,
     enrich_students_tests_marks,
+    parse_markall_key,
+    markall_key as _markall_key,
 )
 from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
-from .student_list_views import _append_school_year_filter
-from .filter_sql import apply_column_filters
+from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
+from .filter_sql import apply_column_filters, extract_markall_course_excludes, markall_course_filter_parts
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -158,6 +160,65 @@ def export_students_csv(request):
     if isinstance(filters, dict):
         filters = {resolve_relative_column_key(k): v for k, v in filters.items()}
 
+    # ── Marks "All Marks" expansion setup ──────────────────────────────────
+    # Any markall umbrella key (or already-expanded pair keys) collapses back to
+    # the umbrella. Actual expansion into wide course/marks pairs happens inside
+    # the stream once the filtered population is known. Selecting it also drops
+    # the individual mark_<year>_<subject>_* columns for the same subjects.
+    def _markall_subject_actual(year, subject_norm):
+        try:
+            from ..column_utils import get_mark_columns
+            marks_struct = get_mark_columns()
+            for subject in marks_struct.get(year, {}):
+                if _markall_key(year, subject) == _markall_key(year, subject_norm):
+                    return subject
+        except Exception:
+            pass
+        return subject_norm.replace('_', ' ')
+
+    markall_years = {}  # (year, subject_actual) -> umbrella key
+    for c in selected_columns:
+        if not isinstance(c, str) or not c.startswith('markall_'):
+            continue
+        parsed = parse_markall_key(c)
+        if parsed:
+            key_t = (parsed['year'], _markall_subject_actual(parsed['year'], parsed['subject_norm']))
+            markall_years.setdefault(key_t, _markall_key(*key_t))
+
+    if markall_years:
+        new_selected = []
+        for c in selected_columns:
+            # Unselect individual mark columns for expanded subjects
+            if isinstance(c, str) and c.startswith('mark_') and not c.startswith('markall_'):
+                tail = c[len('mark_'):]
+                parts = tail.split('_')
+                if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                    yr = f"{parts[0]}-{parts[1]}"
+                    norm_rest = '_'.join(parts[2:])
+                    for (y, subj) in markall_years:
+                        subj_norm = _markall_key(yr, subj)[len('markall_'):].split('_', 2)[2]
+                        if y == yr and norm_rest.startswith(subj_norm + '_'):
+                            break
+                    else:
+                        new_selected.append(c)
+                        continue
+                    continue
+            # Collapse already-expanded keys back to the umbrella (re-expanded later)
+            if isinstance(c, str) and c.startswith('markall_'):
+                parsed = parse_markall_key(c)
+                if parsed and parsed['kind'] is not None:
+                    umbrella = markall_years.get(
+                        (parsed['year'], _markall_subject_actual(parsed['year'], parsed['subject_norm']))
+                    )
+                    if umbrella and umbrella not in new_selected:
+                        new_selected.append(umbrella)
+                    continue
+            new_selected.append(c)
+        selected_columns = new_selected
+
+    # Courses the user deselected from an "All Marks" umbrella (exclude:<course>)
+    markall_excludes = extract_markall_course_excludes(filters)
+
     # 2. Preparation for Query
     db_columns = get_current_student_columns()
     enroll_columns = get_student_enroll_columns()
@@ -237,6 +298,8 @@ def export_students_csv(request):
         logger = logging.getLogger(__name__)
         try:
             from clickhouse_utils.executor import QueryExecutor
+            # Local working copy (the markall expansion below re-binds it).
+            export_cols = list(selected_columns)
             with QueryExecutor(analytics=True).cursor() as cursor:
                 # Re-implement helper logic inline or simplified
                 def _parse_year_from_test_col(col_key):
@@ -448,11 +511,6 @@ def export_students_csv(request):
                         label = f"{info['course_name']} ({info['subject']}) {period} {info['year']}"
                         dynamic_labels[info['col_name']] = label
 
-                # Yield Header
-                header_labels = [dynamic_labels.get(col, col) for col in selected_columns]
-                yield writer.writerow(header_labels)
-                logger.info(f"CSV Export: Header yielded, starting data export with {len(selected_columns)} columns")
-
                 # Build Where Clauses
                 base_where_clauses = ["1=1"]
                 base_params = []
@@ -596,7 +654,62 @@ def export_students_csv(request):
                             where_clauses.append(f"({' OR '.join(_sr_conditions)})")
 
                 where_sql = " AND ".join(where_clauses)
-                
+
+                # ── Marks "All Marks" expansion (filtered population) ──────
+                # Emit one COURSE/MARKS wide pair per course the filtered
+                # students actually have in the subject (respecting the courses
+                # the user deselected). Mirrors load_students.
+                markall_max = {}
+                if markall_years:
+                    with connections['default'].cursor() as markall_cursor:
+                        for (year, subject), umbrella in markall_years.items():
+                            course_filter_sql, course_extra_params = markall_course_filter_parts(
+                                subject, markall_excludes.get(umbrella, set())
+                            )
+                            markall_cursor.execute(
+                                f"""
+                                SELECT COALESCE(MAX(cnt), 0)
+                                FROM (
+                                    SELECT sm.stu_annual_key, COUNT(DISTINCT sm.course_name) AS cnt
+                                    FROM student_marks_list sm
+                                    INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                    {join_sql}
+                                    WHERE {where_sql}
+                                      AND sm.school_year = %s AND sm.subject = %s
+                                      {course_filter_sql}
+                                    GROUP BY sm.stu_annual_key
+                                ) t
+                                """,
+                                params + [year, subject] + course_extra_params,
+                            )
+                            markall_max[(year, subject)] = min(int(markall_cursor.fetchone()[0] or 0), 10)
+
+                    new_selected = []
+                    for c in export_cols:
+                        parsed = parse_markall_key(c) if (isinstance(c, str) and c.startswith('markall_')) else None
+                        if parsed and parsed['kind'] is None:
+                            year = parsed['year']
+                            subject = _markall_subject_actual(year, parsed['subject_norm'])
+                            n = markall_max.get((year, subject), 0)
+                            for i in range(1, n + 1):
+                                new_selected.append(f"{c}_{i}_COURSE")
+                                new_selected.append(f"{c}_{i}_MARKS")
+                            continue
+                        new_selected.append(c)
+                    export_cols = new_selected
+
+                # Definitions for the Marks "All Marks" wide-pair columns
+                for (year, subject), umbrella in markall_years.items():
+                    n = markall_max.get((year, subject), 0)
+                    for i in range(1, n + 1):
+                        dynamic_labels[f"{umbrella}_{i}_COURSE"] = f"Course {i} ({subject}) {year}"
+                        dynamic_labels[f"{umbrella}_{i}_MARKS"] = f"Marks {i} ({subject}) {year}"
+
+                # Yield Header
+                header_labels = [dynamic_labels.get(col, col) for col in export_cols]
+                yield writer.writerow(header_labels)
+                logger.info(f"CSV Export: Header yielded, starting data export with {len(export_cols)} columns")
+
                 # Fetch Loop
                 chunk_size = 500
                 offset = 0
@@ -605,7 +718,7 @@ def export_students_csv(request):
                 query_base_cols = list(base_cols)
                 if 'ssid' not in query_base_cols: query_base_cols.insert(0, 'ssid')
                 if test_cols_info and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
-                if selected_mark_cols and 'stu_annual_key' not in query_base_cols: query_base_cols.insert(0, 'stu_annual_key')
+                if (selected_mark_cols or markall_years) and 'stu_annual_key' not in query_base_cols: query_base_cols.insert(0, 'stu_annual_key')
                 
                 base_col_selects = []
                 base_col_expressions = {}
@@ -650,10 +763,55 @@ def export_students_csv(request):
                         chunk_students, test_cols_info, mark_cols_info, blank='',
                     )
 
+                    # Fetch Marks "All Marks" wide-pair data for this chunk
+                    if markall_years:
+                        try:
+                            chunk_keys = [str(s.get('stu_annual_key') or '').strip() for s in chunk_students if str(s.get('stu_annual_key') or '').strip()]
+                            if chunk_keys:
+                                for (year, subject), umbrella in markall_years.items():
+                                    n = markall_max.get((year, subject), 0)
+                                    course_filter_sql, course_extra_params = markall_course_filter_parts(
+                                        subject, markall_excludes.get(umbrella, set())
+                                    )
+                                    markall_sql = f"""
+                                        SELECT stu_annual_key, course_name, mark_period, mark
+                                        FROM analytics_student_marks sm
+                                        WHERE stu_annual_key = ANY(%s) AND school_year = %s AND subject = %s
+                                          {course_filter_sql}
+                                        ORDER BY stu_annual_key, course_name, mark_period
+                                    """
+                                    markall_rows = _fetchall_ch_or_pg(
+                                        markall_sql,
+                                        [chunk_keys, year, subject] + course_extra_params,
+                                        markall_sql.replace('analytics_student_marks', 'student_marks_list'),
+                                    )
+                                    by_key = {}
+                                    for stu_key, course, period, mark in markall_rows:
+                                        by_key.setdefault(str(stu_key).strip(), {}).setdefault(course, []).append((period, mark))
+                                    for student in chunk_students:
+                                        stu_key = str(student.get('stu_annual_key') or '').strip()
+                                        courses = by_key.get(stu_key, {})
+                                        for i in range(1, n + 1):
+                                            course_key = f"{umbrella}_{i}_COURSE"
+                                            marks_key = f"{umbrella}_{i}_MARKS"
+                                            if i <= len(courses):
+                                                course_name = list(courses.keys())[i - 1]
+                                                periods = courses[course_name]
+                                                marks_str = ', '.join(
+                                                    f"{p}: {m}" for p, m in periods if p and m
+                                                )
+                                                student[course_key] = course_name
+                                                student[marks_key] = marks_str
+                                            else:
+                                                student[course_key] = ''
+                                                student[marks_key] = ''
+                        except Exception:
+                            pass
+
                     # Yield Rows
                     for student in chunk_students:
                         row = []
-                        for col in selected_columns:
+                        for col in export_cols:
                             row.append(export_cell(student.get(col)))
                         yield writer.writerow(row)
                 
