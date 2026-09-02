@@ -7,6 +7,7 @@ import json
 
 from django.core.cache import cache
 
+from clickhouse_utils.timing import timed_fn
 from .data_loader import run_saved_query, run_raw_sql, run_column_query, enrich_drill_rows
 
 
@@ -69,11 +70,15 @@ def _drill_needs_post_filter_cache(chart, drill_filters: dict) -> bool:
 def _can_sql_paginate_drill(chart, drill_filters: dict, sort_by: str) -> bool:
     if _drill_needs_post_filter_cache(chart, drill_filters):
         return False
-    if chart.source_type not in ('query', 'columns'):
+    if chart.source_type not in ('query', 'columns', 'dataset'):
+        return False
+    if chart.source_type == 'dataset' and (chart.config or {}).get('one_row_per_stu_annual_key'):
         return False
     if sort_by:
         bare = sort_by.split('.')[-1]
         if bare.startswith(('test_', 'mark_')):
+            return False
+        if chart.source_type == 'dataset' and '.' not in sort_by:
             return False
     return True
 
@@ -157,6 +162,205 @@ def _deduplicate_count_drill_rows(rows, chart):
     return deduped
 
 
+def _dyn_calc_label(calc, col_defs=None):
+    fn = calc.get('agg_func', 'count')
+    vc = calc.get('value_col', '')
+    lbl = (calc.get('label') or '').strip()
+    if lbl:
+        return lbl
+    vc_lbl = (col_defs or {}).get(vc, vc) if vc else vc
+    return f"{fn.capitalize()} of {vc_lbl}" if vc else fn.capitalize()
+
+
+def _dyn_calc_thresholds(calc):
+    thresholds = []
+    filters = calc.get('filters') if isinstance(calc.get('filters'), list) else [calc.get('filter')]
+    for f in filters:
+        if isinstance(f, dict) and f.get('col') and f.get('op'):
+            thresholds.append({
+                'col': f['col'],
+                'op': f['op'],
+                'val': f.get('val'),
+                'logic': f.get('logic', 'and'),
+            })
+    return thresholds
+
+
+def _resolve_dyn_drill_calc(calc, calc_by_id, col_defs=None, seen=None):
+    """Map a clicked calculation to (value_col, thresholds) for drill filtering."""
+    seen = seen or set()
+    cid = str(calc.get('id') or '')
+    if cid in seen:
+        return '', []
+    seen.add(cid)
+
+    ctype = calc.get('calc_type')
+    if ctype not in ('base', 'derived'):
+        ctype = 'derived' if calc.get('op') and (calc.get('ref_a') is not None or calc.get('ref_b') is not None) else 'base'
+
+    if ctype == 'derived':
+        op = calc.get('op', '')
+        ref_a = calc_by_id.get(str(calc.get('ref_a') or ''))
+        ref_b = calc_by_id.get(str(calc.get('ref_b') or ''))
+        if op in ('divide', 'subtract') and ref_a:
+            vc, th = _resolve_dyn_drill_calc(ref_a, calc_by_id, col_defs, seen)
+            return vc, th + _dyn_calc_thresholds(calc)
+        for ref in (ref_a, ref_b):
+            if ref:
+                vc, th = _resolve_dyn_drill_calc(ref, calc_by_id, col_defs, seen)
+                if vc or th:
+                    return vc, th + _dyn_calc_thresholds(calc)
+        return '', _dyn_calc_thresholds(calc)
+
+    thresholds = _dyn_calc_thresholds(calc)
+    agg = calc.get('agg_func', 'count')
+    vc = calc.get('value_col', '')
+    if vc and agg != 'count':
+        return vc, thresholds
+    return '', thresholds
+
+
+def _match_dyn_calc(col_val, dyn_calc_id, selected_calc_id, calc_by_id, col_defs=None):
+    if dyn_calc_id and dyn_calc_id in calc_by_id:
+        return calc_by_id[dyn_calc_id]
+    if selected_calc_id and selected_calc_id in calc_by_id:
+        return calc_by_id[selected_calc_id]
+    if col_val:
+        sep = ' \u25b8 '
+        if sep in col_val:
+            prefix = col_val.split(sep, 1)[0]
+            if prefix in calc_by_id:
+                return calc_by_id[prefix]
+        if col_val in calc_by_id:
+            return calc_by_id[col_val]
+        for calc in calc_by_id.values():
+            if _dyn_calc_label(calc, col_defs) == col_val:
+                return calc
+    return None
+
+
+def _apply_dyn_calc_threshold_rows(rows, thresholds, resolve_col):
+    if not rows or not thresholds:
+        return rows
+
+    _DRILL_THRESH_OPS = {'lt', 'lte', 'gt', 'gte', 'eq', 'neq', 'in', 'nin'}
+
+    def _th_num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _strip_th(v):
+        if v is None:
+            return ''
+        return str(v).strip()
+
+    _th_cmp = {
+        'lt': lambda a, b: a < b,
+        'lte': lambda a, b: a <= b,
+        'gt': lambda a, b: a > b,
+        'gte': lambda a, b: a >= b,
+    }
+
+    def _passes(row, threshold):
+        tcol = resolve_col(threshold.get('col', ''))
+        top = threshold.get('op')
+        if not tcol or top not in _DRILL_THRESH_OPS:
+            return True
+        raw = row.get(tcol)
+        if top in ('in', 'nin'):
+            raw_val = threshold.get('val')
+            if isinstance(raw_val, (list, tuple, set)):
+                wanted = [str(v).strip() for v in raw_val if v is not None and str(v).strip() != '']
+            elif raw_val is not None and str(raw_val).strip():
+                wanted = [p.strip() for p in str(raw_val).split(',') if p.strip()]
+            else:
+                wanted = []
+            if not wanted:
+                return top != 'in'
+            from dataviz.utils.chart_builder.tables import _in_match_vals
+            wanted = _in_match_vals(wanted)
+            norm = _strip_th(raw)
+            return (norm in wanted) if top == 'in' else (norm not in wanted)
+        if top in ('eq', 'neq'):
+            tval = str(threshold.get('val') or '').strip()
+            if tval == '':
+                return True
+            norm = _strip_th(raw)
+            return norm == tval if top == 'eq' else norm != tval
+        tval = _th_num(threshold.get('val'))
+        if tval is None:
+            return True
+        num = _th_num(raw)
+        return num is not None and _th_cmp[top](num, tval)
+
+    filtered = []
+    for row in rows:
+        if not thresholds:
+            filtered.append(row)
+            continue
+        result = _passes(row, thresholds[0])
+        for idx in range(1, len(thresholds)):
+            logic = str(thresholds[idx].get('logic', 'and')).lower()
+            current = _passes(row, thresholds[idx])
+            result = (result or current) if logic == 'or' else (result and current)
+        if result:
+            filtered.append(row)
+    return filtered
+
+
+def _resolve_drill_row_col(col, row_keys):
+    """Map a config/SQL column name to the key present in drill result rows."""
+    if not col or not row_keys:
+        return col or ''
+    from dataexploration.school_year_utils import resolve_relative_column_key
+
+    def _norm(c):
+        return str(c).replace('-', '_').lower()
+
+    key_map = {_norm(k): k for k in row_keys}
+    norm = _norm(col)
+    if norm in key_map:
+        return key_map[norm]
+    resolved = resolve_relative_column_key(col)
+    norm_res = _norm(resolved)
+    if norm_res in key_map:
+        return key_map[norm_res]
+    clean = col.split('.')[-1]
+    norm_clean = _norm(clean)
+    if norm_clean in key_map:
+        return key_map[norm_clean]
+    return col
+
+
+def _apply_drill_row_filters(rows, drill_filters):
+    """Apply click-derived equality filters in Python (SQL-source charts, alias fallback)."""
+    if not rows or not drill_filters:
+        return rows
+    row_keys = list(rows[0].keys())
+    _blank = {'', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL'}
+
+    for fkey, fval in drill_filters.items():
+        col = _resolve_drill_row_col(fkey, row_keys)
+        if not col or col not in row_keys:
+            continue
+        if isinstance(fval, list):
+            allowed = {str(v).strip() for v in fval}
+            rows = [
+                r for r in rows
+                if str(r.get(col) or '').strip() in allowed
+                or ('(Blank)' in allowed and (not r.get(col) or str(r.get(col)).strip() in _blank))
+            ]
+        else:
+            target = str(fval).strip()
+            if target == '(Blank)':
+                rows = [r for r in rows if not r.get(col) or str(r.get(col)).strip() in _blank]
+            else:
+                rows = [r for r in rows if str(r.get(col) or '').strip() == target]
+    return rows
+
+
 def build_drill_filter(chart, params: dict) -> dict:
     """
     Translate an ECharts click event params dict into dataexploration filter dict.
@@ -212,66 +416,31 @@ def build_drill_filter(chart, params: dict) -> dict:
         row_val = params.get('st_row_val', '') or params.get('x_val', '')
         col_val = params.get('st_col_val', '') or params.get('series_val', '')
 
-        # Calculations mode: the clicked column is a user-defined aggregate
-        # (e.g. "Average of Reading Score"), not a real data column, so there
-        # is no column value to filter by.  Map the cell's label back to its
-        # calculation definition and, for non-count aggregates, restrict the
-        # drill to students who actually contributed a value — otherwise the
-        # drill list shows every student in the row group instead of just
-        # the ones the calculation was computed over.  Derived columns (built
-        # by arithmetic over other calculation columns) have no value column of
-        # their own, so resolve through to the base column they ultimately
-        # aggregate, carrying along any threshold filters on the way.
-        if chart.config.get('dyn_col_mode') == 'calculations' and col_val:
+        # Calculations mode: map the clicked column back to its calculation
+        # definition and apply the same row/threshold filters the cell used.
+        dyn_calcs = chart.config.get('dyn_calculations') or []
+        is_calc_mode = chart.config.get('dyn_col_mode') == 'calculations' or bool(dyn_calcs)
+        if is_calc_mode and (col_val or params.get('dyn_calc_id')):
             col_defs = chart.column_defs or {}
             calc_by_id = {}
-            for _idx, _c in enumerate(chart.config.get('dyn_calculations', [])):
+            for _idx, _c in enumerate(dyn_calcs):
                 if isinstance(_c, dict):
                     calc_by_id[str(_c.get('id') or f'c{_idx}')] = _c
 
-            def _calc_label(_c):
-                _fn = _c.get('agg_func', 'count')
-                _vc = _c.get('value_col', '')
-                _lbl = (_c.get('label') or '').strip()
-                if not _lbl:
-                    _vc_lbl = col_defs.get(_vc, _vc) if _vc else _vc
-                    _lbl = f"{_fn.capitalize()} of {_vc_lbl}" if _vc else _fn.capitalize()
-                return _lbl
-
-            def _resolve_underlying(_c, _seen=None):
-                """Return (value_col, thresholds) for a calc — the base value
-                column it ultimately aggregates plus the threshold filters on
-                the base columns it is built from (if any)."""
-                _seen = _seen or set()
-                _cid = str(_c.get('id') or '')
-                if _cid in _seen:
-                    return '', []
-                _seen.add(_cid)
-                _vc = _c.get('value_col', '')
-                _f = _c.get('filter')
-                _thresholds = []
-                if isinstance(_f, dict) and _f.get('col') and _f.get('op'):
-                    _thresholds.append({'col': _f['col'], 'op': _f['op'], 'val': _f.get('val')})
-                if _vc:
-                    return _vc, _thresholds
-                for _ref in (_c.get('ref_a'), _c.get('ref_b')):
-                    _refc = calc_by_id.get(str(_ref or ''))
-                    if _refc:
-                        _rvc, _rth = _resolve_underlying(_refc, _seen)
-                        if _rvc:
-                            return _rvc, _rth + _thresholds
-                return '', _thresholds
-
-            for calc in chart.config.get('dyn_calculations', []):
-                if not isinstance(calc, dict):
-                    continue
-                if _calc_label(calc) == col_val:
-                    vc, thresholds = _resolve_underlying(calc)
-                    if vc:
-                        filters['dyn_calc_value_col'] = vc
-                    if thresholds:
-                        filters['dyn_calc_thresholds'] = thresholds
-                    break
+            selected_calc_id = str(chart.config.get('dyn_drill_calc') or params.get('dyn_calc_id') or '')
+            matched = _match_dyn_calc(
+                col_val,
+                str(params.get('dyn_calc_id') or ''),
+                selected_calc_id,
+                calc_by_id,
+                col_defs,
+            )
+            if matched:
+                vc, thresholds = _resolve_dyn_drill_calc(matched, calc_by_id, col_defs)
+                if vc:
+                    filters['dyn_calc_value_col'] = vc
+                if thresholds:
+                    filters['dyn_calc_thresholds'] = thresholds
             if row_val and row_cols:
                 parts = row_val.split(_SEP)
                 for i, col in enumerate(row_cols):
@@ -591,6 +760,7 @@ def _apply_user_access_filter(rows, cols, user):
     return filtered, cols
 
 
+@timed_fn('execute_drill_query')
 def execute_drill_query(
     chart,
     drill_filters: dict,
@@ -602,6 +772,7 @@ def execute_drill_query(
     sort_dir: str = 'asc',
     column_filters: dict | None = None,
     extra_columns: list | None = None,
+    cursor: str | None = None,
 ) -> dict:
     """
     Run the chart's underlying query with drill_filters merged in.
@@ -611,18 +782,18 @@ def execute_drill_query(
     Returns {'rows', 'columns', 'all_columns', 'total_rows', 'page',
              'per_page', 'error'}.
     """
-    # dynamic_summary_table (calculations mode): extract the value-col
-    # sentinel before it leaks into SQL filters, and ensure that column is
-    # fetched so we can restrict the drill to students who actually
-    # contributed a value to the aggregate.
+    # dynamic_summary_table (calculations mode): extract calc sentinels before
+    # they leak into SQL filters; fetch value/threshold columns for post-filter.
     dyn_calc_value_col = None
     dyn_calc_thresholds = None
-    if 'dyn_calc_value_col' in drill_filters and chart.chart_type == 'dynamic_summary_table':
+    if chart.chart_type in ('dynamic_summary_table', 'summary_table') and (
+        'dyn_calc_value_col' in drill_filters or 'dyn_calc_thresholds' in drill_filters
+    ):
         drill_filters = dict(drill_filters)
-        dyn_calc_value_col = drill_filters.pop('dyn_calc_value_col')
+        dyn_calc_value_col = drill_filters.pop('dyn_calc_value_col', None)
         dyn_calc_thresholds = drill_filters.pop('dyn_calc_thresholds', None)
         extra_columns = list(extra_columns or [])
-        if dyn_calc_value_col not in extra_columns:
+        if dyn_calc_value_col and dyn_calc_value_col not in extra_columns:
             extra_columns.append(dyn_calc_value_col)
         if isinstance(dyn_calc_thresholds, list):
             for _t in dyn_calc_thresholds:
@@ -693,8 +864,12 @@ def execute_drill_query(
     # returned for the same chart+filters.
     user_part = _drill_user_part(user)
     _fetch_hash = _drill_fetch_hash(chart, drill_filters, extra_columns)
+    sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by)
+    if sql_paginate:
+        _fetch_hash = f"{_fetch_hash}:p{page}:c{cursor or ''}:n{per_page}:s{sort_by}:{sort_dir}"
     updated_ts = int(chart.updated_at.timestamp())
-    _drill_cache_key = f"drill_fetch:{chart.pk}:{updated_ts}:{chart.source_type}:{_fetch_hash}{user_part}"
+    sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+    _drill_cache_key = f"drill_fetch:{sync_v}:{chart.pk}:{updated_ts}:{chart.source_type}:{_fetch_hash}{user_part}"
     _cached_fetch = cache.get(_drill_cache_key)
     sql_total_rows = None
 
@@ -723,8 +898,9 @@ def execute_drill_query(
         result = run_column_query(
             selected_columns, merged_filters, user=user, apply_user_filters=True,
             limit=per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
-            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
+            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) and not cursor else None,
             order_by=sort_by if _can_sql_paginate_drill(chart, drill_filters, sort_by) and sort_by else None,
+            cursor=cursor if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
         )
         rows = result.get('rows', [])
         cols = result.get('columns', [])
@@ -847,10 +1023,31 @@ def execute_drill_query(
             
                 mock_ds = MockDataset(ds, dataset_columns)
                 one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
+                ds_page = sql_paginate and not one_per_sak
+                ds_order = None
+                if ds_page and sort_by and '.' in sort_by:
+                    ds_order = [{'column': sort_by, 'direction': (sort_dir or 'asc')}]
+                if ds_page:
+                    count_sql, count_params = compile_dataset_to_sql(
+                        mock_ds, user=user, interactive_filters=dataset_filters,
+                        limit=None, status_filter=status_val,
+                        one_row_per_stu_annual_key=False, order_by=ds_order,
+                    )
+                    count_result = execute_compiled_query(
+                        f'SELECT COUNT(*) AS n FROM ({count_sql}) AS _drill_cnt',
+                        count_params,
+                    )
+                    if count_result.get('error') or not count_result.get('rows'):
+                        ds_page = False
+                    else:
+                        sql_total_rows = int(next(iter(count_result['rows'][0].values())) or 0)
                 sql, params = compile_dataset_to_sql(
                     mock_ds, user=user, interactive_filters=dataset_filters,
-                    limit=None, status_filter=status_val,
+                    limit=per_page if ds_page else None,
+                    offset=(page - 1) * per_page if ds_page else None,
+                    status_filter=status_val,
                     one_row_per_stu_annual_key=one_per_sak,
+                    order_by=ds_order,
                 )
                 # Use aliased executor so column_mappings are applied to result keys
                 _col_mappings = getattr(mock_ds, 'column_mappings', {}) or {}
@@ -946,8 +1143,9 @@ def execute_drill_query(
             extra_columns=extra_columns,
             apply_user_filters=True,
             limit=per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
-            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
+            offset=(page - 1) * per_page if _can_sql_paginate_drill(chart, drill_filters, sort_by) and not cursor else None,
             order_by=sort_by if _can_sql_paginate_drill(chart, drill_filters, sort_by) and sort_by else None,
+            cursor=cursor if _can_sql_paginate_drill(chart, drill_filters, sort_by) else None,
         )
         rows = result.get('rows', [])
         cols = result.get('columns', [])
@@ -960,7 +1158,7 @@ def execute_drill_query(
 
     # Tier-2 cache: post-filtered row set (before UI column_filters / sort / page)
     _post_hash = _drill_post_hash(chart, _fetch_hash)
-    _drill_post_key = f"drill_post:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
+    _drill_post_key = f"drill_post:{sync_v}:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
     _cached_post = cache.get(_drill_post_key)
 
     if _cached_post is not None:
@@ -985,7 +1183,10 @@ def execute_drill_query(
                     else:
                         rows = [r for r in rows if str(r.get(col_name) or '').strip() == target]
 
-        if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
+        if rows and drill_filters and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
+            rows = _apply_drill_row_filters(rows, drill_filters)
+
+        if rows and chart.chart_type in ('summary_table', 'dynamic_summary_table') and not (dyn_calc_value_col or dyn_calc_thresholds):
             _id_col = _find_id_col(rows[0])
             if _id_col:
                 _seen: set = set()
@@ -1001,30 +1202,7 @@ def execute_drill_query(
 
         if dyn_calc_value_col and rows:
             row_keys = list(rows[0].keys())
-            from dataexploration.school_year_utils import resolve_relative_column_key
-
-            def _norm_col(c):
-                return str(c).replace('-', '_').lower()
-
-            key_map = {_norm_col(k): k for k in row_keys}
-
-            def _resolve_calc_col(col):
-                if not col:
-                    return col
-                norm = _norm_col(col)
-                if norm in key_map:
-                    return key_map[norm]
-                resolved = resolve_relative_column_key(col)
-                norm_res = _norm_col(resolved)
-                if norm_res in key_map:
-                    return key_map[norm_res]
-                clean = col.split('.')[-1]
-                norm_clean = _norm_col(clean)
-                if norm_clean in key_map:
-                    return key_map[norm_clean]
-                return col
-
-            calc_target_col = _resolve_calc_col(dyn_calc_value_col)
+            calc_target_col = _resolve_drill_row_col(dyn_calc_value_col, row_keys)
 
             def _has_calc_value(v):
                 if v is None:
@@ -1043,73 +1221,26 @@ def execute_drill_query(
         # counted, not the whole row group.
         if dyn_calc_thresholds and rows:
             row_keys = list(rows[0].keys())
-            from dataexploration.school_year_utils import resolve_relative_column_key
-
-            def _norm_th_col(c):
-                return str(c).replace('-', '_').lower()
-
-            _th_key_map = {_norm_th_col(k): k for k in row_keys}
 
             def _resolve_th_col(col):
-                if not col:
-                    return col
-                norm = _norm_th_col(col)
-                if norm in _th_key_map:
-                    return _th_key_map[norm]
-                resolved = resolve_relative_column_key(col)
-                norm_res = _norm_th_col(resolved)
-                if norm_res in _th_key_map:
-                    return _th_key_map[norm_res]
-                clean = col.split('.')[-1]
-                norm_clean = _norm_th_col(clean)
-                if norm_clean in _th_key_map:
-                    return _th_key_map[norm_clean]
-                return col
+                return _resolve_drill_row_col(col, row_keys)
 
-            def _th_num(v):
-                try:
-                    return float(v)
-                except (TypeError, ValueError):
-                    return None
+            rows = _apply_dyn_calc_threshold_rows(rows, dyn_calc_thresholds, _resolve_th_col)
 
-            _DRILL_THRESH_OPS = {'lt', 'lte', 'gt', 'gte', 'eq', 'neq'}
-
-            def _strip_th(v):
-                if v is None:
-                    return ''
-                return str(v).strip()
-
-            _th_cmp = {
-                'lt': lambda a, b: a < b,
-                'lte': lambda a, b: a <= b,
-                'gt': lambda a, b: a > b,
-                'gte': lambda a, b: a >= b,
-            }
-            for _t in dyn_calc_thresholds:
-                if not isinstance(_t, dict):
-                    continue
-                _tcol = _resolve_th_col(_t.get('col', ''))
-                _top = _t.get('op')
-                if not _tcol or _top not in _DRILL_THRESH_OPS:
-                    continue
-                if _top in ('eq', 'neq'):
-                    _tval = str(_t.get('val') or '').strip()
-                    if _tval == '':
-                        continue
-                    _raw_vals = [r.get(_tcol) for r in rows]
-                    _norms = [_strip_th(v) for v in _raw_vals]
-                    if _top == 'eq':
-                        rows = [r for r, n in zip(rows, _norms) if n == _tval]
-                    else:
-                        rows = [r for r, n in zip(rows, _norms) if n != _tval]
-                    continue
-                _tval = _th_num(_t.get('val'))
-                if _tval is None:
-                    continue
-                rows = [
-                    r for r in rows
-                    if (lambda v: v is not None and _th_cmp[_top](v, _tval))(_th_num(r.get(_tcol)))
-                ]
+        # A calculation filter must be applied before collapsing joined rows;
+        # otherwise an unmatched duplicate can hide the student record that
+        # actually contributed to the calculation.
+        if (dyn_calc_value_col or dyn_calc_thresholds) and rows and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
+            _id_col = _find_id_col(rows[0])
+            if _id_col:
+                _seen = set()
+                _deduped = []
+                for _r in rows:
+                    _key = _r.get(_id_col)
+                    if _key not in _seen:
+                        _seen.add(_key)
+                        _deduped.append(_r)
+                rows = _deduped
 
         if rows and chart.chart_type == 'date_series' and (ds_date_val or ds_value_col_required or ds_active_enter_col):
             row_keys = list(rows[0].keys())
@@ -1300,6 +1431,10 @@ def execute_drill_query(
         start = (page - 1) * per_page
         paged = rows[start:start + per_page]
 
+    from clickhouse_utils.pagination import cursor_from_row
+    sort_key = (sort_by.split('.')[-1] if sort_by else '') or 'stu_annual_key'
+    next_cursor = cursor_from_row(paged[-1], sort_key, sort_dir) if paged else ''
+
     return {
         'rows': paged,
         'columns': cols,
@@ -1307,6 +1442,7 @@ def execute_drill_query(
         'total_rows': total,
         'page': page,
         'per_page': per_page,
+        'next_cursor': next_cursor,
         'error': error,
     }
 
@@ -1320,7 +1456,8 @@ def get_column_distinct_values(chart, drill_filters: dict, column: str, user) ->
     _fetch_hash = _drill_fetch_hash(chart, drill_filters, None)
     updated_ts = int(chart.updated_at.timestamp())
     _post_hash = _drill_post_hash(chart, _fetch_hash)
-    _drill_post_key = f"drill_post:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
+    sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+    _drill_post_key = f"drill_post:{sync_v}:{chart.pk}:{updated_ts}:{_post_hash}{user_part}"
     cached = cache.get(_drill_post_key)
     if cached is None:
         execute_drill_query(chart, drill_filters, columns=[], user=user, page=1, per_page=50)

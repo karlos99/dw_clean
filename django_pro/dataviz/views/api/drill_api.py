@@ -53,6 +53,7 @@ def drill_rows_api(request, chart_id):
     per_page = min(int(params.get('per_page', 50)), MAX_PER_PAGE)
     sort_by = params.get('sort_by', '')
     sort_dir = params.get('sort_dir', 'asc')
+    cursor = params.get('cursor', '') or None
 
     # Column selection
     cols_param = params.get('cols', '')
@@ -77,6 +78,7 @@ def drill_rows_api(request, chart_id):
         sort_by=sort_by, sort_dir=sort_dir,
         column_filters=column_filters,
         extra_columns=extra_cols or None,
+        cursor=cursor,
     )
 
     query_columns = [c.split('.')[-1] for c in result.get('columns', [])]
@@ -92,6 +94,7 @@ def drill_rows_api(request, chart_id):
         'total_rows': result.get('total_rows', 0),
         'page': result.get('page', 1),
         'per_page': result.get('per_page', 50),
+        'next_cursor': result.get('next_cursor', ''),
         'error': result.get('error', ''),
         'x_val': params.get('x_val', ''),
         'series_val': params.get('series_val', ''),
@@ -216,7 +219,8 @@ def drill_export_csv_api(request, chart_id):
         fetch_hash = _drill_fetch_hash(chart, drill_filters, selected_columns or None)
         updated_ts = int(chart.updated_at.timestamp())
         post_hash = _drill_post_hash(chart, fetch_hash)
-        post_key = f"drill_post:{chart.pk}:{updated_ts}:{post_hash}{user_part}"
+        sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+        post_key = f"drill_post:{sync_v}:{chart.pk}:{updated_ts}:{post_hash}{user_part}"
         cached = cache.get(post_key)
         if cached is None:
             execute_drill_query(

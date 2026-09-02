@@ -93,6 +93,10 @@
                     <p class="text-sm font-medium text-slate-900">{{ student_info.fep_date|date:"m/d/Y"|default:"-" }}</p>
                 </div>
                 <div>
+                    <p class="text-xs text-slate-600">DSUSD FEP</p>
+                    <p class="text-sm font-medium text-slate-900">{{ student_info.dsusd_fep|default:"-" }}</p>
+                </div>
+                <div>
                     <p class="text-xs text-slate-600">US Enter Date</p>
                     <p class="text-sm font-medium text-slate-900">{{ student_info.us_enter_date|date:"m/d/Y"|default:"-" }}</p>
                 </div>

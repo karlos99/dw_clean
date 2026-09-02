@@ -17,8 +17,66 @@ from .common import *  # noqa: F401,F403
 # Comparison operators available to a dynamic-summary-table calculation
 # column's optional threshold filter.  lt/lte/gt/gte are numeric ranges
 # (e.g. "count students with attendance_rate < 85"); eq/neq match a specific
-# value (e.g. gender == "F"), whose options are prepopulated from the column.
-_DYN_FILTER_OPS = frozenset({'lt', 'lte', 'gt', 'gte', 'eq', 'neq'})
+# value (e.g. gender == "F"); in/nin match any of several values (SQL IN).
+_DYN_FILTER_OPS = frozenset({'lt', 'lte', 'gt', 'gte', 'eq', 'neq', 'in', 'nin'})
+
+
+def _norm_in_vals(val):
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple, set)):
+        return [str(v).strip() for v in val if v is not None and str(v).strip() != '']
+    if isinstance(val, dict):
+        return _norm_in_vals(list(val.values()))
+    s = str(val).strip()
+    if not s:
+        return []
+    if s.startswith('['):
+        try:
+            parsed = json.loads(s)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, list):
+            return _norm_in_vals(parsed)
+    return [p.strip() for p in s.split(',') if p.strip()]
+
+
+def _in_match_vals(vals):
+    """Expand IN values so school codes match with or without leading zeros."""
+    out = []
+    seen = set()
+    for v in vals:
+        for cand in (v, v.lstrip('0') or '0'):
+            if cand not in seen:
+                seen.add(cand)
+                out.append(cand)
+    return out
+
+
+def _resolve_work_col(col, columns):
+    """Map a filter/value column name onto an actual dataframe column."""
+    if not col:
+        return ''
+    cols = list(columns)
+    if col in cols:
+        return col
+    key = col.lower().replace('-', '_')
+    by_norm = {c.lower().replace('-', '_'): c for c in cols}
+    if key in by_norm:
+        return by_norm[key]
+    suffix = col.split('.')[-1]
+    if suffix in cols:
+        return suffix
+    sk = suffix.lower().replace('-', '_')
+    if sk in by_norm:
+        return by_norm[sk]
+    return ''
+
+
+def _calc_filter_list(calc):
+    if isinstance(calc.get('filters'), list):
+        return calc['filters']
+    return [calc.get('filter')]
 
 
 def _dyn_filter_expr(col: str, op: str, val):
@@ -29,10 +87,17 @@ def _dyn_filter_expr(col: str, op: str, val):
     aggregations skip invalid values elsewhere.  Equality compares the raw
     (stripped) string value so categorical columns like gender work too.
     """
+    stripped = pl.col(col).cast(pl.Utf8).str.strip_chars()
     if op == 'eq':
-        return pl.col(col).cast(pl.Utf8).str.strip_chars() == str(val).strip()
+        return stripped == str(val).strip()
     if op == 'neq':
-        return pl.col(col).cast(pl.Utf8).str.strip_chars() != str(val).strip()
+        return stripped != str(val).strip()
+    if op in ('in', 'nin'):
+        vals = _in_match_vals(_norm_in_vals(val))
+        if not vals:
+            return pl.lit(False) if op == 'in' else pl.lit(True)
+        expr = stripped.is_in(vals)
+        return expr if op == 'in' else ~expr
     x = pl.col(col).cast(pl.Float64, strict=False)
     if op == 'lt':
         return x < val
@@ -43,6 +108,15 @@ def _dyn_filter_expr(col: str, op: str, val):
     if op == 'gte':
         return x >= val
     return None
+
+
+def _order_row_vals(vals, cfg):
+    """Apply Aggregation & Sort (manual / label) to a table's first row column."""
+    mode = (cfg.get('sort_col') or '').strip() if cfg else ''
+    if not mode:
+        return vals
+    orig = {str(v): v for v in vals}
+    return [orig.get(s, s) for s in _ordered_categories([str(v) for v in vals], cfg or {})]
 
 
 _DYN_CALC_OPS = {
@@ -107,7 +181,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         if work.is_empty():
             return _message_option('Summary Table: no data after filtering blanks', cfg)
 
-        row_vals = _auto_detect_pl_scale(work[row_col].unique().to_list())
+        row_vals = _order_row_vals(_auto_detect_pl_scale(work[row_col].unique().to_list()), cfg)
         col_vals = [_label(c, col_defs) if col_defs else c for c in st_col_cols]
 
         rows_data = []
@@ -214,7 +288,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     if _dup_key and st_agg_func == 'count':
         work = work.unique(subset=[_dup_key, row_col, col_col], keep='first')
 
-    row_vals = _auto_detect_pl_scale(work[row_col].unique().to_list())
+    row_vals = _order_row_vals(_auto_detect_pl_scale(work[row_col].unique().to_list()), cfg)
     col_vals = _auto_detect_pl_scale(work[col_col].unique().to_list())
 
     ct_alt_lookup = None
@@ -334,13 +408,8 @@ def _convert_table_to_echarts(result, cfg, valid_row):
             s_obj['stack'] = 'total'
         series_list.append(s_obj)
 
-    title_text = cfg.get('title', '')
     echarts_option = {
-        'title': {
-            'text': title_text,
-            'left': 'center',
-            'textStyle': {'fontSize': 14, 'color': '#334155'}
-        },
+        'title': _echarts_title(cfg),
         'tooltip': {
             'trigger': 'axis',
             'axisPointer': {'type': 'shadow' if stype == 'bar' else 'line'}
@@ -377,7 +446,8 @@ def _convert_table_to_echarts(result, cfg, valid_row):
             'stRowVals':   result.get('_drillMeta', {}).get('stRowVals', []),
             'colHeaders':  result.get('col_headers', []),
             'colHeaderCols': result.get('col_header_cols', []),
-        }
+        },
+        '__category_names__': x_data,
     }
     return echarts_option
 
@@ -407,10 +477,15 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         dyn_calculations = cfg.get('dyn_calculations', [])
         if not dyn_calculations:
             return _message_option('Dynamic Summary Table: add at least one calculation column', cfg)
-        if not row_cols:
+        totals_only = cfg.get('dyn_totals_only', False) in (True, 1, '1', 'true', 'True')
+        if totals_only:
+            # Totals-only mode is defined by its total row; keep it available
+            # even if an older saved config had column totals disabled.
+            st_show_col_totals = True
+        if not row_cols and not totals_only:
             return _message_option('Dynamic Summary Table: select at least one Row column', cfg)
         valid_row = [c for c in row_cols if c and c in df.columns]
-        if not valid_row:
+        if not valid_row and not totals_only:
             return _message_option('Dynamic Summary Table: no valid Row columns in data', cfg)
 
         # Normalize each calculation: assign a stable id (charts saved before ids
@@ -431,6 +506,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             parsed = dict(calc)
             parsed['id'] = cid
             parsed['calc_type'] = ctype
+            parsed['visible'] = calc.get('visible', True) is not False
             parsed_calcs.append(parsed)
 
         if not parsed_calcs:
@@ -443,13 +519,32 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             except (ValueError, TypeError):
                 return None
 
-        calc_value_cols = [c.get('value_col') for c in parsed_calcs
-                           if c.get('calc_type') == 'base' and c.get('value_col') and c.get('value_col') in df.columns]
-        filter_cols = [f.get('col') for c in parsed_calcs if c.get('calc_type') == 'base'
-                       for f in [c.get('filter')] if isinstance(f, dict) and f.get('col') and f.get('col') in df.columns]
+        calc_value_cols = []
+        for c in parsed_calcs:
+            if c.get('calc_type') != 'base':
+                continue
+            vc = _resolve_work_col(c.get('value_col'), df.columns)
+            if vc:
+                c['value_col'] = vc
+                calc_value_cols.append(vc)
+        filter_cols = []
+        for c in parsed_calcs:
+            if c.get('calc_type') != 'base':
+                continue
+            resolved_filters = []
+            for f in _calc_filter_list(c):
+                if not isinstance(f, dict):
+                    continue
+                ff = dict(f)
+                rc = _resolve_work_col(ff.get('col'), df.columns)
+                ff['col'] = rc
+                resolved_filters.append(ff)
+                if rc:
+                    filter_cols.append(rc)
+            c['filters'] = resolved_filters
         keep_cols = list(dict.fromkeys(valid_row + calc_value_cols + filter_cols + ([_dup_key] if _dup_key else [])))
-        work = df.filter(blank_filter_expr(valid_row, _BLANK)).select(keep_cols)
-        work = strip_str_cols(work, valid_row)
+        work = df.filter(blank_filter_expr(valid_row, _BLANK)).select(keep_cols) if valid_row else df.select(keep_cols)
+        work = strip_str_cols(work, list(dict.fromkeys(c for c in (valid_row + filter_cols) if c in work.columns)))
 
         if work.is_empty():
             return _message_option('Dynamic Summary Table: no data after filtering blanks', cfg)
@@ -457,13 +552,17 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         row_val_lists = {}
         for c in valid_row:
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
-        row_combos = _build_row_combos(row_val_lists, valid_row)
+        if valid_row:
+            row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
+        row_combos = [()] if totals_only else _build_row_combos(row_val_lists, valid_row)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
         base_ids = [c['id'] for c in parsed_calcs if c['calc_type'] == 'base']
 
+        output_calcs = [c for c in parsed_calcs if c['visible']]
+        percent_columns = [i for i, c in enumerate(output_calcs) if c.get('as_percent')]
         col_headers = []
-        for idx, calc in enumerate(parsed_calcs):
+        for idx, calc in enumerate(output_calcs):
             lbl = calc.get('label', '').strip()
             if not lbl:
                 if calc['calc_type'] == 'derived':
@@ -496,25 +595,36 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 dec = _calc_decimals(calc)
 
                 csub = sub
-                f = calc.get('filter')
-                if isinstance(f, dict) and f.get('col') and f.get('op') in _DYN_FILTER_OPS:
+                filters = _calc_filter_list(calc)
+                filter_expr = None
+                for f in filters:
+                    if not isinstance(f, dict) or f.get('op') not in _DYN_FILTER_OPS:
+                        continue
                     fop = f['op']
-                    fcol = f['col']
-                    if fop in ('lt', 'lte', 'gt', 'gte'):
+                    fcol = f.get('col') or ''
+                    if not fcol or fcol not in csub.columns:
+                        expr = pl.lit(False)
+                    elif fop in ('lt', 'lte', 'gt', 'gte'):
                         try:
                             fval = float(f['val'])
                         except (TypeError, ValueError):
                             fval = None
-                        if fval is not None and fcol in csub.columns:
-                            expr = _dyn_filter_expr(fcol, fop, fval)
-                            if expr is not None:
-                                csub = csub.filter(expr)
+                        expr = _dyn_filter_expr(fcol, fop, fval) if fval is not None else None
+                    elif fop in ('in', 'nin'):
+                        expr = _dyn_filter_expr(fcol, fop, f.get('val'))
                     else:  # eq / neq
                         fval = f.get('val')
-                        if fval is not None and str(fval).strip() != '' and fcol in csub.columns:
+                        if fval is None or str(fval).strip() == '':
+                            expr = None
+                        else:
                             expr = _dyn_filter_expr(fcol, fop, fval)
-                            if expr is not None:
-                                csub = csub.filter(expr)
+                    if expr is not None:
+                        if filter_expr is None or str(f.get('logic', 'and')).lower() != 'or':
+                            filter_expr = expr if filter_expr is None else (filter_expr & expr)
+                        else:
+                            filter_expr = filter_expr | expr
+                if filter_expr is not None:
+                    csub = csub.filter(filter_expr)
 
                 if fn == 'count':
                     if _dup_key:
@@ -577,7 +687,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 derived_vals[cid] = 0.0
 
             row_cells = []
-            for calc in parsed_calcs:
+            for calc in output_calcs:
                 if calc['calc_type'] == 'base':
                     row_cells.append(base_display[calc['id']])
                 else:
@@ -587,13 +697,17 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                         v = round(v, dec)
                     row_cells.append(v)
 
-            if st_show_row_totals:
+            if st_show_row_totals and not totals_only:
                 # Row total sums only base columns — a sum of derived values
                 # (rates/percentages) would be meaningless.
                 row_total = sum(base_raw[cid] for cid in base_ids)
                 rows_data.append(list(combo) + row_cells + [row_total])
-            else:
+            elif not totals_only:
                 rows_data.append(list(combo) + row_cells)
+            elif cfg.get('dyn_display_type', 'table') != 'table':
+                # Chart renderers need a category even though table view uses
+                # the dedicated total row below.
+                rows_data.append(['Total'] + row_cells)
 
         # Round base column totals, then recompute derived column totals from
         # their input totals so a rate column's Total is the rate of the totals
@@ -607,23 +721,34 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 if dec is not None:
                     v = round(v, dec)
                 col_total_display[cid] = v
-            else:
+        pending_totals = {c['id']: c for c in parsed_calcs if c['calc_type'] == 'derived'}
+        for _ in range(len(pending_totals) + 1):
+            if not pending_totals:
+                break
+            progressed = False
+            for cid, calc in list(pending_totals.items()):
                 ra = str(calc.get('ref_a') or '')
                 rb = str(calc.get('ref_b') or '')
-                if ra in col_total_display and rb in col_total_display:
-                    fn = _DYN_CALC_OPS.get(calc.get('op', 'add'), _DYN_CALC_OPS['add'])
-                    v = fn(col_total_display[ra], col_total_display[rb])
-                    if calc.get('as_percent'):
-                        v = v * 100
-                else:
-                    v = 0.0
+                if ra not in col_total_display or rb not in col_total_display:
+                    continue
+                fn = _DYN_CALC_OPS.get(calc.get('op', 'add'), _DYN_CALC_OPS['add'])
+                v = fn(col_total_display[ra], col_total_display[rb])
+                if calc.get('as_percent'):
+                    v = v * 100
                 if dec is not None:
                     v = round(v, dec)
                 col_total_display[cid] = v
+                del pending_totals[cid]
+                progressed = True
+            if not progressed:
+                break
+        for cid in pending_totals:
+            col_total_display[cid] = 0.0
 
-        ordered_totals = [col_total_display[c['id']] for c in parsed_calcs]
-        grand_total = sum(col_total_display[cid] for cid in base_ids)
-        total_row = (['Total'] + [''] * (len(valid_row) - 1) + ordered_totals + [grand_total]) if st_show_col_totals else []
+        ordered_totals = [col_total_display[c['id']] for c in output_calcs]
+        grand_total = sum(col_total_display[cid] for cid in base_ids if any(c['id'] == cid and c['visible'] for c in parsed_calcs))
+        total_row_values = ordered_totals if totals_only else ordered_totals + [grand_total]
+        total_row = (['Total'] + [''] * (len(valid_row) - 1) + total_row_values) if st_show_col_totals else []
         row_labels = [_label(c, col_defs) if col_defs else c for c in valid_row]
 
         result = {
@@ -631,19 +756,23 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
             '__series_names__': [],
             'row_col':     valid_row[0] if len(valid_row) == 1 else '__dynst_row__',
             'col_col':     '__calc_cols__',
-            'row_labels':  row_labels,
-            'row_label':   row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels),
+            'row_labels':  ['Total'] if totals_only else row_labels,
+            'row_label':   'Total' if totals_only else (row_labels[0] if len(row_labels) == 1 else _SEP.join(row_labels)),
             'col_label':   'Calculations',
-            'num_row_labels': len(valid_row),
+            'num_row_labels': 1 if totals_only else len(valid_row),
             'col_headers': col_headers,
+            'col_header_cols': [c['id'] for c in output_calcs],
+            'percent_columns': percent_columns,
             'rows':        rows_data,
             'total_row':   total_row,
-            'st_show_row_totals': st_show_row_totals,
+            'total_row_has_grand_total': not totals_only,
+            'total_row_drillable': totals_only,
+            'st_show_row_totals': False if totals_only else st_show_row_totals,
             'st_show_col_totals': st_show_col_totals,
             'show_tooltips': show_tooltips,
             '_drillMeta': {
                 'stType':      'dynamic_summary_table',
-                'stRowCol':    valid_row[0],
+                'stRowCol':    valid_row[0] if valid_row else '__dynst_total__',
                 'stColCol':    '__calc_cols__',
                 'stRowCols':   valid_row,
                 'stColCols':   [],
@@ -693,6 +822,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
         row_val_lists = {}
         for c in valid_row:
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
+        row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
         row_combos = _build_row_combos(row_val_lists, valid_row)
 
         _agg_map = {'sum': 'sum', 'avg': 'mean', 'min': 'min', 'max': 'max', 'median': 'median'}
@@ -853,6 +983,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     row_val_lists = {}
     for c in valid_row:
             row_val_lists[c] = _auto_detect_pl_scale(work[c].unique().to_list())
+    row_val_lists[valid_row[0]] = _order_row_vals(row_val_lists[valid_row[0]], cfg)
 
     row_combos = _build_row_combos(row_val_lists, valid_row)
 

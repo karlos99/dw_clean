@@ -27,9 +27,9 @@ from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 from ..utils import can_user_view_query, get_user_folders
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
 from dataexploration.view_modules.column_management import (
-    is_race_list_column,
-    append_race_list_filter,
-    race_list_unnest_select_expr,
+    json_list_key_for_column,
+    append_json_list_filter,
+    json_list_unnest_select_expr,
 )
 from dataexploration.view_modules.student_data_utils import (
     get_current_student_columns,
@@ -472,8 +472,9 @@ def load_students(request):
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
 
-            if is_race_list_column(col):
-                append_race_list_filter(where_clauses, params, values)
+            json_key = json_list_key_for_column(col)
+            if json_key:
+                append_json_list_filter(where_clauses, params, values, json_key)
                 continue
 
             # NYL or standard column
@@ -970,15 +971,16 @@ def load_students(request):
                 _apply_column_filters(opt_where, opt_params, other_f, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
                 opt_sql = " AND ".join(opt_where)
 
-                if is_race_list_column(col):
+                json_key = json_list_key_for_column(col)
+                if json_key:
                     try:
-                        unnest_expr = race_list_unnest_select_expr('cs')
+                        unnest_expr = json_list_unnest_select_expr(json_key, 'cs')
                         cursor.execute(
                             f"SELECT DISTINCT v FROM ("
                             f" SELECT {unnest_expr} AS v"
                             f" FROM current_student cs {NYL_JOIN} {join_sql}"
                             f" WHERE {opt_sql}"
-                            f") _race_opts WHERE v IS NOT NULL AND BTRIM(v) != ''"
+                            f") _json_list_opts WHERE v IS NOT NULL AND BTRIM(v) != ''"
                             f" ORDER BY v ASC LIMIT 100",
                             opt_params,
                         )

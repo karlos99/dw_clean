@@ -37,6 +37,7 @@ COLUMN_DEFINITIONS = {
     "homeless": "Homeless",
     "dli": "DLI",
     "ltel": "LTEL",
+    "dsusd_fep": "DSUSD FEP",
     "fep_date": "FEP Date",
     "migrant": "Migrant",
     "atendace_rate": "Attendance Rate",
@@ -69,7 +70,7 @@ COLUMN_CATEGORIES = {
     },
     "programs": {
         "title": "Programs & Services",
-        "columns": ["ell", "sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "migrant"],
+        "columns": ["ell", "sped", "gate", "in_504", "sed", "foster", "homeless", "dli", "ltel", "dsusd_fep", "migrant"],
     },
     "performance": {
         "title": "Performance & Behavior",

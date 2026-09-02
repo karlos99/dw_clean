@@ -154,6 +154,31 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     y_cols_raw = [_resolve_cfg_col(c) for c in y_cols_raw] if isinstance(y_cols_raw, list) else y_cols_raw
     compare_pl_cols = [_resolve_cfg_col(c) for c in compare_pl_cols] if isinstance(compare_pl_cols, list) else compare_pl_cols
 
+    _dyn_calcs = cfg.get('dyn_calculations') or []
+    if isinstance(_dyn_calcs, list):
+        _resolved_dyn = []
+        for _calc in _dyn_calcs:
+            if not isinstance(_calc, dict):
+                _resolved_dyn.append(_calc)
+                continue
+            _c = dict(_calc)
+            if _c.get('value_col'):
+                _c['value_col'] = _resolve_cfg_col(_c['value_col'])
+            def _res_filt(_f):
+                if not isinstance(_f, dict):
+                    return _f
+                _ff = dict(_f)
+                if _ff.get('col'):
+                    _ff['col'] = _resolve_cfg_col(_ff['col'])
+                return _ff
+            if isinstance(_c.get('filter'), dict):
+                _c['filter'] = _res_filt(_c['filter'])
+            if isinstance(_c.get('filters'), list):
+                _c['filters'] = [_res_filt(_f) for _f in _c['filters']]
+            _resolved_dyn.append(_c)
+        cfg = dict(cfg)
+        cfg['dyn_calculations'] = _resolved_dyn
+
     # Composite x-axis
     x_cols = [c for c in x_cols_raw if isinstance(c, str) and c in df.columns] if isinstance(x_cols_raw, list) else []
     if len(x_cols) > 1:
@@ -262,10 +287,27 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
     # Apply colour mapping (user overrides + semantic defaults) to all chart types
     _apply_color_map(option, cfg)
 
+    if option.get('__type__') == 'table':
+        if not option.get('__category_names__'):
+            rows = option.get('rows') or []
+            option['__category_names__'] = [str(r[0]) for r in rows if r]
+        option['title_text'] = (cfg.get('chart_title') or cfg.get('title') or '').strip()
+        option['title_show'] = _chart_title_shown(cfg)
+        option['subtitle_text'] = (cfg.get('chart_subtitle') or '').strip()
+        option['subtitle_show'] = _chart_subtitle_shown(cfg)
+        try:
+            option['title_font_size'] = int(cfg.get('title_font_size', 16) or 16)
+        except (TypeError, ValueError):
+            option['title_font_size'] = 16
+
     # Alias category-axis display labels (bar / category charts). Raw values stay
     # in __category_names__ for drill-through.
     _apply_x_value_map(option, cfg)
     option['__x_alias_keys__'] = x_alias_keys
+
+    # Alias summary/dynamic-table column headers. Raw values stay in
+    # col_header_raw / _drillMeta.colHeaders for drill-through.
+    _apply_col_header_aliases(option, cfg)
 
     # Apply category-axis label overrides (rotation, font size, truncation)
     x_label_style = _x_axis_label_style(cfg)

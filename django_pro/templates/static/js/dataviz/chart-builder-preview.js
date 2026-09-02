@@ -9,6 +9,81 @@ function chartBuilderPreviewMethods(urls) {
   return {
     _lastPreviewTime: 0,
     _previewAbortCtrl: null,
+    drillStatus: null,
+
+    _updateDrillStatus(containerEl) {
+      const c = containerEl || this.$refs.previewContainer;
+      const cc = c?.querySelector('.chart-container');
+      if (cc && window.getChartDrillStatus) {
+        this.drillStatus = window.getChartDrillStatus(cc);
+      } else {
+        this.drillStatus = null;
+      }
+    },
+
+    _applyPreviewHtml(html) {
+      this.previewHtml = html;
+      this.previewLoading = false;
+      this.$nextTick(() => {
+        const c = this.$refs.previewContainer;
+        if (!c) return;
+        c.innerHTML = html;
+        if (this.containerWidth || this.containerHeight) {
+          const cc = c.querySelector('.chart-container');
+          if (cc) {
+            if (this.containerWidth)  cc.style.width  = this.containerWidth  + 'px';
+            if (this.containerHeight) cc.style.height = this.containerHeight + 'px';
+          }
+        }
+        if (window.initAllCharts) window.initAllCharts();
+        const el = c.querySelector('[data-series-names]');
+        if (el) {
+          try {
+            const names = JSON.parse(el.dataset.seriesNames || '[]');
+            this.stackOrderAvail = names;
+            if (this.stackOrder.length !== names.length || !names.every(n => this.stackOrder.includes(n))) {
+              this.stackOrder = [...names];
+            }
+          } catch (_) {}
+          try {
+            const categories = JSON.parse(el.dataset.categoryNames || '[]');
+            if (categories.length) {
+              this.categoryOrderAvail = categories;
+              if (this.categoryOrder.length !== categories.length || !categories.every(c => this.categoryOrder.includes(c))) {
+                this.categoryOrder = [...categories];
+              }
+            } else {
+              this.categoryOrderAvail = [];
+            }
+          } catch (_) {}
+          try {
+            const aliasKeys = JSON.parse(el.dataset.xAliasKeys || '[]');
+            this.xValueAliasAvail = Array.isArray(aliasKeys) ? aliasKeys : [];
+          } catch (_) {
+            this.xValueAliasAvail = [];
+          }
+          try {
+            const headerKeys = JSON.parse(el.dataset.colHeaderKeys || '[]');
+            this.colHeaderAliasAvail = Array.isArray(headerKeys) ? headerKeys.map(String) : [];
+          } catch (_) {
+            this.colHeaderAliasAvail = [];
+          }
+          try {
+            const availCats = JSON.parse(el.dataset.acAvailCats || '[]');
+            const availPl   = JSON.parse(el.dataset.acAvailPl   || '[]');
+            if (availCats.length) this.acAvailCats = availCats;
+            if (availPl.length)   this.acAvailPl   = availPl;
+          } catch (_) {}
+          try {
+            const queryCols = JSON.parse(el.dataset.queryColumns || '[]');
+            this.queryColumns = queryCols.map(c => c.split('.').pop());
+          } catch (_) {}
+        }
+        // initAllCharts is lazy via IntersectionObserver; poll briefly for drill status.
+        this._updateDrillStatus(c);
+        setTimeout(() => this._updateDrillStatus(c), 120);
+      });
+    },
 
     /* ─── Preview ────────────────────────────────────────── */
     async doPreview() {
@@ -39,65 +114,14 @@ function chartBuilderPreviewMethods(urls) {
           signal: this._previewAbortCtrl.signal,
         });
         const html = await r.text();
-        this.previewHtml = html;
-        this.previewLoading = false;
-        this.$nextTick(() => {
-          const c = this.$refs.previewContainer;
-          if (c) {
-            c.innerHTML = html;
-            if (this.containerWidth || this.containerHeight) {
-              const cc = c.querySelector('.chart-container');
-              if (cc) {
-                if (this.containerWidth)  cc.style.width  = this.containerWidth  + 'px';
-                if (this.containerHeight) cc.style.height = this.containerHeight + 'px';
-              }
-            }
-            if (window.initAllCharts) window.initAllCharts();
-            const el = c.querySelector('[data-series-names]');
-            if (el) {
-              try {
-                const names = JSON.parse(el.dataset.seriesNames || '[]');
-                this.stackOrderAvail = names;
-                if (this.stackOrder.length !== names.length || !names.every(n => this.stackOrder.includes(n))) {
-                  this.stackOrder = [...names];
-                }
-              } catch (_) {}
-              try {
-                const categories = JSON.parse(el.dataset.categoryNames || '[]');
-                if (categories.length) {
-                  this.categoryOrderAvail = categories;
-                  if (this.categoryOrder.length !== categories.length || !categories.every(c => this.categoryOrder.includes(c))) {
-                    this.categoryOrder = [...categories];
-                  }
-                } else {
-                  this.categoryOrderAvail = [];
-                }
-              } catch (_) {}
-              try {
-                const aliasKeys = JSON.parse(el.dataset.xAliasKeys || '[]');
-                this.xValueAliasAvail = Array.isArray(aliasKeys) ? aliasKeys : [];
-              } catch (_) {
-                this.xValueAliasAvail = [];
-              }
-              try {
-                const availCats = JSON.parse(el.dataset.acAvailCats || '[]');
-                const availPl   = JSON.parse(el.dataset.acAvailPl   || '[]');
-                if (availCats.length) this.acAvailCats = availCats;
-                if (availPl.length)   this.acAvailPl   = availPl;
-              } catch (_) {}
-              try {
-                const queryCols = JSON.parse(el.dataset.queryColumns || '[]');
-                this.queryColumns = queryCols.map(c => c.split('.').pop());
-              } catch (_) {}
-            }
-          }
-        });
+        this._applyPreviewHtml(html);
         this.fetchAutoDescription();
         return;
       } catch (e) {
         if (e.name === 'AbortError') { this.previewLoading = false; return; }
         const msg = `<div class="text-red-600 text-sm p-4">Preview failed: ${e.message}</div>`;
         this.previewHtml = msg;
+        this.drillStatus = null;
         if (this.$refs.previewContainer) this.$refs.previewContainer.innerHTML = msg;
       }
       this.previewLoading = false;
@@ -117,16 +141,23 @@ function chartBuilderPreviewMethods(urls) {
           const text = await r.text();
           try {
             const data = JSON.parse(text);
-            if (data.chart?.id && !this.chartId) {
+            if (data.chart?.id) {
+              if (!this.chartId) {
+                history.replaceState(null, '', `/dataviz/charts/${data.chart.id}/edit/`);
+              }
               this.chartId = data.chart.id;
-              history.replaceState(null, '', `/dataviz/charts/${data.chart.id}/edit/`);
             }
           } catch (_) {
             const m = text.match(/charts\/(\d+)\/edit/);
-            if (m && !this.chartId) {
+            if (m) {
+              if (!this.chartId) {
+                history.replaceState(null, '', `/dataviz/charts/${m[1]}/edit/`);
+              }
               this.chartId = parseInt(m[1]);
-              history.replaceState(null, '', `/dataviz/charts/${m[1]}/edit/`);
             }
+          }
+          if (this.chartId && this.canPreview) {
+            await this.doPreview();
           }
         } else {
           this._flash(await r.text() || 'Save failed', true);
@@ -241,6 +272,8 @@ function chartBuilderPreviewMethods(urls) {
         dyn_show_tooltips: this.dynShowTooltips,
         dyn_col_mode: this.dynColMode,
         dyn_calculations: this.dynCalculations,
+        dyn_drill_calc: this.dynDrillCalc,
+        dyn_totals_only: this.dynTotalsOnly,
         dyn_display_type: this.dynDisplayType,
         ds_date_col: this.dsDateCol,
         ds_date_bucket: this.dsDateBucket,
@@ -267,6 +300,7 @@ function chartBuilderPreviewMethods(urls) {
         smooth: this.smooth,
         color_map: this.colorMap,
         x_value_map: this.xValueMap,
+        col_header_aliases: this.colHeaderAliases,
         show_zoom: this.showZoom,
         show_toolbox: this.showToolbox,
         show_grid: this.showGrid,
@@ -312,6 +346,9 @@ function chartBuilderPreviewMethods(urls) {
         container_width: this.containerWidth,
         container_height: this.containerHeight,
         chart_title: this.chartTitle,
+        show_title: this.showTitle !== false,
+        chart_subtitle: this.chartSubtitle,
+        show_subtitle: this.showSubtitle === true,
         stack_order: this.stackOrder,
         parliament_dot_scale: this.parliamentDotScale,
         parliament_shape: this.parliamentShape,

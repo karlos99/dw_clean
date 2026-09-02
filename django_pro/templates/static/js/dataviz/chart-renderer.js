@@ -236,6 +236,7 @@
 
     // Summary table: render as HTML cross-tab instead of ECharts
     if (option.__type__ === 'table') {
+      container._isTable = true;
       _renderSummaryTable(container, option);
       return null;
     }
@@ -252,15 +253,29 @@
       chart._drillMeta = option._drillMeta;
       delete option._drillMeta;
     }
-    if (option && option.__category_names__) {
-      chart._categoryNames = option.__category_names__;
+    const categoryNames = _categoryNamesFromContainer(container, option);
+    if (categoryNames) {
+      chart._categoryNames = categoryNames;
+      delete option.__category_names__;
     }
     if (option && option.__group_label_bands__) {
       chart._groupLabelBands = option.__group_label_bands__;
       delete option.__group_label_bands__;
     }
 
-    chart.setOption(option);
+    // Large charts are already reduced by the server-side aggregation path;
+    // avoid ECharts' expensive tweening when a chart still contains many
+    // points. This preserves animation for ordinary charts.
+    var pointCount = 0;
+    if (Array.isArray(option.series)) {
+      option.series.forEach(function (series) {
+        if (series && Array.isArray(series.data)) pointCount += series.data.length;
+      });
+    }
+    if (pointCount > 5000 && option.animation !== false) {
+      option.animation = false;
+    }
+    chart.setOption(option, { lazyUpdate: true });
     applyCenteredGroupLabels(chart);
 
     if (option && option.__is_parliament__) {
@@ -277,9 +292,6 @@
       chart.resize();
       if (option && option.__is_parliament__) {
         adjustParliamentAspectRatio(chart, container, option);
-      }
-      if (option) {
-        chart.setOption(option);
       }
       applyCenteredGroupLabels(chart);
     }
@@ -307,11 +319,6 @@
       // Debounce setOption to prevent lag during active resizing, but ensure legend layout updates
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        if (option) {
-          try {
-            chart.setOption(option);
-          } catch (e) {}
-        }
         applyCenteredGroupLabels(chart);
       }, 100);
     });
@@ -409,6 +416,8 @@
 
   function _renderSummaryTable(container, option) {
     const colHeaders = option.col_headers || [];
+    const colKeys    = option.col_header_raw || colHeaders;
+    const percentColumns = option.percent_columns || [];
     const colHeaderGroups = option.col_header_groups || [];
     const colHeaderCols  = option.col_header_cols || [];
     const rows       = option.rows        || [];
@@ -418,6 +427,8 @@
     const numRowLbls = option.num_row_labels || rowLabels.length || 1;
     const showRowTotals = option.st_show_row_totals !== false;  // default true
     const showColTotals = option.st_show_col_totals !== false;  // default true
+    const totalHasGrand = option.total_row_has_grand_total !== false;
+    const totalDrillable = option.total_row_drillable === true;
 
     const chartId    = container.dataset.chartId;
     const drillEnabled = container.dataset.drillEnabled === '1';
@@ -428,7 +439,19 @@
 
     var SEPS = ' \u25b8 ';
 
-    let html = '<div class="overflow-auto w-full h-full min-h-[200px]"><table class="min-w-full text-xs border-collapse">';
+    const titleText = String(option.title_text || '').trim();
+    const titleSize = Number(option.title_font_size) || 16;
+    const titleShow = option.title_show !== false && !!titleText;
+    const subText = String(option.subtitle_text || '').trim();
+    const subShow = option.subtitle_show === true && !!subText;
+    let html = '<div class="flex flex-col w-full h-full min-h-[200px]">';
+    html += '<div class="dv-table-title text-center font-semibold text-slate-800 px-3 pt-2 pb-1 shrink-0"'
+         + (titleShow ? ' style="font-size:' + titleSize + 'px"' : ' style="display:none"') + '>'
+         + _esc(titleText) + '</div>';
+    html += '<p class="dv-table-subtitle text-center font-normal text-slate-500 px-4 pb-2 shrink-0"'
+         + (subShow ? ' style="font-size:11px;line-height:1.45;white-space:pre-wrap"' : ' style="display:none"') + '>'
+         + _esc(subText) + '</p>';
+    html += '<div class="overflow-auto w-full flex-1 min-h-0"><table class="min-w-full text-xs border-collapse">';
 
     // Header rows (single row, or two rows if col_header_groups present)
     html += '<thead>';
@@ -489,7 +512,7 @@
       }
       for (var c = 0; c < cells.length; c++) {
         var cnt = cells[c];
-        var cv  = colHeaders[c];
+        var cv  = colKeys[c];
         var cc  = colHeaderCols[c] || '';
         
         var cellVal = cnt;
@@ -500,15 +523,18 @@
         }
         
         var cntNum = Number(cellVal);
+        var displayCellVal = percentColumns.indexOf(c) >= 0 && cellVal !== '' && cellVal !== null && cellVal !== undefined
+          ? String(cellVal) + '%' : cellVal;
         var hasDisplayValue = !(cellVal === null || cellVal === undefined || String(cellVal).trim() === '');
         var titleAttr = (option.show_tooltips !== false && tooltipText) ? ' title="' + _esc(tooltipText) + '"' : '';
 
         if (canDrill && Number.isFinite(cntNum) && cntNum !== 0) {
           var rvKey = rowVals.join(SEPS);
           var cvKey = cc ? (cc + SEPS + cv) : cv;
-          html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100"' + titleAttr + ' data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '">' + cellVal + '</td>';
+          var calcAttr = cc ? ' data-calc-id="' + _esc(cc) + '"' : '';
+          html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100"' + titleAttr + ' data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '"' + calcAttr + '>' + displayCellVal + '</td>';
         } else {
-          html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500"' + titleAttr + '>' + (hasDisplayValue ? cellVal : '<span class="text-slate-300">\u2014</span>') + '</td>';
+          html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500"' + titleAttr + '>' + (hasDisplayValue ? displayCellVal : '<span class="text-slate-300">\u2014</span>') + '</td>';
         }
       }
       if (showRowTotals) {
@@ -525,13 +551,25 @@
              + (rl > 0 ? ' style="left:' + (rl * 120) + 'px;"' : '') + '>'
              + (rl < totalRow.length ? _esc(String(totalRow[rl] || '')) : '') + '</td>';
       }
-      for (var t = numRowLbls; t < totalRow.length - 1; t++) {
-        html += '<td class="border border-slate-200 px-2 py-1.5 text-center font-semibold text-slate-700">' + totalRow[t] + '</td>';
+      var totalValueEnd = totalHasGrand ? totalRow.length - 1 : totalRow.length;
+      for (var t = numRowLbls; t < totalValueEnd; t++) {
+        var totalColIdx = t - numRowLbls;
+        var totalDisplay = percentColumns.indexOf(totalColIdx) >= 0 && totalRow[t] !== '' ? String(totalRow[t]) + '%' : totalRow[t];
+        var totalCv = colHeaderCols[totalColIdx] ? colHeaderCols[totalColIdx] + SEPS + colKeys[totalColIdx] : colKeys[totalColIdx];
+        if (canDrill && totalDrillable && Number(totalRow[t]) !== 0) {
+          var totalCalcId = colHeaderCols[totalColIdx] || '';
+          var totalCalcAttr = totalCalcId ? ' data-calc-id="' + _esc(totalCalcId) + '"' : '';
+          html += '<td class="border border-slate-200 px-2 py-1.5 text-center font-semibold text-sky-700 cursor-pointer hover:bg-sky-100" data-rv="" data-cv="' + _esc(totalCv) + '"' + totalCalcAttr + '>' + totalDisplay + '</td>';
+        } else {
+          html += '<td class="border border-slate-200 px-2 py-1.5 text-center font-semibold text-slate-700">' + totalDisplay + '</td>';
+        }
       }
-      html += '<td class="bg-slate-200 border border-slate-200 px-2 py-1.5 text-center font-bold text-slate-800">' + totalRow[totalRow.length - 1] + '</td>';
+      if (totalHasGrand) {
+        html += '<td class="bg-slate-200 border border-slate-200 px-2 py-1.5 text-center font-bold text-slate-800">' + totalRow[totalRow.length - 1] + '</td>';
+      }
       html += '</tr>';
     }
-    html += '</tbody></table></div>';
+    html += '</tbody></table></div></div>';
 
     container.innerHTML = html;
 
@@ -541,7 +579,9 @@
         td.addEventListener('click', function () {
           var rv = td.dataset.rv;
           var cv = td.dataset.cv;
-          var url = '/dataviz/drill/' + chartId + '/?st_row_val=' + encodeURIComponent(rv) + '&st_col_val=' + encodeURIComponent(cv);
+          var url = '/dataviz/drill/' + chartId + '/?st_col_val=' + encodeURIComponent(cv);
+          if (rv) url += '&st_row_val=' + encodeURIComponent(rv);
+          if (td.dataset.calcId) url += '&dyn_calc_id=' + encodeURIComponent(td.dataset.calcId);
           if (source)     url += '&source='      + encodeURIComponent(source);
           if (sourceId)   url += '&source_id='   + encodeURIComponent(sourceId);
           if (sourceName) url += '&source_name=' + encodeURIComponent(sourceName);
@@ -550,6 +590,56 @@
         });
       });
     }
+  }
+
+  function _categoryNamesFromContainer(container, option) {
+    if (option && option.__category_names__) {
+      return option.__category_names__;
+    }
+    try {
+      var raw = container.dataset.categoryNames;
+      if (raw) {
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function getDrillStatus(container) {
+    if (!container) {
+      return { canDrill: false, state: 'none', message: 'No chart loaded.' };
+    }
+    var chartId = container.dataset.chartId || '';
+    var drillEnabled = container.dataset.drillEnabled === '1';
+    var hasSavedChart = drillEnabled && chartId && chartId !== 'preview';
+    if (!hasSavedChart) {
+      return {
+        canDrill: false,
+        state: 'needs_save',
+        message: 'Save the chart to test drill-through in the builder.',
+      };
+    }
+    var drillableCells = container.querySelectorAll('td[data-rv]').length;
+    if (drillableCells > 0) {
+      return {
+        canDrill: true,
+        state: 'ready',
+        message: 'Drill ready — click a table cell (' + drillableCells + ' clickable). Save after edits.',
+      };
+    }
+    if (container._echartsInstance) {
+      return {
+        canDrill: true,
+        state: 'ready',
+        message: 'Drill ready — click a bar, point, or slice. Save after edits so drill matches preview.',
+      };
+    }
+    return {
+      canDrill: true,
+      state: 'ready',
+      message: 'Drill ready. Save after config changes so drill matches preview.',
+    };
   }
 
   var _lazyObserver = null;
@@ -580,6 +670,18 @@
     });
   }
 
+  function disposeChartsIn(root) {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('.chart-container').forEach(function (el) {
+      if (el._echartsInstance) {
+        try { el._echartsInstance.dispose(); } catch (e) { /* ignore */ }
+        el._echartsInstance = null;
+      }
+      el._echartsInited = false;
+      el._echartsObserved = false;
+    });
+  }
+
   // Run on initial load and after HTMX swaps
   function onReady() {
     initAll();
@@ -598,6 +700,8 @@
   // Expose globally for manual calls
   window.initChart        = initChart;
   window.initAllCharts    = initAll;
+  window.disposeChartsIn  = disposeChartsIn;
   window.registerDrillThrough = registerDrillThrough;
   window.applyCenteredGroupLabels = applyCenteredGroupLabels;
+  window.getChartDrillStatus = getDrillStatus;
 }());

@@ -373,12 +373,12 @@
             <!-- Student Table (loaded via HTMX) -->
             <div class="flex-1 flex flex-col overflow-hidden">
                 <!-- Sticky Horizontal Scroll Bar (Top) -->
-                <div id="h-scroll-top" class="sticky top-0 z-20 bg-white border-b border-slate-200 overflow-x-auto overflow-y-hidden scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-200" style="height: 12px;">
+                <div id="h-scroll-top" class="sticky top-0 z-20 bg-white border-b border-slate-200 overflow-x-auto overflow-y-hidden scrollbar-thin scrollbar-thumb-slate-400 scrollbar-track-slate-200" style="height: 16px;">
                     <div id="h-scroll-content-top" style="height: 1px;"></div>
                 </div>
                 
                 <!-- Main Table Container with scroll indicators -->
-                <div id="table-scroll-container" class="flex-1 overflow-auto p-4 relative">
+                <div id="table-scroll-container" class="flex-1 overflow-y-auto overflow-x-hidden p-4 relative">
                     <!-- Left Shadow Indicator -->
                     <div id="scroll-shadow-left" class="absolute left-0 top-0 bottom-0 w-8 pointer-events-none z-10 opacity-0 transition-opacity duration-200" style="background: linear-gradient(to right, rgba(0,0,0,0.1), transparent);"></div>
                     

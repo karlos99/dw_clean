@@ -5,7 +5,7 @@ Handles:
   - ILIKE           → lower(x) LIKE lower(y)
   - col->>'key'     → JSONExtractString(col, 'key')
   - col->'key'      → JSONExtractRaw(col, 'key')
-  - DISTINCT ON     → row_number() window subquery
+  - DISTINCT ON     → QUALIFY row_number() = 1
   - %s placeholders → {p0}, {p1} named params
   - = ANY(%s)       → IN expansion
   - NULLS FIRST/LAST → stripped (CH defaults acceptable)
@@ -82,58 +82,67 @@ def translate_pg_to_clickhouse(sql, params):
     #   3. Apply JSON translation only to unquoted segments.
     #   4. Reassemble.
 
-    # Race List idioms (before general JSON rewrite) — keep CH on the fast path.
-    # Matches the CASE text[] normalizer from race_list_array_sql().
+    # JSON-list idioms (before general JSON rewrite) — keep CH on the fast path.
+    # Matches the CASE text[] normalizer from json_list_array_sql().
     _rl_ref = r'((?:\"[^\"]+\"|\w+)(?:\.(?:\"[^\"]+\"|\w+))?)'
+    _rl_key = r'([A-Za-z_][A-Za-z0-9_]*)'
     _rl_case = (
         rf'\(\s*CASE\s+'
-        rf'WHEN\s+{_rl_ref}\s+IS\s+NULL\s+OR\s+\1->\'l_race\'\s+IS\s+NULL\s+'
-        rf'OR\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'null\'\s+'
+        rf'WHEN\s+{_rl_ref}\s+IS\s+NULL\s+OR\s+\1->\'{_rl_key}\'\s+IS\s+NULL\s+'
+        rf'OR\s+jsonb_typeof\s*\(\s*\1->\'\2\'\s*\)\s*=\s*\'null\'\s+'
         rf'THEN\s+ARRAY\s*\[\s*\]\s*::\s*text\s*\[\s*\]\s+'
-        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'array\'\s+'
-        rf'THEN\s+ARRAY\s*\(\s*SELECT\s+jsonb_array_elements_text\s*\(\s*\1->\'l_race\'\s*\)\s*\)\s+'
-        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'l_race\'\s*\)\s*=\s*\'string\'\s+'
-        rf'AND\s+BTRIM\s*\(\s*COALESCE\s*\(\s*\1->>\'l_race\'\s*,\s*\'\'\s*\)\s*\)\s*<>\s*\'\'\s+'
-        rf'THEN\s+regexp_split_to_array\s*\(\s*BTRIM\s*\(\s*\1->>\'l_race\'\s*\)\s*,\s*'
+        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'\2\'\s*\)\s*=\s*\'array\'\s+'
+        rf'THEN\s+ARRAY\s*\(\s*SELECT\s+jsonb_array_elements_text\s*\(\s*\1->\'\2\'\s*\)\s*\)\s+'
+        rf'WHEN\s+jsonb_typeof\s*\(\s*\1->\'\2\'\s*\)\s*=\s*\'string\'\s+'
+        rf'AND\s+BTRIM\s*\(\s*COALESCE\s*\(\s*\1->>\'\2\'\s*,\s*\'\'\s*\)\s*\)\s*<>\s*\'\'\s+'
+        rf'THEN\s+regexp_split_to_array\s*\(\s*BTRIM\s*\(\s*\1->>\'\2\'\s*\)\s*,\s*'
         rf'\'\[\[:space:\]\]\*,\[\[:space:\]\]\*\'\s*\)\s+'
         rf'ELSE\s+ARRAY\s*\[\s*\]\s*::\s*text\s*\[\s*\]\s+END\s*\)'
     )
 
-    def _ch_race_list_arr(ref: str) -> str:
-        r = _strip_pg_casts(ref)
+    def _ch_json_list_arr(ref: str, key: str) -> str:
+        # ifNull the JSON source first — JSONExtract(..., 'Array(String)') on a
+        # Nullable JSON column is typed Nullable(Array(String)), which ClickHouse
+        # rejects ("Nested type Array cannot be inside Nullable").
+        r = f"ifNull({_strip_pg_casts(ref)}, '{{}}')"
         return (
-            f"if(JSONType(JSONExtractRaw({r}, 'l_race')) = 'Array', "
-            f"JSONExtract({r}, 'l_race', 'Array(String)'), "
-            f"if(JSONType(JSONExtractRaw({r}, 'l_race')) = 'String' "
-            f"AND trim(BOTH ' ' FROM JSONExtractString({r}, 'l_race')) != '', "
-            f"splitByRegexp('\\\\s*,\\\\s*', trim(BOTH ' ' FROM JSONExtractString({r}, 'l_race'))), "
-            f"CAST([] AS Array(String))))"
+            f"if(JSONType(JSONExtractRaw({r}, '{key}')) = 'Array', "
+            f"JSONExtract({r}, '{key}', 'Array(String)'), "
+            f"if(JSONType(JSONExtractRaw({r}, '{key}')) = 'String' "
+            f"AND trim(BOTH ' ' FROM JSONExtractString({r}, '{key}')) != '', "
+            f"splitByRegexp('\\\\s*,\\\\s*', trim(BOTH ' ' FROM JSONExtractString({r}, '{key}'))), "
+            f"emptyArrayString()))"
         )
 
     sql = re.sub(
         rf'array_to_string\s*\(\s*{_rl_case}\s*,\s*\',\s*\'\s*\)',
-        lambda m: f"arrayStringConcat({_ch_race_list_arr(m.group(1))}, ', ')",
+        lambda m: f"arrayStringConcat({_ch_json_list_arr(m.group(1), m.group(2))}, ', ')",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
     sql = re.sub(
         rf'\(\s*{_rl_case}\s*&&\s*%s::text\s*\[\s*\]\s*\)',
-        lambda m: f"hasAny({_ch_race_list_arr(m.group(1))}, __HASANY_ARR__%s)",
+        lambda m: f"hasAny({_ch_json_list_arr(m.group(1), m.group(2))}, __HASANY_ARR__%s)",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
     sql = re.sub(
         rf'\(\s*cardinality\s*\(\s*{_rl_case}\s*\)\s*=\s*0\s*\)',
-        lambda m: f"empty({_ch_race_list_arr(m.group(1))})",
+        lambda m: f"empty({_ch_json_list_arr(m.group(1), m.group(2))})",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
     sql = re.sub(
         rf'unnest\s*\(\s*{_rl_case}\s*\)',
-        lambda m: f"arrayJoin({_ch_race_list_arr(m.group(1))})",
+        lambda m: f"arrayJoin({_ch_json_list_arr(m.group(1), m.group(2))})",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
+
+    # PostgreSQL casts are common in scalar JSON expressions. Remove them
+    # after the JSON-list idiom has been rewritten, so that idiom's matcher
+    # can still recognize the original PostgreSQL CASE expression.
+    sql = re.sub(r'::\s*(?:jsonb|json|text\[\]|text)\b', '', sql, flags=re.IGNORECASE)
 
     def _unquote_simple(m):
         inner = m.group(1)
@@ -145,11 +154,11 @@ def translate_pg_to_clickhouse(sql, params):
 
     def _apply_json_translation(s):
         s = re.sub(
-            r'(\w+(?:\.\w+)?)\s*->>\s*(\'[^\']+\')',
+            r'(\w+(?:\.\w+)?)\s*->>\s*(\'[^\']+\'|%s)',
             lambda m: f"JSONExtractString({m.group(1)}, {m.group(2)})", s,
         )
         s = re.sub(
-            r'(\w+(?:\.\w+)?)\s*->\s*(\'[^\']+\')',
+            r'(\w+(?:\.\w+)?)\s*->\s*(\'[^\']+\'|%s)',
             lambda m: f"JSONExtractRaw({m.group(1)}, {m.group(2)})", s,
         )
         return s
@@ -183,6 +192,16 @@ def translate_pg_to_clickhouse(sql, params):
 
     # ── NULLS FIRST / NULLS LAST → stripped ────────────────────────────
     sql = re.sub(r'\bNULLS\s+(FIRST|LAST)\b', '', sql, flags=re.IGNORECASE)
+
+    # ── PG scalar helpers used in Explorer ORDER BY / CASE sorts ──────
+    sql = re.sub(r'\bbtrim\s*\(', "trim(BOTH ' ' FROM ", sql, flags=re.IGNORECASE)
+    sql = re.sub(
+        r"regexp_replace\s*\(\s*(.+?)\s*,\s*('[^']*')\s*,\s*('[^']*')\s*,\s*'g'\s*\)",
+        r'replaceRegexpAll(\1, \2, \3)',
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    sql = re.sub(r'\bAS\s+NUMERIC\b', 'AS Nullable(Float64)', sql, flags=re.IGNORECASE)
 
     # ── string_agg(x, sep) → arrayStringConcat(groupArray(x), sep) ────
     def _string_agg(m):
@@ -279,23 +298,22 @@ def translate_pg_to_clickhouse(sql, params):
         elif isinstance(val, str) and '%' in val:
             ch_params[name] = val.lower()
 
+    # psycopg escaped percents in LIKE literals (novice%% → novice%)
+    sql = sql.replace('%%', '%')
+
     return sql, ch_params
 
 
 def _translate_distinct_on(sql):
     """
     Translate SELECT DISTINCT ON (cols) ... FROM ... ORDER BY ...
-    to a subquery with row_number() window function.
+    to QUALIFY row_number() = 1.
 
-    Handles both top-level and subquery DISTINCT ON patterns.
+    Nested ``SELECT *, row_number() AS _rn`` wrappers hide source columns
+    from ClickHouse join aliases (``se.ell`` cannot be resolved).
     """
     if 'DISTINCT ON' not in sql.upper():
         return sql
-
-    # Match DISTINCT ON subqueries: can be top-level or inside ( ... )
-    # Pattern: ( SELECT DISTINCT ON (...) select_expr FROM table [WHERE ...] ORDER BY cols )
-    # The subquery ends at the closing paren before an alias (e.g. ") se")
-    # or at the end of string for top-level queries.
 
     def _replace_distinct_on_subquery(m):
         distinct_on_cols = m.group(1)
@@ -305,13 +323,13 @@ def _translate_distinct_on(sql):
         order_clause = m.group(5)
 
         order_clean = re.sub(r'\bNULLS\s+(FIRST|LAST)\b', '', order_clause, flags=re.IGNORECASE).strip()
+        where_sql = f' {where_clause.strip()}' if where_clause and where_clause.strip() else ''
 
         return (
-            f'(SELECT {select_expr} FROM ('
-            f'SELECT *, row_number() OVER ('
+            f'(SELECT {select_expr} FROM {from_table}{where_sql}'
+            f' QUALIFY row_number() OVER ('
             f'PARTITION BY {distinct_on_cols} ORDER BY {order_clean}'
-            f') AS _rn FROM {from_table} {where_clause}'
-            f') AS _dist WHERE _rn = 1)'
+            f') = 1)'
         )
 
     # Match subquery form: ( SELECT DISTINCT ON (cols) select FROM table WHERE? ORDER BY cols )
@@ -345,15 +363,14 @@ def _translate_distinct_on(sql):
             order_by = m.group(5).strip()
 
             order_by_clean = re.sub(r'\bNULLS\s+(FIRST|LAST)\b', '', order_by, flags=re.IGNORECASE).strip()
+            middle_sql = f' {middle}' if middle else ''
 
-            window_sql = (
-                f'SELECT *, row_number() OVER (PARTITION BY {partition_cols}'
-                f' ORDER BY {order_by_clean}) AS _rn FROM {from_table}'
+            new_sql = (
+                f'SELECT {select_cols} FROM {from_table}{middle_sql}'
+                f' QUALIFY row_number() OVER (PARTITION BY {partition_cols}'
+                f' ORDER BY {order_by_clean}) = 1'
+                f' ORDER BY {order_by_clean}'
             )
-            if middle:
-                window_sql += f' {middle}'
-
-            new_sql = f'SELECT {select_cols} FROM ({window_sql}) AS _sub WHERE _rn = 1 ORDER BY {order_by_clean}'
 
             limit_match = re.search(r'\bLIMIT\s+(\d+)\s*$', sql, re.IGNORECASE)
             if limit_match:

@@ -226,6 +226,80 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertIn("LIKE '%%ifep%%'", PL_SORT_SQL)
 		self.assertNotIn("LIKE 'novice%'", PL_SORT_SQL.replace('%%', ''))
 
+	def test_enrich_students_tests_marks_one_round_trip(self):
+		from dataexploration.column_utils import enrich_students_tests_marks
+		from unittest.mock import patch, MagicMock
+
+		students = [
+			{'ssid': 'A', 'student_id': '1', 'stu_annual_key': 'k1'},
+			{'ssid': 'B', 'student_id': '2', 'stu_annual_key': 'k2'},
+		]
+		test_info = {
+			'col_name': 'test_2025_2026_CAASPP_Math_SS',
+			'year': '2025-2026', 'test_name': 'CAASPP', 'subject': 'Math',
+			'metric': 'ss',
+		}
+		mark_info = {
+			'col_name': 'mark_x', 'year': '2025-2026',
+			'subject': 'Math', 'course_name': 'Math 8', 'mark_period': 'Q1',
+		}
+		test_result = {
+			'error': None,
+			'rows': [
+				{
+					'local_student_id': '1', 'ssid': 'A', 'school_year': '2025-2026',
+					'test_name': 'CAASPP', 'subject': 'Math', 'test_window': None,
+					'ss': '2400', 'pl': '3', 'other_info': None,
+				},
+			],
+		}
+		mark_result = {
+			'error': None,
+			'rows': [
+				{
+					'stu_annual_key': 'k2', 'school_year': '2025-2026',
+					'subject': 'Mathematics', 'course_name': 'Math 8 HP',
+					'mark_period': 'Q1', 'mark': 'A',
+				},
+			],
+		}
+		exec_mock = MagicMock()
+		exec_mock.execute.side_effect = [test_result, mark_result]
+		with patch('clickhouse_utils.executor.QueryExecutor', return_value=exec_mock):
+			enrich_students_tests_marks(students, [test_info], [mark_info])
+		self.assertEqual(exec_mock.execute.call_count, 2)
+		self.assertEqual(students[0]['test_2025_2026_CAASPP_Math_SS'], '2400')
+		self.assertEqual(students[1]['mark_x'], 'A')
+		self.assertEqual(students[1]['test_2025_2026_CAASPP_Math_SS'], '—')
+
+	def test_enrich_other_info_uses_postgres_not_clickhouse(self):
+		from dataexploration.column_utils import enrich_students_tests_marks
+		from unittest.mock import patch, MagicMock
+
+		students = [{'ssid': '8184048772', 'student_id': '1'}]
+		test_info = {
+			'col_name': 'test_2025_2026_CAASPP_ELA_OI_WERDEVEELConditionCode_abc123',
+			'year': '2025-2026', 'test_name': 'CAASPP', 'subject': 'ELA',
+			'metric': 'oi', 'other_info_key': 'WERDEVEELConditionCode',
+		}
+		pg_rows = [(
+			'1', '8184048772', '2025-2026', 'CAASPP', 'ELA', '',
+			'2500', '3',
+			{'WERDEVEELConditionCode': 'I'},
+		)]
+		cur = MagicMock()
+		cur.fetchall.return_value = pg_rows
+		conn = MagicMock()
+		conn.cursor.return_value.__enter__.return_value = cur
+		exec_mock = MagicMock()
+		with patch('clickhouse_utils.executor.QueryExecutor', return_value=exec_mock):
+			with patch('dataexploration.column_utils.connections') as connections:
+				connections.__getitem__.return_value = conn
+				enrich_students_tests_marks(students, [test_info], [])
+
+		exec_mock.execute.assert_not_called()
+		self.assertEqual(students[0][test_info['col_name']], 'I')
+
 
 class SchoolYearUtilsTests(SimpleTestCase):
 	@patch("dataexploration.school_year_utils.resolve_school_year")
@@ -238,3 +312,33 @@ class SchoolYearUtilsTests(SimpleTestCase):
 	def test_resolve_relative_column_key_no_alias(self, mock_resolve):
 		res = resolve_relative_column_key("test_2025_2026_iready_reading_ss")
 		self.assertEqual(res, "test_2025_2026_iready_reading_ss")
+
+
+class JsonListColumnTests(SimpleTestCase):
+	def test_json_list_key_for_column(self):
+		from dataexploration.view_modules.column_management import (
+			json_list_key_for_column,
+			get_column_expression,
+		)
+		self.assertEqual(json_list_key_for_column('race_list'), 'l_race')
+		self.assertIsNone(json_list_key_for_column('dsusd_fep'))
+		self.assertIsNone(json_list_key_for_column('avid'))
+
+		expr, alias = get_column_expression('dsusd_fep', db_columns=set())
+		self.assertEqual(alias, 'dsusd_fep')
+		self.assertIn("->>'DSUSD_FEP'", expr)
+		self.assertNotIn('array_to_string', expr)
+
+
+class CsFilterClauseTests(SimpleTestCase):
+	def test_dsusd_fep_filter_uses_json_extract_not_physical_column(self):
+		from dataexploration.column_utils import _append_cs_filter_clause
+
+		where_clauses = []
+		params = []
+		_append_cs_filter_clause(where_clauses, params, 'dsusd_fep', ['Y'])
+
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn("->>'DSUSD_FEP'", where_clauses[0])
+		self.assertNotIn('cs.dsusd_fep', where_clauses[0])
+		self.assertEqual(params, [['Y']])

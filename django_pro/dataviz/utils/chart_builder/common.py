@@ -539,6 +539,196 @@ def _alias_category_label(label, value_map: dict, sep: str = _X_COMP_SEP):
     return label
 
 
+_TABLE_HEADER_SEP = ' \u25b8 '
+
+
+def _col_header_alias_map(cfg: dict) -> dict:
+    raw_map = cfg.get('col_header_aliases') or {}
+    if not isinstance(raw_map, dict):
+        return {}
+    return {
+        str(k): str(v)
+        for k, v in raw_map.items()
+        if k is not None and str(k).strip() != '' and v is not None and str(v).strip() != ''
+    }
+
+
+def _pretty_col_key(col) -> str:
+    """JS ``colLabel`` fallback: strip prefix, underscores → spaces, title-ish."""
+    s = str(col).split('.')[-1]
+    for p in ('test_', 'mark_'):
+        if s.startswith(p):
+            s = s[len(p):]
+            break
+    s = s.replace('_', ' ')
+    return (s[:1].upper() + s[1:]) if s else s
+
+
+def _lookup_header_alias(value_map: dict, *candidates):
+    """Resolve an alias from raw keys, dotted tails, or colLabel-style names."""
+    if not value_map:
+        return None
+    tried = []
+    for c in candidates:
+        if c is None:
+            continue
+        s = str(c)
+        if not s:
+            continue
+        tried.append(s)
+        tail = s.split('.')[-1]
+        if tail != s:
+            tried.append(tail)
+        pretty = _pretty_col_key(s)
+        if pretty and pretty != s:
+            tried.append(pretty)
+    expanded = dict(value_map)
+    for k, v in value_map.items():
+        tail = str(k).split('.')[-1]
+        expanded.setdefault(tail, v)
+        pretty = _pretty_col_key(k)
+        if pretty:
+            expanded.setdefault(pretty, v)
+    for s in tried:
+        if s in expanded:
+            return expanded[s]
+    lower = {str(k).lower(): v for k, v in expanded.items()}
+    for s in tried:
+        hit = lower.get(s.lower())
+        if hit is not None:
+            return hit
+    norm = {str(k).lower().replace('_', ' '): v for k, v in expanded.items()}
+    for s in tried:
+        hit = norm.get(s.lower().replace('_', ' '))
+        if hit is not None:
+            return hit
+    return None
+
+
+def _alias_header_label(label, value_map: dict):
+    aliased = _alias_category_label(label, value_map)
+    if aliased != label:
+        return aliased
+    found = _lookup_header_alias(value_map, label)
+    if found is not None:
+        return found
+    return _alias_category_label(label, value_map, sep=_TABLE_HEADER_SEP)
+
+
+def _alias_with_orig(label, orig_key, value_map: dict):
+    """Alias by original column key first, then by the displayed header."""
+    found = _lookup_header_alias(value_map, orig_key, label)
+    if found is not None:
+        return found
+    return _alias_header_label(label, value_map)
+
+
+def _collect_col_header_keys(option: dict) -> list:
+    keys = []
+    seen = set()
+
+    def _add(v):
+        if v is None:
+            return
+        s = str(v)
+        if s and s not in seen:
+            seen.add(s)
+            keys.append(s)
+
+    for h in option.get('col_headers') or []:
+        _add(h)
+    for h in option.get('row_labels') or []:
+        _add(h)
+    _add(option.get('row_label'))
+    for g in option.get('col_header_groups') or []:
+        if isinstance(g, dict):
+            _add(g.get('label'))
+            _add(g.get('col'))
+            for h in g.get('headers') or []:
+                _add(h)
+    meta = option.get('_drillMeta') or {}
+    if isinstance(meta, dict):
+        for h in meta.get('colHeaders') or []:
+            _add(h)
+        _add(meta.get('stRowCol'))
+        for c in meta.get('stRowCols') or []:
+            _add(c)
+        # Dataset columns used as headers (columns-mode / calc-mode), not pivot sources.
+        if meta.get('stColCol') in ('__st_cols__', '__calc_cols__'):
+            for c in meta.get('stColCols') or []:
+                _add(c)
+    return keys
+
+
+def _apply_col_header_aliases(option: dict, cfg: dict) -> None:
+    """Replace table/pivot column-header *display* labels.
+
+    Raw values stay in ``col_header_raw`` and ``_drillMeta.colHeaders``
+    for drill-through. Row-dimension headers and dataset-column headers
+    can be aliased by displayed label or original column key.
+    """
+    st_type = (option.get('_drillMeta') or {}).get('stType')
+    is_table = option.get('__type__') == 'table' or st_type in (
+        'summary_table', 'dynamic_summary_table',
+    )
+    if not is_table:
+        option['__col_header_keys__'] = []
+        return
+
+    option['__col_header_keys__'] = _collect_col_header_keys(option)
+    value_map = _col_header_alias_map(cfg)
+    if not value_map:
+        return
+
+    meta = option.get('_drillMeta') if isinstance(option.get('_drillMeta'), dict) else {}
+    orig_rows = list(meta.get('stRowCols') or [])
+    if not orig_rows and meta.get('stRowCol'):
+        orig_rows = [meta.get('stRowCol')]
+    orig_cols = list(meta.get('stColCols') or [])
+    calc_ids = list(option.get('col_header_cols') or [])
+    # 1:1 original keys only when headers are dataset/calc columns, not pivot values.
+    header_orig = calc_ids if meta.get('stColCol') == '__calc_cols__' else (
+        orig_cols if meta.get('stColCol') == '__st_cols__' else []
+    )
+
+    row_labels = option.get('row_labels')
+    if isinstance(row_labels, list) and row_labels:
+        option['row_labels'] = [
+            _alias_with_orig(h, orig_rows[i] if i < len(orig_rows) else None, value_map)
+            for i, h in enumerate(row_labels)
+        ]
+    if option.get('row_label') is not None:
+        orig = orig_rows[0] if len(orig_rows) == 1 else None
+        option['row_label'] = _alias_with_orig(option['row_label'], orig, value_map)
+
+    headers = option.get('col_headers')
+    if isinstance(headers, list) and headers:
+        option['col_header_raw'] = list(headers)
+        option['col_headers'] = [
+            _alias_with_orig(h, header_orig[i] if i < len(header_orig) else None, value_map)
+            for i, h in enumerate(headers)
+        ]
+
+    groups = option.get('col_header_groups')
+    if isinstance(groups, list):
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            if 'label' in g:
+                g['label'] = _alias_with_orig(g.get('label'), g.get('col'), value_map)
+            hs = g.get('headers')
+            if isinstance(hs, list):
+                g['headers'] = [_alias_header_label(h, value_map) for h in hs]
+
+    legend = option.get('legend')
+    if isinstance(legend, dict) and isinstance(legend.get('data'), list):
+        legend['data'] = [_alias_header_label(n, value_map) for n in legend['data']]
+
+    for s in option.get('series') or []:
+        if isinstance(s, dict) and 'name' in s:
+            s['name'] = _alias_header_label(s['name'], value_map)
+
+
 def _apply_x_value_map(option: dict, cfg: dict) -> None:
     """Replace category-axis *display* labels using ``cfg['x_value_map']``.
 
@@ -917,9 +1107,54 @@ def _update_chart_axes(option, categories, series, y_axis_name, labels, cfg, ax,
     option.setdefault('dv', {})['category_axis'] = 'x'
 
 
+def _chart_title_shown(cfg: dict) -> bool:
+    text = (cfg.get('chart_title') or cfg.get('title') or '').strip() if cfg else ''
+    return bool(text) and (not cfg or cfg.get('show_title', True) is not False)
+
+
+def _chart_subtitle_shown(cfg: dict) -> bool:
+    text = (cfg.get('chart_subtitle') or '').strip() if cfg else ''
+    return bool(text) and bool(cfg and cfg.get('show_subtitle'))
+
+
+def _title_grid_top(cfg: dict) -> int:
+    if _chart_subtitle_shown(cfg):
+        return 96
+    if _chart_title_shown(cfg):
+        return 60
+    return 36
+
+
+def _echarts_title(cfg: dict, t: dict | None = None) -> dict:
+    t = t or _theme(cfg)
+    title_on = _chart_title_shown(cfg)
+    sub = (cfg.get('chart_subtitle') or '').strip() if _chart_subtitle_shown(cfg) else ''
+    return {
+        'show': title_on or bool(sub),
+        'text': (cfg.get('chart_title') or cfg.get('title') or '').strip() if title_on else '',
+        'subtext': sub,
+        'left': cfg.get('title_left') or 'center',
+        'top': cfg.get('title_top') or 'auto',
+        'itemGap': 6 if sub else 8,
+        'textStyle': {
+            'color': t['text'],
+            'fontSize': int(cfg.get('title_font_size', 16) or 16),
+            'fontWeight': 600,
+        },
+        'subtextStyle': {
+            'color': t['text'],
+            'fontSize': 11,
+            'fontWeight': 'normal',
+            'lineHeight': 16,
+            'width': 560,
+            'overflow': 'break',
+        },
+    }
+
+
 def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
     t = _theme(cfg)
-    title_text = cfg.get('chart_title', '') or cfg.get('title', '')
+    default_top = _title_grid_top(cfg)
     show_toolbox = cfg.get('show_toolbox', True) is not False
     show_tooltip = cfg.get('show_tooltip', True) is not False
     animate      = cfg.get('animation', True) is not False
@@ -929,13 +1164,7 @@ def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
         'backgroundColor': t['bg'],
         'aria': {'enabled': True},
         'textStyle': {'color': t['text'], 'fontFamily': 'Inter, system-ui, sans-serif'},
-        'title': {
-            'show': bool(title_text),
-            'text': title_text,
-            'left': cfg.get('title_left', 'center') if cfg.get('title_left') else 'center',
-            'top':  cfg.get('title_top',  'auto')   if cfg.get('title_top')  else 'auto',
-            'textStyle': {'color': t['text'], 'fontSize': int(cfg.get('title_font_size', 16) or 16), 'fontWeight': 600},
-        },
+        'title': _echarts_title(cfg, t),
         'legend': _legend(cfg, t['text']),
         'tooltip': {
             'show': show_tooltip,
@@ -954,7 +1183,7 @@ def _base_option(cfg: dict, axis_trigger: bool = True) -> dict:
         'grid': {
             'left':   int(cfg.get('grid_left',   55) or 55),
             'right':  int(cfg.get('grid_right',  20) or 20),
-            'top':    int(cfg.get('grid_top',    60 if title_text else 36) or (60 if title_text else 36)),
+            'top':    int(cfg.get('grid_top',    default_top) or default_top),
             'bottom': int(cfg.get('grid_bottom', 80) or 80),
             'containLabel': True,
         },
@@ -1177,6 +1406,7 @@ def _message_option(text: str, cfg: dict, error: bool = False) -> dict:
     opt['series'] = []
     opt['title']['show'] = True
     opt['title']['text'] = text
+    opt['title']['subtext'] = ''
     opt['title']['textStyle']['color'] = '#dc2626' if error else _theme(cfg)['text']
     opt['title']['top'] = 'middle'
     opt['__is_message__'] = True

@@ -74,7 +74,9 @@ function chartBuilderUIMethods() {
         agg_func: 'count',
         label: '',
         decimals: null,
+        visible: true,
         filter: null,
+        filters: [],
         op: 'divide',
         ref_a: '',
         ref_b: '',
@@ -95,6 +97,28 @@ function chartBuilderUIMethods() {
           if (c.ref_b === removedId) c.ref_b = '';
         }
       });
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    moveDynCalculation(idx, direction) {
+      const next = idx + direction;
+      if (next < 0 || next >= this.dynCalculations.length) return;
+      const items = [...this.dynCalculations];
+      [items[idx], items[next]] = [items[next], items[idx]];
+      this.dynCalculations = items;
+      this._schedulePreview(true);
+    },
+    duplicateDynCalculation(idx) {
+      const src = this.dynCalculations[idx];
+      if (!src) return;
+      const used = new Set(this.dynCalculations.map(c => String(c.id || '')));
+      this._dynCalcSeq = (this._dynCalcSeq || this.dynCalculations.length) + 1;
+      while (used.has('c' + this._dynCalcSeq)) this._dynCalcSeq += 1;
+      const copy = JSON.parse(JSON.stringify(src));
+      copy.id = 'c' + this._dynCalcSeq;
+      const lbl = (copy.label || this.dynCalcLabel(src) || '').trim();
+      copy.label = lbl ? lbl + ' (copy)' : '';
+      this.dynCalculations.splice(idx + 1, 0, copy);
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
     },
@@ -119,12 +143,61 @@ function chartBuilderUIMethods() {
         .map(o => ({ id: o.c.id, label: this.dynCalcLabel(o.c) }));
     },
     toggleDynCalcFilter(calc) {
-      // Threshold filter ("only include rows where value col < 85").
-      if (calc.filter && typeof calc.filter === 'object') {
-        calc.filter = null;
-      } else {
-        calc.filter = { col: calc.value_col || '', op: 'lt', val: '' };
+      const filters = this.dynCalcFilters(calc);
+      if (filters.length) calc.filters = [];
+      else calc.filters = [{ col: calc.value_col || '', op: 'lt', val: '' }];
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    dynCalcFilters(calc) {
+      if (!Array.isArray(calc.filters)) {
+        calc.filters = calc.filter && typeof calc.filter === 'object' ? [calc.filter] : [];
       }
+      return calc.filters;
+    },
+    addDynCalcFilter(calc) {
+      this.dynCalcFilters(calc).push({ col: calc.value_col || '', op: 'lt', val: '', logic: 'and' });
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    onDynCalcFilterOpChange(filter) {
+      if (['in', 'nin'].includes(filter.op)) {
+        if (!Array.isArray(filter.val)) filter.val = (filter.val !== '' && filter.val != null) ? [String(filter.val)] : [];
+      } else if (Array.isArray(filter.val)) {
+        filter.val = filter.val[0] || '';
+      }
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    dynFilterInLabel(filter) {
+      const vals = Array.isArray(filter.val) ? filter.val : [];
+      if (!vals.length) return 'Select values…';
+      if (vals.length === 1) return vals[0];
+      return vals.length + ' selected';
+    },
+    toggleDynFilterInVal(filter, opt) {
+      if (!Array.isArray(filter.val)) filter.val = [];
+      const s = String(opt);
+      const i = filter.val.map(String).indexOf(s);
+      if (i >= 0) filter.val.splice(i, 1);
+      else filter.val.push(s);
+      filter.val = [...filter.val];
+      this.dynCalculations = [...this.dynCalculations];
+      this._schedulePreview(true);
+    },
+    dynFilterInChecked(filter, opt) {
+      return Array.isArray(filter.val) && filter.val.map(String).includes(String(opt));
+    },
+    moveCategoryOrder(idx, direction) {
+      const next = idx + direction;
+      if (next < 0 || next >= this.categoryOrder.length) return;
+      const items = [...this.categoryOrder];
+      [items[idx], items[next]] = [items[next], items[idx]];
+      this.categoryOrder = items;
+      this._schedulePreview();
+    },
+    removeDynCalcFilter(calc, filterIdx) {
+      this.dynCalcFilters(calc).splice(filterIdx, 1);
       this.dynCalculations = [...this.dynCalculations];
       this._schedulePreview(true);
     },
@@ -139,15 +212,24 @@ function chartBuilderUIMethods() {
       if (this._calcFilterLoading && this._calcFilterLoading[col]) return;
       this._calcFilterLoading = { ...(this._calcFilterLoading || {}), [col]: true };
       const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
-      fetch('/dataviz/api/columns/filter-options/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-        body: JSON.stringify({ columns: [col], filters: this.cleanSourceFilters ? this.cleanSourceFilters() : {} })
-      })
-        .then(r => r.json())
+      const filters = this.cleanSourceFilters ? this.cleanSourceFilters() : {};
+      let req;
+      if (this.sourceType === 'dataset' && this.datasetSourceId) {
+        req = fetch('/dataviz/api/datasets/' + this.datasetSourceId + '/filter-options/?current_filters=' + encodeURIComponent(JSON.stringify(filters)), {
+          credentials: 'same-origin',
+        });
+      } else {
+        req = fetch('/dataviz/api/columns/filter-options/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+          body: JSON.stringify({ columns: [col], filters: filters })
+        });
+      }
+      req.then(r => r.json())
         .then(d => {
-          if (d.filter_options) {
-            this.filterOptions = { ...this.filterOptions, ...d.filter_options };
+          const opts = d.filter_options || d.options || {};
+          if (opts && typeof opts === 'object') {
+            this.filterOptions = { ...this.filterOptions, ...opts };
           }
         })
         .catch(e => console.error('Fetch calc filter options:', e))
@@ -193,6 +275,33 @@ function chartBuilderUIMethods() {
     },
     plColLabel(col) {
       return this.colLabel(col);
+    },
+    tableHeaderAliasOptions() {
+      const seen = new Set();
+      const out = [];
+      const add = (key, label) => {
+        if (key == null || key === '') return;
+        const k = String(key);
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push({ key: k, label: String(label || k) });
+      };
+      const addCol = (c) => { if (c) add(c, this.colLabel(c) || c); };
+      if (this.chartType === 'summary_table') {
+        addCol(this.stRowCol);
+        if (this.stColMode === 'columns') (this.stColCols || []).forEach(addCol);
+      } else if (this.chartType === 'dynamic_summary_table') {
+        (this.dynRowCols || []).forEach(addCol);
+        if (this.dynColMode === 'pivot') (this.dynColCols || []).forEach(addCol);
+        else (this.dynCalculations || []).forEach(c => {
+          if (c && c.visible !== false) {
+            const lbl = this.dynCalcLabel(c);
+            if (lbl) add(lbl, lbl);
+          }
+        });
+      }
+      (this.colHeaderAliasAvail || []).forEach(v => add(v, v));
+      return out;
     },
     colLabel(col) {
       if (!col) return '';
@@ -339,7 +448,7 @@ function chartBuilderUIMethods() {
                          'tooltipShowPct','tooltipShowCount','tooltipValuePct',
                          'parliamentDotScale','parliamentShape','parliamentRows','parliamentRowsAuto','parliamentShowSS','groupGapPct',
                          'centerGroupLabels'];
-      const styleProps = ['chartTitle','titleFontSize','showLegend','showLabels',
+      const styleProps = ['chartTitle','showTitle','chartSubtitle','showSubtitle','titleFontSize','showLegend','showLabels',
                           'legendPos','legendItemGap','legendFontSize','legendIconSize','legendOffset',
                           'labelPosition','labelFontSize','background','opacity',
                           'barBorderRadius','showPoints','smooth',
@@ -381,20 +490,49 @@ function chartBuilderUIMethods() {
       }, 250);
     },
 
+    _applyTableTitleLive(el) {
+      const t = el.querySelector('.dv-table-title');
+      if (t) {
+        const text = (this.chartTitle || '').trim();
+        t.textContent = text;
+        if (text && this.showTitle !== false) {
+          t.style.display = '';
+          t.style.fontSize = (+this.titleFontSize || 16) + 'px';
+        } else {
+          t.style.display = 'none';
+        }
+      }
+      const s = el.querySelector('.dv-table-subtitle');
+      if (s) {
+        const sub = (this.chartSubtitle || '').trim();
+        s.textContent = sub;
+        s.style.display = (sub && this.showSubtitle) ? '' : 'none';
+      }
+    },
     _applyStyleLive() {
       const c = this.$refs.previewContainer;
       if (!c) return;
       const chartEl = c.querySelector('.chart-container');
-      if (!chartEl || !chartEl._echartsInstance) return;
+      if (!chartEl) return;
+      if (chartEl._isTable || chartEl.querySelector('.dv-table-title')) {
+        this._applyTableTitleLive(chartEl);
+        return;
+      }
+      if (!chartEl._echartsInstance) return;
       const chart = chartEl._echartsInstance;
       const opt = {};
 
       const bgMap = { white: '#ffffff', light: '#f8fafc', dark: '#1e293b' };
       opt.backgroundColor = bgMap[this.background] || '#ffffff';
 
+      const sub = (this.showSubtitle && (this.chartSubtitle || '').trim()) ? this.chartSubtitle.trim() : '';
       opt.title = [{
-        text: this.chartTitle || '',
+        show: !!(this.chartTitle && this.showTitle) || !!sub,
+        text: (this.showTitle && this.chartTitle) ? this.chartTitle : '',
+        subtext: sub,
+        itemGap: 6,
         textStyle: { fontSize: +this.titleFontSize || 16 },
+        subtextStyle: { fontSize: 11, fontWeight: 'normal', lineHeight: 16, width: 560, overflow: 'break' },
         ...(this.titleLeft != null ? { left: this.titleLeft } : {}),
         ...(this.titleTop  != null ? { top:  this.titleTop  } : {}),
       }];

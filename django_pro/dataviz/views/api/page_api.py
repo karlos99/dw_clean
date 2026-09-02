@@ -9,7 +9,10 @@ from django.utils.text import slugify
 from django.views.decorators.http import require_GET
 
 from dataviz.models import Dashboard, DataVizPage, DataVizPageSection, DataVizPageRow, DataVizPageTab, DataVizPageFolder, SavedChart
-from dataviz.utils.page_publish import publish_page, unpublish_page, validate_page_slug, normalize_page_folder, all_page_folder_paths
+from dataviz.utils.page_publish import (
+    publish_page, unpublish_page, validate_page_slug, normalize_page_folder,
+    all_page_folder_paths, rewrite_folder_prefix, delete_folder_and_pages,
+)
 
 from ..mixins import is_project_admin, FORBIDDEN
 
@@ -165,6 +168,56 @@ def page_folder_create_api(request):
 
     DataVizPageFolder.objects.get_or_create(path=path)
     return JsonResponse({'success': True, 'folder': path})
+
+
+@login_required
+def page_folder_rename_api(request):
+    """Rename a folder (and nested paths) without deleting pages."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'PUT'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    old_path = normalize_page_folder(body.get('folder', ''))
+    new_leaf = (body.get('name') or '').strip()
+    if not old_path:
+        return JsonResponse({'error': 'Folder is required'}, status=400)
+    if not new_leaf or '/' in new_leaf:
+        return JsonResponse({'error': 'Enter a folder name without /'}, status=400)
+
+    parts = [p.strip() for p in old_path.split(' / ') if p.strip()]
+    parts[-1] = new_leaf
+    new_path = normalize_page_folder(' / '.join(parts))
+    with transaction.atomic():
+        moved = rewrite_folder_prefix(old_path, new_path)
+    return JsonResponse({'success': True, 'folder': new_path, 'moved': moved})
+
+
+@login_required
+def page_folder_delete_api(request):
+    """Delete a folder and any pages nested under it."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    if request.method not in ('POST', 'DELETE'):
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    path = normalize_page_folder(body.get('folder', ''))
+    if not path:
+        return JsonResponse({'error': 'Folder is required'}, status=400)
+
+    with transaction.atomic():
+        deleted = delete_folder_and_pages(path)
+    return JsonResponse({'success': True, 'deleted_pages': deleted})
 
 
 @login_required
@@ -468,7 +521,7 @@ def page_filter_options_api(request, slug, filter_id):
         try:
             # Only route through ClickHouse when this table is actually mirrored
             # there — otherwise the data doesn't exist and Postgres is correct.
-            cursor_ctx = QueryExecutor().cursor() if table in CLICKHOUSE_SYNCED_TABLES else connections['default'].cursor()
+            cursor_ctx = QueryExecutor(analytics=True).cursor() if table in CLICKHOUSE_SYNCED_TABLES else connections['default'].cursor()
             with cursor_ctx as cursor:
                 cursor.execute(
                     f'SELECT DISTINCT "{col}" FROM "{table}" WHERE "{col}" IS NOT NULL ORDER BY "{col}"'

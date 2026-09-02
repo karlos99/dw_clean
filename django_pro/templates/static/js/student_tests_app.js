@@ -22,6 +22,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let yearAliasMap = {}; // {'2024_2025': '__sy_this__', ...} — underscore-format keys
     let yearMode = localStorage.getItem('dwYearMode') || 'specific';
     let page = 1;
+    let nextCursor = '';
+    let pendingCursor = '';
+    let cursorStack = [];
+    let loadAbort = null;
+    let inFlightUrl = '';
     let sortBy = '';
     let sortDir = 'asc';
     let filters = {};
@@ -1211,19 +1216,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let loadDataSeq = 0;
 
-    const loadData = () => {
-        const requestSeq = ++loadDataSeq;
-        showLoading('Loading student data...');
-        clearStatsCache();
+    const resetPage = () => {
+        page = 1;
+        pendingCursor = '';
+        nextCursor = '';
+        cursorStack = [];
+    };
 
+    const loadData = () => {
         restoreViewState();
-        
+
         const url = new URL(loadStudentsUrl, window.location.origin);
         url.searchParams.set('page', page);
+        if (page <= 1) pendingCursor = '';
+        if (pendingCursor) url.searchParams.set('cursor', pendingCursor);
 
         refreshColumnStructures();
 
-        // Include saved_query or student_list from URL if present
         const urlParams = new URLSearchParams(window.location.search);
         const savedQueryId = urlParams.get('saved_query');
         const studentListId = urlParams.get('student_list');
@@ -1264,7 +1273,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (statusInput) url.searchParams.set('status', statusInput.value);
         }
 
-        fetch(url.toString(), { credentials: 'same-origin' })
+        const urlStr = url.toString();
+        if (inFlightUrl === urlStr) return;
+        if (loadAbort) loadAbort.abort();
+        loadAbort = new AbortController();
+        inFlightUrl = urlStr;
+        const requestSeq = ++loadDataSeq;
+        showLoading('Loading student data...');
+        clearStatsCache();
+
+        fetch(urlStr, { credentials: 'same-origin', signal: loadAbort.signal })
             .then(async (response) => {
                 if (!response.ok) {
                     const text = await response.text();
@@ -1274,18 +1292,23 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then((payload) => {
                 if (requestSeq !== loadDataSeq) return;
+                nextCursor = payload.next_cursor || '';
+                pendingCursor = '';
                 renderTable(payload);
                 saveViewState();
                 hideLoading();
             })
             .catch((error) => {
-                if (requestSeq !== loadDataSeq) return;
+                if (error.name === 'AbortError' || requestSeq !== loadDataSeq) return;
                 console.error('Error loading data:', error);
                 hideLoading();
                 const targetEl = document.querySelector('#student-table');
                 if (targetEl) {
                     targetEl.innerHTML = '<div class="text-center py-8 text-red-600">Failed to load data.</div>';
                 }
+            })
+            .finally(() => {
+                if (inFlightUrl === urlStr) inFlightUrl = '';
             });
     };
 
@@ -1332,7 +1355,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 selectedColumns.push(key);
             }
-            page = 1;
+            resetPage();
             renderSelectedColumns();
             triggerLoadData();
             return;
@@ -1366,7 +1389,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 selectedColumns.push(key);
             }
-            page = 1;
+            resetPage();
             renderSelectedColumns();
             triggerLoadData();
             return;
@@ -1381,7 +1404,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             selectedColumns.push(key);
         }
-        page = 1;
+        resetPage();
         renderSelectedColumns();
         triggerLoadData();
     };
@@ -1408,7 +1431,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!selectedColumns.some(sc => normaliseKey(sc) === normC)) selectedColumns.push(c);
                 });
             }
-            page = 1;
+            resetPage();
             renderSelectedColumns();
             triggerLoadData();
             return;
@@ -1526,6 +1549,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const colEl = document.querySelector(`col[data-col="${cssEscape(resizeState.col)}"]`);
         if (colEl) colEl.style.width = `${newWidth}px`;
+        updateTopScrollWidth();
+        syncTableToTopBar();
     };
 
     const endResize = () => {
@@ -1594,13 +1619,13 @@ document.addEventListener('DOMContentLoaded', () => {
             searchInput.value = '';
             searchInput.placeholder = 'Clear list to search by name';
             updateIdListBadge();
-            page = 1;
+            resetPage();
             triggerLoadData();
         });
 
         searchInput.addEventListener('input', debounce(() => {
             if (pastedIdList) clearIdList();
-            page = 1;
+            resetPage();
             triggerLoadData();
         }, 400));
     }
@@ -1612,7 +1637,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 searchInput.value = '';
                 searchInput.placeholder = 'Name, SSID, ID — or paste a list';
             }
-            page = 1;
+            resetPage();
             triggerLoadData();
         });
     }
@@ -1620,7 +1645,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const schoolYearSelect = document.getElementById('school_year');
     if (schoolYearSelect) {
         schoolYearSelect.addEventListener('change', () => {
-            page = 1;
+            resetPage();
             triggerLoadData();
         });
     }
@@ -1628,7 +1653,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusSelect = document.getElementById('status');
     if (statusSelect) {
         statusSelect.addEventListener('change', () => {
-            page = 1;
+            resetPage();
             triggerLoadData();
         });
     }
@@ -1763,6 +1788,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (pageBtn) {
             const nextPage = parseInt(pageBtn.dataset.page, 10);
             if (!Number.isNaN(nextPage)) {
+                if (nextPage > page) {
+                    if (nextCursor) cursorStack.push(nextCursor);
+                    pendingCursor = nextCursor || '';
+                } else if (nextPage < page) {
+                    cursorStack.pop();
+                    pendingCursor = cursorStack.length ? cursorStack[cursorStack.length - 1] : '';
+                } else {
+                    pendingCursor = '';
+                }
                 page = nextPage;
                 triggerLoadData();
             }
@@ -1880,7 +1914,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const fbModal = document.getElementById('folder-browser-modal');
             if (fbModal) fbModal.classList.add('hidden');
 
-            page = 1;
+            resetPage();
             loadData();
             return;
         }
@@ -1913,7 +1947,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (statusInput) statusInput.value = 'Active';
 
             renderSelectedColumns();
-            page = 1;
+            resetPage();
             loadData();
             return;
         }
@@ -2164,19 +2198,42 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     let _scrollSyncResizeObserver = null;
-    let _scrollSyncInitialized = false;
+    let _scrollSyncMainEl = null;
     let _scrollSyncTopScrolling = false;
     let _scrollSyncMainScrolling = false;
 
-    // The table is wrapped in `.table-container` (overflow-x: auto) which is
-    // what actually scrolls horizontally — NOT the outer #table-scroll-container.
     const getTableScrollEl = () => {
         const inner = document.querySelector('#student-table .table-container');
-        if (inner) return inner;
-        const table = document.querySelector('#student-table table');
-        if (table && table.closest('.table-container')) return table.closest('.table-container');
-        return document.getElementById('table-scroll-container');
+        const outer = document.getElementById('table-scroll-container');
+        const candidates = [inner, outer].filter(Boolean);
+        for (const el of candidates) {
+            if (el.scrollWidth > el.clientWidth + 1) return el;
+        }
+        return inner || outer;
     };
+
+    const syncTopBarToTable = () => {
+        const topScrollBar = document.getElementById('h-scroll-top');
+        const scrollEl = getTableScrollEl();
+        if (!topScrollBar || !scrollEl || _scrollSyncMainScrolling) return;
+        _scrollSyncTopScrolling = true;
+        scrollEl.scrollLeft = topScrollBar.scrollLeft;
+        updateScrollIndicators();
+        window.setTimeout(() => { _scrollSyncTopScrolling = false; }, 50);
+    };
+
+    const syncTableToTopBar = () => {
+        const topScrollBar = document.getElementById('h-scroll-top');
+        const scrollEl = getTableScrollEl();
+        if (!topScrollBar || !scrollEl || _scrollSyncTopScrolling) return;
+        _scrollSyncMainScrolling = true;
+        topScrollBar.scrollLeft = scrollEl.scrollLeft;
+        updateScrollIndicators();
+        window.setTimeout(() => { _scrollSyncMainScrolling = false; }, 50);
+    };
+
+    const onTopScrollBarScroll = () => syncTopBarToTable();
+    const onTableScrollElScroll = () => syncTableToTopBar();
 
     const updateTopScrollWidth = () => {
         const topScrollBar = document.getElementById('h-scroll-top');
@@ -2213,39 +2270,32 @@ document.addEventListener('DOMContentLoaded', () => {
             _scrollSyncResizeObserver = null;
         }
 
-        // Only attach scroll listeners once
-        if (!_scrollSyncInitialized) {
-            _scrollSyncInitialized = true;
-
-            topScrollBar.addEventListener('scroll', () => {
-                if (_scrollSyncMainScrolling) return;
-                _scrollSyncTopScrolling = true;
-                scrollEl.scrollLeft = topScrollBar.scrollLeft;
-                updateScrollIndicators();
-                setTimeout(() => { _scrollSyncTopScrolling = false; }, 50);
-            });
-
-            scrollEl.addEventListener('scroll', () => {
-                if (_scrollSyncTopScrolling) return;
-                _scrollSyncMainScrolling = true;
-                topScrollBar.scrollLeft = scrollEl.scrollLeft;
-                updateScrollIndicators();
-                setTimeout(() => { _scrollSyncMainScrolling = false; }, 50);
-            });
+        if (_scrollSyncMainEl && _scrollSyncMainEl !== scrollEl) {
+            _scrollSyncMainEl.removeEventListener('scroll', onTableScrollElScroll);
         }
+        _scrollSyncMainEl = scrollEl;
+
+        if (!topScrollBar.dataset.scrollSyncBound) {
+            topScrollBar.addEventListener('scroll', onTopScrollBarScroll);
+            topScrollBar.dataset.scrollSyncBound = '1';
+        }
+        scrollEl.removeEventListener('scroll', onTableScrollElScroll);
+        scrollEl.addEventListener('scroll', onTableScrollElScroll);
 
         // Wait for layout, then set width and observe the scroll container
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 updateTopScrollWidth();
+                syncTableToTopBar();
                 updateScrollIndicators();
-                if (scrollEl) {
-                    _scrollSyncResizeObserver = new ResizeObserver(() => {
-                        updateTopScrollWidth();
-                        updateScrollIndicators();
-                    });
-                    _scrollSyncResizeObserver.observe(scrollEl);
-                }
+                const table = scrollEl.querySelector('table');
+                _scrollSyncResizeObserver = new ResizeObserver(() => {
+                    updateTopScrollWidth();
+                    syncTableToTopBar();
+                    updateScrollIndicators();
+                });
+                _scrollSyncResizeObserver.observe(scrollEl);
+                if (table) _scrollSyncResizeObserver.observe(table);
             });
         });
     };

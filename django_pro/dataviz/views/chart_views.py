@@ -20,6 +20,48 @@ from dataexploration.constants import SY_THIS_YEAR, SY_LAST_YEAR, SY_TWO_PRIOR, 
 from .mixins import ProjectAdminMixin, is_project_admin
 
 
+def _chart_page_usage(chart_ids):
+    """Map chart id → unique pages that embed it."""
+    if not chart_ids:
+        return {}
+    from collections import defaultdict
+    from dataviz.models import DataVizPageSection
+    sections = (
+        DataVizPageSection.objects
+        .filter(element_type=DataVizPageSection.TYPE_CHART, chart_id__in=chart_ids)
+        .select_related('page')
+        .values('chart_id', 'page_id', 'page__title', 'page__slug')
+        .order_by('page__title')
+    )
+    usage = defaultdict(list)
+    seen = set()
+    for s in sections:
+        key = (s['chart_id'], s['page_id'])
+        if key in seen:
+            continue
+        seen.add(key)
+        usage[s['chart_id']].append({
+            'id': s['page_id'],
+            'title': s['page__title'],
+            'slug': s['page__slug'],
+        })
+    return dict(usage)
+
+
+def _annotate_charts(charts, page_usage):
+    type_labels = {k: l for k, l, _, _ in CHART_TYPES}
+    for chart in charts:
+        chart.type_label = type_labels.get(
+            chart.chart_type, chart.chart_type.replace('_', ' ').title()
+        )
+        chart.used_on_pages = page_usage.get(chart.pk, [])
+        chart.search_blob = ' '.join(
+            [chart.display_name, chart.folder_path, chart.type_label,
+             chart.chart_type, chart.description or '']
+            + [p['title'] or '' for p in chart.used_on_pages]
+        )
+
+
 def chart_index(request):
     """List charts in a file-explorer style structure."""
     if not request.user.is_authenticated:
@@ -30,71 +72,81 @@ def chart_index(request):
         return HttpResponseForbidden('Project Admins only.')
 
     current_path = request.GET.get('folder', '').strip().strip('/')
+    search_q = request.GET.get('q', '').strip()
     charts = SavedChart.objects.all().order_by('name')[:500]
 
     # Build the full tree structure
     root = {'folders': {}, 'charts': []}
+    all_charts = []
     for chart in charts:
-        parts = [p.strip() for p in chart.name.split('/')]
+        parts = [p.strip() for p in chart.name.split('/') if p.strip()]
         curr = root
         for part in parts[:-1]:
             if part not in curr['folders']:
                 curr['folders'][part] = {'folders': {}, 'charts': []}
             curr = curr['folders'][part]
-        
-        chart.display_name = parts[-1]
-        curr['charts'].append(chart)
 
-    # Navigate to the requested folder
+        chart.display_name = parts[-1] if parts else chart.name
+        chart.folder_path = ' / '.join(parts[:-1])
+        chart.folder_url = '/'.join(parts[:-1])
+        curr['charts'].append(chart)
+        all_charts.append(chart)
+
+    # Navigate to the requested folder (ignored while searching globally)
     path_parts = [p for p in current_path.split('/') if p]
     display_curr = root
     breadcrumbs = []
     running_path = []
-    
-    for p in path_parts:
-        if p in display_curr['folders']:
-            running_path.append(p)
-            display_curr = display_curr['folders'][p]
-            breadcrumbs.append({'name': p, 'path': '/'.join(running_path)})
-        else:
-            # Path not found, fall back to root
-            display_curr = root
-            breadcrumbs = []
-            current_path = ''
-            break
 
-    # Get subfolders and charts for the current view
-    subfolders = sorted(display_curr['folders'].keys())
-    folder_charts = display_curr['charts']
+    if not search_q:
+        for p in path_parts:
+            if p in display_curr['folders']:
+                running_path.append(p)
+                display_curr = display_curr['folders'][p]
+                breadcrumbs.append({'name': p, 'path': '/'.join(running_path)})
+            else:
+                display_curr = root
+                breadcrumbs = []
+                current_path = ''
+                break
 
-    # ── Page usage: which pages embed each chart ──────────────────────
-    chart_ids = [c.pk for c in folder_charts]
-    page_usage = {}
-    if chart_ids:
-        from dataviz.models import DataVizPageSection
-        sections = (
-            DataVizPageSection.objects
-            .filter(element_type=DataVizPageSection.TYPE_CHART, chart_id__in=chart_ids)
-            .select_related('page')
-            .values('chart_id', 'page_id', 'page__title', 'page__slug')
-            .order_by('page__title')
-        )
-        from collections import defaultdict
-        usage = defaultdict(list)
-        for s in sections:
-            usage[s['chart_id']].append({
-                'id': s['page_id'],
-                'title': s['page__title'],
-                'slug': s['page__slug'],
-            })
-        page_usage = dict(usage)
+    def _folder_chart_count(node):
+        n = len(node['charts'])
+        for child in node['folders'].values():
+            n += _folder_chart_count(child)
+        return n
+
+    if search_q:
+        current_path = ''
+        breadcrumbs = []
+        subfolders = []
+        subfolder_items = []
+        candidates = all_charts
+    else:
+        subfolders = sorted(display_curr['folders'].keys())
+        subfolder_items = [
+            {'name': name, 'count': _folder_chart_count(display_curr['folders'][name])}
+            for name in subfolders
+        ]
+        candidates = display_curr['charts']
+
+    page_usage = _chart_page_usage([c.pk for c in candidates])
+    _annotate_charts(candidates, page_usage)
+
+    if search_q:
+        needle = search_q.lower()
+        folder_charts = [c for c in candidates if needle in (c.search_blob or '').lower()]
+    else:
+        folder_charts = candidates
 
     return render(request, 'dataviz/charts/index.html', {
         'subfolders': subfolders,
+        'subfolder_items': subfolder_items,
         'charts': folder_charts,
         'current_path': current_path,
         'breadcrumbs': breadcrumbs,
         'page_usage': page_usage,
+        'search_q': search_q,
     })
 
 

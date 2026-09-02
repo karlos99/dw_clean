@@ -1,6 +1,8 @@
 """Chart API views: preview, save, detail, list partial."""
 import hashlib
 import json
+import logging
+import time
 import traceback
 
 from django.contrib.auth.decorators import login_required
@@ -14,11 +16,120 @@ from django.views.decorators.http import require_POST, require_GET
 
 from dataviz.models import SavedChart
 from dataviz.utils.chart_builder import build_option
+from clickhouse_utils.timing import timed_fn
 
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '10'
+_CHART_PIPELINE_VERSION = '14'
+_timing_log = logging.getLogger('analytics.timing')
+
+# One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
+_FLIGHT_LOCK_TTL = 30
+_FLIGHT_WAIT_S = 0.05
+_FLIGHT_WAIT_TRIES = 80  # 4s; gunicorn timeout is 120s
+
+_CLICKHOUSE_AGGREGATE_CHARTS = frozenset({
+    'bar', 'column', 'grouped_bar', 'stacked_bar', 'line', 'area',
+    'areaspline', 'stacked_area', 'pie', 'donut',
+})
+
+
+def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings):
+    """Return compact chart rows for simple visual datasets.
+
+    Chart builders historically received every matching row and aggregated it
+    in Polars. For the common dimension/count or dimension/value charts, let
+    ClickHouse perform the aggregation and send only grouped rows to Django.
+    Complex charts continue through the existing raw-row path so their exact
+    semantics and drill metadata remain unchanged.
+    """
+    chart_type = cfg.get('chart_type', 'bar')
+    if chart_type not in _CLICKHOUSE_AGGREGATE_CHARTS:
+        return None
+    if cfg.get('group_col'):
+        return None
+    # Dataset status handling has additional semantics (including the
+    # interactive status sentinel); keep it on the established compiler path
+    # until those predicates are represented directly in this aggregate SQL.
+    if any(str(k).split('.')[-1] == 'status' for k in (filters or {})):
+        return None
+    if any(str(f.get('column', '')).split('.')[-1] == 'status' for f in (ds.filters or [])):
+        return None
+
+    x_cols = cfg.get('x_cols') or []
+    if not isinstance(x_cols, list):
+        x_cols = []
+    x_col = cfg.get('x_col') or (x_cols[0] if len(x_cols) == 1 else '')
+    if not x_col or (x_cols and len(x_cols) != 1):
+        return None
+    series_col = cfg.get('stack_col') or cfg.get('series_col') or ''
+    y_col = cfg.get('y_col') or None
+    aggregation = cfg.get('agg', 'count')
+    if aggregation not in {'count', 'sum', 'avg', 'min', 'max', 'median'}:
+        return None
+    # Same rule as the Python chart builder: stacking by the value column
+    # (e.g. PL stacked + PL avg) must count rows, not average the labels.
+    if series_col and y_col and series_col == y_col and aggregation != 'count':
+        aggregation = 'count'
+        y_col = None
+
+    from dataviz.utils.compiler import (
+        build_dataset_col_index, compile_aggregated_dataset_to_sql,
+        execute_compiled_query, SQLCompilationError, resolve_dataset_filters,
+    )
+    index = build_dataset_col_index(ds)
+
+    def resolve(value):
+        if not value:
+            return None
+        if value in (ds.columns or []):
+            return value
+        return index.get(value)
+
+    x_full = resolve(x_col)
+    series_full = resolve(series_col) if series_col else None
+    y_full = resolve(y_col) if y_col else None
+    if not x_full or (series_col and not series_full) or (y_col and not y_full):
+        return None
+
+    active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
+    resolved_interactive = resolve_dataset_filters(filters or {}, ds, active_tables)
+    try:
+        sql, params = compile_aggregated_dataset_to_sql(
+            ds, [x_full], y_full, aggregation, series_col=series_full,
+            user=None, limit=None, interactive_filters=resolved_interactive,
+            one_row_per_stu_annual_key=bool(cfg.get('one_row_per_stu_annual_key')),
+            date_bucket=(cfg.get('x_date_bucket') or '').strip().lower() or None,
+        )
+    except SQLCompilationError:
+        return None
+    result = execute_compiled_query(sql, params)
+    if result.get('error'):
+        return None
+
+    alias_for = dict(column_mappings or {})
+    x_alias = alias_for.get(x_full, x_col)
+    series_alias = alias_for.get(series_full, series_col) if series_full else ''
+    compact_rows = []
+    for row in result.get('rows', []):
+        compact = {alias_for.get(k, k): v for k, v in row.items()}
+        if x_alias not in compact:
+            compact[x_alias] = row.get(x_full.replace('.', '_'))
+        if series_full and series_alias not in compact:
+            compact[series_alias] = row.get(series_full.replace('.', '_'))
+        compact_rows.append(compact)
+
+    compact_cfg = dict(cfg)
+    compact_cfg['x_col'] = x_alias
+    compact_cfg['x_cols'] = [x_alias]
+    compact_cfg['y_col'] = '__dv_value'
+    compact_cfg['agg'] = 'sum'
+    if series_full:
+        compact_cfg['stack_col'] = series_alias
+        compact_cfg['series_col'] = series_alias
+    return {'rows': compact_rows, 'columns': list(result.get('columns', [])),
+            'row_count': len(compact_rows)}, compact_cfg
 
 
 def _effective_chart_cfg(chart) -> dict:
@@ -71,10 +182,29 @@ def _remap_config_cols(config: dict, column_mappings: dict | None) -> dict:
                     f = new_item.get('filter')
                     if isinstance(f, dict) and f.get('col') and isinstance(f['col'], str):
                         new_item['filter'] = {**f, 'col': column_mappings.get(f['col'], f['col'])}
+                    filters = new_item.get('filters')
+                    if isinstance(filters, list):
+                        new_item['filters'] = [
+                            {**ff, 'col': column_mappings.get(ff['col'], ff['col'])}
+                            if isinstance(ff, dict) and isinstance(ff.get('col'), str)
+                            else ff
+                            for ff in filters
+                        ]
                     new_calcs.append(new_item)
                 else:
                     new_calcs.append(item)
             res[k] = new_calcs
+        elif k == 'col_header_aliases' and isinstance(v, dict):
+            expanded = {}
+            for ak, av in v.items():
+                expanded[ak] = av
+                if isinstance(ak, str):
+                    mapped = column_mappings.get(ak)
+                    if mapped and mapped != ak:
+                        expanded[mapped] = av
+                    if '.' in ak:
+                        expanded[ak.split('.')[-1]] = av
+            res[k] = expanded
         else:
             res[k] = v
     return res
@@ -101,6 +231,34 @@ def _progress_growth_query_columns(chart_type: str, chart_cfg: dict) -> list:
         if col and col not in cols:
             cols.append(col)
     return cols
+
+
+def _dyn_calc_query_columns(chart_cfg: dict) -> list:
+    """Value/filter columns calculation-mode tables need beyond the explorer selection."""
+    cols = []
+    seen = set()
+    for calc in (chart_cfg or {}).get('dyn_calculations') or []:
+        if not isinstance(calc, dict):
+            continue
+        vc = calc.get('value_col')
+        if vc and vc not in seen:
+            seen.add(vc)
+            cols.append(vc)
+        flist = calc.get('filters') if isinstance(calc.get('filters'), list) else [calc.get('filter')]
+        for f in flist:
+            col = f.get('col') if isinstance(f, dict) else None
+            if col and col not in seen:
+                seen.add(col)
+                cols.append(col)
+    return cols
+
+
+def _chart_extra_query_columns(chart_cfg: dict) -> list:
+    extras = _progress_growth_query_columns((chart_cfg or {}).get('chart_type', ''), chart_cfg)
+    for col in _dyn_calc_query_columns(chart_cfg):
+        if col not in extras:
+            extras.append(col)
+    return extras
 
 
 def _augment_chart_result_rows(chart_type: str, chart_cfg: dict, col_mappings: dict, result: dict) -> dict:
@@ -142,6 +300,14 @@ def _cfg_from_post(post):
         x_value_map = {}
     if not isinstance(x_value_map, dict):
         x_value_map = {}
+
+    cha_raw = post.get('col_header_aliases', '')
+    try:
+        col_header_aliases = json.loads(cha_raw) if cha_raw else {}
+    except (json.JSONDecodeError, ValueError):
+        col_header_aliases = {}
+    if not isinstance(col_header_aliases, dict):
+        col_header_aliases = {}
 
     # Parse stack_order JSON
     so_raw = post.get('stack_order', '')
@@ -247,6 +413,8 @@ def _cfg_from_post(post):
         'dyn_show_tooltips':  post.get('dyn_show_tooltips', '1') == '1',
         'dyn_col_mode':      post.get('dyn_col_mode', 'pivot'),
         'dyn_calculations':  _parse_json_list('dyn_calculations'),
+        'dyn_drill_calc':    post.get('dyn_drill_calc', ''),
+        'dyn_totals_only':   post.get('dyn_totals_only', '0') == '1',
         'dyn_display_type':  post.get('dyn_display_type', 'table'),
         # Dates (date_series) fields
         'ds_date_col':       post.get('ds_date_col', ''),
@@ -274,6 +442,7 @@ def _cfg_from_post(post):
         'smooth':            bool(post.get('smooth')),
         'color_map':         color_map,
         'x_value_map':       x_value_map,
+        'col_header_aliases': col_header_aliases,
         # Stack order
         'stack_order':       stack_order,
         # Element toggles
@@ -322,6 +491,9 @@ def _cfg_from_post(post):
         'title_font_size': _parse_int(post.get('title_font_size'), 16),
         'label_distance':   _parse_int(post.get('label_distance'),   None),
         'chart_title':      post.get('chart_title', '').strip(),
+        'show_title':       bool(post.get('show_title', '1')),
+        'chart_subtitle':   post.get('chart_subtitle', '').strip(),
+        'show_subtitle':    bool(post.get('show_subtitle')),
         'container_width':  _parse_int(post.get('container_width'),  None),
         'container_height': _parse_int(post.get('container_height'), None),
         'parliament_dot_scale': _parse_float(post.get('parliament_dot_scale'), None),
@@ -428,13 +600,26 @@ def chart_preview_api(request):
             _sel_cols = json.loads(_sel_raw) if isinstance(_sel_raw, str) else _sel_raw
         except (json.JSONDecodeError, ValueError):
             _sel_cols = []
+        if not isinstance(_sel_cols, list):
+            _sel_cols = []
+        _sel_cols = list(_sel_cols)
+        for _c in _chart_extra_query_columns(cfg):
+            if _c not in _sel_cols:
+                _sel_cols.append(_c)
     preview_source_hash = hashlib.md5(json.dumps({
         'st': source_type,
         'sid': source_id,
         'ssql': source_sql,
         'sf': source_filters,
         'sc': _sel_cols,
+        'xc': _chart_extra_query_columns(cfg),
         'one_row_per_stu_annual_key': bool(cfg.get('one_row_per_stu_annual_key')),
+        'x': cfg.get('x_col'),
+        'y': cfg.get('y_col'),
+        'stack': cfg.get('stack_col') or cfg.get('series_col'),
+        'agg': cfg.get('agg'),
+        'date_bucket': cfg.get('x_date_bucket'),
+        'v': _CHART_PIPELINE_VERSION,
     }, sort_keys=True).encode()).hexdigest()[:12]
     preview_data_key = f'preview_data:{preview_source_hash}'
     preview_cached = cache.get(preview_data_key)
@@ -446,15 +631,7 @@ def chart_preview_api(request):
     elif source_type == 'sql':
         result = run_raw_sql(source_sql)
     elif source_type == 'columns':
-        # Column Picker source: selected_columns come from POST or JSON
-        if 'application/json' in content_type:
-            sel_cols_raw = body.get('selected_columns', '[]')
-        else:
-            sel_cols_raw = request.POST.get('selected_columns', '[]')
-        try:
-            selected_columns = json.loads(sel_cols_raw) if isinstance(sel_cols_raw, str) else sel_cols_raw
-        except (json.JSONDecodeError, ValueError):
-            selected_columns = []
+        selected_columns = _sel_cols or []
         if not selected_columns:
             return _error('Select at least one column in the Explorer')
         result = run_column_query(selected_columns, source_filters)
@@ -480,19 +657,25 @@ def chart_preview_api(request):
             if res.get('error'):
                 return _error(res['error'])
             aliased_rows = res.get('rows', [])
+            cfg = _remap_config_cols(cfg, col_mappings)
         else:
             active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
             resolved_filters, status_val = prepare_interactive_filters(source_filters or {}, ds, active_tables)
-            sql, params = compile_dataset_to_sql(
-                ds, user=None, interactive_filters=resolved_filters,
-                limit=limit_val, status_filter=status_val,
-                one_row_per_stu_annual_key=one_per_sak,
-            )
-            res = execute_compiled_query_aliased(sql, params, col_mappings)
+            aggregated = _clickhouse_aggregate_dataset(ds, cfg, source_filters or {}, col_mappings)
+            if aggregated is not None:
+                res, cfg = aggregated
+            else:
+                sql, params = compile_dataset_to_sql(
+                    ds, user=None, interactive_filters=resolved_filters,
+                    limit=limit_val, status_filter=status_val,
+                    one_row_per_stu_annual_key=one_per_sak,
+                )
+                res = execute_compiled_query_aliased(sql, params, col_mappings)
+                cfg = _remap_config_cols(cfg, col_mappings)
             if res.get('error'):
                 return _error(res['error'])
             aliased_rows = res.get('rows', [])
-            if one_per_sak:
+            if one_per_sak and aggregated is None:
                 aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
         # Fetch test_*/mark_* columns via data explorer for any alias that wasn't
         # returned by the dataset SQL (dataset without a results/tests JOIN).
@@ -501,15 +684,14 @@ def chart_preview_api(request):
             aliased_rows = _augment_rows_with_assessment_cols(
                 aliased_rows, _missing_assessment, None, source_filters=source_filters,
             )
-        cfg = _remap_config_cols(cfg, col_mappings)
         result = {'rows': aliased_rows, 'columns': res.get('columns', []), 'row_count': len(aliased_rows)}
     else:
         if not source_id:
             return _error('Select a data source first')
-        pg_extra = _progress_growth_query_columns(cfg.get('chart_type', ''), cfg)
+        extra_cols = _chart_extra_query_columns(cfg)
         result = run_saved_query(
             source_id, source_filters, request.user,
-            extra_columns=pg_extra or None,
+            extra_columns=extra_cols or None,
             apply_user_filters=False,
         )
         result = _augment_chart_result_rows(cfg.get('chart_type', ''), cfg, {}, result)
@@ -531,6 +713,7 @@ def chart_preview_api(request):
         series_names    = option.pop('__series_names__', [])
         category_names  = option.pop('__category_names__', [])
         x_alias_keys    = option.pop('__x_alias_keys__', [])
+        col_header_keys = option.pop('__col_header_keys__', [])
         ac_avail_cats   = option.pop('__ac_avail_cats__', [])
         ac_avail_pl     = option.pop('__ac_avail_pl__', [])
         query_columns = list(rows[0].keys()) if rows else (result.get('columns', []))
@@ -539,11 +722,15 @@ def chart_preview_api(request):
             'series_names_json':  json.dumps(series_names),
             'category_names_json': json.dumps(category_names),
             'x_alias_keys_json':  json.dumps(x_alias_keys),
+            'col_header_keys_json': json.dumps(col_header_keys),
             'ac_avail_cats_json': json.dumps(ac_avail_cats),
             'ac_avail_pl_json':   json.dumps(ac_avail_pl),
             'query_columns_json': json.dumps(query_columns),
             'chart_id':           _chart_id or 'preview',
             'drill_enabled':      '1' if _chart_id else '0',
+            'drill_source':       'chart_builder' if _chart_id else '',
+            'drill_source_id':    str(_chart_id) if _chart_id else '',
+            'drill_source_name':  'Chart Builder' if _chart_id else '',
         })
     except Exception as exc:
         return _error(f'Chart error: {exc}')
@@ -660,7 +847,7 @@ def chart_save_api(request):
 
 @login_required
 def chart_detail_api(request, chart_id):
-    """GET a chart's full dict; PUT to update description; DELETE to remove it."""
+    """GET a chart's full dict; PUT to update description / user-menu flag; DELETE to remove it."""
     if not is_project_admin(request.user):
         return FORBIDDEN
 
@@ -673,11 +860,21 @@ def chart_detail_api(request, chart_id):
             body = json.loads(request.body)
         except (json.JSONDecodeError, ValueError):
             return JsonResponse({'error': 'Invalid JSON'}, status=400)
+        update_fields = []
         if 'description' in body:
             chart.description = body['description']
-            chart.save(update_fields=['description'])
-            return JsonResponse({'success': True, 'description': chart.description})
-        return JsonResponse({'error': 'No updatable fields provided'}, status=400)
+            update_fields.append('description')
+        if 'is_user_menu' in body:
+            chart.is_user_menu = bool(body['is_user_menu'])
+            update_fields.append('is_user_menu')
+        if not update_fields:
+            return JsonResponse({'error': 'No updatable fields provided'}, status=400)
+        chart.save(update_fields=update_fields)
+        return JsonResponse({
+            'success': True,
+            'description': chart.description,
+            'is_user_menu': chart.is_user_menu,
+        })
     if request.method == 'DELETE':
         chart.delete()
         return JsonResponse({'success': True})
@@ -755,6 +952,57 @@ def _parse_pf_filters(get_params) -> dict:
     return filters
 
 
+def _chart_flight_keys(chart_id, updated_ts, pf_hash, embed_suffix, sync_version):
+    lock_key = (
+        f'chart_flight:{_CHART_PIPELINE_VERSION}:{chart_id}:'
+        f'{updated_ts}:{pf_hash}:{embed_suffix}:{sync_version}'
+    )
+    return lock_key, f'{lock_key}:done'
+
+
+def _wait_chart_flight(done_key):
+    for _ in range(_FLIGHT_WAIT_TRIES):
+        time.sleep(_FLIGHT_WAIT_S)
+        done = cache.get(done_key)
+        if done is not None:
+            payload = dict(done)
+            payload['cache_status'] = 'HIT'
+            return payload
+    return None
+
+
+def warm_published_page_charts(limit=32):
+    """Fill Redis for charts on active DataViz pages after a ClickHouse sync."""
+    from dataviz.models import DataVizPage, DataVizPageSection
+    ids = []
+    seen = set()
+    qs = (
+        DataVizPageSection.objects
+        .filter(
+            element_type=DataVizPageSection.TYPE_CHART,
+            chart_id__isnull=False,
+            page__status=DataVizPage.STATUS_ACTIVE,
+        )
+        .order_by('page_id', 'gs_y', 'gs_x')
+        .values_list('chart_id', flat=True)
+    )
+    for cid in qs.iterator():
+        if cid in seen:
+            continue
+        seen.add(cid)
+        ids.append(cid)
+        if len(ids) >= limit:
+            break
+    warmed = 0
+    for cid in ids:
+        try:
+            _render_saved_chart(cid, {}, is_embed=True)
+            warmed += 1
+        except Exception:
+            _timing_log.exception('op=warm_published_page_charts chart_id=%s', cid)
+    return warmed
+
+
 def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_source_id='',
                          drill_source_name='', is_embed=False, request=None, if_none_match=None,
                          school_id=None):
@@ -781,6 +1029,9 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     from dataviz.utils.data_loader import run_saved_query, run_raw_sql, run_column_query
 
     chart = get_object_or_404(SavedChart, pk=chart_id)
+    # Read once per render so a sync that happens mid-request cannot produce
+    # mismatched data/render cache keys.
+    sync_version = cache.get('analytics:clickhouse_sync_version', 'legacy')
 
     # ── School scope ────────────────────────────────────────────────
     if school_id and school_id not in ('all', 'All', ''):
@@ -797,17 +1048,20 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # Layer 1 – Data cache: raw rows keyed by source + filters
     sel_cols_hash = ""
     if chart.source_type == SavedChart.SOURCE_COLUMNS:
-        sel_cols_hash = hashlib.md5(json.dumps(chart.config.get('selected_columns', []), sort_keys=True).encode()).hexdigest()[:8]
+        _sel_for_hash = list(chart.config.get('selected_columns', []))
+        for _c in _chart_extra_query_columns(chart.config):
+            if _c not in _sel_for_hash:
+                _sel_for_hash.append(_c)
+        sel_cols_hash = hashlib.md5(json.dumps(_sel_for_hash, sort_keys=True).encode()).hexdigest()[:8]
 
-    pg_extra_hash = ''
-    if chart.chart_type == 'progress_growth':
-        pg_extra_hash = hashlib.md5(
-            json.dumps(_progress_growth_query_columns(chart.chart_type, chart.config), sort_keys=True).encode()
-        ).hexdigest()[:8]
+    extra_cols_hash = hashlib.md5(
+        json.dumps(_chart_extra_query_columns(chart.config), sort_keys=True).encode()
+    ).hexdigest()[:8]
 
     source_part = (
         f'{_CHART_PIPELINE_VERSION}:{chart.source_type}:{chart.source_id or "_"}:'
-        f'{chart.source_sql or "_"}:{sel_cols_hash}:{pg_extra_hash}:{pf_hash}:{updated_ts}'
+        f'{chart.source_sql or "_"}:{sel_cols_hash}:{extra_cols_hash}:{pf_hash}:{updated_ts}:'
+        f'{sync_version}'
     )
     data_cache_key = f'chart_data:{source_part}'
     data_cached = cache.get(data_cache_key)
@@ -822,7 +1076,8 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     embed_suffix = 'e' if is_embed else 's'
     render_cache_key = (
         f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
-        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
+        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}:'
+        f'{sync_version}'
     )
     etag = f'W/"{render_cache_key[-16:]}"'
 
@@ -832,6 +1087,21 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     cached_html = cache.get(render_cache_key)
     if cached_html is not None:
         return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
+
+    lock_key, done_key = _chart_flight_keys(
+        chart_id, updated_ts, pf_hash, embed_suffix, sync_version,
+    )
+    done = cache.get(done_key)
+    if done is not None:
+        payload = dict(done)
+        payload['cache_status'] = 'HIT'
+        return payload
+
+    got_lock = cache.add(lock_key, 1, timeout=_FLIGHT_LOCK_TTL)
+    if not got_lock:
+        waited = _wait_chart_flight(done_key)
+        if waited is not None:
+            return waited
 
     # ── Cache miss: run the full pipeline ─────────────────────────
     chart_cfg = _effective_chart_cfg(chart)
@@ -843,7 +1113,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             result = run_raw_sql(chart.source_sql)
         elif chart.source_type == SavedChart.SOURCE_COLUMNS:
             selected_columns = list(chart.config.get('selected_columns', []))
-            for c in _progress_growth_query_columns(chart.chart_type, chart.config):
+            for c in _chart_extra_query_columns(chart.config):
                 if c not in selected_columns:
                     selected_columns.append(c)
             merged_filters = dict(chart.source_filters or {})
@@ -890,8 +1160,12 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                         },
                         sort_keys=True, default=str,
                     ).encode()).hexdigest()[:12]
-                ds_cache_key = f'chart_data:ds:{chart.source_id}:{ds_updated}:{limit_val}:{ds_filter_hash}'
+                ds_cache_key = (
+                    f'chart_data:ds:{_CHART_PIPELINE_VERSION}:{chart.source_id}:'
+                    f'{ds_updated}:{limit_val}:{ds_filter_hash}:{sync_version}'
+                )
                 ds_cached = cache.get(ds_cache_key)
+                used_aggregate = False
                 if ds_cached is not None:
                     result = ds_cached
                     chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
@@ -901,27 +1175,37 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     else:
                         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                         resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
-                        sql, params = compile_dataset_to_sql(
-                            ds, user=None, interactive_filters=resolved_filters,
-                            limit=limit_val, status_filter=status_val,
-                            one_row_per_stu_annual_key=one_per_sak,
+                        aggregated = _clickhouse_aggregate_dataset(
+                            ds, chart_cfg, raw_filters, col_mappings,
                         )
-                        res = execute_compiled_query_aliased(sql, params, col_mappings)
+                        if aggregated is not None:
+                            res, chart_cfg = aggregated
+                            used_aggregate = True
+                        else:
+                            sql, params = compile_dataset_to_sql(
+                                ds, user=None, interactive_filters=resolved_filters,
+                                limit=limit_val, status_filter=status_val,
+                                one_row_per_stu_annual_key=one_per_sak,
+                            )
+                            res = execute_compiled_query_aliased(sql, params, col_mappings)
                     if res.get('error'):
                         result = {'error': res['error'], 'rows': [], 'columns': []}
                     else:
                         rows = res.get('rows', [])
                         result = {'rows': rows, 'columns': res.get('columns', []), 'row_count': len(rows)}
-                        if result.get('rows'):
+                        # Compact CH aggregates are chart-specific; do not store
+                        # them under the shared dataset-row cache key.
+                        if result.get('rows') and not used_aggregate:
                             cache.set(ds_cache_key, result, timeout=1800)
-                    chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
+                    if not used_aggregate:
+                        chart_cfg = _remap_config_cols(_effective_chart_cfg(chart), col_mappings)
 
                 # After data is retrieved (either from cache or fresh query), augment with assessment cols if needed.
                 # This must be done outside the dataset cache because different charts on the same dataset
                 # might require different assessment columns.
                 if not result.get('error') and result.get('rows'):
                     aliased_rows = result['rows']
-                    if one_per_sak:
+                    if one_per_sak and not used_aggregate:
                         aliased_rows = dedupe_rows_by_stu_annual_key(aliased_rows)
                     _missing_assessment = _get_missing_assessment_cols(chart_cfg, col_mappings, aliased_rows)
                     if _missing_assessment:
@@ -936,10 +1220,10 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             merged_filters = dict(chart.source_filters or {})
             merged_filters.update(pf_filters)
             user = getattr(request, 'user', None)
-            pg_extra = _progress_growth_query_columns(chart.chart_type, chart_cfg)
+            extra_cols = _chart_extra_query_columns(chart_cfg)
             result = run_saved_query(
                 chart.source_id, merged_filters, user,
-                extra_columns=pg_extra or None,
+                extra_columns=extra_cols or None,
                 apply_user_filters=False,
             )
             result = _augment_chart_result_rows(
@@ -984,16 +1268,23 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
         data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True, cls=DjangoJSONEncoder).encode()).hexdigest()[:12]
         render_cache_key = (
         f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
-        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}'
+        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}'
     )
         etag = f'W/"{render_cache_key[-16:]}"'
         cache.set(render_cache_key, html, timeout=3600)
 
-    return {'html': html, 'error': error, 'cache_status': 'MISS', 'etag': etag}
+    payload = {'html': html, 'error': error, 'cache_status': 'MISS', 'etag': etag}
+    if got_lock:
+        cache.set(done_key, {
+            'html': html, 'error': error, 'etag': etag,
+        }, timeout=_FLIGHT_LOCK_TTL)
+        cache.delete(lock_key)
+    return payload
 
 
 @login_required
 @require_GET
+@timed_fn('chart_render_api')
 def chart_render_api(request, chart_id):
     """
     Return a rendered chart partial for a saved chart_id.
@@ -1028,6 +1319,11 @@ def chart_render_api(request, chart_id):
         if_none_match=request.headers.get('If-None-Match'),
         school_id=request.GET.get('school_id', ''),
     )
+    _timing_log.info(
+        'op=chart_render_api cache_status=%s chart_id=%s',
+        result.get('cache_status') or ('not_modified' if result.get('not_modified') else 'unknown'),
+        chart_id,
+    )
 
     if result.get('not_modified'):
         resp = HttpResponse(status=304)
@@ -1044,6 +1340,7 @@ def chart_render_api(request, chart_id):
 
 @login_required
 @require_POST
+@timed_fn('chart_batch_render_api')
 def chart_batch_render_api(request):
     """
     Render multiple saved charts concurrently in one request.
@@ -1108,7 +1405,11 @@ def chart_batch_render_api(request):
                 is_embed=is_embed, request=request,
                 school_id=school_id,
             )
-            return cid, {'html': res.get('html', ''), 'error': res.get('error')}
+            return cid, {
+                'html': res.get('html', ''),
+                'error': res.get('error'),
+                'cache_status': res.get('cache_status'),
+            }
         except Exception as exc:
             return cid, {'html': '', 'error': str(exc)}
 

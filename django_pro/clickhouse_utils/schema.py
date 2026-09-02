@@ -21,7 +21,24 @@ def get_all_ddl():
         CREATE_MATHR_RECOMMENDATION,
         CREATE_STUDENT_ATTENDANCE,
         CREATE_STUDENT_INCIDENTS,
+        CREATE_ANALYTICS_STUDENT_PROFILE,
+        CREATE_ANALYTICS_STUDENT_RESULTS,
+        CREATE_ANALYTICS_STUDENT_MARKS,
+        CREATE_ANALYTICS_AP_RESULTS,
+        CREATE_ANALYTICS_AP_AWARDS,
+        CREATE_ANALYTICS_SURVEY_RESPONSES,
+        CREATE_ANALYTICS_SYNC_META,
     ]
+
+
+ANALYTICS_TABLE_NAMES = (
+    'analytics_student_profile',
+    'analytics_student_results',
+    'analytics_student_marks',
+    'analytics_ap_results',
+    'analytics_ap_awards',
+    'analytics_survey_responses',
+)
 
 
 CREATE_CURRENT_STUDENT = """
@@ -287,3 +304,176 @@ ENGINE = MergeTree
 ORDER BY (ssid, stu_annual_key)
 SETTINGS index_granularity = 8192
 """
+
+CREATE_ANALYTICS_STUDENT_PROFILE = """
+CREATE TABLE IF NOT EXISTS analytics_student_profile (
+    stu_annual_key String,
+    ssid String,
+    student_id String,
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    school_short_name Nullable(String),
+    gender Nullable(String),
+    race Nullable(String),
+    ell Nullable(String),
+    sed Nullable(String),
+    foster Nullable(String),
+    homeless Nullable(String),
+    sped Nullable(String),
+    gate Nullable(String),
+    in_504 Nullable(String),
+    dli Nullable(String),
+    atendace_rate Nullable(Float64),
+    suspension_indicator Nullable(String),
+    ltel Nullable(String),
+    status Nullable(String),
+    school_year String,
+    add_data Nullable(String),
+    first_name Nullable(String),
+    middle_name Nullable(String),
+    last_name Nullable(String),
+    birth_date Nullable(DateTime64),
+    enter_date Nullable(DateTime64),
+    leave_date Nullable(DateTime64),
+    us_enter_date Nullable(DateTime64),
+    state_enter_date Nullable(DateTime64),
+    ell_status Nullable(String),
+    fep_date Nullable(DateTime64),
+    instructional_setting Nullable(String),
+    special_program_code Nullable(String),
+    migrant Nullable(String),
+    attendance_percent Nullable(Float64),
+    absent_fte Nullable(Float64),
+    tardy_count Nullable(Int32),
+    days_enrolled Nullable(Int32)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, stu_annual_key)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_STUDENT_RESULTS = """
+CREATE TABLE IF NOT EXISTS analytics_student_results (
+    test_id String,
+    ssid String,
+    local_student_id String,
+    school_year String,
+    school_code String,
+    pl Nullable(String),
+    ss Nullable(String),
+    other_info Nullable(String),
+    test_group_key String,
+    test_name String,
+    subject String,
+    test_window Nullable(String),
+    stu_annual_key Nullable(String),
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    gender Nullable(String),
+    race Nullable(String),
+    ell Nullable(String),
+    sed Nullable(String),
+    sped Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, test_name, subject, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_STUDENT_MARKS = """
+CREATE TABLE IF NOT EXISTS analytics_student_marks (
+    marks_id String,
+    stu_annual_key String,
+    ssid String,
+    school_year String,
+    student_id Nullable(String),
+    school_name Nullable(String),
+    state_school_id Nullable(String),
+    school_type Nullable(String),
+    subject Nullable(String),
+    course_name Nullable(String),
+    staff_name Nullable(String),
+    staff_email Nullable(String),
+    staff_employee_id Nullable(String),
+    mark_period String,
+    mark Nullable(String),
+    created_at Nullable(DateTime64),
+    updated_at Nullable(DateTime64),
+    student_name Nullable(String),
+    grade Nullable(String),
+    status Nullable(String),
+    gender Nullable(String),
+    school Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, stu_annual_key, mark_period)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_AP_RESULTS = """
+CREATE TABLE IF NOT EXISTS analytics_ap_results (
+    ssid String,
+    admin_year String,
+    exam_name String,
+    exam_grade Nullable(String),
+    exam_id String
+)
+ENGINE = MergeTree
+ORDER BY (admin_year, ssid, exam_name)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_AP_AWARDS = """
+CREATE TABLE IF NOT EXISTS analytics_ap_awards (
+    ssid String,
+    award_year String,
+    award_description String
+)
+ENGINE = MergeTree
+ORDER BY (award_year, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_SURVEY_RESPONSES = """
+CREATE TABLE IF NOT EXISTS analytics_survey_responses (
+    student_id String,
+    ssid String,
+    survey_type String,
+    school_year String,
+    testing_window String,
+    grade_range String,
+    question_order Int32,
+    value Nullable(Int32)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, student_id, survey_type, question_order)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_SYNC_META = """
+CREATE TABLE IF NOT EXISTS analytics_sync_meta (
+    table_name String,
+    last_sync DateTime64,
+    source_max_ts Nullable(DateTime64),
+    row_count Int64,
+    sync_version String,
+    mode String
+)
+ENGINE = ReplacingMergeTree(last_sync)
+ORDER BY table_name
+SETTINGS index_granularity = 8192
+"""
+
+PROJECTION_DDL = (
+    "ALTER TABLE analytics_student_profile ADD PROJECTION IF NOT EXISTS p_year_ssid "
+    "(SELECT * ORDER BY school_year, ssid, stu_annual_key)",
+    "ALTER TABLE analytics_student_results ADD PROJECTION IF NOT EXISTS p_test_lookup "
+    "(SELECT * ORDER BY ssid, school_year, test_name, subject)",
+    "ALTER TABLE analytics_student_marks ADD PROJECTION IF NOT EXISTS p_mark_lookup "
+    "(SELECT * ORDER BY stu_annual_key, school_year, subject)",
+)

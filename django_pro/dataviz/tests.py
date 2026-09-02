@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 import json
-from django.test import SimpleTestCase, TestCase
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from dataviz.models import (
     SavedChart, Dataset, DataVizPage, DataVizPageRow, DataVizPageSection, DataVizPageFolder,
@@ -44,6 +47,138 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertIn('SELECT DISTINCT ON ("current_student"."stu_annual_key")', sql)
         self.assertIn('ORDER BY "current_student"."stu_annual_key" ASC', sql)
         self.assertFalse(sql.startswith('SELECT DISTINCT "'))
+
+    def test_compile_aggregated_avg_casts_strings_to_float(self):
+        from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['results.pl', 'results.school_year'],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_aggregated_dataset_to_sql(
+                dataset, ['results.school_year'], 'results.pl', 'avg',
+            )
+
+        self.assertIn('AVG(toFloat64OrNull(nullIf(toString("results"."pl"), \'\')))', sql)
+        self.assertNotIn('AVG("results"."pl")', sql)
+
+    def test_compile_aggregated_one_row_per_student_wraps_sak(self):
+        from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['results.pl', 'results.stu_annual_key'],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value={'pl', 'stu_annual_key'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_aggregated_dataset_to_sql(
+                dataset, ['results.pl'], None, 'count',
+                one_row_per_stu_annual_key=True,
+            )
+
+        self.assertIn('GROUP BY "results"."stu_annual_key"', sql)
+        self.assertIn('FROM (', sql)
+        self.assertIn('AS _sak', sql)
+        self.assertIn('COUNT(*)', sql)
+
+    def test_compile_aggregated_date_bucket_month(self):
+        from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
+        dataset = SimpleNamespace(
+            base_table='results',
+            distinct=False,
+            joins=[],
+            filters=[],
+            columns=['results.test_date'],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value={'results'}), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, _params = compile_aggregated_dataset_to_sql(
+                dataset, ['results.test_date'], None, 'count',
+                date_bucket='month',
+            )
+
+        self.assertIn("formatDateTime(", sql)
+        self.assertIn('%Y-%m', sql)
+
+    def test_resolve_dataset_filters_maps_bare_school_state_id(self):
+        from dataviz.utils.compiler import resolve_dataset_filters
+        ds = SimpleNamespace(
+            base_table='results', joins=[], columns=['results.pl'], column_mappings={},
+        )
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables',
+                   return_value={'results', 'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value=set()):
+            out = resolve_dataset_filters({'school_state_id': 'S1'}, ds, {'results'})
+        self.assertEqual(out.get('current_student.school_state_id'), 'S1')
+
+    def test_compile_aggregated_applies_school_filter_join(self):
+        from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
+        dataset = SimpleNamespace(
+            base_table='results', distinct=False, joins=[], filters=[],
+            columns=['results.pl'],
+        )
+
+        def fake_validate(col_str, active_tables):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        def fake_cols(tbl):
+            if tbl == 'current_student':
+                return {'school_state_id', 'ssid', 'stu_annual_key', 'school_year'}
+            return {'pl', 'ssid', 'school_year'}
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables',
+                   return_value={'results', 'current_student'}), \
+             patch('dataviz.utils.compiler.get_columns_for_table', side_effect=fake_cols), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format):
+            sql, params = compile_aggregated_dataset_to_sql(
+                dataset, ['results.pl'], None, 'count',
+                interactive_filters={'current_student.school_state_id': 'S1'},
+            )
+        self.assertIn('LEFT JOIN "current_student"', sql)
+        self.assertIn('"current_student"."school_state_id"', sql)
+        self.assertIn('S1', params)
 
     def test_dedupe_rows_by_stu_annual_key(self):
         from dataviz.utils.compiler import dedupe_rows_by_stu_annual_key
@@ -2486,7 +2621,7 @@ class DrillCacheTests(TestCase):
             owner=self.user,
         )
 
-    @patch('dataviz.utils.data_loader.run_column_query')
+    @patch('dataviz.utils.drill_through.run_column_query')
     def test_drill_tier2_hit_on_page_change(self, mock_run_query):
         mock_run_query.return_value = {
             'rows': [{'student_id': str(i), 'grade': 'K'} for i in range(5)],
@@ -2500,7 +2635,7 @@ class DrillCacheTests(TestCase):
         self.assertEqual(len(r2['rows']), 2)
         self.assertEqual(mock_run_query.call_count, 1)
 
-    @patch('dataviz.utils.data_loader.run_column_query')
+    @patch('dataviz.utils.drill_through.run_column_query')
     def test_drill_source_filters_bust_tier1(self, mock_run_query):
         mock_run_query.return_value = {
             'rows': [{'student_id': '1', 'grade': 'K'}],
@@ -2569,6 +2704,142 @@ class ChartRenderCacheTests(TestCase):
         req5.user = self.user
         resp5 = chart_render_api(req5, chart.id)
         self.assertEqual(resp5.get('X-Chart-Cache'), 'MISS')
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_warm_published_page_charts_skips_drafts(self, mock_run_query):
+        mock_run_query.return_value = {
+            'rows': [{'student_id': '1', 'grade': 'K'}],
+            'columns': ['student_id', 'grade'],
+        }
+        chart = SavedChart.objects.create(
+            name="Warm Chart",
+            chart_type="bar",
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['student_id', 'grade'], 'chart_type': 'bar'},
+            owner=self.user,
+        )
+        active = DataVizPage.objects.create(
+            title='Active Page', slug='warm-active', owner=self.user,
+            status=DataVizPage.STATUS_ACTIVE,
+        )
+        DataVizPageSection.objects.create(
+            page=active, element_type=DataVizPageSection.TYPE_CHART, chart=chart,
+        )
+        draft = DataVizPage.objects.create(
+            title='Draft Page', slug='warm-draft', owner=self.user,
+            status=DataVizPage.STATUS_DRAFT,
+        )
+        DataVizPageSection.objects.create(
+            page=draft, element_type=DataVizPageSection.TYPE_CHART, chart=chart,
+        )
+        from dataviz.views.api.chart_api import warm_published_page_charts
+        mock_run_query.reset_mock()
+        n = warm_published_page_charts()
+        self.assertEqual(n, 1)
+        self.assertEqual(mock_run_query.call_count, 1)
+
+    @patch('dataviz.views.api.chart_api.build_option')
+    @patch('dataviz.views.api.chart_api._clickhouse_aggregate_dataset')
+    def test_render_keeps_clickhouse_aggregate_cfg(self, mock_agg, mock_build):
+        mock_build.return_value = {'title': {'text': 't'}}
+        compact_rows = [{'school_year': '2024-2025', 'pl': '1', '__dv_value': 6500}]
+        mock_agg.return_value = (
+            {'rows': compact_rows, 'columns': ['school_year', 'pl', '__dv_value'], 'row_count': 1},
+            {
+                'chart_type': 'bar', 'x_col': 'school_year', 'x_cols': ['school_year'],
+                'y_col': '__dv_value', 'agg': 'sum', 'stack_col': 'pl', 'series_col': 'pl',
+            },
+        )
+        ds = Dataset.objects.create(
+            name='Agg DS', owner=self.user, base_table='results',
+            columns=['results.pl', 'current_student.school_year'],
+            column_mappings={
+                'results.pl': 'pl',
+                'current_student.school_year': 'school_year',
+            },
+        )
+        chart = SavedChart.objects.create(
+            name='CAASPP-like',
+            chart_type='bar',
+            source_type=SavedChart.SOURCE_DATASET,
+            source_id=ds.id,
+            config={
+                'chart_type': 'bar', 'x_col': 'school_year', 'y_col': 'pl',
+                'agg': 'avg', 'stack_col': 'pl', 'one_row_per_stu_annual_key': True,
+            },
+            owner=self.user,
+        )
+        from django.test import RequestFactory
+        from dataviz.views.api.chart_api import chart_render_api
+
+        req = RequestFactory().get(f'/api/charts/{chart.id}/render/')
+        req.user = self.user
+        resp = chart_render_api(req, chart.id)
+        self.assertEqual(resp.status_code, 200)
+        _rows, _coldefs, cfg = mock_build.call_args.args
+        self.assertEqual(cfg.get('y_col'), '__dv_value')
+        self.assertEqual(cfg.get('agg'), 'sum')
+        self.assertEqual(_rows[0]['__dv_value'], 6500)
+
+
+class ChartRenderSingleFlightTests(TransactionTestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='flightadmin', password='password', is_staff=True, is_superuser=True,
+        )
+        from django.core.cache import cache
+        cache.clear()
+
+    @patch('dataviz.utils.data_loader.run_column_query')
+    def test_concurrent_renders_share_one_query(self, mock_run_query):
+        gate = threading.Event()
+
+        def slow_query(*args, **kwargs):
+            gate.wait(timeout=2)
+            time.sleep(0.15)
+            return {
+                'rows': [{'student_id': '1', 'grade': 'K'}],
+                'columns': ['student_id', 'grade'],
+            }
+
+        mock_run_query.side_effect = slow_query
+        chart = SavedChart.objects.create(
+            name="Flight Chart",
+            chart_type="bar",
+            source_type=SavedChart.SOURCE_COLUMNS,
+            config={'selected_columns': ['student_id', 'grade'], 'chart_type': 'bar'},
+            owner=self.user,
+        )
+
+        from django.db import close_old_connections
+        from django.test import RequestFactory
+        from dataviz.views.api.chart_api import chart_render_api
+
+        rf = RequestFactory()
+        # 20 threads is enough to prove stampede coalescing. 100 OS threads each
+        # open a Postgres connection and trip max_connections; real 100-user
+        # traffic shares gunicorn's 8×4 slots instead.
+        burst = 20
+
+        def worker():
+            close_old_connections()
+            req = rf.get(f'/api/charts/{chart.id}/render/')
+            req.user = self.user
+            try:
+                return chart_render_api(req, chart.id)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=burst) as pool:
+            futs = [pool.submit(worker) for _ in range(burst)]
+            gate.set()
+            resps = [f.result(timeout=15) for f in futs]
+
+        self.assertTrue(all(r.status_code == 200 for r in resps))
+        self.assertEqual(mock_run_query.call_count, 1)
+        statuses = [r.get('X-Chart-Cache') for r in resps]
+        self.assertIn('MISS', statuses)
+        self.assertGreaterEqual(statuses.count('HIT'), burst - 1)
 
 
 class ChartAccessControlTests(TestCase):
@@ -2646,10 +2917,87 @@ class DynamicSummaryTableOptionTests(TestCase):
         
         self.assertEqual(res['__type__'], 'table')
         self.assertEqual(res['col_headers'], ['My Count', 'My Avg'])
+        self.assertEqual(res['col_header_cols'], ['c0', 'c1'])
         self.assertEqual(res['rows'], [
             ['5', 2.0, 350.0],
             ['6', 1.0, 500.0],
         ])
+
+    def test_dynamic_summary_table_calculations_totals_only_and_hidden_columns(self):
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '123', 'score': 80.0},
+            {'grade': '6', 'ssid': '456', 'score': 90.0},
+        ])
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_totals_only': True,
+            'dyn_calculations': [
+                {'id': 'total', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Students'},
+                {'id': 'hidden', 'calc_type': 'base', 'agg_func': 'avg', 'value_col': 'score', 'label': 'Hidden', 'visible': False},
+                {'id': 'rate', 'calc_type': 'derived', 'op': 'divide', 'ref_a': 'total', 'ref_b': 'total', 'label': 'Rate', 'as_percent': True},
+            ],
+            'dyn_show_col_totals': True,
+            'dyn_show_row_totals': True,
+        }
+        res = _dynamic_summary_table_option(df, row_cols=[], col_cols=[], agg_func='count', value_col='', agg_decimals=None, cfg=cfg, col_defs=None)
+
+        self.assertEqual(res['rows'], [])
+        self.assertEqual(res['col_headers'], ['Students', 'Rate'])
+        self.assertEqual(res['total_row'], ['Total', 2.0, 100.0])
+
+    def test_dynamic_summary_table_calculation_multiple_filter_criteria(self):
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'score': 70.0},
+            {'grade': '5', 'ssid': '2', 'score': 85.0},
+            {'grade': '5', 'ssid': '3', 'score': 95.0},
+            {'grade': '6', 'ssid': '4', 'score': 90.0},
+        ])
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [{
+                'agg_func': 'count', 'value_col': 'ssid', 'label': '80 to 90',
+                'filters': [
+                    {'col': 'score', 'op': 'gte', 'val': 80},
+                    {'col': 'score', 'op': 'lte', 'val': 90},
+                ],
+            }],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+        res = _dynamic_summary_table_option(df, ['grade'], [], 'count', '', None, cfg, None)
+
+        self.assertEqual(res['rows'], [['5', 1.0], ['6', 1.0]])
+
+    def test_dynamic_summary_table_calculation_or_filter_criteria(self):
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'score': 70.0},
+            {'grade': '5', 'ssid': '2', 'score': 85.0},
+            {'grade': '5', 'ssid': '3', 'score': 95.0},
+        ])
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [{
+                'agg_func': 'count', 'value_col': 'ssid', 'label': 'Low or High',
+                'filters': [
+                    {'col': 'score', 'op': 'lt', 'val': 75},
+                    {'col': 'score', 'op': 'gt', 'val': 90, 'logic': 'or'},
+                ],
+            }],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+        res = _dynamic_summary_table_option(df, ['grade'], [], 'count', '', None, cfg, None)
+
+        self.assertEqual(res['rows'], [['5', 2.0]])
 
     def test_dynamic_summary_table_echarts_mode(self):
         import polars as pl
@@ -2930,6 +3278,210 @@ class DynamicSummaryTableOptionTests(TestCase):
         # Grade 6: F=0, not F=1, none exactly 85.0
         self.assertEqual(res['rows'][1], ['6', 0.0, 1.0, 0.0])
 
+    def test_dynamic_summary_table_in_filter(self):
+        """in/nin match any of several values (SQL IN), including comma-separated strings."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'gender': 'F'},
+            {'grade': '5', 'ssid': '2', 'gender': 'M'},
+            {'grade': '5', 'ssid': '3', 'gender': 'NB'},
+            {'grade': '6', 'ssid': '4', 'gender': 'M'},
+        ])
+
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'any', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'F or NB',
+                 'filter': {'col': 'gender', 'op': 'in', 'val': ['F', 'NB']}},
+                {'id': 'notm', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'Not M',
+                 'filter': {'col': 'gender', 'op': 'nin', 'val': 'M'}},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+
+        self.assertEqual(res['col_headers'], ['F or NB', 'Not M'])
+        # Grade 5: F+NB=2, not M=2; Grade 6: neither F nor NB, not M=0
+        self.assertEqual(res['rows'][0], ['5', 2.0, 2.0])
+        self.assertEqual(res['rows'][1], ['6', 0.0, 0.0])
+
+    def test_dynamic_summary_table_independent_school_in_filters(self):
+        """Each calc column's IN list is applied on its own — different school
+        sets must not collapse to the same unfiltered count."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option, build_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1', 'school_state_id': '0110791'},
+            {'grade': '5', 'ssid': '2', 'school_state_id': '0110791'},
+            {'grade': '5', 'ssid': '3', 'school_state_id': '0220002'},
+            {'grade': '6', 'ssid': '4', 'school_state_id': '0110791'},
+            {'grade': '6', 'ssid': '5', 'school_state_id': '0330003'},
+        ])
+        cfg = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': [
+                {'id': 'a', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid',
+                 'label': 'School A', 'filters': [
+                     {'col': 'current_student.school_state_id', 'op': 'in',
+                      'val': ['0110791']}]},
+                {'id': 'b', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid',
+                 'label': 'School B', 'filters': [
+                     {'col': 'school_state_id', 'op': 'in',
+                      'val': ['0220002', '0330003']}]},
+            ],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+        res = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None, cfg=cfg, col_defs=None,
+        )
+        self.assertEqual(res['col_headers'], ['School A', 'School B'])
+        self.assertEqual(res['rows'][0], ['5', 2.0, 1.0])
+        self.assertEqual(res['rows'][1], ['6', 1.0, 1.0])
+
+        # Leading-zero codes in the filter still match unpadded stored values.
+        padded = build_option(
+            [{'grade': '5', 'ssid': '1', 'school_state_id': '110791'}],
+            {},
+            {
+                'chart_type': 'dynamic_summary_table',
+                'dyn_col_mode': 'calculations',
+                'dyn_row_cols': ['grade'],
+                'dyn_calculations': [{
+                    'id': 'a', 'calc_type': 'base', 'agg_func': 'count',
+                    'filters': [{'col': 'school_state_id', 'op': 'in', 'val': ['0110791']}],
+                }],
+                'dyn_show_row_totals': False,
+                'dyn_show_col_totals': False,
+            },
+        )
+        self.assertEqual(padded['rows'][0][1], 1.0)
+
+    def test_dynamic_summary_table_first_column_sort(self):
+        """Manual and A→Z sort_col reorder the first row-dimension values."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _dynamic_summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'ssid': '1'},
+            {'grade': '6', 'ssid': '2'},
+            {'grade': 'K', 'ssid': '3'},
+        ])
+        calcs = [
+            {'id': 'n', 'calc_type': 'base', 'agg_func': 'count', 'value_col': 'ssid', 'label': 'N'},
+        ]
+        base = {
+            'dyn_col_mode': 'calculations',
+            'dyn_calculations': calcs,
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+        }
+
+        manual = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None,
+            cfg={**base, 'sort_col': '__manual__', 'category_order': ['K', '6', '5']},
+            col_defs=None,
+        )
+        self.assertEqual([r[0] for r in manual['rows']], ['K', '6', '5'])
+
+        az = _dynamic_summary_table_option(
+            df, row_cols=['grade'], col_cols=[], agg_func='count', value_col='',
+            agg_decimals=None,
+            cfg={**base, 'sort_col': '_label', 'sort_dir': 'asc'},
+            col_defs=None,
+        )
+        self.assertEqual([r[0] for r in az['rows']], ['5', '6', 'K'])
+
+    def test_table_chart_title_on_summary_and_dynamic(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F', 'n': 2},
+            {'grade': '6', 'gender': 'M', 'n': 1},
+        ]
+        st = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'chart_title': 'Enrollment',
+            'title_font_size': 18,
+        })
+        self.assertEqual(st.get('title_text'), 'Enrollment')
+        self.assertEqual(st.get('title_font_size'), 18)
+        self.assertTrue(st.get('title_show'))
+
+        hidden = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'chart_title': 'Enrollment',
+            'show_title': False,
+        })
+        self.assertEqual(hidden.get('title_text'), 'Enrollment')
+        self.assertFalse(hidden.get('title_show'))
+
+        dyn = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['gender'],
+            'dyn_agg_func': 'count',
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'chart_title': 'By Grade',
+        })
+        self.assertEqual(dyn.get('title_text'), 'By Grade')
+
+        with_sub = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'chart_title': 'Enrollment',
+            'chart_subtitle': 'Counts by grade and gender.',
+            'show_subtitle': True,
+        })
+        self.assertEqual(with_sub.get('subtitle_text'), 'Counts by grade and gender.')
+        self.assertTrue(with_sub.get('subtitle_show'))
+
+        sub_off = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'chart_title': 'Enrollment',
+            'chart_subtitle': 'Hidden by default.',
+        })
+        self.assertEqual(sub_off.get('subtitle_text'), 'Hidden by default.')
+        self.assertFalse(sub_off.get('subtitle_show'))
+
+        bar_off = build_option(rows, {}, {
+            'chart_type': 'bar', 'x_col': 'grade', 'y_col': 'n', 'agg': 'sum',
+            'chart_subtitle': 'Note',
+        })
+        self.assertFalse(bar_off.get('title', {}).get('subtext'))
+        bar_on = build_option(rows, {}, {
+            'chart_type': 'bar', 'x_col': 'grade', 'y_col': 'n', 'agg': 'sum',
+            'chart_subtitle': 'Note', 'show_subtitle': True,
+        })
+        self.assertEqual(bar_on.get('title', {}).get('subtext'), 'Note')
+
     def test_dynamic_summary_table_equality_derived(self):
         """Equals/not-equals filtered counts compose into a derived ratio."""
         import polars as pl
@@ -3033,6 +3585,270 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual([s['name'] for s in res['series']], ['Total', 'Below', 'Pct Below'])
         self.assertEqual(res['series'][0]['stack'], 'total')
         self.assertEqual([s['data'] for s in res['series']], [[2.0, 1.0], [1.0, 0.0], [50.0, 0.0]])
+
+    def test_col_header_aliases_dynamic_pivot_keeps_raw_for_drill(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F', 'n': 2},
+            {'grade': '6', 'gender': 'M', 'n': 1},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['gender'],
+            'dyn_agg_func': 'count',
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'col_header_aliases': {'F': 'Female', 'M': 'Male'},
+        })
+        self.assertEqual(opt['col_headers'], ['Female', 'Male'])
+        self.assertEqual(opt['col_header_raw'], ['F', 'M'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['F', 'M'])
+        keys = set(opt.get('__col_header_keys__') or [])
+        self.assertTrue({'F', 'M', 'grade'}.issubset(keys))
+
+    def test_col_header_aliases_summary_table_pivot(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F'},
+            {'grade': '6', 'gender': 'M'},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_col_mode': 'values',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_agg_func': 'count',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'col_header_aliases': {'F': 'Female'},
+        })
+        self.assertEqual(opt['col_headers'], ['Female', 'M'])
+        self.assertEqual(opt['col_header_raw'], ['F', 'M'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['F', 'M'])
+
+    def test_col_header_aliases_dynamic_pivot_echarts_series(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F'},
+            {'grade': '6', 'gender': 'M'},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['gender'],
+            'dyn_agg_func': 'count',
+            'dyn_display_type': 'stacked_bar',
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'col_header_aliases': {'F': 'Female', 'M': 'Male'},
+        })
+        self.assertEqual([s['name'] for s in opt['series']], ['Female', 'Male'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['F', 'M'])
+
+    def test_col_header_aliases_any_table_column(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'attendance_rate': 90, 'test_score': 80},
+            {'grade': '6', 'attendance_rate': 85, 'test_score': 70},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_col_mode': 'columns',
+            'st_row_col': 'grade',
+            'st_col_cols': ['attendance_rate', 'test_score'],
+            'st_agg_func': 'avg',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'col_header_aliases': {
+                'grade': 'Grade Level',
+                'attendance_rate': 'Attendance %',
+            },
+        })
+        self.assertEqual(opt['row_label'], 'Grade Level')
+        self.assertEqual(opt['col_headers'], ['Attendance %', 'test_score'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['attendance_rate', 'test_score'])
+        keys = set(opt.get('__col_header_keys__') or [])
+        self.assertTrue({'grade', 'attendance_rate', 'test_score'}.issubset(keys))
+
+    def test_col_header_aliases_dynamic_calculations_row_and_calc(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'ssid': 'a', 'score': 70},
+            {'grade': '6', 'ssid': 'b', 'score': 90},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'calculations',
+            'dyn_row_cols': ['grade'],
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'dyn_calculations': [{
+                'id': 'total',
+                'calc_type': 'base',
+                'agg_func': 'count',
+                'value_col': 'ssid',
+                'label': 'Student Count',
+            }],
+            'col_header_aliases': {
+                'grade': 'Grade Level',
+                'Student Count': 'N Students',
+            },
+        })
+        self.assertEqual(opt['row_labels'], ['Grade Level'])
+        self.assertEqual(opt['col_headers'], ['N Students'])
+        self.assertEqual(opt['_drillMeta']['colHeaders'], ['Student Count'])
+
+    def test_col_header_aliases_row_label_matches_pretty_and_dotted_keys(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'gender': 'F'},
+            {'grade': '6', 'gender': 'M'},
+        ]
+        opt = build_option(rows, {}, {
+            'chart_type': 'summary_table',
+            'st_col_mode': 'values',
+            'st_row_col': 'grade',
+            'st_col_col': 'gender',
+            'st_agg_func': 'count',
+            'st_show_row_totals': False,
+            'st_show_col_totals': False,
+            'col_header_aliases': {'Grade': 'Grade Level'},
+        })
+        self.assertEqual(opt['row_label'], 'Grade Level')
+
+        opt2 = build_option(rows, {}, {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['gender'],
+            'dyn_agg_func': 'count',
+            'dyn_show_row_totals': False,
+            'dyn_show_col_totals': False,
+            'col_header_aliases': {'students.grade': 'Year Group'},
+        })
+        self.assertEqual(opt2['row_labels'], ['Year Group'])
+
+
+class DynamicSummaryTableDrillTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='drilluser', password='password', is_superuser=True)
+        self.chart = SavedChart.objects.create(
+            name='Dyn ST Drill',
+            chart_type='dynamic_summary_table',
+            source_type=SavedChart.SOURCE_SQL,
+            source_sql='SELECT ssid, grade, score FROM students',
+            owner=self.user,
+            config={
+                'dyn_col_mode': 'calculations',
+                'dyn_row_cols': ['grade'],
+                'dyn_calculations': [{
+                    'id': 'below',
+                    'calc_type': 'base',
+                    'agg_func': 'count',
+                    'value_col': 'ssid',
+                    'label': 'Below 80',
+                    'filters': [{'col': 'score', 'op': 'lt', 'val': 80}],
+                }],
+            },
+        )
+
+    def test_build_drill_filter_matches_calc_by_id(self):
+        from dataviz.utils.drill_through import build_drill_filter
+
+        filters = build_drill_filter(self.chart, {
+            'st_row_val': '5',
+            'st_col_val': 'below \u25b8 Below 80',
+            'dyn_calc_id': 'below',
+        })
+        self.assertEqual(filters.get('grade'), '5')
+        self.assertNotIn('dyn_calc_value_col', filters)
+        self.assertEqual(len(filters.get('dyn_calc_thresholds', [])), 1)
+        self.assertEqual(filters['dyn_calc_thresholds'][0]['col'], 'score')
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_execute_drill_query_applies_calc_thresholds(self, mock_run_sql):
+        mock_run_sql.return_value = {
+            'columns': ['ssid', 'grade', 'score'],
+            'rows': [
+                {'ssid': '1', 'grade': '5', 'score': 70},
+                {'ssid': '2', 'grade': '5', 'score': 90},
+                {'ssid': '3', 'grade': '5', 'score': 60},
+                {'ssid': '4', 'grade': '6', 'score': 55},
+            ],
+        }
+        from dataviz.utils.drill_through import build_drill_filter, execute_drill_query
+
+        drill_filters = build_drill_filter(self.chart, {
+            'st_row_val': '5',
+            'st_col_val': 'Below 80',
+            'dyn_calc_id': 'below',
+        })
+        result = execute_drill_query(self.chart, drill_filters, columns=['ssid', 'score'], user=self.user)
+        ssids = {r['ssid'] for r in result['rows']}
+        self.assertEqual(ssids, {'1', '3'})
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_execute_drill_query_thresholds_only_without_value_col(self, mock_run_sql):
+        """Count calcs with filter criteria set dyn_calc_thresholds but not dyn_calc_value_col."""
+        mock_run_sql.return_value = {
+            'columns': ['ssid', 'score'],
+            'rows': [
+                {'ssid': '1', 'score': 70},
+                {'ssid': '2', 'score': 90},
+            ],
+        }
+        from dataviz.utils.drill_through import execute_drill_query
+
+        result = execute_drill_query(
+            self.chart,
+            {
+                'dyn_calc_thresholds': [{'col': 'score', 'op': 'lt', 'val': 80}],
+            },
+            columns=['ssid', 'score'],
+            user=self.user,
+        )
+        self.assertEqual({r['ssid'] for r in result['rows']}, {'1'})
+
+    def test_apply_dyn_calc_threshold_rows_or_logic(self):
+        from dataviz.utils.drill_through import _apply_dyn_calc_threshold_rows
+
+        rows = [
+            {'score': 70},
+            {'score': 85},
+            {'score': 95},
+        ]
+        thresholds = [
+            {'col': 'score', 'op': 'lt', 'val': 75, 'logic': 'and'},
+            {'col': 'score', 'op': 'gt', 'val': 90, 'logic': 'or'},
+        ]
+        filtered = _apply_dyn_calc_threshold_rows(rows, thresholds, lambda c: c)
+        self.assertEqual([r['score'] for r in filtered], [70, 95])
+
+    def test_apply_dyn_calc_threshold_rows_in_nin(self):
+        from dataviz.utils.drill_through import _apply_dyn_calc_threshold_rows
+
+        rows = [
+            {'gender': 'F'},
+            {'gender': 'M'},
+            {'gender': 'NB'},
+        ]
+        inn = _apply_dyn_calc_threshold_rows(
+            rows, [{'col': 'gender', 'op': 'in', 'val': ['F', 'NB']}], lambda c: c,
+        )
+        self.assertEqual([r['gender'] for r in inn], ['F', 'NB'])
+        nin = _apply_dyn_calc_threshold_rows(
+            rows, [{'col': 'gender', 'op': 'nin', 'val': 'M'}], lambda c: c,
+        )
+        self.assertEqual([r['gender'] for r in nin], ['F', 'NB'])
 
 
 class PageDuplicateTests(TestCase):
@@ -3263,6 +4079,55 @@ class PageFolderTests(TestCase):
         self.assertEqual(DataVizPage.objects.get(slug='one').folder, 'New / Home')
         self.assertEqual(DataVizPage.objects.get(slug='two').folder, 'New / Home')
 
+    def test_rename_folder_updates_pages_and_nested(self):
+        import json
+        DataVizPage.objects.create(title='ELA', slug='ela', owner=self.user, folder='Reports / ELA')
+        DataVizPage.objects.create(title='Nested', slug='nested', owner=self.user, folder='Reports / ELA / Midyear')
+        DataVizPageFolder.objects.create(path='Reports / ELA')
+        response = self.client.post(
+            '/dataviz/api/pages/folders/rename/',
+            data=json.dumps({'folder': 'Reports / ELA', 'name': 'Literacy'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['folder'], 'Reports / Literacy')
+        self.assertEqual(DataVizPage.objects.get(slug='ela').folder, 'Reports / Literacy')
+        self.assertEqual(DataVizPage.objects.get(slug='nested').folder, 'Reports / Literacy / Midyear')
+        self.assertTrue(DataVizPageFolder.objects.filter(path='Reports / Literacy').exists())
+        self.assertFalse(DataVizPageFolder.objects.filter(path='Reports / ELA').exists())
+
+    def test_delete_folder_warns_via_count_and_deletes_pages(self):
+        import json
+        DataVizPage.objects.create(title='Keep', slug='keep', owner=self.user, folder='Reports')
+        DataVizPage.objects.create(title='Gone', slug='gone', owner=self.user, folder='Reports / ELA')
+        DataVizPage.objects.create(title='Nested', slug='nested', owner=self.user, folder='Reports / ELA / Midyear')
+        DataVizPageFolder.objects.create(path='Reports / ELA')
+        list_resp = self.client.get('/dataviz/pages/?folder=Reports')
+        self.assertContains(list_resp, '2 pages')
+        response = self.client.post(
+            '/dataviz/api/pages/folders/delete/',
+            data=json.dumps({'folder': 'Reports / ELA'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['deleted_pages'], 2)
+        self.assertFalse(DataVizPage.objects.filter(slug='gone').exists())
+        self.assertFalse(DataVizPage.objects.filter(slug='nested').exists())
+        self.assertTrue(DataVizPage.objects.filter(slug='keep').exists())
+        self.assertFalse(DataVizPageFolder.objects.filter(path='Reports / ELA').exists())
+
+    def test_delete_empty_folder(self):
+        import json
+        DataVizPageFolder.objects.create(path='Empty Box')
+        response = self.client.post(
+            '/dataviz/api/pages/folders/delete/',
+            data=json.dumps({'folder': 'Empty Box'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['deleted_pages'], 0)
+        self.assertFalse(DataVizPageFolder.objects.filter(path='Empty Box').exists())
+
 
 class DatasetExportCSVTests(TestCase):
     def setUp(self):
@@ -3419,9 +4284,10 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         mock_base.assert_called_once()
         self.assertIn('student_id', mock_base.call_args[0][1])
 
+    @patch('dataviz.utils.data_loader._analytics_rows', return_value=None)
     @patch('clickhouse_utils.executor.QueryExecutor.pg_cursor')
     @patch('dataviz.utils.chart_builder._record_pg_val')
-    def test_fetch_test_data_uses_ssid_when_student_id_missing(self, _mock_pg, mock_pg_cursor):
+    def test_fetch_test_data_uses_ssid_when_student_id_missing(self, _mock_pg, mock_pg_cursor, _ch):
         from unittest.mock import MagicMock
         from dataviz.utils.data_loader import _fetch_test_data
 
@@ -3466,7 +4332,8 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         cursor.fetchall.return_value = [
             ('loc1', '123', None, '3', None, '2024-2025', 'CAASPP', 'ELA', 'Spring'),
         ]
-        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor, \
+        with patch('dataviz.utils.data_loader._analytics_rows', return_value=None), \
+             patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor, \
              patch('dataviz.utils.chart_builder._record_pg_val'):
             mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
             mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
@@ -3495,7 +4362,8 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         cursor.fetchall.return_value = [
             ('loc1', '123', None, '2', None, '2024-2025', 'ELPAC', 'summative', 'Regular'),
         ]
-        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
+        with patch('dataviz.utils.data_loader._analytics_rows', return_value=None), \
+             patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
             mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
             mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
             _fetch_test_data(None, test_infos, [], students)
@@ -3505,9 +4373,10 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         self.assertEqual(students[1][col], '2')
         self.assertEqual(mock_record.call_count, 2)
 
+    @patch('dataviz.utils.data_loader._analytics_rows', return_value=None)
     @patch('clickhouse_utils.executor.QueryExecutor.pg_cursor')
     @patch('dataviz.utils.chart_builder._record_pg_val')
-    def test_fetch_test_data_blank_sentinel_scores(self, _mock_pg, mock_record):
+    def test_fetch_test_data_blank_sentinel_scores(self, _mock_pg, mock_pg_cursor, _ch):
         from unittest.mock import MagicMock, patch
         from dataviz.utils.data_loader import _fetch_test_data
 
@@ -3538,10 +4407,9 @@ class AssessmentEnrichmentRegressionTests(TestCase):
             ('loc1', '123', None, 'NaN', None, '2024-2025', 'CAASPP', 'ELA', ''),
             ('loc1', '123', 'NS', None, None, '2024-2025', 'CAASPP', 'Math', ''),
         ]
-        with patch('clickhouse_utils.executor.QueryExecutor.pg_cursor') as mock_pg_cursor:
-            mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
-            mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
-            _fetch_test_data(None, test_infos, [], students)
+        mock_pg_cursor.return_value.__enter__ = MagicMock(return_value=cursor)
+        mock_pg_cursor.return_value.__exit__ = MagicMock(return_value=False)
+        _fetch_test_data(None, test_infos, [], students)
 
         self.assertEqual(students[0]['test_2024_2025_CAASPP_ELA_PL'], '\u2014')
         self.assertEqual(students[0]['test_2024_2025_CAASPP_Math_SS'], '\u2014')
@@ -3631,3 +4499,107 @@ class AssessmentEnrichmentRegressionTests(TestCase):
         data = sorted(zip(opt['xAxis']['data'], opt['series'][0]['data']))
         self.assertEqual(data, [('Above', 2.0), ('Below', 1.0)])
 
+
+class ChartIndexListTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='chartadmin', password='password', is_superuser=True,
+        )
+        self.chart = SavedChart.objects.create(
+            name='Academics / Math / Very Long Chart Name That Used To Truncate',
+            description='Enrollment by grade',
+            chart_type='bar',
+            owner=self.user,
+        )
+        self.unused = SavedChart.objects.create(
+            name='Academics / Unused Chart',
+            chart_type='line',
+            owner=self.user,
+        )
+        self.page = DataVizPage.objects.create(
+            title='Math Overview', slug='math-overview', owner=self.user,
+        )
+        row = DataVizPageRow.objects.create(page=self.page, position=0)
+        DataVizPageSection.objects.create(
+            page=self.page, row=row, element_type=DataVizPageSection.TYPE_CHART,
+            chart=self.chart,
+        )
+        DataVizPageSection.objects.create(
+            page=self.page, row=row, element_type=DataVizPageSection.TYPE_CHART,
+            chart=self.chart,
+        )
+
+    def test_index_shows_full_name_and_page_usage(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?folder=Academics/Math')
+        self.assertEqual(resp.status_code, 200)
+        charts = list(resp.context['charts'])
+        self.assertEqual(len(charts), 1)
+        chart = charts[0]
+        self.assertEqual(chart.display_name, 'Very Long Chart Name That Used To Truncate')
+        self.assertEqual(chart.type_label, 'Bar')
+        self.assertEqual(len(chart.used_on_pages), 1)
+        self.assertEqual(chart.used_on_pages[0]['title'], 'Math Overview')
+        html = resp.content.decode()
+        self.assertIn('Very Long Chart Name That Used To Truncate', html)
+        self.assertIn('chart-row', html)
+        self.assertIn('chart-preview-canvas', html)
+        self.assertIn('Math Overview', html)
+
+    def test_folder_counts_include_nested_charts(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?folder=Academics')
+        self.assertEqual(resp.status_code, 200)
+        items = {i['name']: i['count'] for i in resp.context['subfolder_items']}
+        self.assertEqual(items.get('Math'), 1)
+        unused = [c for c in resp.context['charts'] if c.pk == self.unused.pk]
+        self.assertEqual(len(unused), 1)
+        self.assertEqual(unused[0].used_on_pages, [])
+        self.assertIn('Unused Chart', unused[0].search_blob)
+
+    def test_global_search_finds_nested_chart_from_root(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?q=Very+Long')
+        self.assertEqual(resp.status_code, 200)
+        charts = list(resp.context['charts'])
+        self.assertEqual([c.pk for c in charts], [self.chart.pk])
+        self.assertEqual(charts[0].folder_path, 'Academics / Math')
+        self.assertEqual(resp.context['search_q'], 'Very Long')
+        html = resp.content.decode()
+        self.assertIn('Very Long Chart Name That Used To Truncate', html)
+        self.assertIn('Academics / Math', html)
+
+    def test_global_search_matches_page_title(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?q=Math+Overview')
+        ids = [c.pk for c in resp.context['charts']]
+        self.assertIn(self.chart.pk, ids)
+        self.assertNotIn(self.unused.pk, ids)
+
+    def test_index_has_user_chart_checkbox(self):
+        self.client.force_login(self.user)
+        resp = self.client.get('/dataviz/?folder=Academics/Math')
+        html = resp.content.decode()
+        self.assertIn('toggleUserChart', html)
+        self.assertIn('User', html)
+
+    def test_put_toggles_user_menu_without_opening_builder(self):
+        self.client.force_login(self.user)
+        self.assertFalse(self.chart.is_user_menu)
+        resp = self.client.put(
+            f'/dataviz/api/charts/{self.chart.id}/',
+            data=json.dumps({'is_user_menu': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['is_user_menu'])
+        self.chart.refresh_from_db()
+        self.assertTrue(self.chart.is_user_menu)
+        resp = self.client.put(
+            f'/dataviz/api/charts/{self.chart.id}/',
+            data=json.dumps({'is_user_menu': False}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.chart.refresh_from_db()
+        self.assertFalse(self.chart.is_user_menu)

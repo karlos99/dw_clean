@@ -186,6 +186,7 @@ def drill_table(request, chart_id):
         'after_val':  request.GET.get('after_val', ''),
         'st_row_val': request.GET.get('st_row_val', ''),
         'st_col_val': request.GET.get('st_col_val', ''),
+        'dyn_calc_id':  request.GET.get('dyn_calc_id', ''),
     }
     raw_drill_filters = build_drill_filter(chart, params)
 
@@ -232,6 +233,7 @@ def drill_table(request, chart_id):
 
     page = int(request.GET.get('page', 1))
     per_page = 50
+    cursor = request.GET.get('cursor', '') or None
 
     # Ensure any dynamic columns used in drill filters (e.g. test_*_PL columns
     # from assessment_compare) are included in extra_columns so the data_loader
@@ -247,6 +249,7 @@ def drill_table(request, chart_id):
         sort_by=sort_by, sort_dir=sort_dir,
         column_filters=column_filters,
         extra_columns=extra_cols or None,
+        cursor=cursor,
     )
 
     # Columns that the query produced (may be restricted by selection)
@@ -320,6 +323,7 @@ def drill_table(request, chart_id):
         'total_rows':         result['total_rows'],
         'page':               result['page'],
         'per_page':           result['per_page'],
+        'next_cursor':        result.get('next_cursor', ''),
         'has_next':           (result['page'] * result['per_page']) < result['total_rows'],
         'has_prev':           result['page'] > 1,
         'error':              result.get('error'),

@@ -13,8 +13,9 @@ from ..models import SavedQuery, StudentList
 from ..constants import COLUMN_DEFINITIONS
 from ..column_utils import (
     _get_display_name,
-    RESULTS_BULK_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
-    assign_result_value_maps, lookup_result_value, export_cell,
+    RESULTS_BLANK_SSID_SQL,
+    export_cell,
+    enrich_students_tests_marks,
 )
 from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from .student_data_utils import (
@@ -24,8 +25,8 @@ from .student_data_utils import (
 from .column_management import (
     get_saved_default_columns,
     get_column_expression,
-    is_race_list_column,
-    append_race_list_filter,
+    json_list_key_for_column,
+    append_json_list_filter,
 )
 from dataexploration.school_year_utils import resolve_relative_column_key
 
@@ -255,8 +256,9 @@ def export_students_csv(request):
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
 
-            if is_race_list_column(col):
-                append_race_list_filter(where_clauses, params, values)
+            json_key = json_list_key_for_column(col)
+            if json_key:
+                append_json_list_filter(where_clauses, params, values, json_key)
                 continue
 
             expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
@@ -345,7 +347,7 @@ def export_students_csv(request):
         logger = logging.getLogger(__name__)
         try:
             from clickhouse_utils.executor import QueryExecutor
-            with QueryExecutor().cursor() as cursor:
+            with QueryExecutor(analytics=True).cursor() as cursor:
                 # Re-implement helper logic inline or simplified
                 def _parse_year_from_test_col(col_key):
                     s = (col_key or '').replace('-', '_')
@@ -644,10 +646,10 @@ def export_students_csv(request):
                     expr, alias = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
                     if expr and alias:
                         base_col_expressions[col] = expr
-                        base_col_selects.append(f"{expr} AS {alias}" if expr != f"cs.{alias}" else expr)
+                        base_col_selects.append(f"{expr} AS {alias}")
                 
                 if not base_col_selects:
-                    base_col_selects.append("cs.ssid")
+                    base_col_selects.append("cs.ssid AS ssid")
 
                 base_col_sql = ", ".join(base_col_selects)
                 
@@ -677,69 +679,9 @@ def export_students_csv(request):
                         break
                         
                     chunk_students = [dict(zip(cols, row)) for row in rows]
-                    student_ids = [s.get('student_id') for s in chunk_students if s.get('student_id')]
-                    
-                    # Fetch Test Data
-                    if test_cols_info and student_ids:
-                        student_ssids = [s.get('ssid') for s in chunk_students if s.get('ssid')]
-                        for test_info in test_cols_info:
-                            metric_col = test_info['metric']
-                            window_clause = ""
-                            window_params = []
-                            if test_info.get('test_window'):
-                                window_clause = "AND LOWER(t.test_window) = LOWER(%s)"
-                                window_params = [test_info['test_window']]
-
-                            select_expr = f"r.{metric_col}" if metric_col in {'ss', 'pl'} else "(r.other_info ->> %s)"
-                            extra_params = [] if metric_col in {'ss', 'pl'} else [test_info.get('other_info_key', '')]
-
-                            tquery = f"""
-                                SELECT r.local_student_id, r.ssid, {select_expr}
-                                FROM results r
-                                INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                                WHERE {RESULTS_BULK_MATCH_SQL}
-                                AND r.school_year = %s
-                                AND LOWER(t.test_name) = LOWER(%s)
-                                AND LOWER(t.subject) = LOWER(%s)
-                                {window_clause}
-                            """
-                            cursor.execute(tquery, [
-                                *extra_params, student_ssids, student_ids, test_info['year'],
-                                test_info['test_name'], test_info['subject'], *window_params,
-                            ])
-                            test_data_by_id, test_data_by_ssid = assign_result_value_maps(
-                                cursor.fetchall()
-                            )
-                            for student in chunk_students:
-                                student[test_info['col_name']] = lookup_result_value(
-                                    student, test_data_by_id, test_data_by_ssid,
-                                )
-                    
-                    # Fetch marks data for this chunk
-                    student_keys = [s.get('stu_annual_key') for s in chunk_students if s.get('stu_annual_key')]
-                    if mark_cols_info and student_keys:
-                        for mark_info in mark_cols_info:
-                            period_clause = "AND sm.mark_period ILIKE %s" if mark_info.get('mark_period') else "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
-                            period_params = [mark_info['mark_period']] if mark_info.get('mark_period') else []
-                            
-                            mquery = f"""
-                                SELECT sm.stu_annual_key, sm.mark
-                                FROM student_marks_list sm
-                                WHERE sm.stu_annual_key = ANY(%s)
-                                AND sm.school_year = %s
-                                AND sm.subject ILIKE %s
-                                AND sm.course_name ILIKE %s
-                                {period_clause}
-                            """
-                            cursor.execute(mquery, [
-                                student_keys, mark_info['year'],
-                                f"%{mark_info['subject']}%", f"%{mark_info['course_name']}%",
-                                *period_params
-                            ])
-                            mdata = {row[0]: row[1] for row in cursor.fetchall()}
-                            
-                            for student in chunk_students:
-                                student[mark_info['col_name']] = mdata.get(student.get('stu_annual_key'), '')
+                    enrich_students_tests_marks(
+                        chunk_students, test_cols_info, mark_cols_info, blank='',
+                    )
 
                     # Yield Rows
                     for student in chunk_students:
@@ -766,5 +708,4 @@ def export_students_csv(request):
     response['Content-Disposition'] = 'attachment; filename="students_export.csv"'
     logger.info(f"CSV Export: Returning response")
     return response
-
 

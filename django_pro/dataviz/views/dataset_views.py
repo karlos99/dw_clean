@@ -164,6 +164,12 @@ class DatasetBuilderView(ProjectAdminMixin, TemplateView):
             except Exception:
                 pass
 
+        from dataexploration.view_modules.column_management import known_add_data_json_paths
+        if isinstance(schema_json, dict) and 'current_student' in schema_json:
+            cs_cols = set(schema_json['current_student'])
+            cs_cols.update(known_add_data_json_paths())
+            schema_json['current_student'] = sorted(cs_cols)
+
         # Build a flat list of explorer column options grouped by category
         explorer_groups = [
             {
@@ -496,7 +502,7 @@ def api_column_unique_values(request):
             sql = f'SELECT DISTINCT "{col_name}" FROM "{table_name}" WHERE "{col_name}" IS NOT NULL AND "{col_name}" != %s ORDER BY "{col_name}"'
             from clickhouse_utils.executor import QueryExecutor, CLICKHOUSE_SYNCED_TABLES
             if table_name in CLICKHOUSE_SYNCED_TABLES:
-                with QueryExecutor().cursor() as cursor:
+                with QueryExecutor(analytics=True).cursor() as cursor:
                     cursor.execute(sql, [''])
                     rows = cursor.fetchall()
             else:
@@ -587,7 +593,7 @@ def dataset_filter_options_api(request, dataset_id):
         # simply isn't there and Postgres remains the correct source.
         from clickhouse_utils.executor import QueryExecutor, CLICKHOUSE_SYNCED_TABLES
         use_ch = active_tables <= CLICKHOUSE_SYNCED_TABLES
-        cursor_ctx = QueryExecutor().cursor() if use_ch else connection.cursor()
+        cursor_ctx = QueryExecutor(analytics=True).cursor() if use_ch else connection.cursor()
 
         filter_options = {}
         with cursor_ctx as cur:

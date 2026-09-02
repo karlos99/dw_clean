@@ -11,14 +11,16 @@ from decimal import Decimal
 from datetime import date, datetime, timezone
 import hashlib
 import json
+import logging
 
 from clickhouse_utils.executor import QueryExecutor
+from clickhouse_utils.pagination import decode_cursor, cursor_from_row, keyset_clause
 from ..models import SavedQuery, StudentList
 from studata.models import CurrentStudent
 from ..column_utils import (
     get_test_columns, get_mark_columns, get_ap_columns, _get_display_name,
-    RESULTS_STUDENT_MATCH_SQL, RESULTS_BULK_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
-    assign_result_value_maps, lookup_result_value,
+    RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
+    enrich_students_tests_marks,
     PL_SORT_SQL, SS_SORT_SQL, parse_apall_sort_key,
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
@@ -32,13 +34,27 @@ from .column_management import (
     get_saved_default_columns,
     get_column_expression,
     get_enabled_columns,
-    is_race_list_column,
-    append_race_list_filter,
-    race_list_unnest_select_expr,
-    RACE_LIST_COL,
+    json_list_key_for_column,
+    append_json_list_filter,
+    json_list_unnest_select_expr,
 )
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
 from landing.utils import get_project_config
+
+logger = logging.getLogger(__name__)
+
+
+def _fetchall_ch_or_pg(sql, params, pg_sql=None):
+    """Run *sql* on ClickHouse; on error, run *pg_sql* (or *sql*) on PostgreSQL."""
+    try:
+        cur = QueryExecutor(analytics=True).cursor()
+        cur.execute(sql, params)
+        return list(cur.fetchall())
+    except Exception:
+        with connections['default'].cursor() as cur:
+            cur.execute(pg_sql or sql, params)
+            return list(cur.fetchall())
+
 
 def _append_school_year_filter(where_clauses: list, params: list, school_year) -> None:
     """Append a school_year predicate; no-op when school_year is unset."""
@@ -507,6 +523,11 @@ def load_students(request):
     sort_by = request.GET.get('sort_by', '') or saved_config.get('sort_by', '')
     sort_dir = request.GET.get('sort_dir', 'asc').lower()
 
+    # Optional keyset cursor. Numbered pages remain supported. Cursor
+    # pagination is used for default name order and other base-column sorts.
+    cursor_raw = request.GET.get('cursor', '')
+    cursor_value = decode_cursor(cursor_raw) if cursor_raw else None
+
     filters_json = request.GET.get('filters', '')
     filters = {}
     if filters_json:
@@ -842,9 +863,9 @@ def load_students(request):
                     where_clauses.append(f"({' OR '.join(conditions)})")
                 continue
 
-            # Race List (add_data.l_race JSON array) — match students with ANY selected race
-            if is_race_list_column(col):
-                append_race_list_filter(where_clauses, params, values)
+            json_key = json_list_key_for_column(col)
+            if json_key:
+                append_json_list_filter(where_clauses, params, values, json_key)
                 continue
 
             # Standard columns
@@ -865,7 +886,7 @@ def load_students(request):
                  if conditions:
                       where_clauses.append(f"({' OR '.join(conditions)})")
 
-    with QueryExecutor().cursor() as cursor:
+    with QueryExecutor(analytics=True).cursor() as cursor:
         db_columns = get_current_student_columns()
         enroll_columns = get_student_enroll_columns()
         base_where_clauses = ["1=1"]
@@ -1273,13 +1294,9 @@ def load_students(request):
             or sort_by in enroll_fields
         )
 
-        # Determine if we need students join (for ltel overrides)
-        students_fields = {'ltel'}
-        needs_students = (
-            any(c in students_fields for c in selected_columns)
-            or (isinstance(filters, dict) and any(k in students_fields for k in filters.keys()))
-            or sort_by in students_fields
-        )
+        # LTEL lives on current_student (synced). The SIS `students` override
+        # table is not in ClickHouse, so joining it fails analytics reads.
+        needs_students = False
 
         needs_eht = (
              (isinstance(filters, dict) and 'elem_teacher_name' in filters.keys())
@@ -1355,7 +1372,8 @@ def load_students(request):
         where_sql = " AND ".join(where_clauses)
         
         # Count total with caching
-        count_cache_key = f"dataexp:count:{hashlib.md5(json.dumps({'where': where_clauses, 'params': [str(p) for p in params], 'join': join_sql}, sort_keys=True).encode()).hexdigest()}"
+        _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+        count_cache_key = f"dataexp:count:{_sync_v}:{hashlib.md5(json.dumps({'where': where_clauses, 'params': [str(p) for p in params], 'join': join_sql}, sort_keys=True).encode()).hexdigest()}"
         total = cache.get(count_cache_key)
         if total is None:
             count_query = f"""
@@ -1428,52 +1446,58 @@ def load_students(request):
 
         # Marks "All Marks" fetch needs stu_annual_key to join marks per course
         if markall_years and 'stu_annual_key' not in base_cols:
-            base_cols.insert(0, 'stu_annual_key')        # Build base column SELECT with safe mapping
+            base_cols.insert(0, 'stu_annual_key')
+        # Keyset pagination needs a unique tie-breaker even when it is not displayed.
+        if 'stu_annual_key' not in base_cols:
+            base_cols.insert(0, 'stu_annual_key')
+        if 'student_name' not in base_cols:
+            base_cols.append('student_name')
+        # Build base column SELECT with safe mapping
         base_col_selects = []
         base_col_expressions = {}
         for col in base_cols:
             expr, alias = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
             if expr and alias:
                 base_col_expressions[col] = expr
-                if expr != f"cs.{alias}":
-                    base_col_selects.append(f"{expr} AS {alias}")
-                else:
-                    base_col_selects.append(expr)
+                # Always alias: ClickHouse names `cs.ssid` as `cs.ssid`, not `ssid`.
+                base_col_selects.append(f"{expr} AS {alias}")
 
         if not base_col_selects:
-            base_col_selects.append("cs.ssid") if 'ssid' in db_columns else base_col_selects.append("NULL AS ssid")
+            base_col_selects.append("cs.ssid AS ssid") if 'ssid' in db_columns else base_col_selects.append("NULL AS ssid")
 
         base_col_sql = ", ".join(base_col_selects)
 
-        # Sorting (Optimized with Redis Caching)
+        # Sorting. ClickHouse rejects correlated ORDER BY subqueries that read
+        # outer cs.ssid / cs.student_id, so dynamic sorts are LEFT JOINs.
         order_by_expr = "cs.student_name"
-        need_joined_sort = False
-        
+        sort_join_sql = ""
+
         if sort_by:
             expr = base_col_expressions.get(sort_by)
             if expr:
                 order_by_expr = expr
             elif sort_by in mark_col_map:
-                # Keep subquery for marks (less frequent)
                 mark_info = mark_col_map.get(sort_by)
                 period_clause = ""
                 if mark_info.get('mark_period'):
                     period_clause = "AND sm.mark_period ILIKE %s"
                 else:
                     period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
-
-                order_by_expr = (
-                    "(SELECT sm.mark FROM student_marks_list sm "
-                    "WHERE sm.stu_annual_key = cs.stu_annual_key "
-                    "AND sm.school_year = %s "
-                    "AND sm.subject ILIKE %s "
-                    "AND sm.course_name ILIKE %s "
-                    f"{period_clause} "
-                    "LIMIT 1)"
+                sort_join_sql = (
+                    " LEFT JOIN ("
+                    " SELECT sm.stu_annual_key AS _k, any(sm.mark) AS _v"
+                    " FROM analytics_student_marks sm"
+                    " WHERE sm.school_year = %s"
+                    " AND sm.subject ILIKE %s"
+                    " AND sm.course_name ILIKE %s"
+                    f" {period_clause}"
+                    " GROUP BY sm.stu_annual_key"
+                    " ) _sort ON _sort._k = cs.stu_annual_key"
                 )
+                order_by_expr = "_sort._v"
                 params.extend([
                     mark_info['year'],
-                     f"%{mark_info['subject']}%",
+                    f"%{mark_info['subject']}%",
                     f"%{mark_info['course_name']}%",
                 ])
                 if mark_info.get('mark_period'):
@@ -1482,19 +1506,17 @@ def load_students(request):
                 _sv_col_meta = get_survey_columns().get('col_meta', {})
                 _sv_meta = _sv_col_meta.get(sort_by)
                 if _sv_meta:
-                    order_by_expr = (
-                        "(SELECT sr.value FROM \"dataLoader_surveyresponse\" sr "
-                        "INNER JOIN \"dataLoader_surveyquestion\" sq ON sr.question_id = sq.id "
-                        "INNER JOIN \"dataLoader_surveydefinition\" sd ON sq.survey_definition_id = sd.id "
-                        "INNER JOIN \"dataLoader_importlog\" il ON sr.import_log_id = il.id "
-                        "WHERE sr.student_id = cs.student_id "
-                        "AND sd.survey_type = %s AND sd.school_year = %s "
-                        "AND sd.testing_window = %s AND sd.grade_range = %s "
-                        "AND sq.\"order\" = %s "
-                        "AND il.ready_for_exploration = true "
-                        "AND il.status = 'COMPLETED' "
-                        "LIMIT 1)"
+                    sort_join_sql = (
+                        " LEFT JOIN ("
+                        " SELECT student_id AS _k, any(value) AS _v"
+                        " FROM analytics_survey_responses"
+                        " WHERE survey_type = %s AND school_year = %s"
+                        " AND testing_window = %s AND grade_range = %s"
+                        " AND question_order = %s"
+                        " GROUP BY student_id"
+                        " ) _sort ON _sort._k = cs.student_id"
                     )
+                    order_by_expr = "_sort._v"
                     params.extend([
                         _sv_meta['survey_type'],
                         _sv_meta['school_year'],
@@ -1503,108 +1525,115 @@ def load_students(request):
                         _sv_meta['question_order'],
                     ])
             elif sort_by in test_col_map:
-                # Use subquery for now, but we'll cache the result ids
                 test_info = test_col_map.get(sort_by)
                 metric_col = test_info['metric']
-                
+
                 window_clause = ""
                 window_params = []
                 if test_info.get('test_window'):
-                    # Exact match (lower) — ILIKE treats '_' as a wildcard, which
-                    # breaks names like Initial_ELPAC / ELPAC_summative.
-                    window_clause = "AND lower(t.test_window) = lower(%s)"
+                    window_clause = "AND lower(r.test_window) = lower(%s)"
                     window_params = [test_info['test_window']]
-                
-                select_expr = ""
+
                 extra_params = []
-                
                 if metric_col == 'ss':
-                     select_expr = SS_SORT_SQL
+                    select_expr = SS_SORT_SQL
                 elif metric_col == 'pl':
-                     select_expr = PL_SORT_SQL
+                    select_expr = PL_SORT_SQL
                 else:
                     select_expr = "(r.other_info ->> %s)"
                     extra_params = [test_info.get('other_info_key', '')]
 
-                order_by_expr = (
-                    f"(SELECT {select_expr} FROM results r "
-                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    f"WHERE {RESULTS_STUDENT_MATCH_SQL} "
-                    "AND r.school_year = %s "
-                    "AND lower(t.test_name) = lower(%s) "
-                    "AND lower(t.subject) = lower(%s) "
-                    f"{window_clause} "
-                    "LIMIT 1)"
+                test_where = (
+                    "r.school_year = %s AND lower(r.test_name) = lower(%s) "
+                    f"AND lower(r.subject) = lower(%s) {window_clause}"
                 )
-                params.extend(extra_params)
-                params.extend([
+                test_join_params = extra_params + [
                     test_info['year'],
                     test_info['test_name'],
                     test_info['subject'],
-                ])
-                params.extend(window_params)
+                    *window_params,
+                ]
+                sort_join_sql = (
+                    " LEFT JOIN ("
+                    f" SELECT r.ssid AS _k, any({select_expr}) AS _v"
+                    " FROM analytics_student_results r"
+                    f" WHERE {test_where}"
+                    " AND r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN'"
+                    " GROUP BY r.ssid"
+                    " ) _sort_ssid ON _sort_ssid._k = cs.ssid"
+                    " LEFT JOIN ("
+                    f" SELECT r.local_student_id AS _k, any({select_expr}) AS _v"
+                    " FROM analytics_student_results r"
+                    f" WHERE {test_where}"
+                    " AND (r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN')"
+                    " GROUP BY r.local_student_id"
+                    " ) _sort_local ON _sort_local._k = cs.student_id"
+                )
+                order_by_expr = "coalesce(_sort_ssid._v, _sort_local._v)"
+                params.extend(test_join_params)
+                params.extend(test_join_params)
             elif sort_by.startswith('apall_'):
-                # AP "All Results" wide columns: apall_<year>_<n>_SUBJECT|PL
-                # Must be checked before the generic ap_* branch (apall_ starts with ap_).
                 apall_parsed = parse_apall_sort_key(sort_by)
                 if apall_parsed and apall_parsed['index'] >= 1:
-                    _field = apall_parsed['field']
-                    if _field == 'SUBJECT':
-                        _apall_select = "e.name"
+                    _rn = int(apall_parsed['index'])
+                    if apall_parsed['field'] == 'SUBJECT':
+                        _apall_select = "exam_name"
                     else:
                         _apall_select = (
                             "CAST(NULLIF(regexp_replace("
-                            "NULLIF(btrim(r.exam_grade), ''), '[^0-9.]', '', 'g'), '') AS NUMERIC)"
+                            "NULLIF(btrim(exam_grade), ''), '[^0-9.]', '', 'g'), '') AS NUMERIC)"
                         )
-                    _off = apall_parsed['index'] - 1
-                    order_by_expr = (
-                        f"(SELECT {_apall_select} "
-                        "FROM \"dataLoader_apexamresult\" r "
-                        "INNER JOIN \"dataLoader_apexamcode\" e ON r.exam_id = e.code "
-                        "INNER JOIN \"dataLoader_apimportlog\" il ON r.import_log_id = il.id "
-                        "WHERE r.ssid = cs.ssid AND r.admin_year = %s AND il.is_published = true "
-                        "ORDER BY e.name "
-                        f"LIMIT 1 OFFSET {_off})"
+                    sort_join_sql = (
+                        " LEFT JOIN ("
+                        f" SELECT ssid AS _k, {_apall_select} AS _v"
+                        " FROM ("
+                        " SELECT ssid, exam_name, exam_grade,"
+                        " row_number() OVER (PARTITION BY ssid ORDER BY exam_name) AS _rn"
+                        " FROM analytics_ap_results"
+                        " WHERE admin_year = %s"
+                        " ) t WHERE _rn = %s"
+                        " ) _sort ON _sort._k = cs.ssid"
                     )
-                    params.append(apall_parsed['year'])
+                    order_by_expr = "_sort._v"
+                    params.extend([apall_parsed['year'], _rn])
             elif sort_by.startswith('apawards_all_'):
-                # Combined "All Awards" column for a year — sort by the joined list.
-                # Use PG dialect (string_agg) so the Postgres fallback works;
-                # the QueryExecutor translator converts it to ClickHouse syntax
-                # (arrayStringConcat(groupArray(...))) when ClickHouse is used.
                 _yr = sort_by[len('apawards_all_'):].replace('_', '-')
-                order_by_expr = (
-                    "(SELECT string_agg(t.description, ', ') "
-                    "FROM \"dataLoader_apstudentaward\" a "
-                    "INNER JOIN \"dataLoader_apawardtype\" t ON a.award_type_id = t.code "
-                    "INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id "
-                    "WHERE a.ssid = cs.ssid AND a.award_year = %s AND il.is_published = true)"
+                sort_join_sql = (
+                    " LEFT JOIN ("
+                    " SELECT ssid AS _k, string_agg(award_description, ', ') AS _v"
+                    " FROM analytics_ap_awards"
+                    " WHERE award_year = %s"
+                    " GROUP BY ssid"
+                    " ) _sort ON _sort._k = cs.ssid"
                 )
+                order_by_expr = "_sort._v"
                 params.append(_yr)
             elif sort_by.startswith('ap_') and not sort_by.startswith('apaward_'):
                 ap_info = next((i for i in ap_exam_infos if i['col_name'] == sort_by), None)
                 if ap_info:
-                    order_by_expr = (
-                        "(SELECT CAST(NULLIF(regexp_replace(r.exam_grade, '[^0-9.]', '', 'g'), '') AS NUMERIC) "
-                        "FROM \"dataLoader_apexamresult\" r "
-                        "INNER JOIN \"dataLoader_apexamcode\" e ON r.exam_id = e.code "
-                        "INNER JOIN \"dataLoader_apimportlog\" il ON r.import_log_id = il.id "
-                        "WHERE r.ssid = cs.ssid AND r.admin_year = %s AND e.name = %s "
-                        "AND il.is_published = true "
-                        "LIMIT 1)"
+                    sort_join_sql = (
+                        " LEFT JOIN ("
+                        " SELECT ssid AS _k,"
+                        " any(CAST(NULLIF(regexp_replace(exam_grade, '[^0-9.]', '', 'g'), '') AS NUMERIC)) AS _v"
+                        " FROM analytics_ap_results"
+                        " WHERE admin_year = %s AND exam_name = %s"
+                        " GROUP BY ssid"
+                        " ) _sort ON _sort._k = cs.ssid"
                     )
+                    order_by_expr = "_sort._v"
                     params.extend([ap_info['year'], ap_info['subject']])
             elif sort_by.startswith('apaward_'):
                 ap_info = next((i for i in ap_award_infos if i['col_name'] == sort_by), None)
                 if ap_info:
-                    order_by_expr = (
-                        "(SELECT t.description FROM \"dataLoader_apstudentaward\" a "
-                        "INNER JOIN \"dataLoader_apawardtype\" t ON a.award_type_id = t.code "
-                        "INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id "
-                        "WHERE a.ssid = cs.ssid AND a.award_year = %s AND t.description = %s "
-                        "AND il.is_published = true "
-                        "LIMIT 1)"
+                    sort_join_sql = (
+                        " LEFT JOIN ("
+                        " SELECT ssid AS _k, any(award_description) AS _v"
+                        " FROM analytics_ap_awards"
+                        " WHERE award_year = %s AND award_description = %s"
+                        " GROUP BY ssid"
+                        " ) _sort ON _sort._k = cs.ssid"
                     )
+                    order_by_expr = "_sort._v"
                     params.extend([ap_info['year'], ap_info['award']])
 
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
@@ -1617,16 +1646,34 @@ def load_students(request):
             or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_'))
         )
         order_nulls_sql = ' NULLS LAST' if is_dynamic_sort else ''
+        # sort_join placeholders come before WHERE in the SQL, so they must
+        # be prepended to the execute param list (not appended onto params).
+        sort_params = params[len(filter_params):]
+        page_where_sql = where_sql
+        page_params = list(filter_params)
+        expected_cursor_key = sort_by or 'student_name'
+        use_keyset = bool(
+            cursor_value
+            and not is_dynamic_sort
+            and cursor_value.get('k') == expected_cursor_key
+        )
+        if use_keyset:
+            page_where_sql += keyset_clause(order_by_expr, sort_dir)
+            page_params.extend([
+                cursor_value['v'], cursor_value['v'], cursor_value['sak'],
+            ])
 
         # Check Redis cache for sorted IDs
         # Include full params in key to ensure uniqueness for filters
         # Note: We rely on cache invalidation via TTL (5 mins) matching the count cache
         cache_key_components = {
-            'sql_hash': hashlib.md5((where_sql + join_sql).encode()).hexdigest(),
-            'params': [str(p) for p in params], # params includes where + sort params
+            'sql_hash': hashlib.md5((where_sql + join_sql + sort_join_sql).encode()).hexdigest(),
+            'params': [str(p) for p in list(filter_params) + list(sort_params)],
+            'sync': cache.get('analytics:clickhouse_sync_version', 'legacy'),
             'sort': f"{sort_by}:{sort_dir}:nulls_last" if is_dynamic_sort else f"{sort_by}:{sort_dir}",
             'limit': limit,
             'offset': offset 
+            , 'cursor': cursor_raw if cursor_value else ''
         }
         # Actually, for pagination optimization we should cache the FULL list of IDs for this filter+sort,
         # but fetching all IDs might be heavy. 
@@ -1667,7 +1714,7 @@ def load_students(request):
                 # 2. Sort them in Python to match the cached order.
                 # 3. Proceed to fetch Test/Mark data as usual.
                 
-                cached_exec = QueryExecutor()
+                cached_exec = QueryExecutor(analytics=True)
                 sy_clauses = []
                 sy_params = []
                 _append_school_year_filter(sy_clauses, sy_params, school_year)
@@ -1697,16 +1744,40 @@ def load_students(request):
             SELECT {base_col_sql}
             FROM current_student cs
             {join_sql}
-            WHERE {where_sql}
-            ORDER BY {order_by_expr} {sort_dir}{order_nulls_sql}
-            LIMIT %s OFFSET %s
+            {sort_join_sql}
+            WHERE {page_where_sql}
+            ORDER BY {order_by_expr} {sort_dir}{order_nulls_sql}, cs.stu_annual_key {sort_dir}
+            LIMIT %s
             """
+            query_params = list(sort_params) + list(page_params)
+            query_params.append(limit)
+            if not use_keyset:
+                query = query.rstrip() + " OFFSET %s\n"
+                query_params.append(offset)
             
-            query_params = list(params)
-            query_params.extend([limit, offset])
-            
-            main_exec = QueryExecutor()
+            main_exec = QueryExecutor(analytics=True)
             main_result = main_exec.execute(query, query_params)
+            empty_page = (not main_result.get('rows')) and total and offset < total
+            if main_result.get('error') or empty_page:
+                logger.error(
+                    "Explorer page query failed: error=%s empty=%s",
+                    main_result.get('error'), empty_page,
+                )
+                # ponytail: keep the list populated if the sort join fails
+                query = f"""
+                SELECT {base_col_sql}
+                FROM current_student cs
+                {join_sql}
+                WHERE {where_sql}
+                ORDER BY cs.student_name {sort_dir}, cs.stu_annual_key {sort_dir}
+                LIMIT %s
+                """
+                query_params = list(filter_params)
+                query_params.append(limit)
+                if not use_keyset:
+                    query = query.rstrip() + " OFFSET %s\n"
+                    query_params.append(offset)
+                main_result = main_exec.execute(query, query_params)
             columns = main_result['columns']
             students = main_result['rows']
             
@@ -1718,152 +1789,66 @@ def load_students(request):
         # Proceed with Detail Fetching (Test/Marks) for the identified students
         student_ids = [s.get('student_id') for s in students if s.get('student_id')]
         student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
-        
-        _fetch_cursor = QueryExecutor().cursor()
-        
-        # Fetch test data in bulk for selected test columns
-        if test_cols_info and student_ids:
-            student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
-            for test_info in test_cols_info:
-                metric_col = test_info['metric']
-                test_name_db = test_info['test_name'].replace(' ', '_')
-                subject_db = test_info['subject'].replace(' ', '_')
 
-                window_clause = ""
-                window_params = []
-                if test_info.get('test_window'):
-                    window_clause = "AND t.test_window ILIKE %s"
-                    window_params = [test_info['test_window']]
-                
-                if metric_col in {'ss', 'pl'}:
-                    select_expr = f"r.{metric_col}"
-                    extra_params = []
-                else:
-                    select_expr = "(r.other_info ->> %s)"
-                    extra_params = [test_info.get('other_info_key', '')]
-
-                query = f"""
-                    SELECT /*+ IndexScan(r) */ r.local_student_id, r.ssid, {select_expr}
-                    FROM results r
-                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE {RESULTS_BULK_MATCH_SQL}
-                      AND r.school_year = %s
-                      AND t.test_name ILIKE %s
-                      AND t.subject ILIKE %s
-                      {window_clause}
-                """
-                _fetch_cursor.execute(query, [
-                    *extra_params,
-                    student_ssids,
-                    student_ids,
-                    test_info['year'],
-                    test_info['test_name'],
-                    test_info['subject'],
-                    *window_params,
-                ])
-                
-                test_data_by_id, test_data_by_ssid = assign_result_value_maps(
-                    _fetch_cursor.fetchall()
-                )
-                
-                # Add test data to each student
-                for student in students:
-                    student[test_info['col_name']] = lookup_result_value(
-                        student, test_data_by_id, test_data_by_ssid,
-                    )
-
-        # Fetch mark data in bulk for selected mark columns
-        if mark_cols_info and student_keys:
-            for mark_info in mark_cols_info:
-                period_clause = ""
-                period_params = []
-                if mark_info.get('mark_period'):
-                    period_clause = "AND sm.mark_period ILIKE %s"
-                    period_params = [mark_info['mark_period']]
-                else:
-                    period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
-
-                query = f"""
-                    SELECT /*+ IndexScan(sm stu_annual_key) */ sm.stu_annual_key, sm.mark
-                    FROM student_marks_list sm
-                    WHERE sm.stu_annual_key = ANY(%s)
-                      AND sm.school_year = %s
-                      AND sm.subject ILIKE %s
-                      AND sm.course_name ILIKE %s
-                      {period_clause}
-                """
-                _fetch_cursor.execute(query, [
-                    student_keys,
-                    mark_info['year'],
-                    f"%{mark_info['subject']}%",
-                    f"%{mark_info['course_name']}%",
-                    *period_params,
-                ])
-
-                mark_data = {row[0]: row[1] for row in _fetch_cursor.fetchall()}
-
-                for student in students:
-                    student_key = student.get('stu_annual_key')
-                    student[mark_info['col_name']] = mark_data.get(student_key, '—')
+        enrich_students_tests_marks(students, test_cols_info, mark_cols_info)
 
         # Fetch Marks "All Marks" wide-pair data (markall_<year>_<subject>_<i>_COURSE / _MARKS)
         if markall_years and students:
             try:
                 student_keys_all = [str(s.get('stu_annual_key') or '').strip() for s in students if str(s.get('stu_annual_key') or '').strip()]
                 if student_keys_all:
-                    with connections['default'].cursor() as markall_cur:
-                        for (year, subject), umbrella in markall_years.items():
-                            n = markall_max.get((year, subject), 0)
-                            course_filter_sql = ""
-                            if subject == 'Elementary':
-                                course_filter_sql = " AND " + _markall_excluded_course_sql()
-                            markall_cur.execute(
-                                f"""
-                                SELECT stu_annual_key, course_name, mark_period, mark
-                                FROM student_marks_list sm
-                                WHERE stu_annual_key = ANY(%s) AND school_year = %s AND subject = %s
-                                  {course_filter_sql}
-                                ORDER BY stu_annual_key, course_name, mark_period
-                                """,
-                                [student_keys_all, year, subject],
-                            )
-                            by_key = {}
-                            for stu_key, course, period, mark in markall_cur.fetchall():
-                                by_key.setdefault(str(stu_key).strip(), {}).setdefault(course, []).append((period, mark))
-                            for student in students:
-                                stu_key = str(student.get('stu_annual_key') or '').strip()
-                                courses = by_key.get(stu_key, {})
-                                for i in range(1, n + 1):
-                                    course_key = f"{umbrella}_{i}_COURSE"
-                                    marks_key = f"{umbrella}_{i}_MARKS"
-                                    if i <= len(courses):
-                                        course_name = list(courses.keys())[i - 1]
-                                        periods = courses[course_name]
-                                        marks_str = ', '.join(
-                                            f"{p}: {m}" for p, m in periods if p and m
-                                        )
-                                        # If this MARKS column has an active filter, only
-                                        # keep the matching period:mark entries in the cell.
-                                        col_filters = filters.get(marks_key) if isinstance(filters, dict) else None
-                                        if col_filters:
-                                            sel_periods = [str(v).split(':', 1)[1] for v in col_filters if str(v).startswith('period:')]
-                                            sel_marks = [str(v).split(':', 1)[1] for v in col_filters if str(v).startswith('mark:')]
-                                            if sel_periods or sel_marks:
-                                                kept = []
-                                                for p, m in periods:
-                                                    if not p or not m:
-                                                        continue
-                                                    if sel_periods and p not in sel_periods:
-                                                        continue
-                                                    if sel_marks and m not in sel_marks:
-                                                        continue
-                                                    kept.append(f"{p}: {m}")
-                                                marks_str = ', '.join(kept)
-                                        student[course_key] = course_name
-                                        student[marks_key] = marks_str or '\u2014'
-                                    else:
-                                        student[course_key] = '\u2014'
-                                        student[marks_key] = '\u2014'
+                    for (year, subject), umbrella in markall_years.items():
+                        n = markall_max.get((year, subject), 0)
+                        course_filter_sql = ""
+                        if subject == 'Elementary':
+                            course_filter_sql = " AND " + _markall_excluded_course_sql()
+                        markall_sql = f"""
+                            SELECT stu_annual_key, course_name, mark_period, mark
+                            FROM analytics_student_marks sm
+                            WHERE stu_annual_key = ANY(%s) AND school_year = %s AND subject = %s
+                              {course_filter_sql}
+                            ORDER BY stu_annual_key, course_name, mark_period
+                        """
+                        markall_rows = _fetchall_ch_or_pg(
+                            markall_sql,
+                            [student_keys_all, year, subject],
+                            markall_sql.replace('analytics_student_marks', 'student_marks_list'),
+                        )
+                        by_key = {}
+                        for stu_key, course, period, mark in markall_rows:
+                            by_key.setdefault(str(stu_key).strip(), {}).setdefault(course, []).append((period, mark))
+                        for student in students:
+                            stu_key = str(student.get('stu_annual_key') or '').strip()
+                            courses = by_key.get(stu_key, {})
+                            for i in range(1, n + 1):
+                                course_key = f"{umbrella}_{i}_COURSE"
+                                marks_key = f"{umbrella}_{i}_MARKS"
+                                if i <= len(courses):
+                                    course_name = list(courses.keys())[i - 1]
+                                    periods = courses[course_name]
+                                    marks_str = ', '.join(
+                                        f"{p}: {m}" for p, m in periods if p and m
+                                    )
+                                    col_filters = filters.get(marks_key) if isinstance(filters, dict) else None
+                                    if col_filters:
+                                        sel_periods = [str(v).split(':', 1)[1] for v in col_filters if str(v).startswith('period:')]
+                                        sel_marks = [str(v).split(':', 1)[1] for v in col_filters if str(v).startswith('mark:')]
+                                        if sel_periods or sel_marks:
+                                            kept = []
+                                            for p, m in periods:
+                                                if not p or not m:
+                                                    continue
+                                                if sel_periods and p not in sel_periods:
+                                                    continue
+                                                if sel_marks and m not in sel_marks:
+                                                    continue
+                                                kept.append(f"{p}: {m}")
+                                            marks_str = ', '.join(kept)
+                                    student[course_key] = course_name
+                                    student[marks_key] = marks_str or '\u2014'
+                                else:
+                                    student[course_key] = '\u2014'
+                                    student[marks_key] = '\u2014'
             except Exception:
                 pass
 
@@ -1888,36 +1873,50 @@ def load_students(request):
             try:
                 ssids = [str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()]
                 if ssids:
-                    with connections['default'].cursor() as apall_cur:
-                        for year in apall_years:
-                            yk = year.replace('-', '_')
-                            n = apall_max.get(year, 0)
-                            apall_cur.execute(
-                                """
-                                SELECT r.ssid, e.name, r.exam_grade
-                                FROM "dataLoader_apexamresult" r
-                                INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
-                                INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
-                                WHERE r.ssid = ANY(%s) AND r.admin_year = %s AND il.is_published = true
-                                ORDER BY r.ssid, e.name
-                                """,
-                                [ssids, year],
+                    from dataviz.utils.data_loader import _analytics_rows
+                    for year in apall_years:
+                        yk = year.replace('-', '_')
+                        n = apall_max.get(year, 0)
+                        ap_rows = _analytics_rows(
+                            "SELECT ssid, exam_name, exam_grade FROM analytics_ap_results "
+                            "WHERE ssid = ANY(%s) AND admin_year = %s "
+                            "ORDER BY ssid, exam_name",
+                            [ssids, year],
+                        )
+                        if ap_rows is None:
+                            with connections['default'].cursor() as apall_cur:
+                                apall_cur.execute(
+                                    """
+                                    SELECT r.ssid, e.name, r.exam_grade
+                                    FROM "dataLoader_apexamresult" r
+                                    INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                                    INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                                    WHERE r.ssid = ANY(%s) AND r.admin_year = %s AND il.is_published = true
+                                    ORDER BY r.ssid, e.name
+                                    """,
+                                    [ssids, year],
+                                )
+                                ap_rows = [
+                                    {'ssid': r[0], 'exam_name': r[1], 'exam_grade': r[2]}
+                                    for r in apall_cur.fetchall()
+                                ]
+                        by_ssid = {}
+                        for row in ap_rows:
+                            by_ssid.setdefault(str(row.get('ssid') or '').strip(), []).append(
+                                (row.get('exam_name'), row.get('exam_grade'))
                             )
-                            by_ssid = {}
-                            for ssid, subject, grade in apall_cur.fetchall():
-                                by_ssid.setdefault(str(ssid).strip(), []).append((subject, grade))
-                            for student in students:
-                                sid = str(student.get('ssid') or '').strip()
-                                results = by_ssid.get(sid, [])
-                                for i in range(1, n + 1):
-                                    subj_key = f"apall_{yk}_{i}_SUBJECT"
-                                    pl_key = f"apall_{yk}_{i}_PL"
-                                    if i <= len(results):
-                                        student[subj_key] = results[i - 1][0]
-                                        student[pl_key] = str(results[i - 1][1]).strip() if results[i - 1][1] else '\u2014'
-                                    else:
-                                        student[subj_key] = '\u2014'
-                                        student[pl_key] = '\u2014'
+                        for student in students:
+                            sid = str(student.get('ssid') or '').strip()
+                            results = by_ssid.get(sid, [])
+                            for i in range(1, n + 1):
+                                subj_key = f"apall_{yk}_{i}_SUBJECT"
+                                pl_key = f"apall_{yk}_{i}_PL"
+                                if i <= len(results):
+                                    student[subj_key] = results[i - 1][0]
+                                    student[pl_key] = str(results[i - 1][1]).strip() if results[i - 1][1] else '\u2014'
+                                else:
+                                    student[subj_key] = '\u2014'
+                                    student[pl_key] = '\u2014'
             except Exception:
                 pass
 
@@ -1951,8 +1950,10 @@ def load_students(request):
                 AND sl.period = '0'
                 AND sch.school_group = 'Elementary School'
             """
-            _fetch_cursor.execute(q_eht, [student_keys])
-            eht_map = {row[0]: row[1] for row in _fetch_cursor.fetchall()}
+            eht_map = {
+                row[0]: row[1]
+                for row in _fetchall_ch_or_pg(q_eht, [student_keys])
+            }
             for student in students:
                 key = student.get('stu_annual_key')
                 if key:
@@ -2003,6 +2004,7 @@ def load_students(request):
                 payload = {
                     'base': base_filter_state,
                     'filters': normalized_filters or "no_filters",
+                    'sync': cache.get('analytics:clickhouse_sync_version', 'legacy'),
                 }
                 filter_str = json.dumps(payload, sort_keys=True)
                 return f"filter_opts:{column}:{hashlib.md5(filter_str.encode()).hexdigest()}"
@@ -2031,17 +2033,17 @@ def load_students(request):
                 _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
-                # Race List options: unnest individual races from the JSON array/string
-                if is_race_list_column(col):
+                json_key = json_list_key_for_column(col)
+                if json_key:
                     try:
-                        unnest_expr = race_list_unnest_select_expr('cs')
+                        unnest_expr = json_list_unnest_select_expr(json_key, 'cs')
                         options_query = f"""
                             SELECT DISTINCT v FROM (
                                 SELECT {unnest_expr} AS v
                                 FROM current_student cs
                                 {join_sql}
                                 WHERE {option_where_sql}
-                            ) _race_opts
+                            ) _json_list_opts
                             WHERE v IS NOT NULL AND BTRIM(v) != ''
                             ORDER BY v ASC
                             LIMIT 100
@@ -2049,12 +2051,10 @@ def load_students(request):
                         cursor.execute(options_query, option_params)
                         rows = cursor.fetchall()
                         values = [row[0] for row in rows if row[0] is not None and str(row[0]).strip()]
-                        # Always expose filter options for Race List when any values exist
                         if values:
                             filter_options[col] = values
                             cache.set(cache_key, values, 300)
                     except Exception:
-                        # Don't let Race List options take down the whole table load
                         pass
                     continue
 
@@ -2135,12 +2135,15 @@ def load_students(request):
                     ORDER BY v ASC NULLS FIRST
                     LIMIT 30
                 """
-                    cursor.execute(options_query, option_params + [
-                        test_info['year'],
-                        test_info['test_name'],
-                        test_info['subject'],
-                        *window_params,
-                    ])
+                    try:
+                        cursor.execute(options_query, option_params + [
+                            test_info['year'],
+                            test_info['test_name'],
+                            test_info['subject'],
+                            *window_params,
+                        ])
+                    except Exception:
+                        continue
                 else:
                     options_query = f"""
                     SELECT (r.other_info ->> %s) AS v
@@ -2158,14 +2161,17 @@ def load_students(request):
                     LIMIT 30
                     """
                     other_key = test_info.get('other_info_key', '')
-                    cursor.execute(options_query, [
-                        other_key,
-                        *option_params,
-                        test_info['year'],
-                        test_info['test_name'],
-                        test_info['subject'],
-                        *window_params,
-                    ])
+                    try:
+                        cursor.execute(options_query, [
+                            other_key,
+                            *option_params,
+                            test_info['year'],
+                            test_info['test_name'],
+                            test_info['subject'],
+                            *window_params,
+                        ])
+                    except Exception:
+                        continue
                 
                 values = []
                 for row in cursor.fetchall():
@@ -2175,21 +2181,28 @@ def load_students(request):
                     if val not in values:
                         values.append(val)
 
-                # Check if there are any students with NO result record (Blank)
+                # Check if there are any students with NO result record (Blank).
+                # Anti-join: ClickHouse rejects correlated EXISTS that read outer cs.ssid.
                 check_blank_query = f"""
                     SELECT 1
                     FROM current_student cs
                     {join_sql}
-                    WHERE {option_where_sql}
-                    AND NOT EXISTS (
-                        SELECT 1 FROM results r
+                    LEFT JOIN (
+                        SELECT r.ssid, r.local_student_id
+                        FROM results r
                         INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                        WHERE {RESULTS_STUDENT_MATCH_SQL}
-                        AND r.school_year = %s
-                        AND t.test_name ILIKE %s
-                        AND t.subject ILIKE %s
-                        {window_clause}
+                        WHERE r.school_year = %s
+                          AND t.test_name ILIKE %s
+                          AND t.subject ILIKE %s
+                          {window_clause}
+                    ) _r ON (
+                        (_r.ssid IS NOT NULL AND _r.ssid != '' AND _r.ssid != 'NaN'
+                         AND cs.ssid IS NOT NULL AND cs.ssid != '' AND _r.ssid = cs.ssid)
+                        OR ((_r.ssid IS NULL OR _r.ssid = '' OR _r.ssid = 'NaN')
+                            AND _r.local_student_id = cs.student_id)
                     )
+                    WHERE {option_where_sql}
+                      AND _r.ssid IS NULL AND _r.local_student_id IS NULL
                     LIMIT 1
                 """
                 check_params = option_params + [
@@ -2198,10 +2211,13 @@ def load_students(request):
                     test_info['subject'],
                     *window_params,
                 ]
-                cursor.execute(check_blank_query, check_params)
-                if cursor.fetchone():
-                    if "" not in values:
-                        values.insert(0, "")
+                try:
+                    cursor.execute(check_blank_query, check_params)
+                    if cursor.fetchone():
+                        if "" not in values:
+                            values.insert(0, "")
+                except Exception:
+                    pass
 
                 if values:
                     filter_options[col_key] = values
@@ -2438,13 +2454,16 @@ def load_students(request):
                     )
                     LIMIT 1
                 """
-                cursor.execute(check_blank_query, option_params + [
-                    ap_info['year'],
-                    ap_info['subject'],
-                ])
-                if cursor.fetchone():
-                    if "" not in values:
-                        values.insert(0, "")
+                try:
+                    cursor.execute(check_blank_query, option_params + [
+                        ap_info['year'],
+                        ap_info['subject'],
+                    ])
+                    if cursor.fetchone():
+                        if "" not in values:
+                            values.insert(0, "")
+                except Exception:
+                    pass
 
                 if values:
                     filter_options[col_key] = values
@@ -2528,10 +2547,13 @@ def load_students(request):
                         )
                         LIMIT 1
                     """
-                    cursor.execute(check_blank_query, option_params + [ap_info['year']])
-                    if cursor.fetchone():
-                        if "" not in values:
-                            values.insert(0, "")
+                    try:
+                        cursor.execute(check_blank_query, option_params + [ap_info['year']])
+                        if cursor.fetchone():
+                            if "" not in values:
+                                values.insert(0, "")
+                    except Exception:
+                        pass
 
                 if values:
                     filter_options[col_key] = values
@@ -2591,6 +2613,11 @@ def load_students(request):
             dynamic_definitions[f"{umbrella}_{i}_MARKS"] = f"Marks {i} ({subject})\n{year}"
 
     if request.GET.get('format') == 'json':
+        next_cursor = ''
+        if students and not is_dynamic_sort:
+            next_cursor = cursor_from_row(
+                students[-1], sort_by or 'student_name', sort_dir,
+            )
         return JsonResponse({
             'students': students,
             'selected_columns': selected_columns,
@@ -2606,6 +2633,7 @@ def load_students(request):
             'status': _serialize_context_filter(status),
             'sort_by': sort_by,
             'sort_dir': sort_dir,
+            'next_cursor': next_cursor,
             'survey_colors': survey_colors,
         })
 
@@ -2625,5 +2653,3 @@ def load_students(request):
     }
 
     return render(request, 'dataexploration/partials/student_table.html', context)
-
-

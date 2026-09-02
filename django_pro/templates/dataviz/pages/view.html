@@ -782,10 +782,15 @@ document.addEventListener('DOMContentLoaded', function () {
       btn.classList.toggle('shadow-sm', active);
       btn.classList.toggle('text-slate-500', !active);
     });
-    panels.forEach(panel => { panel.hidden = panel.dataset.tabContent !== id; });
+    panels.forEach(panel => {
+      const show = panel.dataset.tabContent === id;
+      if (!show && window.disposeChartsIn) window.disposeChartsIn(panel);
+      panel.hidden = !show;
+    });
     document.querySelectorAll('[data-tab-content="' + id + '"] .page-chart-slot').forEach(slot => {
       if (window.htmx && !slot.dataset.tabLoaded) htmx.trigger(slot, 'reload');
     });
+    if (window.initAllCharts) window.initAllCharts();
   }
   buttons.forEach(btn => btn.addEventListener('click', () => activate(btn.dataset.tabTarget)));
   activate(buttons[0]?.dataset.tabTarget);

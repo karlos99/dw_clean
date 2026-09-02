@@ -12,6 +12,7 @@ import re
 from django.core.cache import cache
 from django.db import connections
 
+from clickhouse_utils.timing import timed_fn
 from dataexploration.column_utils import ap_column_key
 
 
@@ -105,7 +106,7 @@ def run_raw_sql(sql: str) -> dict:
     try:
         from clickhouse_utils.executor import QueryExecutor
 
-        executor = QueryExecutor()
+        executor = QueryExecutor(analytics=True)
         result = executor.execute(sql)
 
         if result['error']:
@@ -170,7 +171,7 @@ _CS_COLUMNS = frozenset([
 ])
 
 # Virtual columns resolved via JSON expressions (not real CS table columns)
-_VIRTUAL_CS_COLUMNS = frozenset(['race_list', 'avid', 'avid_type'])
+_VIRTUAL_CS_COLUMNS = frozenset(['race_list', 'dsusd_fep', 'avid', 'avid_type'])
 
 # Column-Picker fields that live in student_enroll, not current_student.
 # 'ell'/'grade' exist in both tables (see the COALESCE handling below); the
@@ -505,8 +506,17 @@ def _build_ap_award_columns_from_db(cursor, selected_award_cols: list[str]) -> t
     return result
 
 
+def _analytics_rows(sql, params):
+    """Return ClickHouse rows, or None if the analytics table is unavailable."""
+    from clickhouse_utils.executor import QueryExecutor
+    result = QueryExecutor(analytics=True).execute(sql, params)
+    if result.get('error'):
+        return None
+    return result.get('rows') or []
+
+
 def _fetch_ap_exam_data(students: list[dict], ap_exam_infos: list[dict]):
-    """Bulk-fetch AP exam grades from Postgres and merge into *students* in-place."""
+    """Bulk-fetch AP exam grades and merge into *students* in-place."""
     if not students or not ap_exam_infos:
         return
     ssids = list({str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()})
@@ -523,32 +533,46 @@ def _fetch_ap_exam_data(students: list[dict], ap_exam_infos: list[dict]):
     for info in ap_exam_infos:
         infos_by_year.setdefault(info['year'], []).append(info)
 
-    try:
-        with connections['default'].cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT r.ssid, r.admin_year, e.name, r.exam_grade
-                FROM "dataLoader_apexamresult" r
-                JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
-                JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
-                WHERE r.ssid = ANY(%s) AND il.is_published = true
-                """,
-                [ssids],
-            )
-            for ssid, year, subject, grade in cursor.fetchall():
-                s_obj = student_map.get(str(ssid).strip())
-                if not s_obj:
-                    continue
-                year_val = (year or '').strip() or 'Unknown'
-                for info in infos_by_year.get(year_val, ()):
-                    if info['subject'].lower() == (subject or '').strip().lower():
-                        s_obj[info['col_name']] = str(grade).strip() if grade else '\u2014'
-    except Exception:
-        pass
+    rows = _analytics_rows(
+        "SELECT ssid, admin_year, exam_name, exam_grade FROM analytics_ap_results "
+        "WHERE ssid = ANY(%s)",
+        [ssids],
+    )
+    if rows is None:
+        try:
+            with connections['default'].cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT r.ssid, r.admin_year, e.name, r.exam_grade
+                    FROM "dataLoader_apexamresult" r
+                    JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                    JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                    WHERE r.ssid = ANY(%s) AND il.is_published = true
+                    """,
+                    [ssids],
+                )
+                rows = [
+                    {'ssid': r[0], 'admin_year': r[1], 'exam_name': r[2], 'exam_grade': r[3]}
+                    for r in cursor.fetchall()
+                ]
+        except Exception:
+            return
+
+    for row in rows:
+        s_obj = student_map.get(str(row.get('ssid') or '').strip())
+        if not s_obj:
+            continue
+        year_val = (row.get('admin_year') or '').strip() or 'Unknown'
+        subject = (row.get('exam_name') or '').strip()
+        grade = row.get('exam_grade')
+        for info in infos_by_year.get(year_val, ()):
+            if info['subject'].lower() == subject.lower():
+                s_obj[info['col_name']] = str(grade).strip() if grade else '\u2014'
+
 
 
 def _fetch_ap_award_data(students: list[dict], award_infos: list[dict]):
-    """Bulk-fetch AP awards from Postgres and merge into *students* in-place.
+    """Bulk-fetch AP awards and merge into *students* in-place.
 
     Individual columns get the award description; the combined ``apawards_all_{year}``
     column gets a comma-separated list of every award earned that year.
@@ -569,39 +593,52 @@ def _fetch_ap_award_data(students: list[dict], award_infos: list[dict]):
     for info in award_infos:
         infos_by_year.setdefault(info['year'], []).append(info)
 
-    try:
-        with connections['default'].cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT a.ssid, a.award_year, t.description
-                FROM "dataLoader_apstudentaward" a
-                JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
-                JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
-                WHERE a.ssid = ANY(%s) AND il.is_published = true
-                """,
-                [ssids],
-            )
-            all_by_year: dict = {}
-            for ssid, year, award in cursor.fetchall():
-                s_obj = student_map.get(str(ssid).strip())
-                if not s_obj:
-                    continue
-                year_val = (year or '').strip() or 'Unknown'
-                for info in infos_by_year.get(year_val, ()):
-                    if info['award'] == '__ALL__':
-                        all_by_year.setdefault((str(ssid).strip(), year_val), set()).add(award)
-                    elif info['award'].lower() == (award or '').strip().lower():
-                        s_obj[info['col_name']] = award or '\u2014'
+    rows = _analytics_rows(
+        "SELECT ssid, award_year, award_description FROM analytics_ap_awards "
+        "WHERE ssid = ANY(%s)",
+        [ssids],
+    )
+    if rows is None:
+        try:
+            with connections['default'].cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT a.ssid, a.award_year, t.description
+                    FROM "dataLoader_apstudentaward" a
+                    JOIN "dataLoader_apawardtype" t ON a.award_type_id = t.code
+                    JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                    WHERE a.ssid = ANY(%s) AND il.is_published = true
+                    """,
+                    [ssids],
+                )
+                rows = [
+                    {'ssid': r[0], 'award_year': r[1], 'award_description': r[2]}
+                    for r in cursor.fetchall()
+                ]
+        except Exception:
+            return
 
-            for (ssid, year_val), awards in all_by_year.items():
-                s_obj = student_map.get(ssid)
-                if not s_obj:
-                    continue
-                for info in infos_by_year.get(year_val, ()):
-                    if info['award'] == '__ALL__':
-                        s_obj[info['col_name']] = ', '.join(sorted(awards))
-    except Exception:
-        pass
+    all_by_year: dict = {}
+    for row in rows:
+        ssid = str(row.get('ssid') or '').strip()
+        s_obj = student_map.get(ssid)
+        if not s_obj:
+            continue
+        year_val = (row.get('award_year') or '').strip() or 'Unknown'
+        award = row.get('award_description')
+        for info in infos_by_year.get(year_val, ()):
+            if info['award'] == '__ALL__':
+                all_by_year.setdefault((ssid, year_val), set()).add(award)
+            elif info['award'].lower() == (award or '').strip().lower():
+                s_obj[info['col_name']] = award or '\u2014'
+
+    for (ssid, year_val), awards in all_by_year.items():
+        s_obj = student_map.get(ssid)
+        if not s_obj:
+            continue
+        for info in infos_by_year.get(year_val, ()):
+            if info['award'] == '__ALL__':
+                s_obj[info['col_name']] = ', '.join(sorted(a for a in awards if a))
 
 
 def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict],
@@ -636,57 +673,86 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
     if not student_ids and not student_ssids:
         return
 
-    test_alias = 't'
-    where_parts = []
-    params = []
-    for info in test_cols_info:
-        part = (
-            f"(r.school_year = %s AND LOWER({test_alias}.test_name) = LOWER(%s)"
-            f" AND LOWER({test_alias}.subject) = LOWER(%s)"
-        )
-        part_params = [info['year'], info['test_name'], info['subject']]
-        if info.get('test_window'):
-            part += f" AND LOWER({test_alias}.test_window) = LOWER(%s)"
-            part_params.append(info['test_window'])
-        part += ")"
-        where_parts.append(part)
-        params.extend(part_params)
+    def _test_where(alias):
+        where_parts = []
+        params = []
+        for info in test_cols_info:
+            part = (
+                f"(r.school_year = %s AND LOWER({alias}.test_name) = LOWER(%s)"
+                f" AND LOWER({alias}.subject) = LOWER(%s)"
+            )
+            part_params = [info['year'], info['test_name'], info['subject']]
+            if info.get('test_window'):
+                part += f" AND LOWER({alias}.test_window) = LOWER(%s)"
+                part_params.append(info['test_window'])
+            part += ")"
+            where_parts.append(part)
+            params.extend(part_params)
+        return where_parts, params
 
     tested_school_clause = ''
+    school_params = []
     if tested_school_codes:
         codes = [c for c in tested_school_codes if c]
         if codes:
-            tested_school_clause = f"AND r.school_code = ANY(%s)"
-            params.append(codes)
+            tested_school_clause = "AND r.school_code = ANY(%s)"
+            school_params = [codes]
 
-    sql = f"""
+    where_r, params_r = _test_where('r')
+    ch_sql = f"""
         SELECT r.local_student_id, r.ssid, r.ss, r.pl, r.other_info,
-               r.school_year, t.test_name, t.subject, t.test_window
-        FROM results r
-        INNER JOIN tests t ON r.test_group_key = t.test_group_key
+               r.school_year, r.test_name, r.subject, r.test_window
+        FROM analytics_student_results r
         WHERE (
             (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND r.ssid = ANY(%s))
             OR ((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = ANY(%s))
           )
-          AND ({" OR ".join(where_parts)})
+          AND ({" OR ".join(where_r)})
           {tested_school_clause}
     """
+    fetched_rows = None
+    if not any(info.get('metric') not in ('ss', 'pl') for info in test_cols_info):
+        fetched_rows = _analytics_rows(ch_sql, [student_ssids, student_ids, *params_r, *school_params])
+    if fetched_rows is None:
+        where_t, params_t = _test_where('t')
+        sql = f"""
+            SELECT r.local_student_id, r.ssid, r.ss, r.pl, r.other_info,
+                   r.school_year, t.test_name, t.subject, t.test_window
+            FROM results r
+            INNER JOIN tests t ON r.test_group_key = t.test_group_key
+            WHERE (
+                (r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND r.ssid = ANY(%s))
+                OR ((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = ANY(%s))
+              )
+              AND ({" OR ".join(where_t)})
+              {tested_school_clause}
+        """
+        from clickhouse_utils.executor import QueryExecutor
+        with QueryExecutor().pg_cursor() as cursor:
+            cursor.execute(sql, [student_ssids, student_ids, *params_t, *school_params])
+            fetched_rows = [
+                {
+                    'local_student_id': row[0], 'ssid': row[1], 'ss': row[2], 'pl': row[3],
+                    'other_info': row[4], 'school_year': row[5], 'test_name': row[6],
+                    'subject': row[7], 'test_window': row[8],
+                }
+                for row in cursor.fetchall()
+            ]
 
-    from clickhouse_utils.executor import QueryExecutor
-    with QueryExecutor().pg_cursor() as cursor:
-        cursor.execute(sql, [student_ssids, student_ids, *params])
-        fetched_rows = cursor.fetchall()
-
-    # Group infos by year so each row only scans the (small) subset of infos
-    # that could possibly match its year, instead of every info every time.
-    # `info['year'] == ry` was already the first condition checked below, so
-    # this changes nothing about which infos match — only how many get checked.
     infos_by_year: dict = {}
     for info in test_cols_info:
         infos_by_year.setdefault(info['year'], []).append(info)
 
     for row in fetched_rows:
-        sid, ssid, ss, pl, oi, ry, rt, rs, rw = row
+        sid = row.get('local_student_id')
+        ssid = row.get('ssid')
+        ss = row.get('ss')
+        pl = row.get('pl')
+        oi = row.get('other_info')
+        ry = row.get('school_year')
+        rt = row.get('test_name')
+        rs = row.get('subject')
+        rw = row.get('test_window')
         # Prefer SSID when present — local_student_id is reused across students.
         s_objs = []
         if ssid:
@@ -751,20 +817,33 @@ def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str]
 
     sql = f"""
         SELECT sm.stu_annual_key, sm.mark, sm.school_year, sm.subject, sm.course_name, sm.mark_period
-        FROM student_marks_list sm
+        FROM analytics_student_marks sm
         WHERE sm.stu_annual_key = ANY(%s)
           AND ({" OR ".join(where_parts)})
     """
-    cursor.execute(sql, [student_keys, *params])
+    fetched_rows = _analytics_rows(sql, [student_keys, *params])
+    if fetched_rows is None:
+        pg_sql = sql.replace('analytics_student_marks', 'student_marks_list')
+        cursor.execute(pg_sql, [student_keys, *params])
+        fetched_rows = [
+            {
+                'stu_annual_key': row[0], 'mark': row[1], 'school_year': row[2],
+                'subject': row[3], 'course_name': row[4], 'mark_period': row[5],
+            }
+            for row in cursor.fetchall()
+        ]
 
-    # Same scoping optimization as _fetch_test_data: group by year up front
-    # so each row only scans infos for its own year (identical match results).
     infos_by_year: dict = {}
     for info in mark_cols_info:
         infos_by_year.setdefault(info['year'], []).append(info)
 
-    for row in cursor.fetchall():
-        sk, mark, ry, rs, rc, rp = row
+    for row in fetched_rows:
+        sk = row.get('stu_annual_key')
+        mark = row.get('mark')
+        ry = row.get('school_year')
+        rs = row.get('subject')
+        rc = row.get('course_name')
+        rp = row.get('mark_period')
         s_obj = student_map.get(sk)
         if not s_obj: continue
         for info in infos_by_year.get(ry, ()):
@@ -933,25 +1012,25 @@ def _enrich_rows_test_mark(
             if need_test and need_mark:
                 def _fetch_tests():
                     _fetch_test_data(
-                        QueryExecutor().cursor(), test_infos, student_ids, rows,
+                        QueryExecutor(analytics=True).cursor(), test_infos, student_ids, rows,
                         tested_school_codes=tested_school_filter,
                     )
 
                 def _fetch_marks():
-                    _fetch_mark_data(QueryExecutor().cursor(), mark_infos, student_keys, rows)
+                    _fetch_mark_data(QueryExecutor(analytics=True).cursor(), mark_infos, student_keys, rows)
 
                 pool = get_io_pool()
                 for f in [pool.submit(_fetch_tests), pool.submit(_fetch_marks)]:
                     f.result()
             elif need_test:
                 _fetch_test_data(
-                    QueryExecutor().cursor(), test_infos, student_ids, rows,
+                    QueryExecutor(analytics=True).cursor(), test_infos, student_ids, rows,
                     tested_school_codes=tested_school_filter,
                 )
             elif need_mark:
-                _fetch_mark_data(QueryExecutor().cursor(), mark_infos, student_keys, rows)
+                _fetch_mark_data(QueryExecutor(analytics=True).cursor(), mark_infos, student_keys, rows)
 
-        # AP data lives in Postgres (Django models), fetched separately from ClickHouse.
+        # AP/survey prefer ClickHouse analytics tables, with PostgreSQL fallback.
         if need_ap:
             _fetch_ap_exam_data(rows, ap_exam_infos)
         if need_award:
@@ -1121,7 +1200,7 @@ def run_saved_query_preview(saved_query) -> dict:
     try:
         from clickhouse_utils.executor import QueryExecutor
 
-        executor = QueryExecutor()
+        executor = QueryExecutor(analytics=True)
         result = executor.execute(sql, ['Active'])
         if result['error']:
             return {'error': result['error'], 'rows': [], 'columns': []}
@@ -1134,7 +1213,7 @@ def run_saved_query_preview(saved_query) -> dict:
         return {'error': str(exc), 'rows': [], 'columns': []}
 
 
-def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: list | None = None, apply_user_filters: bool = False, limit: int | None = None, offset: int | None = None, order_by: str | None = None) -> dict:
+def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: list | None = None, apply_user_filters: bool = False, limit: int | None = None, offset: int | None = None, order_by: str | None = None, cursor: str | None = None) -> dict:
     """
     Execute a ``dataexploration.SavedQuery`` and return rows as a list of dicts.
 
@@ -1174,11 +1253,11 @@ def run_saved_query(query_id: int, extra_filters: dict, user, extra_columns: lis
 
     return _run_saved_query_sql(
         config, user=user if apply_user_filters else None,
-        limit=limit, offset=offset, order_by=order_by,
+        limit=limit, offset=offset, order_by=order_by, cursor=cursor,
     )
 
 
-def run_column_query(selected_columns: list[str], filters: dict | None = None, user=None, apply_user_filters: bool = False, limit: int | None = None, offset: int | None = None, order_by: str | None = None) -> dict:
+def run_column_query(selected_columns: list[str], filters: dict | None = None, user=None, apply_user_filters: bool = False, limit: int | None = None, offset: int | None = None, order_by: str | None = None, cursor: str | None = None) -> dict:
     """
     Execute a query using directly-selected columns (Column Picker source type).
 
@@ -1196,11 +1275,12 @@ def run_column_query(selected_columns: list[str], filters: dict | None = None, u
     }
     return _run_saved_query_sql(
         config, user=user if apply_user_filters else None,
-        limit=limit, offset=offset, order_by=order_by,
+        limit=limit, offset=offset, order_by=order_by, cursor=cursor,
     )
 
 
-def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offset: int | None = None, order_by: str | None = None, count_only: bool = False) -> dict:
+@timed_fn('_run_saved_query_sql')
+def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offset: int | None = None, order_by: str | None = None, count_only: bool = False, cursor: str | None = None) -> dict:
     """
     Execute a saved query config against ``current_student`` using raw SQL.
 
@@ -1230,7 +1310,12 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         'limit': limit,
         'offset': offset,
         'order_by': order_by,
+        'cursor': cursor or '',
         'count_only': count_only,
+        # A successful ClickHouse sync advances this version and naturally
+        # invalidates cached analytics results without clearing unrelated app
+        # caches.
+        'clickhouse_sync_version': cache.get('analytics:clickhouse_sync_version', 'legacy'),
     }, sort_keys=True).encode()).hexdigest()
     cache_key = f"dv_query_result:{config_hash}{user_part}"
     cached = cache.get(cache_key)
@@ -1298,6 +1383,11 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         base_cols.append('stu_annual_key')
     if (need_ap or need_award) and 'ssid' not in base_cols:
         base_cols.append('ssid')
+    if cursor:
+        if 'stu_annual_key' not in base_cols:
+            base_cols.append('stu_annual_key')
+        if 'student_name' not in base_cols:
+            base_cols.append('student_name')
 
     if not base_cols:
         base_cols = ['student_id', 'student_name', 'grade', 'school', 'school_year']
@@ -1439,6 +1529,14 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
     if tested_school_filter and not isinstance(tested_school_filter, list):
         tested_school_filter = [tested_school_filter]
 
+    from dataexploration.view_modules.column_management import (
+        JSON_LIST_COLUMNS,
+        JSON_SCALAR_COLUMNS,
+        append_json_list_filter,
+        json_list_display_expr,
+        json_scalar_expr,
+    )
+
     for fkey, fval in filters.items():
         if fkey == 'search':
             continue  # handled separately below
@@ -1449,20 +1547,18 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             except Exception:
                 dynamic_filters[fkey] = fval
             continue  # dynamic columns are filtered after enrichment below
-        if fkey == 'race_list':
-            from dataexploration.view_modules.column_management import append_race_list_filter
+        json_key = JSON_LIST_COLUMNS.get(fkey)
+        if json_key:
             vals = fval if isinstance(fval, list) else ([fval] if fval else [])
-            append_race_list_filter(where_parts, params, vals)
+            append_json_list_filter(where_parts, params, vals, json_key)
             continue
         if fkey in _ENROLL_FIELDS:
             needs_enroll = True
             _add_filter(_ENROLL_FIELDS[fkey], fval)
         elif fkey in _CS_COLUMNS and _SAFE_IDENT_RE.match(fkey):
             _add_filter(f'cs.{fkey}', fval)
-        elif fkey == 'avid':
-            _add_filter("(cs.add_data::jsonb->>'AVID')", fval)
-        elif fkey == 'avid_type':
-            _add_filter("(cs.add_data::jsonb->>'AVID_type')", fval)
+        elif fkey in JSON_SCALAR_COLUMNS:
+            _add_filter(json_scalar_expr(fkey), fval)
 
     # Search filter
     search = filters.get('search', '')
@@ -1504,13 +1600,10 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             select_exprs.append('COALESCE(se.grade, cs.grade) AS grade')
         elif c in _ENROLL_FIELDS and needs_enroll:
             select_exprs.append(f'{_ENROLL_FIELDS[c]} AS {c}')
-        elif c == 'race_list':
-            from dataexploration.view_modules.column_management import race_list_display_expr
-            select_exprs.append(f'{race_list_display_expr("cs")} AS race_list')
-        elif c == 'avid':
-            select_exprs.append("(cs.add_data::jsonb->>'AVID') AS avid")
-        elif c == 'avid_type':
-            select_exprs.append("(cs.add_data::jsonb->>'AVID_type') AS avid_type")
+        elif c in JSON_LIST_COLUMNS:
+            select_exprs.append(f'{json_list_display_expr(JSON_LIST_COLUMNS[c], "cs")} AS {c}')
+        elif c in JSON_SCALAR_COLUMNS:
+            select_exprs.append(f'{json_scalar_expr(c)} AS {c}')
         else:
             select_exprs.append(f'cs.{c}')
 
@@ -1525,30 +1618,49 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         pass
 
     where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
+    count_where_sql = where_sql
     col_sql   = ', '.join(select_exprs)
     from_sql  = f'FROM current_student cs{join_sql}'
 
     order_sql = ''
+    order_expr = 'cs.stu_annual_key'
+    order_key = 'stu_annual_key'
     if order_by and _SAFE_IDENT_RE.match(order_by.split('.')[-1]):
         bare_ob = order_by.split('.')[-1]
         if bare_ob in _CS_COLUMNS:
-            order_sql = f' ORDER BY cs.{bare_ob}'
+            order_expr = f'cs.{bare_ob}'
+            order_key = bare_ob
+            order_sql = f' ORDER BY {order_expr}, cs.stu_annual_key'
         elif bare_ob in _ENROLL_FIELDS and needs_enroll:
-            order_sql = f' ORDER BY {_ENROLL_FIELDS[bare_ob]}'
+            order_expr = _ENROLL_FIELDS[bare_ob]
+            order_key = bare_ob
+            order_sql = f' ORDER BY {order_expr}, cs.stu_annual_key'
+    elif cursor:
+        order_sql = ' ORDER BY cs.stu_annual_key'
+
+    from clickhouse_utils.pagination import decode_cursor, keyset_clause, cursor_from_row
+    parsed_cursor = decode_cursor(cursor) if cursor else None
+    use_keyset = bool(parsed_cursor and parsed_cursor.get('k') == order_key)
+    if use_keyset:
+        where_parts.append(
+            keyset_clause(order_expr, parsed_cursor['d']).removeprefix(' AND ')
+        )
+        params.extend([parsed_cursor['v'], parsed_cursor['v'], parsed_cursor['sak']])
+        where_sql = ('WHERE ' + ' AND '.join(where_parts)) if where_parts else ''
 
     limit_sql = ''
     if limit is not None and limit > 0:
         limit_sql = f' LIMIT {int(limit)}'
-        if offset is not None and offset > 0:
+        if not use_keyset and offset is not None and offset > 0:
             limit_sql += f' OFFSET {int(offset)}'
 
-    count_sql = f'SELECT COUNT(*) AS cnt {from_sql} {where_sql}'
+    count_sql = f'SELECT COUNT(*) AS cnt {from_sql} {count_where_sql}'
     sql       = f'SELECT {col_sql} {from_sql} {where_sql}{order_sql}{limit_sql}'
 
     try:
         from clickhouse_utils.executor import QueryExecutor
 
-        phase1_executor = QueryExecutor()
+        phase1_executor = QueryExecutor(analytics=True)
         total_rows = None
         if count_only or limit is not None:
             count_result = phase1_executor.execute(count_sql, params)
@@ -1621,6 +1733,7 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
                     break
             col_types.setdefault(col, 'string')
 
+        next_cursor = cursor_from_row(rows[-1], order_key) if rows else ''
         res = {
             'columns':   all_cols,
             'col_types': col_types,
@@ -1628,6 +1741,7 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
             'row_count': len(rows),
             'total_rows': total_rows if total_rows is not None else len(rows),
             'has_more':  False,
+            'next_cursor': next_cursor,
             'error':     None,
         }
         # Cache for 30 minutes (1800s) — confirmed acceptable staleness window
@@ -1635,6 +1749,3 @@ def _run_saved_query_sql(config: dict, user=None, limit: int | None = None, offs
         return res
     except Exception as exc:
         return {'error': str(exc), 'rows': [], 'columns': []}
-
-
-

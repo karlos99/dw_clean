@@ -9,6 +9,8 @@ from dataexploration.utils import get_user_roles
 
 from dataviz.utils.status_filter import _UNSET
 
+from clickhouse_utils.timing import timed_fn
+
 logger = logging.getLogger(__name__)
 
 
@@ -197,10 +199,17 @@ TABLE_WHITELIST = {
     'school': 'school',
     'tests': 'tests',
     'results': 'results',
+    'results_with_tests': 'results_with_tests',
     'schedule_list': 'schedule_list',
     'student_marks_list': 'student_marks_list',
     'users_user': 'users_user',
     'relative_year': 'relative_year',
+    'analytics_student_profile': 'analytics_student_profile',
+    'analytics_student_results': 'analytics_student_results',
+    'analytics_student_marks': 'analytics_student_marks',
+    'analytics_ap_results': 'analytics_ap_results',
+    'analytics_ap_awards': 'analytics_ap_awards',
+    'analytics_survey_responses': 'analytics_survey_responses',
 }
 
 
@@ -284,8 +293,27 @@ def get_columns_for_table(table_name: str) -> set:
                     keys = [row[0] for row in cursor.fetchall() if row[0]]
                     for k in keys:
                         final_cols.add(f"{c}->'{k}'")
+                    if table_name == 'current_student' and c == 'add_data' and 'school_year' in base_cols:
+                        cursor.execute(
+                            'SELECT DISTINCT jsonb_object_keys('
+                            "CASE WHEN jsonb_typeof(add_data) = 'object' THEN add_data "
+                            "WHEN jsonb_typeof(add_data) = 'string' "
+                            "AND left(BTRIM(add_data #>> '{}'), 1) = '{' "
+                            "THEN (add_data #>> '{}')::jsonb ELSE NULL END"
+                            ') AS key FROM current_student '
+                            'WHERE add_data IS NOT NULL AND school_year = ('
+                            'SELECT MAX(school_year) FROM current_student'
+                            ')'
+                        )
+                        for row in cursor.fetchall():
+                            if row[0]:
+                                final_cols.add(f"add_data->'{row[0]}'")
     except Exception:
         logger.warning(f"Failed to extract JSON columns for table {table_name}", exc_info=True)
+
+    if table_name == 'current_student':
+        from dataexploration.view_modules.column_management import known_add_data_json_paths
+        final_cols.update(known_add_data_json_paths())
 
     return final_cols
 
@@ -296,13 +324,16 @@ def get_allowed_dataset_tables():
     Filters the dynamically discovered tables based on settings config.
     """
     from landing.utils import get_project_config
-    
+    from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES
+
     db_tables = get_db_tables()
+    for name in ANALYTICS_TABLE_NAMES:
+        db_tables[name] = name
+    db_tables['results_with_tests'] = 'results_with_tests'
     try:
         cfg = get_project_config()
         enabled = getattr(cfg, 'enabled_dataset_tables', None)
         if enabled is not None:
-            # Filter based on enabled list
             return {t: db_tables[t] for t in enabled if t in db_tables}
     except Exception:
         pass
@@ -346,6 +377,44 @@ COLUMN_WHITELIST = {
         'marks_id', 'stu_annual_key', 'ssid', 'school_year', 'student_id',
         'school_name', 'state_school_id', 'subject', 'course_name', 'staff_name',
         'staff_employee_id', 'mark_period', 'mark'
+    },
+    'results_with_tests': {
+        'test_id', 'ssid', 'local_student_id', 'school_year', 'school_code',
+        'pl', 'ss', 'other_info', 'test_group_key', 'test_name', 'subject',
+        'test_window'
+    },
+    'analytics_student_profile': {
+        'stu_annual_key', 'ssid', 'student_id', 'student_name', 'grade', 'school',
+        'school_state_id', 'school_short_name', 'gender', 'race', 'ell', 'sed',
+        'foster', 'homeless', 'sped', 'gate', 'in_504', 'dli', 'atendace_rate',
+        'suspension_indicator', 'ltel', 'status', 'school_year', 'add_data',
+        'first_name', 'middle_name', 'last_name', 'birth_date', 'enter_date',
+        'leave_date', 'us_enter_date', 'state_enter_date', 'ell_status',
+        'fep_date', 'instructional_setting', 'special_program_code', 'migrant',
+        'attendance_percent', 'absent_fte', 'tardy_count', 'days_enrolled'
+    },
+    'analytics_student_results': {
+        'test_id', 'ssid', 'local_student_id', 'school_year', 'school_code',
+        'pl', 'ss', 'other_info', 'test_group_key', 'test_name', 'subject',
+        'test_window', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'gender', 'race', 'ell', 'sed', 'sped'
+    },
+    'analytics_student_marks': {
+        'marks_id', 'stu_annual_key', 'ssid', 'school_year', 'student_id',
+        'school_name', 'state_school_id', 'school_type', 'subject', 'course_name',
+        'staff_name', 'staff_email', 'staff_employee_id', 'mark_period', 'mark',
+        'created_at', 'updated_at', 'student_name', 'grade', 'status', 'gender',
+        'school'
+    },
+    'analytics_ap_results': {
+        'ssid', 'admin_year', 'exam_name', 'exam_grade', 'exam_id',
+    },
+    'analytics_ap_awards': {
+        'ssid', 'award_year', 'award_description',
+    },
+    'analytics_survey_responses': {
+        'student_id', 'ssid', 'survey_type', 'school_year', 'testing_window',
+        'grade_range', 'question_order', 'value',
     },
     'users_user': {
         'id', 'username', 'email', 'name', 'first_name', 'last_name', 'is_active',
@@ -392,21 +461,31 @@ def format_column_expr(tbl, col):
     Given a table name and a column name, returns the SQL expression.
     If the column name contains a JSON path like 'other_info->\'lexile\'',
     formats it as '"table"."other_info"->>\'lexile\''.
-    Race-list arrays (add_data->'l_race') are rendered as comma-joined text.
+    JSON-list arrays (add_data->'l_race') are rendered as comma-joined text.
     """
     if '->' in col:
         base_col, key = col.split('->', 1)
         key_clean = key.strip("'\"")
-        if base_col == 'add_data' and key_clean == 'l_race':
-            from dataexploration.view_modules.column_management import race_list_display_expr
-            return race_list_display_expr(f'"{tbl}"')
+        if base_col == 'add_data':
+            from dataexploration.view_modules.column_management import (
+                json_list_key_for_column,
+                json_list_display_expr,
+                JSON_SCALAR_COLUMNS,
+                json_scalar_expr,
+            )
+            json_key = json_list_key_for_column(f"add_data->'{key_clean}'")
+            if json_key:
+                return json_list_display_expr(json_key, f'"{tbl}"')
+            virt = next((c for c, k in JSON_SCALAR_COLUMNS.items() if k == key_clean), None)
+            if virt:
+                return json_scalar_expr(virt, f'"{tbl}"')
         return f'"{tbl}"."{base_col}"->>\'{key_clean}\''
     return f'"{tbl}"."{col}"'
 
 
-def _append_dataset_l_race_filter(where_parts, params, tbl, val, operator='in'):
-    """Any-of overlap filter for current_student.add_data->'l_race'."""
-    from dataexploration.view_modules.column_management import append_race_list_filter
+def _append_dataset_json_list_filter(where_parts, params, tbl, json_key, val, operator='in'):
+    """Any-of overlap filter for current_student.add_data JSON-list keys."""
+    from dataexploration.view_modules.column_management import append_json_list_filter
     alias = f'"{tbl}"'
     if operator == 'exact':
         values = [val] if val not in (None, '') else []
@@ -414,7 +493,7 @@ def _append_dataset_l_race_filter(where_parts, params, tbl, val, operator='in'):
         values = val
     else:
         values = [val] if val not in (None, '') else []
-    append_race_list_filter(where_parts, params, values, table_alias=alias)
+    append_json_list_filter(where_parts, params, values, json_key, table_alias=alias)
 
 
 def find_stu_annual_key_column(active_tables, columns_list=None) -> str | None:
@@ -479,6 +558,46 @@ def _is_results_json_column(col_str: str) -> bool:
     return '->' in col_str or col_str == 'results.other_info'
 
 
+def _inject_student_filter_joins(joins_list, active_tables, interactive_filters):
+    """LEFT JOIN current_student / student_enroll when a filter needs those tables."""
+    if not interactive_filters:
+        return joins_list, active_tables
+    joins_list = list(joins_list or [])
+    active_tables = set(active_tables)
+    for target_tbl in ('current_student', 'student_enroll'):
+        has_filter = any(str(fkey).startswith(f'{target_tbl}.') for fkey in interactive_filters)
+        if not has_filter or target_tbl in active_tables:
+            continue
+        join_target = None
+        join_col = None
+        for col in ('stu_annual_key', 'student_id', 'ssid'):
+            for t in active_tables:
+                if col in _allowed(t) and col in _allowed(target_tbl):
+                    join_target, join_col = t, col
+                    break
+            if join_target:
+                break
+        if not join_target:
+            continue
+        extra = []
+        if 'school_year' in _allowed(join_target) and 'school_year' in _allowed(target_tbl):
+            extra.append({
+                'on_left': f'{target_tbl}.school_year',
+                'on_right': f'{join_target}.school_year',
+            })
+        joins_list.append({
+            'table': target_tbl,
+            'join_type': 'left',
+            'conditions': [{
+                'on_left': f'{target_tbl}.{join_col}',
+                'on_right': f'{join_target}.{join_col}',
+            }] + extra,
+        })
+        active_tables.add(target_tbl)
+    return joins_list, active_tables
+
+
+@timed_fn('compile_dataset_to_sql')
 def compile_dataset_to_sql(
     dataset,
     user=None,
@@ -540,59 +659,10 @@ def compile_dataset_to_sql(
             raise SQLCompilationError(f"Joined table '{join_table}' is not whitelisted.")
         active_tables.add(join_table)
 
-    # Dynamic join injection for unjoined whitelisted tables referenced in filters
-    if interactive_filters:
-        for target_tbl in ('current_student', 'student_enroll'):
-            has_filter = any(fkey.startswith(f'{target_tbl}.') for fkey in interactive_filters)
-            if has_filter and target_tbl not in active_tables:
-                join_target = None
-                join_col_self = None
-                join_col_target = None
-                
-                # Priority 1: stu_annual_key
-                for t in active_tables:
-                    if 'stu_annual_key' in _allowed(t) and 'stu_annual_key' in _allowed(target_tbl):
-                        join_target = t
-                        join_col_self = 'stu_annual_key'
-                        join_col_target = 'stu_annual_key'
-                        break
-                # Priority 2: student_id
-                if not join_target:
-                    for t in active_tables:
-                        if 'student_id' in _allowed(t) and 'student_id' in _allowed(target_tbl):
-                            join_target = t
-                            join_col_self = 'student_id'
-                            join_col_target = 'student_id'
-                            break
-                # Priority 3: ssid
-                if not join_target:
-                    for t in active_tables:
-                        if 'ssid' in _allowed(t) and 'ssid' in _allowed(target_tbl):
-                            join_target = t
-                            join_col_self = 'ssid'
-                            join_col_target = 'ssid'
-                            break
-                            
-                if join_target:
-                    extra_join_conds = []
-                    if 'school_year' in _allowed(join_target) and 'school_year' in _allowed(target_tbl):
-                        extra_join_conds.append({
-                            'on_left': f'{target_tbl}.school_year',
-                            'on_right': f'{join_target}.school_year'
-                        })
-                    joins_list = list(joins_list)
-                    joins_list.append({
-                        'table': target_tbl,
-                        'join_type': 'left',
-                        'conditions': [
-                            {
-                                'on_left': f'{target_tbl}.{join_col_self}',
-                                'on_right': f'{join_target}.{join_col_target}'
-                            }
-                        ] + extra_join_conds
-                    })
-                    active_tables.add(target_tbl)
-        
+    joins_list, active_tables = _inject_student_filter_joins(
+        joins_list, active_tables, interactive_filters,
+    )
+
     columns_list = list(dataset.columns or [])
     if not columns_list:
         raise SQLCompilationError("Dataset has no select columns specified.")
@@ -691,9 +761,10 @@ def compile_dataset_to_sql(
         
         tbl, col = validate_column_identifier(col_str, active_tables)
 
-        from dataexploration.view_modules.column_management import is_race_list_column
-        if is_race_list_column(col_str) or is_race_list_column(col):
-            _append_dataset_l_race_filter(where_parts, params, tbl, val, operator)
+        from dataexploration.view_modules.column_management import json_list_key_for_column
+        json_key = json_list_key_for_column(col_str) or json_list_key_for_column(col)
+        if json_key:
+            _append_dataset_json_list_filter(where_parts, params, tbl, json_key, val, operator)
             continue
 
         expr = format_column_expr(tbl, col)
@@ -816,9 +887,10 @@ def compile_dataset_to_sql(
             if ftbl not in allowed_tables or base_col not in get_columns_for_table(ftbl):
                 continue
 
-            from dataexploration.view_modules.column_management import is_race_list_column
-            if is_race_list_column(fname) or is_race_list_column(fkey):
-                _append_dataset_l_race_filter(where_parts, params, ftbl, fval, 'in')
+            from dataexploration.view_modules.column_management import json_list_key_for_column
+            json_key = json_list_key_for_column(fname) or json_list_key_for_column(fkey)
+            if json_key:
+                _append_dataset_json_list_filter(where_parts, params, ftbl, json_key, fval, 'in')
                 continue
             
             # Add filter condition
@@ -924,18 +996,37 @@ def compile_dataset_to_sql(
     return result
 
 
-def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation, series_col=None, user=None, limit=None):
+def _sql_date_bucket(expr, bucket):
+    """ClickHouse labels matching ``_bucket_date_column`` (day/week/month/quarter/year)."""
+    d = f"toDateOrNull(left(toString({expr}), 10))"
+    bucket = (bucket or 'day').lower()
+    if bucket == 'year':
+        return f"toString(toYear({d}))"
+    if bucket == 'month':
+        return f"formatDateTime({d}, '%Y-%m')"
+    if bucket == 'quarter':
+        return f"concat(toString(toYear({d})), '-Q', toString(toQuarter({d})))"
+    if bucket == 'week':
+        return f"formatDateTime({d}, '%G-W%V')"
+    return f"formatDateTime({d}, '%Y-%m-%d')"
+
+
+def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation, series_col=None, user=None, limit=None, interactive_filters=None, one_row_per_stu_annual_key=False, date_bucket=None):
     """
     Compiles a Dataset definition into aggregated SQL with GROUP BY.
 
     ``group_by_cols`` — list of ``table.column`` strings for the GROUP BY clause.
-    ``y_col``          — ``table.column`` string for the value column to aggregate.
-    ``aggregation``    — one of ``count, sum, avg, min, max``.
+    ``y_col``          — ``table.column`` string for the value column to aggregate,
+                         or ``None`` for row counts.
+    ``aggregation``    — one of ``count, sum, avg, min, max, median``.
     ``series_col``     — optional ``table.column`` for series grouping (added to GROUP BY).
 
     Returns ``(sql_query_string, parameters_list)``.
     """
-    SQL_FUNCS = {'count': 'COUNT', 'sum': 'SUM', 'avg': 'AVG', 'min': 'MIN', 'max': 'MAX'}
+    SQL_FUNCS = {
+        'count': 'COUNT', 'sum': 'SUM', 'avg': 'AVG',
+        'min': 'MIN', 'max': 'MAX', 'median': 'median',
+    }
     agg_func = SQL_FUNCS.get(aggregation)
     if not agg_func:
         raise SQLCompilationError(f"Unsupported aggregation: {aggregation}")
@@ -953,27 +1044,32 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
             raise SQLCompilationError(f"Joined table '{join_table}' is not whitelisted.")
         active_tables.add(join_table)
 
+    joins_list, active_tables = _inject_student_filter_joins(
+        joins_list, active_tables, interactive_filters,
+    )
+
     all_group_cols = list(group_by_cols)
     if series_col and series_col not in all_group_cols:
         all_group_cols.append(series_col)
+    x_col_str = group_by_cols[0] if group_by_cols else None
 
-    select_clauses = []
-    group_clauses = []
+    group_items = []
     for col_str in all_group_cols:
         tbl, col = validate_column_identifier(col_str, active_tables)
         expr = format_column_expr(tbl, col)
+        if date_bucket and col_str == x_col_str:
+            expr = _sql_date_bucket(expr, date_bucket)
         alias = col_str.replace('.', '_')
-        select_clauses.append(f'{expr} AS "{alias}"')
-        group_clauses.append(expr)
+        group_items.append((expr, alias))
 
-    # Add aggregated value column
-    y_tbl, y_col_name = validate_column_identifier(y_col, active_tables)
-    y_expr = format_column_expr(y_tbl, y_col_name)
-    y_alias = y_col.replace('.', '_')
-    select_clauses.append(f'{agg_func}({y_expr}) AS "{y_alias}"')
+    y_expr = None
+    if not (aggregation == 'count' and not y_col):
+        if not y_col:
+            raise SQLCompilationError(f"Aggregation '{aggregation}' requires a value column")
+        y_tbl, y_col_name = validate_column_identifier(y_col, active_tables)
+        y_expr = format_column_expr(y_tbl, y_col_name)
 
-    select_sql = ", ".join(select_clauses)
-    sql = f'SELECT {select_sql} FROM "{base_table}"'
+    from_sql = f'FROM "{base_table}"'
 
     # Joins (same as compile_dataset_to_sql)
     join_clauses = []
@@ -994,7 +1090,7 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
             on_clauses.append(f'{format_column_expr(l_tbl, l_col)} = {format_column_expr(r_tbl, r_col)}')
         join_clauses.append(f'{join_keyword} "{join_table}" ON ' + " AND ".join(on_clauses))
     if join_clauses:
-        sql += " " + " ".join(join_clauses)
+        from_sql += " " + " ".join(join_clauses)
 
     # Filters (same as compile_dataset_to_sql)
     where_parts = []
@@ -1005,9 +1101,10 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
         operator = f.get('operator', 'exact').lower()
         val = f.get('value')
         tbl, col = validate_column_identifier(col_str, active_tables)
-        from dataexploration.view_modules.column_management import is_race_list_column
-        if is_race_list_column(col_str) or is_race_list_column(col):
-            _append_dataset_l_race_filter(where_parts, params, tbl, val, operator)
+        from dataexploration.view_modules.column_management import json_list_key_for_column
+        json_key = json_list_key_for_column(col_str) or json_list_key_for_column(col)
+        if json_key:
+            _append_dataset_json_list_filter(where_parts, params, tbl, json_key, val, operator)
             continue
         expr = format_column_expr(tbl, col)
         if operator == 'exact':
@@ -1032,6 +1129,23 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
             else:
                 where_parts.append(f'{expr} = %s')
                 params.append(val)
+
+    # Interactive filters are supplied separately by chart/page requests and
+    # must be applied before aggregation. The caller resolves these keys to
+    # whitelisted table.column names before calling this compiler.
+    for col_str, val in (interactive_filters or {}).items():
+        tbl, col = validate_column_identifier(col_str, active_tables)
+        expr = format_column_expr(tbl, col)
+        if isinstance(val, (list, tuple, set)):
+            values = list(val)
+            if values:
+                where_parts.append(f'{expr} = ANY(%s)')
+                params.append(values)
+            else:
+                where_parts.append('1=0')
+        else:
+            where_parts.append(f'{expr} = %s')
+            params.append(val)
 
     # School security filter injection (same as compile_dataset_to_sql)
     if user:
@@ -1090,9 +1204,55 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
                 else:
                     where_parts.append("1=0")  # No students assigned
 
+    from_where = from_sql
     if where_parts:
-        sql += " WHERE " + " AND ".join(where_parts)
-    sql += " GROUP BY " + ", ".join(group_clauses)
+        from_where += " WHERE " + " AND ".join(where_parts)
+
+    aliases = [alias for _expr, alias in group_items]
+
+    if one_row_per_stu_annual_key:
+        sak_col = find_stu_annual_key_column(active_tables, dataset.columns or [])
+        if not sak_col:
+            raise SQLCompilationError(
+                'one_row_per_stu_annual_key requires a stu_annual_key column'
+            )
+        sak_tbl, sak_name = validate_column_identifier(sak_col, active_tables)
+        sak_expr = format_column_expr(sak_tbl, sak_name)
+        inner_cols = [f'{sak_expr} AS _sak']
+        for expr, alias in group_items:
+            inner_cols.append(f'any({expr}) AS "{alias}"')
+        if y_expr is not None:
+            inner_cols.append(f'any({y_expr}) AS _y')
+        inner = (
+            f"SELECT {', '.join(inner_cols)} {from_where} GROUP BY {sak_expr}"
+        )
+        outer_groups = ", ".join(f'"{a}"' for a in aliases)
+        if y_expr is None:
+            outer_agg = 'COUNT(*)'
+        elif aggregation == 'count':
+            outer_agg = 'COUNT(_y)'
+        else:
+            outer_agg = (
+                f"{agg_func}(toFloat64OrNull(nullIf(toString(_y), '')))"
+            )
+        sql = (
+            f'SELECT {outer_groups}, {outer_agg} AS "__dv_value" '
+            f'FROM ({inner}) AS _sak GROUP BY {outer_groups}'
+        )
+    else:
+        select_clauses = [f'{expr} AS "{alias}"' for expr, alias in group_items]
+        if y_expr is None:
+            select_clauses.append('COUNT(*) AS "__dv_value"')
+        elif aggregation == 'count':
+            select_clauses.append(f'COUNT({y_expr}) AS "__dv_value"')
+        else:
+            num_expr = f"toFloat64OrNull(nullIf(toString({y_expr}), ''))"
+            select_clauses.append(f'{agg_func}({num_expr}) AS "__dv_value"')
+        group_clauses = [expr for expr, _alias in group_items]
+        sql = (
+            f'SELECT {", ".join(select_clauses)} {from_where} '
+            f'GROUP BY {", ".join(group_clauses)}'
+        )
     if limit is not None:
         sql += f" LIMIT {limit}"
 
@@ -1106,7 +1266,7 @@ def execute_compiled_query(sql, params):
     """
     from clickhouse_utils.executor import QueryExecutor
 
-    executor = QueryExecutor()
+    executor = QueryExecutor(analytics=True)
     result = executor.execute(sql, params)
     return result
 
@@ -1123,7 +1283,7 @@ def execute_compiled_query_aliased(sql, params, column_mappings):
     """
     from clickhouse_utils.executor import QueryExecutor
 
-    executor = QueryExecutor()
+    executor = QueryExecutor(analytics=True)
     result = executor.execute(sql, params)
 
     if result['error']:
