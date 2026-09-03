@@ -175,6 +175,31 @@
                                 class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4">
                             <span class="text-sm font-semibold text-slate-800">All Marks</span>
                         </label>
+
+                        {% comment %}Course picker for "All Marks": lets users uncheck courses they
+                           don't want included in the course/marks columns. Hidden until the umbrella
+                           is selected (toggled in student_tests_app.js). Homeroom courses are never
+                           part of the Elementary All Marks view, so those rows are hidden by JS.{% endcomment %}
+                        <div data-markall-course-box class="hidden ml-1 mt-0.5 space-y-1">
+                            <div class="flex items-center justify-between px-1">
+                                <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Include courses</span>
+                                <span data-markall-course-hint class="text-[10px] text-slate-400"></span>
+                            </div>
+                            <div class="ml-1 space-y-0.5 pl-2 border-l border-emerald-100">
+                                {% for course, periods in courses.items %}
+                                <label class="flex items-center gap-1.5 p-0.5 hover:bg-emerald-50 rounded cursor-pointer transition-colors"
+                                       data-markall-course-name-wrap="{{ course }}"
+                                       title="{{ course }}">
+                                    <input type="checkbox" data-markall-course="1"
+                                        data-markall-course-name="{{ course }}"
+                                        data-markall-year="{{ year }}" data-markall-subject="{{ subject }}"
+                                        class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-3.5 w-3.5 flex-shrink-0"
+                                        checked>
+                                    <span class="text-xs text-slate-700 truncate">{{ course }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
                         {% for course, periods in courses.items %}
                         <div class="pl-2 border-l border-slate-200">
                             <button data-toggle-category="marks_{{ year|slugify }}_{{ subject|slugify }}_{{ course|slugify }}"

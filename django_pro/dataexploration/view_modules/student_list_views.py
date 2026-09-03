@@ -39,7 +39,11 @@ from .column_management import (
     json_list_unnest_select_expr,
 )
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
-from .filter_sql import apply_column_filters, normalize_filter_param as _normalize_filter_param
+from .filter_sql import (
+    apply_column_filters,
+    normalize_filter_param as _normalize_filter_param,
+    extract_markall_course_excludes,
+)
 from landing.utils import get_project_config
 
 logger = logging.getLogger(__name__)
@@ -354,14 +358,17 @@ def load_students(request):
             pass
         return subject_norm.replace('_', ' ')
 
-    def _markall_excluded_course_sql():
-        """SQL predicate excluding Homeroom courses for the Elementary subject.
+    def _markall_course_sql_parts(subject, excludes):
+        """SQL predicate + params restricting which courses participate.
 
         Homeroom courses (e.g. "Homeroom Gr 1", "IS Homeroom Gr KN-5") are
         administrative placeholder courses and are filtered out of the
-        Elementary subject's "All Marks" view.
+        Elementary subject's "All Marks" view. User-deselected courses (from
+        the course picker) are excluded here too so the whole wide-pair view
+        stays consistent.
         """
-        return "(sm.course_name NOT ILIKE '%%Homeroom%%')"
+        from .filter_sql import markall_course_filter_parts
+        return markall_course_filter_parts(subject, excludes)
 
     markall_years = {}  # (year, subject_actual) -> umbrella key
     for c in selected_columns:
@@ -457,13 +464,19 @@ def load_students(request):
     if _sy_in_url:
         _sy_raw = request.GET.get('school_year', '')
         school_year = _parse_multi(_sy_raw, '')
-    elif _project_default_year:
-        school_year = _project_default_year
     else:
-        school_year = _parse_multi(
+        # A saved query's own school year wins over the project default, so
+        # reopening a query still targets the year it was built for.
+        _saved_school_year = _parse_multi(
             saved_filters.get('school_year', ''),
             _parse_multi(saved_config.get('school_year', ''), '')
         )
+        if saved_query_id and _saved_school_year:
+            school_year = _saved_school_year
+        elif _project_default_year:
+            school_year = _project_default_year
+        else:
+            school_year = _saved_school_year
 
     if not school_year:
         school_year = '__sy_this__'
@@ -534,6 +547,17 @@ def load_students(request):
             k: v for k, v in filters.items()
             if not (isinstance(k, str) and k.startswith('mark_') and not k.startswith('markall_'))
         }
+
+    # Courses the user deselected from an "All Marks" umbrella. Stored under the
+    # umbrella key as 'exclude:<course>' values; read before SQL filtering since
+    # these entries only shape the wide-pair columns, never the row population.
+    markall_excludes = extract_markall_course_excludes(filters)
+
+    def _markall_course_excludes(year, subject):
+        umbrella = markall_years.get((year, subject))
+        if umbrella:
+            return markall_excludes.get(umbrella, set())
+        return set()
 
     with QueryExecutor(analytics=True).cursor() as cursor:
         db_columns = get_current_student_columns()
@@ -1046,9 +1070,9 @@ def load_students(request):
         if markall_years:
             with connections['default'].cursor() as markall_cursor:
                 for (year, subject), umbrella in markall_years.items():
-                    course_filter_sql = ""
-                    if subject == 'Elementary':
-                        course_filter_sql = "AND " + _markall_excluded_course_sql()
+                    course_filter_sql, course_extra_params = _markall_course_sql_parts(
+                        subject, _markall_course_excludes(year, subject)
+                    )
                     markall_cursor.execute(
                         f"""
                         SELECT COALESCE(MAX(cnt), 0)
@@ -1063,7 +1087,7 @@ def load_students(request):
                             GROUP BY sm.stu_annual_key
                         ) t
                         """,
-                        params + [year, subject],
+                        params + [year, subject] + course_extra_params,
                     )
                     markall_max[(year, subject)] = min(int(markall_cursor.fetchone()[0] or 0), 10)
 
@@ -1452,9 +1476,9 @@ def load_students(request):
                 if student_keys_all:
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
-                        course_filter_sql = ""
-                        if subject == 'Elementary':
-                            course_filter_sql = " AND " + _markall_excluded_course_sql()
+                        course_filter_sql, course_extra_params = _markall_course_sql_parts(
+                            subject, _markall_course_excludes(year, subject)
+                        )
                         markall_sql = f"""
                             SELECT stu_annual_key, course_name, mark_period, mark
                             FROM analytics_student_marks sm
@@ -1464,7 +1488,7 @@ def load_students(request):
                         """
                         markall_rows = _fetchall_ch_or_pg(
                             markall_sql,
-                            [student_keys_all, year, subject],
+                            [student_keys_all, year, subject] + course_extra_params,
                             markall_sql.replace('analytics_student_marks', 'student_marks_list'),
                         )
                         by_key = {}
@@ -1942,6 +1966,9 @@ def load_students(request):
             # Add filter options for Marks "All Marks" wide-pair columns
             for (year, subject), umbrella in markall_years.items():
                 n = markall_max.get((year, subject), 0)
+                course_filter_sql, course_extra_params = _markall_course_sql_parts(
+                    subject, _markall_course_excludes(year, subject)
+                )
                 for i in range(1, n + 1):
                     course_col = f"{umbrella}_{i}_COURSE"
                     marks_col = f"{umbrella}_{i}_MARKS"
@@ -1965,9 +1992,6 @@ def load_students(request):
 
                         if is_marks:
                             # Distinct "period: mark" pairs
-                            course_filter_sql = ""
-                            if subject == 'Elementary':
-                                course_filter_sql = " AND " + _markall_excluded_course_sql()
                             # Distinct marking periods (prefixed) — individual selections
                             period_query = f"""
                                 SELECT DISTINCT CONCAT('period:', sm.mark_period) AS v
@@ -1981,12 +2005,13 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            cursor.execute(period_query, option_params + [year, subject])
                             period_values = []
-                            for row in cursor.fetchall():
-                                v = row[0]
-                                if v is not None and v not in period_values:
-                                    period_values.append(v)
+                            with connections['default'].cursor() as pg_cursor:
+                                pg_cursor.execute(period_query, option_params + [year, subject] + course_extra_params)
+                                for row in pg_cursor.fetchall():
+                                    v = row[0]
+                                    if v is not None and v not in period_values:
+                                        period_values.append(v)
 
                             # Distinct marks (prefixed) — individual selections
                             mark_query = f"""
@@ -2001,12 +2026,13 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            cursor.execute(mark_query, option_params + [year, subject])
                             mark_values = []
-                            for row in cursor.fetchall():
-                                v = row[0]
-                                if v is not None and v not in mark_values:
-                                    mark_values.append(v)
+                            with connections['default'].cursor() as pg_cursor:
+                                pg_cursor.execute(mark_query, option_params + [year, subject] + course_extra_params)
+                                for row in pg_cursor.fetchall():
+                                    v = row[0]
+                                    if v is not None and v not in mark_values:
+                                        mark_values.append(v)
 
                             values = period_values + mark_values
                             if values:
@@ -2014,9 +2040,6 @@ def load_students(request):
                                 cache.set(cache_key, values, 300)
                         else:
                             # Distinct course names
-                            course_filter_sql = ""
-                            if subject == 'Elementary':
-                                course_filter_sql = " AND " + _markall_excluded_course_sql()
                             options_query = f"""
                                 SELECT DISTINCT sm.course_name AS v
                                 FROM student_marks_list sm
@@ -2029,15 +2052,15 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            cursor.execute(options_query, option_params + [year, subject])
-
                             values = []
-                            for row in cursor.fetchall():
-                                val = row[0]
-                                if val is None:
-                                    val = ""
-                                if val not in values:
-                                    values.append(val)
+                            with connections['default'].cursor() as pg_cursor:
+                                pg_cursor.execute(options_query, option_params + [year, subject] + course_extra_params)
+                                for row in pg_cursor.fetchall():
+                                    val = row[0]
+                                    if val is None:
+                                        val = ""
+                                    if val not in values:
+                                        values.append(val)
                             if values:
                                 filter_options[col_key] = values
                                 cache.set(cache_key, values, 300)

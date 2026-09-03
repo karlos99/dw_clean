@@ -42,6 +42,31 @@ def markall_excluded_course_sql():
     return "(sm.course_name NOT ILIKE '%%Homeroom%%')"
 
 
+def markall_course_filter_parts(subject, excludes):
+    """SQL predicate + extra params restricting which courses participate.
+
+    Homeroom courses (e.g. "Homeroom Gr 1", "IS Homeroom Gr KN-5") are
+    administrative placeholder courses and are filtered out of the Elementary
+    subject's "All Marks" view. User-deselected courses (from the course picker)
+    are excluded here too so the whole wide-pair view stays consistent.
+
+    Returns ``(sql_fragment, extra_params)``; ``sql_fragment`` is empty when no
+    restriction applies.
+    """
+    clauses = []
+    extra = []
+    if subject == 'Elementary':
+        clauses.append("(sm.course_name NOT ILIKE '%%Homeroom%%')")
+    if excludes:
+        names = sorted(excludes)
+        placeholders = ", ".join(["%s"] * len(names))
+        clauses.append(f"sm.course_name NOT IN ({placeholders})")
+        extra.extend(names)
+    if not clauses:
+        return "", []
+    return (" AND " + " AND ".join(clauses), extra)
+
+
 def markall_subject_actual(year, subject_norm):
     """Resolve a normalized markall subject token back to its real spelling."""
     try:
@@ -53,6 +78,39 @@ def markall_subject_actual(year, subject_norm):
     except Exception:
         pass
     return subject_norm.replace('_', ' ')
+
+
+def is_markall_umbrella_key(col):
+    """True for a ``markall_`` umbrella key (no ``_<i>_COURSE``/``_MARKS`` suffix)."""
+    if not isinstance(col, str) or not col.startswith('markall_'):
+        return False
+    parsed = parse_markall_key(col)
+    return bool(parsed) and parsed['kind'] is None
+
+
+def extract_markall_course_excludes(filters_to_apply):
+    """Read the per-umbrella course exclude list from a filters dict.
+
+    The Data Explorer stores courses the user deselected under the ``All Marks``
+    umbrella key (e.g. ``markall_2025_2026_Math``) as ``exclude:<course>`` values.
+    Returns ``{umbrella_key: set(course_names)}``. These entries only describe
+    which courses participate in the All Marks wide pairs — they are never row
+    filters, so callers skip them when building SQL.
+    """
+    excludes = {}
+    if not isinstance(filters_to_apply, dict):
+        return excludes
+    for col, values in filters_to_apply.items():
+        if not is_markall_umbrella_key(col):
+            continue
+        names = set()
+        for value in values or []:
+            value_str = str(value)
+            if value_str.startswith('exclude:'):
+                names.add(value_str[len('exclude:'):])
+        if names:
+            excludes[col] = names
+    return excludes
 
 
 def apply_column_filters(
@@ -319,7 +377,9 @@ def apply_column_filters(
 
         if col.startswith('markall_'):
             parsed = parse_markall_key(col)
-            if not parsed:
+            if not parsed or parsed['kind'] is None:
+                # Umbrella-level keys only carry course include/exclude bookkeeping
+                # for the All Marks view; they are not row filters.
                 continue
             year = parsed['year']
             subject = markall_subject_actual(parsed['year'], parsed['subject_norm'])
