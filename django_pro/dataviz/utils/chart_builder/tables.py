@@ -326,6 +326,8 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
         row_cells = []
         for i, cv in enumerate(col_vals):
             v = counts[i]
+            if st_agg_decimals is not None and st_agg_func != 'count':
+                v = round(v, st_agg_decimals)
             alt_v = pivot_cell(ct_alt_lookup, rv, cv, default=None) if ct_alt_lookup is not None else None
             if alt_v == 0.0 and (rv, cv) not in (ct_alt_lookup or {}):
                 alt_v = None
