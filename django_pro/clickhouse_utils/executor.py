@@ -128,7 +128,7 @@ class QueryExecutor:
             from .translator import SQLTranslationError
             if _sql_requires_postgres(sql):
                 return self._execute_postgres(sql, params)
-            if _sql_uses_pg_add_data_key(sql) and not self.analytics:
+            if _sql_uses_pg_add_data_key(sql):
                 return self._execute_postgres(sql, params)
             try:
                 return self._execute_clickhouse(sql, params)
@@ -168,7 +168,7 @@ class QueryExecutor:
             from .translator import SQLTranslationError
             if _sql_requires_postgres(sql):
                 return self._execute_postgres_fetchall(sql, params)
-            if _sql_uses_pg_add_data_key(sql) and not self.analytics:
+            if _sql_uses_pg_add_data_key(sql):
                 return self._execute_postgres_fetchall(sql, params)
             try:
                 result = self._execute_clickhouse(sql, params)

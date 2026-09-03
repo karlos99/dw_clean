@@ -342,3 +342,42 @@ class CsFilterClauseTests(SimpleTestCase):
 		self.assertIn("->>'DSUSD_FEP'", where_clauses[0])
 		self.assertNotIn('cs.dsusd_fep', where_clauses[0])
 		self.assertEqual(params, [['Y']])
+
+
+class ApplyColumnFilterTests(SimpleTestCase):
+	def test_grade_column_filter_applies_to_cs_grade(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+
+		where_clauses = []
+		params = []
+		apply_column_filters(
+			where_clauses, params,
+			{'grade': ['03']},
+			{}, {}, {'grade'}, {}, False,
+		)
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn('cs.grade', where_clauses[0])
+		self.assertEqual(params, [['03']])
+
+	def test_mark_column_filter_uses_stu_annual_key_subquery(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+
+		where_clauses = []
+		params = []
+		mark_col_map = {
+			'mark_2025_2026_Math_Algebra_Q1': {
+				'col_name': 'mark_2025_2026_Math_Algebra_Q1',
+				'year': '2025-2026',
+				'subject': 'Math',
+				'course_name': 'Algebra',
+				'mark_period': 'Q1',
+			},
+		}
+		apply_column_filters(
+			where_clauses, params,
+			{'mark_2025_2026_Math_Algebra_Q1': ['A']},
+			{}, mark_col_map, set(), {}, False,
+		)
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn('student_marks_list', where_clauses[0])
+		self.assertIn('stu_annual_key', where_clauses[0])

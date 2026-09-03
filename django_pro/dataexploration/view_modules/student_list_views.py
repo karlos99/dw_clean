@@ -39,6 +39,11 @@ from .column_management import (
     json_list_unnest_select_expr,
 )
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
+from .filter_sql import (
+    apply_column_filters,
+    normalize_filter_param as _normalize_filter_param,
+    extract_markall_course_excludes,
+)
 from landing.utils import get_project_config
 
 logger = logging.getLogger(__name__)
@@ -77,32 +82,6 @@ def _serialize_context_filter(val):
     if isinstance(val, list):
         return val[0] if len(val) == 1 else (val if val else '')
     return val or ''
-
-
-def _normalize_filter_param(col, value):
-    """Coerce filter values to native Python types for typed columns."""
-    if value in (None, ''):
-        return value
-
-    if col in {'birth_date', 'us_enter_date', 'fep_date'}:
-        if isinstance(value, (datetime, date)):
-            return value
-        if isinstance(value, str):
-            value = value.strip()
-            if not value:
-                return value
-            try:
-                parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
-            except ValueError:
-                try:
-                    parsed = datetime.combine(date.fromisoformat(value), datetime.min.time())
-                except ValueError:
-                    return value
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed
-
-    return value
 
 
 class StudentWithTestsListView(LoginRequiredMixin, ListView):
@@ -379,14 +358,17 @@ def load_students(request):
             pass
         return subject_norm.replace('_', ' ')
 
-    def _markall_excluded_course_sql():
-        """SQL predicate excluding Homeroom courses for the Elementary subject.
+    def _markall_course_sql_parts(subject, excludes):
+        """SQL predicate + params restricting which courses participate.
 
         Homeroom courses (e.g. "Homeroom Gr 1", "IS Homeroom Gr KN-5") are
         administrative placeholder courses and are filtered out of the
-        Elementary subject's "All Marks" view.
+        Elementary subject's "All Marks" view. User-deselected courses (from
+        the course picker) are excluded here too so the whole wide-pair view
+        stays consistent.
         """
-        return "(sm.course_name NOT ILIKE '%%Homeroom%%')"
+        from .filter_sql import markall_course_filter_parts
+        return markall_course_filter_parts(subject, excludes)
 
     markall_years = {}  # (year, subject_actual) -> umbrella key
     for c in selected_columns:
@@ -482,13 +464,19 @@ def load_students(request):
     if _sy_in_url:
         _sy_raw = request.GET.get('school_year', '')
         school_year = _parse_multi(_sy_raw, '')
-    elif _project_default_year:
-        school_year = _project_default_year
     else:
-        school_year = _parse_multi(
+        # A saved query's own school year wins over the project default, so
+        # reopening a query still targets the year it was built for.
+        _saved_school_year = _parse_multi(
             saved_filters.get('school_year', ''),
             _parse_multi(saved_config.get('school_year', ''), '')
         )
+        if saved_query_id and _saved_school_year:
+            school_year = _saved_school_year
+        elif _project_default_year:
+            school_year = _project_default_year
+        else:
+            school_year = _saved_school_year
 
     if not school_year:
         school_year = '__sy_this__'
@@ -560,331 +548,16 @@ def load_students(request):
             if not (isinstance(k, str) and k.startswith('mark_') and not k.startswith('markall_'))
         }
 
-    def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
-        """Append SQL filter clauses + params for the provided filters dict."""
-        if not isinstance(filters_to_apply, dict):
-            return
+    # Courses the user deselected from an "All Marks" umbrella. Stored under the
+    # umbrella key as 'exclude:<course>' values; read before SQL filtering since
+    # these entries only shape the wide-pair columns, never the row population.
+    markall_excludes = extract_markall_course_excludes(filters)
 
-        for col, values in filters_to_apply.items():
-            if not values:
-                continue
-
-            if col == 'atendace_rate':
-                expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
-                if expr:
-                    conditions = []
-                    import re
-                    for val in values:
-                        val_str = str(val).strip()
-                        if not val_str: # Blank
-                            conditions.append(f"({expr} IS NULL)")
-                            continue
-                        
-                        # Check for operators: <, <=, >, >=, = followed by number
-                        match = re.match(r'^([<>]=?|=)?\s*(\d+(?:\.\d+)?)$', val_str)
-                        if match:
-                            op = match.group(1) or '='
-                            num = match.group(2)
-                            conditions.append(f"{expr} {op} %s")
-                            params.append(num)
-                            continue
-                        
-                        # Check for range: num - num
-                        match_range = re.match(r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$', val_str)
-                        if match_range:
-                            low, high = match_range.groups()
-                            conditions.append(f"{expr} BETWEEN %s AND %s")
-                            params.extend([low, high])
-                            continue
-                        
-                        # Fallback to equality
-                        conditions.append(f"{expr} = %s")
-                        params.append(val)
-                    
-                    if conditions:
-                        where_clauses.append(f"({' OR '.join(conditions)})")
-                    continue
-
-            # Handle blank values (represented by empty string)
-            has_blank = "" in values
-            real_values = [v for v in values if v != ""]
-
-            if col.startswith('test_'):
-                test_info = test_col_map.get(col) or test_col_map.get(col.replace('-', '_'))
-                if not test_info:
-                    continue
-                metric_col = test_info['metric']
-                window_clause = ""
-                window_params = []
-                if test_info.get('test_window'):
-                    window_clause = "AND t.test_window ILIKE %s "
-                    window_params = [test_info['test_window']]
-
-                id_subquery_base = (
-                    "SELECT r.local_student_id FROM results r "
-                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.school_year = %s "
-                    f"AND {RESULTS_BLANK_SSID_SQL} "
-                    "AND t.test_name ILIKE %s "
-                    "AND t.subject ILIKE %s "
-                    f"{window_clause}"
-                )
-                ssid_subquery_base = (
-                    "SELECT r.ssid FROM results r "
-                    "INNER JOIN tests t ON r.test_group_key = t.test_group_key "
-                    "WHERE r.ssid IS NOT NULL AND r.ssid != '' "
-                    "AND r.school_year = %s "
-                    "AND t.test_name ILIKE %s "
-                    "AND t.subject ILIKE %s "
-                    f"{window_clause}"
-                )
-                base_params = [
-                    test_info['year'],
-                    test_info['test_name'],
-                    test_info['subject'],
-                    *window_params,
-                ]
-
-                conditions = []
-
-                if real_values:
-                    val_id = id_subquery_base
-                    val_ssid = ssid_subquery_base
-                    if metric_col in {'ss', 'pl'}:
-                        val_id += f"AND r.{metric_col} = ANY(%s)"
-                        val_ssid += f"AND r.{metric_col} = ANY(%s)"
-                    else:
-                        val_id += "AND (r.other_info ->> %s) = ANY(%s)"
-                        val_ssid += "AND (r.other_info ->> %s) = ANY(%s)"
-                    
-                    val_id_params = list(base_params)
-                    val_ssid_params = list(base_params)
-                    if metric_col in {'oi', 'dfp'}:
-                        val_id_params.append(test_info.get('other_info_key', ''))
-                        val_ssid_params.append(test_info.get('other_info_key', ''))
-                    val_id_params.append(real_values)
-                    val_ssid_params.append(real_values)
-                    
-                    conditions.append(f"(cs.student_id IN ({val_id}) OR cs.ssid IN ({val_ssid}))")
-                    params.extend(val_id_params + val_ssid_params)
-
-                if has_blank:
-                    blank_subconditions = []
-                    
-                    # 1. No record exists
-                    blank_subconditions.append(f"(cs.student_id NOT IN ({id_subquery_base}) AND cs.ssid NOT IN ({ssid_subquery_base}))")
-                    params.extend(base_params + base_params)
-
-                    # 2. Record exists but value is NULL
-                    null_id = id_subquery_base
-                    null_ssid = ssid_subquery_base
-                    null_id_params = list(base_params)
-                    null_ssid_params = list(base_params)
-                    
-                    if metric_col in {'ss', 'pl'}:
-                        null_id += f"AND r.{metric_col} IS NULL"
-                        null_ssid += f"AND r.{metric_col} IS NULL"
-                    else:
-                        null_id += "AND (r.other_info ->> %s) IS NULL"
-                        null_ssid += "AND (r.other_info ->> %s) IS NULL"
-                        null_id_params.append(test_info.get('other_info_key', ''))
-                        null_ssid_params.append(test_info.get('other_info_key', ''))
-                    
-                    blank_subconditions.append(f"(cs.student_id IN ({null_id}) OR cs.ssid IN ({null_ssid}))")
-                    params.extend(null_id_params + null_ssid_params)
-                    
-                    conditions.append(f"({' OR '.join(blank_subconditions)})")
-                
-                if conditions:
-                    where_clauses.append(f"({' OR '.join(conditions)})")
-                continue
-
-            if col.startswith('mark_'):
-                mark_info = mark_col_map.get(col) or mark_col_map.get(col.replace('-', '_'))
-                if not mark_info:
-                    continue
-
-                conditions = []
-
-                mark_subquery_base = (
-                    "SELECT sm.stu_annual_key FROM student_marks_list sm "
-                    "WHERE sm.school_year = %s "
-                    "AND sm.subject ILIKE %s "
-                    "AND sm.course_name ILIKE %s "
-                )
-                mark_base_params = [
-                    mark_info['year'],
-                    f"%{mark_info['subject']}%",
-                    f"%{mark_info['course_name']}%",
-                ]
-
-                if mark_info.get('mark_period'):
-                    mark_subquery_base += "AND sm.mark_period ILIKE %s "
-                    mark_base_params.append(mark_info['mark_period'])
-                else:
-                    mark_subquery_base += "AND (sm.mark_period IS NULL OR sm.mark_period = '') "
-
-                if real_values:
-                    val_clause = mark_subquery_base + "AND sm.mark = ANY(%s)"
-                    val_params = list(mark_base_params) + [real_values]
-                    conditions.append(f"cs.stu_annual_key IN ({val_clause})")
-                    params.extend(val_params)
-
-                if has_blank:
-                    blank_clause = mark_subquery_base + "AND (sm.mark IS NULL OR sm.mark = '')"
-                    blank_params = list(mark_base_params)
-                    conditions.append(f"(cs.stu_annual_key NOT IN ({mark_subquery_base}) OR cs.stu_annual_key IN ({blank_clause}))")
-                    params.extend(mark_base_params + blank_params)
-
-                if conditions:
-                    where_clauses.append(f"({' OR '.join(conditions)})")
-                continue
-
-            # AP exam performance-level columns (ap_<year>_<subject>_PL)
-            if col.startswith('ap_') and not col.startswith('apaward_') and not col.startswith('apawards_all_'):
-                ap_info = next((i for i in ap_exam_infos if i['col_name'] == col), None)
-                if not ap_info:
-                    continue
-                year = ap_info['year']
-                subject = ap_info['subject']
-                sub_base = (
-                    "SELECT a.ssid FROM \"dataLoader_apexamresult\" a "
-                    "INNER JOIN \"dataLoader_apexamcode\" e ON a.exam_id = e.code "
-                    "INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id "
-                    "WHERE a.admin_year = %s AND e.name = %s AND il.is_published = true "
-                )
-                sub_params = [year, subject]
-                conditions = []
-                if real_values:
-                    conditions.append(f"cs.ssid IN ({sub_base} AND a.exam_grade = ANY(%s))")
-                    params.extend(sub_params + [real_values])
-                if has_blank:
-                    conditions.append(
-                        f"(cs.ssid NOT IN ({sub_base}) OR "
-                        f"cs.ssid IN ({sub_base} AND (a.exam_grade IS NULL OR a.exam_grade = '')))"
-                    )
-                    params.extend(sub_params + sub_params)
-                if conditions:
-                    where_clauses.append(f"({' OR '.join(conditions)})")
-                continue
-
-            # Individual AP award columns (apaward_<year>_<award>)
-            if col.startswith('apaward_') and not col.startswith('apawards_all_'):
-                ap_info = next((i for i in ap_award_infos if i['col_name'] == col), None)
-                if not ap_info:
-                    continue
-                sub_base = (
-                    "SELECT a.ssid FROM \"dataLoader_apstudentaward\" a "
-                    "INNER JOIN \"dataLoader_apawardtype\" t ON a.award_type_id = t.code "
-                    "INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id "
-                    "WHERE a.award_year = %s AND t.description = %s AND il.is_published = true "
-                )
-                sub_params = [ap_info['year'], ap_info['award']]
-                conditions = []
-                if real_values:
-                    conditions.append(f"cs.ssid IN ({sub_base})")
-                    params.extend(sub_params)
-                if has_blank:
-                    conditions.append(f"cs.ssid NOT IN ({sub_base})")
-                    params.extend(sub_params)
-                if conditions:
-                    where_clauses.append(f"({' OR '.join(conditions)})")
-                continue
-
-            # Combined "All Awards" column (apawards_all_<year>)
-            if col.startswith('apawards_all_'):
-                year = col[len('apawards_all_'):].replace('_', '-')
-                sub_base = (
-                    "SELECT a.ssid FROM \"dataLoader_apstudentaward\" a "
-                    "INNER JOIN \"dataLoader_apawardtype\" t ON a.award_type_id = t.code "
-                    "INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id "
-                    "WHERE a.award_year = %s AND il.is_published = true "
-                )
-                sub_params = [year]
-                conditions = []
-                if real_values:
-                    conditions.append(f"cs.ssid IN ({sub_base} AND t.description = ANY(%s))")
-                    params.extend(sub_params + [real_values])
-                if has_blank:
-                    conditions.append(f"cs.ssid NOT IN ({sub_base})")
-                    params.extend(sub_params)
-                if conditions:
-                    where_clauses.append(f"({' OR '.join(conditions)})")
-                continue
-
-            # Marks "All Marks" columns (markall_<year>_<subject>_<i>_COURSE / _MARKS)
-            if col.startswith('markall_'):
-                parsed = parse_markall_key(col)
-                if not parsed:
-                    continue
-                year = parsed['year']
-                subject = _markall_subject_actual(year, parsed['subject_norm'])
-                is_marks_col = parsed['kind'] == 'MARKS'
-                course_filter_sql = ""
-                if subject == 'Elementary':
-                    course_filter_sql = " AND " + _markall_excluded_course_sql()
-                sub_base = (
-                    "SELECT sm.stu_annual_key FROM student_marks_list sm "
-                    "WHERE sm.school_year = %s AND sm.subject = %s "
-                    f"{course_filter_sql}"
-                )
-                sub_params = [year, subject]
-                conditions = []
-                if real_values:
-                    if is_marks_col:
-                        # Filter by individual marking-period and mark selections.
-                        # Values arrive prefixed ("period:Q1", "mark:B"). Selecting a
-                        # period AND a mark overlaps (intersects): students must have a
-                        # mark row matching any selected period AND any selected mark.
-                        periods = [str(v).split(':', 1)[1] for v in real_values if str(v).startswith('period:')]
-                        marks = [str(v).split(':', 1)[1] for v in real_values if str(v).startswith('mark:')]
-                        if periods and marks:
-                            val_clause = sub_base + "AND sm.mark_period = ANY(%s) AND sm.mark = ANY(%s)"
-                            conditions.append(f"cs.stu_annual_key IN ({val_clause})")
-                            params.extend(sub_params + [periods, marks])
-                        elif periods:
-                            val_clause = sub_base + "AND sm.mark_period = ANY(%s)"
-                            conditions.append(f"cs.stu_annual_key IN ({val_clause})")
-                            params.extend(sub_params + [periods])
-                        elif marks:
-                            val_clause = sub_base + "AND sm.mark = ANY(%s)"
-                            conditions.append(f"cs.stu_annual_key IN ({val_clause})")
-                            params.extend(sub_params + [marks])
-                    else:
-                        # COURSE column filter: match course name
-                        val_clause = sub_base + "AND sm.course_name = ANY(%s)"
-                        conditions.append(f"cs.stu_annual_key IN ({val_clause})")
-                        params.extend(sub_params + [real_values])
-                if has_blank:
-                    blank_clause = sub_base + "AND sm.course_name IS NULL"
-                    conditions.append(f"cs.stu_annual_key NOT IN ({sub_base})")
-                    params.extend(sub_params + sub_params)
-                if conditions:
-                    where_clauses.append(f"({' OR '.join(conditions)})")
-                continue
-
-            json_key = json_list_key_for_column(col)
-            if json_key:
-                append_json_list_filter(where_clauses, params, values, json_key)
-                continue
-
-            # Standard columns
-            expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
-            if expr:
-                 conditions = []
-                 if real_values:
-                      normalized_values = [_normalize_filter_param(col, v) for v in real_values]
-                      conditions.append(f"{expr} = ANY(%s)")
-                      params.append(normalized_values)
-                 if has_blank:
-                      # Check if date (only IS NULL) or string (IS NULL or Empty)
-                      if col in {'birth_date', 'us_enter_date', 'fep_date'}:
-                           conditions.append(f"{expr} IS NULL")
-                      else:
-                           conditions.append(f"({expr} IS NULL OR {expr} = '')")
-                 
-                 if conditions:
-                      where_clauses.append(f"({' OR '.join(conditions)})")
+    def _markall_course_excludes(year, subject):
+        umbrella = markall_years.get((year, subject))
+        if umbrella:
+            return markall_excludes.get(umbrella, set())
+        return set()
 
     with QueryExecutor(analytics=True).cursor() as cursor:
         db_columns = get_current_student_columns()
@@ -1327,7 +1000,11 @@ def load_students(request):
         # Column filters (applied to the main query)
         where_clauses = list(base_where_clauses)
         params = list(base_params)
-        _apply_column_filters(where_clauses, params, filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
+        apply_column_filters(
+            where_clauses, params, filters, test_col_map, mark_col_map,
+            db_columns, enroll_columns, needs_enroll, needs_students, needs_eht,
+            ap_exam_infos, ap_award_infos,
+        )
 
         # Handle survey column filters (subquery since survey data is not in the main SQL table)
         survey_filters = {k: v for k, v in filters.items() if isinstance(k, str) and k.startswith('survey_') and v} if isinstance(filters, dict) else {}
@@ -1393,9 +1070,9 @@ def load_students(request):
         if markall_years:
             with connections['default'].cursor() as markall_cursor:
                 for (year, subject), umbrella in markall_years.items():
-                    course_filter_sql = ""
-                    if subject == 'Elementary':
-                        course_filter_sql = "AND " + _markall_excluded_course_sql()
+                    course_filter_sql, course_extra_params = _markall_course_sql_parts(
+                        subject, _markall_course_excludes(year, subject)
+                    )
                     markall_cursor.execute(
                         f"""
                         SELECT COALESCE(MAX(cnt), 0)
@@ -1410,7 +1087,7 @@ def load_students(request):
                             GROUP BY sm.stu_annual_key
                         ) t
                         """,
-                        params + [year, subject],
+                        params + [year, subject] + course_extra_params,
                     )
                     markall_max[(year, subject)] = min(int(markall_cursor.fetchone()[0] or 0), 10)
 
@@ -1799,9 +1476,9 @@ def load_students(request):
                 if student_keys_all:
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
-                        course_filter_sql = ""
-                        if subject == 'Elementary':
-                            course_filter_sql = " AND " + _markall_excluded_course_sql()
+                        course_filter_sql, course_extra_params = _markall_course_sql_parts(
+                            subject, _markall_course_excludes(year, subject)
+                        )
                         markall_sql = f"""
                             SELECT stu_annual_key, course_name, mark_period, mark
                             FROM analytics_student_marks sm
@@ -1811,7 +1488,7 @@ def load_students(request):
                         """
                         markall_rows = _fetchall_ch_or_pg(
                             markall_sql,
-                            [student_keys_all, year, subject],
+                            [student_keys_all, year, subject] + course_extra_params,
                             markall_sql.replace('analytics_student_marks', 'student_marks_list'),
                         )
                         by_key = {}
@@ -2030,7 +1707,7 @@ def load_students(request):
                 # Cache miss - query database
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, False, ap_exam_infos, ap_award_infos)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 json_key = json_list_key_for_column(col)
@@ -2111,7 +1788,7 @@ def load_students(request):
                 # Cache miss - query database
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
                 window_clause = ""
                 window_params = []
@@ -2241,7 +1918,7 @@ def load_students(request):
 
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 period_clause = ""
@@ -2289,6 +1966,9 @@ def load_students(request):
             # Add filter options for Marks "All Marks" wide-pair columns
             for (year, subject), umbrella in markall_years.items():
                 n = markall_max.get((year, subject), 0)
+                course_filter_sql, course_extra_params = _markall_course_sql_parts(
+                    subject, _markall_course_excludes(year, subject)
+                )
                 for i in range(1, n + 1):
                     course_col = f"{umbrella}_{i}_COURSE"
                     marks_col = f"{umbrella}_{i}_MARKS"
@@ -2307,14 +1987,11 @@ def load_students(request):
 
                         option_where = list(base_where_clauses)
                         option_params = list(base_params)
-                        _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll)
+                        apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
                         option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                         if is_marks:
                             # Distinct "period: mark" pairs
-                            course_filter_sql = ""
-                            if subject == 'Elementary':
-                                course_filter_sql = " AND " + _markall_excluded_course_sql()
                             # Distinct marking periods (prefixed) — individual selections
                             period_query = f"""
                                 SELECT DISTINCT CONCAT('period:', sm.mark_period) AS v
@@ -2328,12 +2005,13 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            cursor.execute(period_query, option_params + [year, subject])
                             period_values = []
-                            for row in cursor.fetchall():
-                                v = row[0]
-                                if v is not None and v not in period_values:
-                                    period_values.append(v)
+                            with connections['default'].cursor() as pg_cursor:
+                                pg_cursor.execute(period_query, option_params + [year, subject] + course_extra_params)
+                                for row in pg_cursor.fetchall():
+                                    v = row[0]
+                                    if v is not None and v not in period_values:
+                                        period_values.append(v)
 
                             # Distinct marks (prefixed) — individual selections
                             mark_query = f"""
@@ -2348,12 +2026,13 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            cursor.execute(mark_query, option_params + [year, subject])
                             mark_values = []
-                            for row in cursor.fetchall():
-                                v = row[0]
-                                if v is not None and v not in mark_values:
-                                    mark_values.append(v)
+                            with connections['default'].cursor() as pg_cursor:
+                                pg_cursor.execute(mark_query, option_params + [year, subject] + course_extra_params)
+                                for row in pg_cursor.fetchall():
+                                    v = row[0]
+                                    if v is not None and v not in mark_values:
+                                        mark_values.append(v)
 
                             values = period_values + mark_values
                             if values:
@@ -2361,9 +2040,6 @@ def load_students(request):
                                 cache.set(cache_key, values, 300)
                         else:
                             # Distinct course names
-                            course_filter_sql = ""
-                            if subject == 'Elementary':
-                                course_filter_sql = " AND " + _markall_excluded_course_sql()
                             options_query = f"""
                                 SELECT DISTINCT sm.course_name AS v
                                 FROM student_marks_list sm
@@ -2376,15 +2052,15 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            cursor.execute(options_query, option_params + [year, subject])
-
                             values = []
-                            for row in cursor.fetchall():
-                                val = row[0]
-                                if val is None:
-                                    val = ""
-                                if val not in values:
-                                    values.append(val)
+                            with connections['default'].cursor() as pg_cursor:
+                                pg_cursor.execute(options_query, option_params + [year, subject] + course_extra_params)
+                                for row in pg_cursor.fetchall():
+                                    val = row[0]
+                                    if val is None:
+                                        val = ""
+                                    if val not in values:
+                                        values.append(val)
                             if values:
                                 filter_options[col_key] = values
                                 cache.set(cache_key, values, 300)
@@ -2406,7 +2082,7 @@ def load_students(request):
 
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 options_query = f"""
@@ -2486,7 +2162,7 @@ def load_students(request):
 
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                _apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 if ap_info['award'] == '__ALL__':

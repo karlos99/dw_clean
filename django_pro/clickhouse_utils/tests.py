@@ -23,7 +23,16 @@ class AnalyticsRoutingTests(SimpleTestCase):
         postgres.assert_called_once()
         clickhouse.assert_not_called()
 
-    def test_analytics_executor_does_not_fallback_on_clickhouse_failure(self):
+    def test_analytics_executor_routes_dsusd_fep_filters_to_postgres(self):
+        executor = QueryExecutor(analytics=True)
+        with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):
+            with patch.object(executor, '_execute_postgres', return_value={'columns': ['ssid'], 'rows': [], 'row_count': 0, 'error': None}) as postgres:
+                with patch.object(executor, '_execute_clickhouse') as clickhouse:
+                    sql = "SELECT cs.ssid FROM current_student cs WHERE (cs.add_data::jsonb->>'DSUSD_FEP') = ANY(%s)"
+                    executor.execute(sql, [['Y']])
+
+        postgres.assert_called_once()
+        clickhouse.assert_not_called()
         executor = QueryExecutor(analytics=True)
         with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):
             with patch.object(executor, '_execute_clickhouse', side_effect=Exception('unsupported syntax')):

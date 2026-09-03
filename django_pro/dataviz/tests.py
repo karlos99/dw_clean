@@ -3055,6 +3055,33 @@ class DynamicSummaryTableOptionTests(TestCase):
         self.assertEqual(res['rows'][0], ['5', 350.3, 0.0, 350.3])
         self.assertEqual(res['total_row'], ['Total', 350.3, 500.0, 850.3])
 
+    def test_summary_table_values_mode_cell_decimals(self):
+        """Summary Table (Values mode) cells must honor st_agg_decimals, not
+        just the row/column totals (which were rounded while cells stayed raw)."""
+        import polars as pl
+        from dataviz.utils.chart_builder import _summary_table_option
+
+        df = pl.from_dicts([
+            {'grade': '5', 'gender': 'F', 'scale_score': 300.567},
+            {'grade': '5', 'gender': 'F', 'scale_score': 400.123},
+            {'grade': '6', 'gender': 'M', 'scale_score': 500.000},
+        ])
+
+        cfg = {
+            'st_col_mode': 'values',
+            'st_agg_func': 'avg',
+            'st_value_col': 'scale_score',
+            'st_show_row_totals': True,
+            'st_show_col_totals': True,
+            'st_agg_decimals': 1,
+        }
+        res = _summary_table_option(df, row_col='grade', col_col='gender', cfg=cfg, col_defs=None)
+
+        self.assertEqual(res['__type__'], 'table')
+        # Grade 5 / F avg = 350.345 -> rounded to 350.3 in the cell
+        self.assertEqual(res['rows'][0], ['5', 350.3, 0.0, 350.3])
+        self.assertEqual(res['total_row'], ['Total', 350.3, 500.0, 850.3])
+
     def test_summary_table_and_dynamic_table_tooltips(self):
         import polars as pl
         from dataviz.utils.chart_builder import _summary_table_option, _dynamic_summary_table_option
