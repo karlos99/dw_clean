@@ -47,6 +47,16 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
 # keep those extracts on Postgres until CH is re-synced.
 _PG_ADD_DATA_KEYS = ('dsusd_fep', 'DSUSD_FEP')
 
+# Application tables that are NOT part of the ClickHouse read model (they are
+# intentionally absent from CLICKHOUSE_SYNCED_TABLES). Queries that reference
+# them must run on PostgreSQL — the CH mirror does not have them and would
+# raise "Unknown table expression identifier".
+_PG_ONLY_TABLE_MARKERS = (
+    'elementary_homeroom_teacher',
+    'students',
+    'dataexploration_studentlistitem',
+)
+
 
 def _sql_uses_pg_add_data_key(sql: str) -> bool:
     text = sql or ''
@@ -55,7 +65,12 @@ def _sql_uses_pg_add_data_key(sql: str) -> bool:
 
 def _sql_requires_postgres(sql: str) -> bool:
     """PostgreSQL-only idioms that must not go through the CH translator."""
-    return 'jsonb_object_keys' in (sql or '').lower()
+    text = (sql or '').lower()
+    if 'jsonb_object_keys' in text:
+        return True
+    # Any reference to a table that is only kept in Postgres routes the whole
+    # statement there (mirrored tables never appear in this list).
+    return any(m in text for m in _PG_ONLY_TABLE_MARKERS)
 
 
 class QueryExecutor:

@@ -23,6 +23,38 @@ class AnalyticsRoutingTests(SimpleTestCase):
         postgres.assert_called_once()
         clickhouse.assert_not_called()
 
+    def test_analytics_executor_routes_pg_only_tables_to_postgres(self):
+        """Queries referencing tables outside the CH read model run on PG."""
+        pg_tables = [
+            'elementary_homeroom_teacher',
+            'students',
+            'dataexploration_studentlistitem',
+        ]
+        for table in pg_tables:
+            executor = QueryExecutor(analytics=True)
+            with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):
+                with patch.object(executor, '_execute_postgres', return_value={'columns': ['x'], 'rows': [], 'row_count': 0, 'error': None}) as postgres:
+                    with patch.object(executor, '_execute_clickhouse') as clickhouse:
+                        executor.execute(f'SELECT eht.x FROM {table} eht')
+
+            postgres.assert_called_once()
+            clickhouse.assert_not_called()
+
+    def test_analytics_executor_still_routes_mirrored_tables_to_clickhouse(self):
+        """Adding PG-only routing must not hijack normal mirrored-table queries."""
+        executor = QueryExecutor(analytics=True)
+        with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):
+            with patch.object(executor, '_execute_clickhouse', return_value={'columns': ['a'], 'rows': [], 'row_count': 0, 'error': None}) as clickhouse:
+                with patch.object(executor, '_execute_postgres') as postgres:
+                    result = executor.execute(
+                        'SELECT cs.student_id FROM current_student cs '
+                        'INNER JOIN student_enroll se ON se.student_id = cs.student_id'
+                    )
+
+        clickhouse.assert_called_once()
+        postgres.assert_not_called()
+        self.assertIsNone(result['error'])
+
     def test_analytics_executor_routes_dsusd_fep_filters_to_postgres(self):
         executor = QueryExecutor(analytics=True)
         with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):
