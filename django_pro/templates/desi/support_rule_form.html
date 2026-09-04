@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}{% if is_edit %}Edit{% else %}Create{% endif %} Support Rule - DESI - DS Data{% endblock %}
+
+{% block content %}
+<script id="student-options-data" type="application/json">
+    {{ student_field_options_json|safe }}
+</script>
+
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
+     x-data="{
+        criteria: [
+            {% if is_edit %}
+                {% for c in criteria %}
+                { field: '{{ c.field_name }}', operator: '{{ c.operator }}', value: '{{ c.value|escapejs }}' }{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            {% endif %}
+        ],
+        availableOptions: JSON.parse(document.getElementById('student-options-data').textContent),
+        addCriterion() {
+            this.criteria.push({ field: 'grade', operator: 'is', value: '' });
+        },
+        removeCriterion(index) {
+            this.criteria.splice(index, 1);
+        }
+     }">
+
+    <div class="mb-6">
+        <a href="{% url 'desi:support_rule_list' %}" class="text-sm font-semibold text-slate-500 hover:text-blue-600 transition flex items-center gap-1">
+            &larr; Back to support rules
+        </a>
+    </div>
+
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900">
+            {% if is_edit %}Edit Support Rule: {{ rule.name }}{% else %}Create Support Rule{% endif %}
+        </h1>
+        <p class="mt-2 text-sm text-slate-600">When a student does not meet the criteria below, the supports you pick are hidden for that student.</p>
+    </div>
+
+    <form method="post" class="space-y-6">
+        {% csrf_token %}
+
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-5">
+            <h2 class="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">1. Rule Details</h2>
+            <div>
+                <label for="name" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Rule Name</label>
+                <input type="text" name="name" id="name" required value="{% if is_edit %}{{ rule.name }}{% endif %}"
+                       placeholder="e.g. Alternate Assessment Supports Only"
+                       class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+            </div>
+            <div>
+                <label for="description" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Description (Optional)</label>
+                <textarea name="description" id="description" rows="2" class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">{% if is_edit %}{{ rule.description }}{% endif %}</textarea>
+            </div>
+            <label class="inline-flex items-center text-sm text-slate-700">
+                <input type="checkbox" name="is_active" {% if not is_edit or rule.is_active %}checked{% endif %}
+                       class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-2">
+                Rule is Active
+            </label>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-2">
+                <h2 class="text-lg font-bold text-slate-900">2. Eligibility Criteria</h2>
+                <button type="button" @click="addCriterion" class="inline-flex items-center px-3 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                    ➕ Add Condition
+                </button>
+            </div>
+            <p class="text-xs text-slate-500">All conditions must be met for a student to see the attached supports.</p>
+
+            <div class="space-y-3">
+                <template x-for="(critRow, index) in criteria" :key="index">
+                    <div class="flex flex-col md:flex-row items-center gap-3 bg-slate-50 border border-slate-200 rounded p-3">
+                        <select name="crit_field[]" x-model="critRow.field" class="w-full md:w-1/3 rounded border-slate-300 text-sm py-1.5 px-2">
+                            {% for val, label in field_choices %}
+                            <option value="{{ val }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="crit_operator[]" x-model="critRow.operator" class="w-full md:w-1/4 rounded border-slate-300 text-sm py-1.5 px-2">
+                            {% for val, label in operator_choices %}
+                            <option value="{{ val }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="w-full md:flex-1">
+                            <template x-if="availableOptions[critRow.field] && availableOptions[critRow.field].length > 0 && (critRow.operator === 'is' || critRow.operator === 'is_not')">
+                                <select name="crit_value[]" x-model="critRow.value" required class="w-full rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                    <option value="" disabled>-- Choose Value --</option>
+                                    <template x-for="val in availableOptions[critRow.field]" :key="val">
+                                        <option :value="val" :selected="critRow.value === val" x-text="val"></option>
+                                    </template>
+                                </select>
+                            </template>
+                            <input type="text" name="crit_value[]" x-model="critRow.value" required
+                                   x-show="!(availableOptions[critRow.field] && availableOptions[critRow.field].length > 0 && (critRow.operator === 'is' || critRow.operator === 'is_not'))"
+                                   placeholder="Value..."
+                                   class="w-full rounded border-slate-300 text-sm py-1.5 px-3">
+                        </div>
+                        <button type="button" @click="removeCriterion(index)" class="shrink-0 text-red-600 hover:text-red-800 text-xs font-bold uppercase">Delete</button>
+                    </div>
+                </template>
+                <div x-show="criteria.length === 0" class="text-center py-4 text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-200 rounded">
+                    No conditions defined yet.
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-4">
+            <h2 class="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">3. Affected Designated Supports</h2>
+            <p class="text-xs text-slate-500">Supports hidden when a student does not meet the criteria above.</p>
+            <div class="max-h-80 overflow-y-auto border border-slate-200 rounded p-3 bg-slate-50 grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                {% for support in supports %}
+                <label class="inline-flex items-start gap-2 text-xs text-slate-700 cursor-pointer rounded border border-slate-200 bg-white p-2">
+                    <input type="checkbox" name="supports" value="{{ support.id }}" {% if support.id in selected_support_ids %}checked{% endif %}
+                           class="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                    <span class="min-w-0">
+                        <span class="font-semibold text-slate-800">{{ support.name }}</span>
+                        {% if support.code or support.tag %}
+                        <span class="block text-[10px] text-slate-400">{{ support.code }}{% if support.code and support.tag %} · {% endif %}{{ support.tag }}</span>
+                        {% endif %}
+                    </span>
+                </label>
+                {% empty %}
+                <div class="col-span-full text-sm text-slate-500 italic">No designated supports registered yet.</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="flex justify-end gap-3 pt-4 border-t border-slate-200">
+            <a href="{% url 'desi:support_rule_list' %}" class="inline-flex items-center px-4 py-2.5 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50">Cancel</a>
+            <button type="submit" class="inline-flex items-center px-8 py-2.5 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700">Save Rule</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

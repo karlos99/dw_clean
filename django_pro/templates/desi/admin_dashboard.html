@@ -21,6 +21,9 @@
             <a href="{% url 'desi:create_assessment' %}" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 transition">
                 ➕ Create Assessment
             </a>
+            <a href="{% url 'desi:support_rule_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                Support Rules
+            </a>
         </div>
     </div>
 
@@ -121,11 +124,50 @@
             </summary>
 
             <div class="mt-4">
-                <p class="text-sm text-slate-600 mb-6">These are the global supports available. You can register, edit, and delete them here.</p>
-                
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <p class="text-sm text-slate-600 mb-4">These are the global supports available. You can register, edit, and delete them here.</p>
+
+                <!-- POOL FILTERS -->
+                <div class="mb-5 flex flex-col lg:flex-row lg:items-end gap-3">
+                    <div class="flex-1">
+                        <label for="pool-search" class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Search</label>
+                        <input type="search" id="pool-search" placeholder="Search by name, code, source tag, or description..."
+                               class="block w-full rounded border-slate-300 bg-white text-xs py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                    </div>
+                    <div class="lg:w-64">
+                        <label for="pool-type" class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Type</label>
+                        <select id="pool-type" class="block w-full rounded border-slate-300 bg-white text-xs py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                            <option value="">All types</option>
+                            {% for type in pool_type_options %}
+                            <option value="{{ type }}">{{ type }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="lg:w-64">
+                        <label for="pool-test" class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Test / Assessment</label>
+                        <select id="pool-test" class="block w-full rounded border-slate-300 bg-white text-xs py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                            <option value="">All tests</option>
+                            {% for test in pool_test_options %}
+                            <option value="{{ test }}">{{ test }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="lg:w-auto">
+                        <button type="button" id="pool-clear" class="px-4 py-2 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                            Clear
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-4 text-xs text-slate-500">
+                    Showing <span id="pool-count" class="font-bold text-slate-700">0</span> of {{ accommodations|length }} supports
+                </div>
+
+                <div id="support-pool-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {% for acc in accommodations %}
-                    <div class="border border-slate-200 rounded-lg p-5 bg-slate-50 hover:shadow-sm transition flex flex-col justify-between">
+                    <div class="pool-card border border-slate-200 rounded-lg p-5 bg-slate-50 hover:shadow-sm transition flex flex-col justify-between"
+                         data-search="{{ acc.name|lower }} {{ acc.code|lower }} {{ acc.category|lower }} {{ acc.tag|lower }} {{ acc.description|lower }}"
+                         data-category="{{ acc.category|lower }}"
+                         data-tests="{% for ast in acc.connected_assessments %}{{ ast.name|lower }}||{% endfor %}">
                         <div>
                             <div class="flex justify-between items-start gap-2 mb-2 flex-wrap">
                                 <h3 class="text-sm font-bold text-slate-900">{{ acc.name }}</h3>
@@ -191,9 +233,65 @@
                     </div>
                     {% endfor %}
                 </div>
+
+                <div id="pool-empty" class="hidden col-span-full py-8 text-center text-sm text-slate-400 italic">
+                    No designated supports match the current filters.
+                </div>
             </div>
         </details>
     </div>
 
 </div>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const grid = document.getElementById('support-pool-grid');
+        const emptyMessage = document.getElementById('pool-empty');
+        const countEl = document.getElementById('pool-count');
+        if (!grid || !countEl) return;
+
+        const search = document.getElementById('pool-search');
+        const typeSelect = document.getElementById('pool-type');
+        const testSelect = document.getElementById('pool-test');
+        const clearButton = document.getElementById('pool-clear');
+
+        const cards = Array.from(grid.querySelectorAll('.pool-card'));
+
+        const applyFilters = () => {
+            const q = (search.value || '').trim().toLowerCase();
+            const type = (typeSelect.value || '').trim().toLowerCase();
+            const test = (testSelect.value || '').trim().toLowerCase();
+
+            let visible = 0;
+            cards.forEach((card) => {
+                const haystack = card.dataset.search || '';
+                const category = card.dataset.category || '';
+                const tests = card.dataset.tests || '';
+
+                let show = true;
+                if (q && haystack.indexOf(q) === -1) show = false;
+                if (show && type && category !== type) show = false;
+                if (show && test && tests.indexOf(`${test}||`) === -1) show = false;
+
+                card.style.display = show ? '' : 'none';
+                if (show) visible += 1;
+            });
+
+            countEl.textContent = visible;
+            if (emptyMessage) emptyMessage.classList.toggle('hidden', visible > 0);
+        };
+
+        search.addEventListener('input', applyFilters);
+        typeSelect.addEventListener('change', applyFilters);
+        testSelect.addEventListener('change', applyFilters);
+        if (clearButton) {
+            clearButton.addEventListener('click', () => {
+                search.value = '';
+                typeSelect.value = '';
+                testSelect.value = '';
+                applyFilters();
+            });
+        }
+        applyFilters();
+    });
+</script>
 {% endblock %}

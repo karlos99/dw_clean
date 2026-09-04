@@ -12,7 +12,8 @@ class Command(BaseCommand):
             'School Admin',
             'School View',
             'School Gr View',
-            'Teacher'
+            'Teacher',
+            'Testing Coordinator'
         ]
         
         for r_name in roles:

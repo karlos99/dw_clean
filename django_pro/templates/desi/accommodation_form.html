@@ -27,6 +27,19 @@
                 {% endfor %}
             {% endif %}
         },
+        resources: [
+            {% if is_edit %}
+                {% for res in accommodation.resources.all %}
+                { id: '{{ res.id }}', label: '{{ res.label|escapejs }}', url: '{{ res.url|escapejs }}', kind: '{{ res.kind|escapejs }}' }{% if not forloop.last %},{% endif %}
+                {% endfor %}
+            {% endif %}
+        ],
+        addResource() {
+            this.resources.push({ id: '', label: '', url: '', kind: 'page' });
+        },
+        removeResource(index) {
+            this.resources.splice(index, 1);
+        },
         addOption() {
             this.options.push({ id: '', name: '', code: '' });
         },
@@ -91,14 +104,6 @@
                     <label for="description" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Description</label>
                     <textarea name="description" id="description" rows="3" placeholder="Briefly describe what this support entails..."
                               class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">{% if is_edit %}{{ accommodation.description }}{% endif %}</textarea>
-                </div>
-
-                <!-- YouTube Video Link -->
-                <div>
-                    <label for="video_url" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Explanation Video Link (YouTube)</label>
-                    <input type="url" name="video_url" id="video_url" value="{% if is_edit and accommodation.video_url %}{{ accommodation.video_url }}{% endif %}" 
-                           placeholder="e.g. https://www.youtube.com/watch?v=..."
-                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
                 </div>
 
                 <!-- Order -->
@@ -294,6 +299,54 @@
                     No active assessments configured. Please create an assessment first.
                 </div>
                 {% endfor %}
+            </div>
+        </div>
+
+        <!-- SECTION 4: ADDITIONAL RESOURCES -->
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-6">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-2">
+                <h2 class="text-lg font-bold text-slate-900">4. Additional Resources</h2>
+                <button type="button" @click="addResource"
+                        class="inline-flex items-center px-3 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm">
+                    ➕ Add Link
+                </button>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">
+                Add extra links shown to teachers on the support card (YouTube video, other video, a web page, or a PDF document). These open in an overlay in the app.
+            </p>
+
+            <div class="space-y-2">
+                <template x-for="(res, index) in resources" :key="index">
+                    <div class="grid grid-cols-1 md:grid-cols-[1fr_2fr_9rem_auto] items-end gap-2 bg-slate-50 border border-slate-200 rounded p-2">
+                        <input type="hidden" name="resource_id[]" x-model="res.id">
+                        <div>
+                            <label class="sr-only">Label</label>
+                            <input type="text" name="resource_label[]" x-model="res.label" placeholder="Label (e.g. Video guide)"
+                                   class="block w-full rounded border-slate-300 text-xs py-1.5 px-2.5">
+                        </div>
+                        <div>
+                            <label class="sr-only">URL</label>
+                            <input type="url" name="resource_url[]" x-model="res.url" required placeholder="https://..."
+                                   class="block w-full rounded border-slate-300 text-xs py-1.5 px-2.5">
+                        </div>
+                        <div>
+                            <label class="sr-only">Type</label>
+                            <select name="resource_kind[]" x-model="res.kind" class="block w-full rounded border-slate-300 text-xs py-1.5 px-2">
+                                <option value="youtube">YouTube</option>
+                                <option value="video">Video</option>
+                                <option value="page">Web Page</option>
+                                <option value="pdf">PDF / Document</option>
+                            </select>
+                        </div>
+                        <div class="shrink-0 text-right">
+                            <button type="button" @click="removeResource(index)" class="text-red-600 hover:text-red-800 text-xs font-bold uppercase tracking-wider">Delete</button>
+                        </div>
+                    </div>
+                </template>
+
+                <div x-show="resources.length === 0" class="text-center py-4 text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-200 rounded">
+                    No additional resources configured.
+                </div>
             </div>
         </div>
 

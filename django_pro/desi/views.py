@@ -4,7 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.core import signing
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import HttpResponse, HttpResponseForbidden
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -16,11 +16,15 @@ from landing.utils import get_project_config
 from .models import (
     Accommodation,
     AccommodationOption,
+    AccommodationResource,
     Assessment,
     AssessmentCriteria,
     DesiExportConfiguration,
+    DesiSchoolAccess,
     StudentAccommodation,
     StudentAssessmentCompletion,
+    SupportRule,
+    SupportRuleCriteria,
 )
 
 
@@ -61,6 +65,70 @@ def _is_teacher(user):
     if active_role:
         return active_role.name == 'Teacher'
     return user.roles.filter(name='Teacher').exists() if hasattr(user, 'roles') else False
+
+
+def _has_role(user, name):
+    """Membership-based role check (add-on roles work regardless of active role)."""
+    if not user or not user.is_authenticated:
+        return False
+    if name in user.role_names():
+        return True
+    return user.roles.filter(name=name).exists() if hasattr(user, 'roles') else False
+
+
+def _has_district_role(user):
+    if not user or not user.is_authenticated:
+        return False
+    return any('District' in role for role in user.role_names())
+
+
+def _is_testing_coordinator(user):
+    return _has_role(user, 'Testing Coordinator')
+
+
+def _coordinator_school_ids(user):
+    """Schools a coordinator administers (from user.schools; all if project-level)."""
+    if user.is_superuser or _has_role(user, 'Project Admin') or _has_district_role(user):
+        return None  # unrestricted
+    schools = getattr(user, 'schools', None)
+    return list(schools) if isinstance(schools, list) and schools else []
+
+
+def can_edit_desi(user, student=None, school_state_id=None):
+    """
+    Whether the user may save designated supports/completions for a student.
+
+    Project/District/School Admin -> edit. A Teacher (including one who also
+    holds an add-on Testing Coordinator role) edits their own students unless
+    the school's DesiSchoolAccess.teachers_can_edit is False. Non-teacher
+    viewers (School View / School Gr View / Testing Coordinator) are read-only.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or _has_role(user, 'Project Admin') or _has_district_role(user):
+        return True
+
+    role_names = user.role_names()
+
+    if 'School Admin' in role_names:
+        return True
+
+    if 'Teacher' in role_names:
+        if school_state_id is None and student is not None:
+            school_state_id = getattr(student, 'school_state_id', None)
+        if school_state_id:
+            try:
+                access = DesiSchoolAccess.objects.get(school_state_id=school_state_id)
+                if not access.teachers_can_edit:
+                    return False
+            except DesiSchoolAccess.DoesNotExist:
+                pass
+        return True
+
+    if any(r in {'School View', 'School Gr View', 'Testing Coordinator'} for r in role_names):
+        return False
+
+    return False
 
 
 def _get_student_field_options():
@@ -149,6 +217,31 @@ def check_criteria(criteria_list, student):
     return len(failed_reasons) == 0, failed_reasons
 
 
+def hidden_support_ids(student):
+    """
+    Designated supports that should be hidden for this student.
+
+    A support is hidden when at least one active SupportRule attached to it has
+    demographic criteria that the student does NOT meet. Returns a set of
+    Accommodation ids.
+    """
+    hidden = set()
+    rules = (
+        SupportRule.objects.filter(is_active=True)
+        .exclude(supports__isnull=True)
+        .prefetch_related('criteria', 'supports')
+        .distinct()
+    )
+    for rule in rules:
+        criteria = list(rule.criteria.all())
+        if not criteria:
+            continue
+        eligible, _failed = check_criteria(criteria, student)
+        if not eligible:
+            hidden.update(rule.supports.values_list('id', flat=True))
+    return hidden
+
+
 def _parse_dependency_fields(post_data):
     dependency_support_id = post_data.get('depends_on_accommodation', '').strip()
     dependency_option_id = post_data.get('depends_on_option', '').strip()
@@ -165,6 +258,47 @@ def _parse_dependency_assessments(post_data):
 def _split_option_values(raw_value):
     """Turn one option field into one or more trimmed comma-separated values."""
     return [value.strip() for value in (raw_value or '').split(',') if value.strip()]
+
+
+def _save_resource_rows(accommodation, post_data):
+    """Create/update/delete AccommodationResource rows from dynamic form arrays."""
+    ids = post_data.getlist('resource_id[]')
+    labels = post_data.getlist('resource_label[]')
+    urls = post_data.getlist('resource_url[]')
+    kinds = post_data.getlist('resource_kind[]')
+
+    existing = {str(r.id): r for r in accommodation.resources.all()}
+    valid_kinds = {kind for kind, _label in AccommodationResource.KIND_CHOICES}
+    keep_ids = []
+
+    for index, url in enumerate(urls):
+        url = (url or '').strip()
+        if not url:
+            continue
+        posted_id = ids[index].strip() if index < len(ids) else ''
+        label = (labels[index].strip() if index < len(labels) else '') or url
+        kind = (kinds[index].strip() if index < len(kinds) else '') or 'page'
+        if kind not in valid_kinds:
+            kind = 'page'
+
+        if posted_id in existing:
+            resource = existing[posted_id]
+            if resource.url != url or resource.label != label or resource.kind != kind:
+                resource.url = url
+                resource.label = label
+                resource.kind = kind
+                resource.save()
+            keep_ids.append(resource.id)
+        else:
+            resource = AccommodationResource.objects.create(
+                accommodation=accommodation,
+                label=label,
+                url=url,
+                kind=kind,
+            )
+            keep_ids.append(resource.id)
+
+    accommodation.resources.exclude(id__in=keep_ids).delete()
 
 
 def _validate_dependency(accommodation, dep_support_id, dep_option_id):
@@ -454,12 +588,218 @@ def admin_dashboard(request):
     for accommodation in accommodations:
         accommodation.connected_assessments = accommodation_assessments.get(accommodation.id, [])
 
+    # Filter options for the Master Designated Supports Pool.
+    pool_type_options = sorted({
+        a.category for a in accommodations if a.category
+    })
+    pool_test_options = sorted({
+        ast.name for asts in accommodation_assessments.values() for ast in asts
+    })
+
     context = {
         'assessments': assessments,
         'accommodations': accommodations,
         'school_year': default_year,
+        'pool_type_options': pool_type_options,
+        'pool_test_options': pool_test_options,
     }
     return render(request, 'desi/admin_dashboard.html', context)
+
+
+def _coordinator_allowed_schools_qs(user):
+    """Schools the coordinator can manage; all schools for project-level users."""
+    school_ids = _coordinator_school_ids(user)
+    qs = StudataSchool.objects.order_by('school_name')
+    if school_ids is not None:
+        qs = qs.filter(state_id__in=school_ids)
+    return qs
+
+
+@login_required
+def coordinator_dashboard(request):
+    """Testing Coordinator DESI page: school teacher-access settings + reports."""
+    allowed = (
+        request.user.is_superuser
+        or _is_project_admin(request.user)
+        or _is_testing_coordinator(request.user)
+    )
+    if not allowed:
+        messages.error(request, "You do not have permission to access DESI coordinator settings.")
+        return redirect('landing:index')
+
+    allowed_qs = _coordinator_allowed_schools_qs(request.user)
+    allowed_ids = set(allowed_qs.values_list('state_id', flat=True))
+
+    if request.method == 'POST':
+        for school_state_id in request.POST.getlist('school_id'):
+            if not school_state_id or school_state_id not in allowed_ids:
+                continue
+            access_value = request.POST.get(f'teachers_access__{school_state_id}', 'edit')
+            can_edit = access_value == 'edit'
+            DesiSchoolAccess.objects.update_or_create(
+                school_state_id=school_state_id,
+                defaults={'teachers_can_edit': can_edit, 'updated_by': request.user},
+            )
+        messages.success(request, "Teacher access settings saved.")
+        return redirect(reverse('desi:coordinator_dashboard') + '?tab=access')
+
+    raw_tab = request.GET.get('tab', 'access')
+    tab = raw_tab if raw_tab in ('access', 'completion', 'entered') else 'access'
+    schools = list(allowed_qs)
+
+    access_map = {
+        a.school_state_id: a
+        for a in DesiSchoolAccess.objects.filter(
+            school_state_id__in=[s.state_id for s in schools]
+        )
+    }
+    for school in schools:
+        school.desi_access = access_map.get(school.state_id)
+
+    default_year = None
+    try:
+        default_year = get_project_config().default_school_year
+    except Exception:
+        default_year = None
+    if not default_year:
+        latest = CurrentStudent.objects.order_by('-school_year').values_list('school_year', flat=True).first()
+        default_year = latest or ''
+
+    selected_year = request.GET.get('year', '').strip() or default_year
+    school_param = request.GET.get('school', '').strip()
+    valid_ids = {s.state_id for s in schools}
+    selected_school = next((s for s in schools if s.state_id == school_param), None)
+    if selected_school is None and schools:
+        active_school = getattr(request.user, 'active_school', None)
+        if active_school:
+            selected_school = next((s for s in schools if s.state_id == active_school.state_id), schools[0])
+        else:
+            selected_school = schools[0]
+
+    completion = None
+    entered = None
+    teacher_options = []
+    selected_teacher = ''
+    scope = request.GET.get('scope', 'school')
+
+    if tab in ('completion', 'report') and selected_school and selected_year:
+        from .report_utils import build_school_report
+        completion = build_school_report(selected_school.state_id, selected_year)
+
+    if tab == 'entered' and selected_school and selected_year:
+        from .report_utils import build_entered_supports_report, list_school_teachers
+        teacher_options = list_school_teachers(selected_school.state_id, selected_year)
+        selected_teacher = request.GET.get('teacher', '').strip()
+        if scope == 'teacher' and selected_teacher in teacher_options:
+            entered = build_entered_supports_report(selected_school.state_id, selected_year, teacher=selected_teacher)
+        else:
+            scope = 'school'
+            entered = build_entered_supports_report(selected_school.state_id, selected_year)
+
+    context = {
+        'tab': tab,
+        'schools': schools,
+        'report_school': selected_school,
+        'report_year': selected_year,
+        'report': completion,
+        'entered': entered,
+        'teacher_options': teacher_options,
+        'selected_teacher': selected_teacher,
+        'scope': scope,
+    }
+    return render(request, 'desi/coordinator_dashboard.html', context)
+
+
+@login_required
+def coordinator_report_csv(request):
+    """CSV export of the completion report for a school/year."""
+    allowed = (
+        request.user.is_superuser
+        or _is_project_admin(request.user)
+        or _is_testing_coordinator(request.user)
+    )
+    if not allowed:
+        return HttpResponseForbidden("Permission denied.")
+
+    allowed_qs = _coordinator_allowed_schools_qs(request.user)
+    school_state_id = request.GET.get('school', '').strip()
+    if not allowed_qs.filter(state_id=school_state_id).exists():
+        return HttpResponseForbidden("Permission denied for this school.")
+
+    report_year = request.GET.get('year', '').strip()
+    if not report_year:
+        try:
+            report_year = get_project_config().default_school_year
+        except Exception:
+            report_year = ''
+    if not report_year:
+        return HttpResponseForbidden("Select a school year.")
+
+    from .report_utils import build_report_rows, build_school_report
+    report = build_school_report(school_state_id, report_year)
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="desi_completion_report_{school_state_id}_{report_year}.csv"'
+    writer = csv.writer(response)
+    header = ['SSID', 'Student Name', 'Grade'] + [a.name for a in report['assessments']]
+    writer.writerow(header)
+    for row in build_report_rows(report):
+        writer.writerow([row['ssid'], row['student_name'], row['grade']] + [row[a.id] for a in report['assessments']])
+    return response
+
+
+@login_required
+def coordinator_entered_csv(request):
+    """CSV export of the supports users have entered, for the whole school or one teacher."""
+    allowed = (
+        request.user.is_superuser
+        or _is_project_admin(request.user)
+        or _is_testing_coordinator(request.user)
+    )
+    if not allowed:
+        return HttpResponseForbidden("Permission denied.")
+
+    allowed_qs = _coordinator_allowed_schools_qs(request.user)
+    school_state_id = request.GET.get('school', '').strip()
+    if not allowed_qs.filter(state_id=school_state_id).exists():
+        return HttpResponseForbidden("Permission denied for this school.")
+
+    report_year = request.GET.get('year', '').strip()
+    if not report_year:
+        try:
+            report_year = get_project_config().default_school_year
+        except Exception:
+            report_year = ''
+    if not report_year:
+        return HttpResponseForbidden("Select a school year.")
+
+    teacher = request.GET.get('teacher', '').strip()
+    if request.GET.get('scope', 'school') == 'teacher' and teacher:
+        from .report_utils import list_school_teachers
+        if teacher not in list_school_teachers(school_state_id, report_year):
+            return HttpResponseForbidden("Teacher not found in this school.")
+    else:
+        teacher = ''
+
+    from .report_utils import build_entered_supports_report
+    report = build_entered_supports_report(school_state_id, report_year, teacher=teacher)
+
+    response = HttpResponse(content_type='text/csv')
+    suffix = teacher.replace(' ', '_') if teacher else 'entire_school'
+    response['Content-Disposition'] = f'attachment; filename="desi_entered_supports_{school_state_id}_{report_year}_{suffix}.csv"'
+    writer = csv.writer(response)
+    writer.writerow(['SSID', 'Student Name', 'Grade', 'Supports Entered', 'Completed Assessments', 'Updated By', 'Updated At'])
+    for row in report['rows']:
+        writer.writerow([
+            row['ssid'],
+            row['student_name'],
+            row['grade'],
+            row['supports'],
+            row['completions'],
+            row['updated_by'],
+            row['updated_at'],
+        ])
+    return response
 
 
 def _build_export_columns(selected_assessments):
@@ -964,7 +1304,6 @@ def create_accommodation(request):
         category = request.POST.get('category', '').strip()
         description = request.POST.get('description', '').strip()
         
-        video_url = request.POST.get('video_url', '').strip() or None
         order_val = request.POST.get('order', '0').strip() or '0'
         
         bulk_options_text = request.POST.get('bulk_options', '').strip()
@@ -994,7 +1333,6 @@ def create_accommodation(request):
             code=code,
             category=category,
             description=description,
-            video_url=video_url,
             order=order,
             depends_on_accommodation=parent_support,
             depends_on_option=parent_option,
@@ -1067,6 +1405,8 @@ def create_accommodation(request):
             except Assessment.DoesNotExist:
                 pass
 
+        _save_resource_rows(accommodation, request.POST)
+
         messages.success(request, f"Designated support '{accommodation.name}' created successfully.")
         return redirect('desi:admin_dashboard')
 
@@ -1096,8 +1436,6 @@ def edit_accommodation(request, id):
         accommodation.code = request.POST.get('code', '').strip()
         accommodation.category = request.POST.get('category', '').strip()
         accommodation.description = request.POST.get('description', '').strip()
-        
-        accommodation.video_url = request.POST.get('video_url', '').strip() or None
         
         order_val = request.POST.get('order', '0').strip() or '0'
         try:
@@ -1229,6 +1567,8 @@ def edit_accommodation(request, id):
         else:
             accommodation.dependency_assessments.clear()
 
+        _save_resource_rows(accommodation, request.POST)
+
         messages.success(request, f"Designated support '{accommodation.name}' updated successfully.")
         return redirect('desi:admin_dashboard')
 
@@ -1278,6 +1618,104 @@ def delete_accommodation(request, id):
     accommodation.delete()
     messages.success(request, f"Designated support '{name}' deleted successfully.")
     return redirect('desi:admin_dashboard')
+
+
+@login_required
+def support_rule_list(request):
+    """List SupportRules that hide supports based on student demographics."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rules = SupportRule.objects.annotate(
+        support_count=Count('supports'),
+        criteria_count=Count('criteria'),
+    ).order_by('-is_active', '-updated_at')
+    return render(request, 'desi/support_rule_list.html', {'rules': rules})
+
+
+@login_required
+def support_rule_form(request, id=None):
+    """Create/edit a SupportRule and the supports it affects."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rule = None
+    criteria = []
+    selected_support_ids = set()
+    if id:
+        rule = get_object_or_404(SupportRule, id=id)
+        criteria = list(rule.criteria.all())
+        selected_support_ids = set(rule.supports.values_list('id', flat=True))
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        if not name:
+            messages.error(request, "Rule name is required.")
+            return redirect('desi:support_rule_list')
+
+        description = request.POST.get('description', '').strip()
+        is_active = request.POST.get('is_active') == 'on'
+        support_ids = {int(x) for x in request.POST.getlist('supports') if x.isdigit()}
+
+        if not support_ids:
+            messages.error(request, "Select at least one designated support affected by this rule.")
+            url = reverse('desi:support_rule_edit', args=[rule.id]) if rule else reverse('desi:support_rule_create')
+            return redirect(url)
+
+        if rule:
+            rule.name = name
+            rule.description = description
+            rule.is_active = is_active
+            rule.save()
+        else:
+            rule = SupportRule.objects.create(name=name, description=description, is_active=is_active)
+
+        rule.supports.set(Accommodation.objects.filter(id__in=support_ids))
+        rule.criteria.all().delete()
+
+        crit_fields = request.POST.getlist('crit_field[]')
+        crit_operators = request.POST.getlist('crit_operator[]')
+        crit_values = request.POST.getlist('crit_value[]')
+        for field, op, val in zip(crit_fields, crit_operators, crit_values):
+            if field and op and val:
+                SupportRuleCriteria.objects.create(rule=rule, field_name=field, operator=op, value=val)
+
+        messages.success(request, f"Support rule '{rule.name}' saved.")
+        return redirect('desi:support_rule_list')
+
+    supports = list(
+        Accommodation.objects.order_by('tag', 'category', 'name').select_related()
+    )
+    field_choices = AssessmentCriteria.FIELD_CHOICES
+    operator_choices = AssessmentCriteria.OPERATOR_CHOICES
+
+    context = {
+        'rule': rule,
+        'criteria': criteria,
+        'supports': supports,
+        'selected_support_ids': selected_support_ids,
+        'field_choices': field_choices,
+        'operator_choices': operator_choices,
+        'student_field_options_json': _get_student_field_options(),
+        'is_edit': bool(rule),
+    }
+    return render(request, 'desi/support_rule_form.html', context)
+
+
+@login_required
+def delete_support_rule(request, id):
+    """Delete a support rule."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rule = get_object_or_404(SupportRule, id=id)
+    name = rule.name
+    rule.delete()
+    messages.success(request, f"Support rule '{name}' deleted successfully.")
+    return redirect('desi:support_rule_list')
 
 
 @login_required
@@ -1431,11 +1869,12 @@ def clone_assessment(request, id):
     return redirect('desi:admin_dashboard')
 
 
-def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None):
+def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True):
     """Build workspace context for the DESI accommodation editor."""
     shared_accommodations = []
     selected_support_ids = set(selected_support_ids or [])
     test_specific_accommodations = {ast.id: [] for ast in eligible_assessments}
+    hidden_ids = hidden_support_ids(student)
 
     # Map: accommodation -> { assessment: options_list }
     acc_ast_opts = {}
@@ -1443,6 +1882,8 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
         opts = list(ast.supported_options.all().select_related('accommodation'))
         for opt in opts:
             acc = opt.accommodation
+            if acc.id in hidden_ids:
+                continue
             if acc not in acc_ast_opts:
                 acc_ast_opts[acc] = {}
             if ast not in acc_ast_opts[acc]:
@@ -1552,6 +1993,7 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
         'assessment_cards': assessment_cards,
         'ineligible_cards': ineligible_cards,
         'student_option_ids': student_option_ids,
+        'can_edit': can_edit,
     }
 
 
@@ -1598,11 +2040,21 @@ def assign_accommodations(request, stu_annual_key):
 
     student_acc, student_annual_keys = _get_student_accommodation(student)
 
+    can_edit = can_edit_desi(request.user, student=student)
+
+    if request.method == 'POST' and not can_edit:
+        messages.error(
+            request,
+            "DESI is view-only for this school. You can review supports but cannot save or enter changes.",
+        )
+        return redirect(reverse('desi:assign_accommodations', args=[stu_annual_key]))
+
     # Pull active assessments (color-coded consistently per assessment)
     assessments = list(Assessment.objects.filter(is_active=True).prefetch_related(
         'criteria',
         'supported_options__accommodation__depends_on_option',
         'supported_options__accommodation__dependency_assessments',
+        'supported_options__accommodation__resources',
     ))
     for index, ast in enumerate(assessments):
         ast.card_color = ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)]
@@ -1694,6 +2146,7 @@ def assign_accommodations(request, stu_annual_key):
                 failed_rules_map,
                 selected_opt_ids,
                 selected_support_ids,
+                can_edit=can_edit,
             )
             list_context.update(context)
 
@@ -1758,6 +2211,7 @@ def assign_accommodations(request, stu_annual_key):
         failed_rules_map,
         student_option_ids,
         selected_support_ids,
+        can_edit=can_edit,
     )
 
     if is_htmx:

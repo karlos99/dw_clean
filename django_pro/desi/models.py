@@ -233,3 +233,102 @@ class DesiExportConfiguration(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class DesiSchoolAccess(models.Model):
+    """Per-school teacher editing policy for DESI, managed by Testing Coordinators."""
+    school_state_id = models.CharField(max_length=50, unique=True, db_index=True)
+    teachers_can_edit = models.BooleanField(
+        default=True,
+        help_text="If unchecked, teachers at this school can view DESI but cannot save supports or completions.",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='desi_school_access_updated',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.school_state_id} - {'Edit' if self.teachers_can_edit else 'View only'}"
+
+
+class SupportRule(models.Model):
+    """
+    A named demographic criteria rule. Supports attached via ``supports`` are
+    hidden for a student when this rule's criteria are not met.
+    """
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    supports = models.ManyToManyField(
+        Accommodation,
+        blank=True,
+        related_name='visibility_rules',
+        help_text="Designated supports hidden when this rule's criteria fail.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return self.name
+
+
+class SupportRuleCriteria(models.Model):
+    """One demographic condition belonging to a SupportRule (all conditions AND together)."""
+    rule = models.ForeignKey(SupportRule, on_delete=models.CASCADE, related_name='criteria')
+    field_name = models.CharField(max_length=50, choices=AssessmentCriteria.FIELD_CHOICES)
+    operator = models.CharField(max_length=20, choices=AssessmentCriteria.OPERATOR_CHOICES)
+    value = models.CharField(max_length=255, help_text="Comparison value (e.g. '03,04,05' or 'Y')")
+
+    def __str__(self):
+        return f"{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
+
+
+class AccommodationResource(models.Model):
+    """Extra resource links (video/page/pdf) attached to a designated support."""
+    KIND_CHOICES = [
+        ('youtube', 'YouTube'),
+        ('video', 'Video'),
+        ('page', 'Web Page'),
+        ('pdf', 'PDF / Document'),
+    ]
+    accommodation = models.ForeignKey(
+        Accommodation,
+        on_delete=models.CASCADE,
+        related_name='resources',
+    )
+    label = models.CharField(max_length=255, blank=True, help_text="Short label shown on the button, e.g. 'Video guide'")
+    url = models.URLField(max_length=500, help_text="Link to a video, page, or PDF document")
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default='page')
+    order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        label = self.label or self.url
+        return f"{label} ({self.get_kind_display()})"
+
+    def get_embed_url(self):
+        """Return an embeddable URL for youtube; other types embed as-is when possible."""
+        if self.kind == 'youtube':
+            import re
+            patterns = [
+                r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&\s]+)',
+                r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^\?\s]+)',
+                r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^\?\s]+)',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, self.url)
+                if match:
+                    return f"https://www.youtube.com/embed/{match.group(1)}"
+            return None
+        return self.url

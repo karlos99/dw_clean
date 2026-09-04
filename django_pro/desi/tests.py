@@ -10,13 +10,22 @@ from users.models import Role
 from desi.models import (
     Accommodation,
     AccommodationOption,
+    AccommodationResource,
     Assessment,
     AssessmentCriteria,
     DesiExportConfiguration,
+    DesiSchoolAccess,
     StudentAccommodation,
     StudentAssessmentCompletion,
+    SupportRule,
+    SupportRuleCriteria,
 )
-from desi.views import check_criteria, EXPORT_ENDPOINT_SIGNING_SALT
+from desi.views import (
+    check_criteria,
+    can_edit_desi,
+    hidden_support_ids,
+    EXPORT_ENDPOINT_SIGNING_SALT,
+)
 from desi import importers
 
 User = get_user_model()
@@ -857,3 +866,185 @@ class DesiCsvImporterTests(TestCase):
         self.assertEqual(Accommodation.objects.count(), 6)
         self.assertEqual(AccommodationOption.objects.count(), 8)
         self.assertEqual(set(Accommodation.objects.values_list("tag", flat=True)), {"CAASPP", "ELPAC"})
+
+
+class DesiTestingCoordinatorAndRulesTests(TestCase):
+
+    def setUp(self):
+        self.teacher_role = Role.objects.create(name="Teacher")
+        self.coordinator_role = Role.objects.create(name="Testing Coordinator")
+        self.project_role = Role.objects.create(name="Project Admin")
+
+        self.user = User.objects.create_user(
+            username="coord-teacher@test.com",
+            email="coord-teacher@test.com",
+            password="password123",
+        )
+        self.user.roles.add(self.teacher_role, self.coordinator_role)
+        self.user.schools = ["SCH-A"]
+        self.user.save()
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="desi_coord_student",
+            ssid="coordssid",
+            student_id="coordlocal",
+            student_name="Coordinator Student",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+
+    def test_coordinator_addon_role_is_schoolwide_even_when_teacher_active(self):
+        # Simulate middleware attaching an active role of Teacher.
+        self.user.active_role = self.teacher_role
+        self.assertIsNone(self.user.get_accessible_student_keys())
+
+    def test_can_edit_matrix(self):
+        # Coordinator holding only Testing Coordinator is read-only.
+        coord = User.objects.create_user(username="coord@test.com", email="coord@test.com", password="password123")
+        coord.roles.add(self.coordinator_role)
+        self.assertFalse(can_edit_desi(coord, student=self.student))
+
+        # Teacher default = edit.
+        self.assertTrue(can_edit_desi(self.user, student=self.student))
+
+        # View-only school flips teacher to read-only.
+        DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
+        self.assertFalse(can_edit_desi(self.user, student=self.student))
+
+    def test_view_only_school_blocks_teacher_save(self):
+        DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
+        assessment = Assessment.objects.create(name="Blocked Test", is_active=True)
+        self.user.active_role = self.teacher_role
+        self.client.force_login(self.user)
+
+        url = reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        response = self.client.post(url, {"completed_assessments": [str(assessment.id)]})
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            StudentAssessmentCompletion.objects.filter(
+                student_annual_key=self.student.stu_annual_key, assessment=assessment
+            ).exists()
+        )
+
+    def test_support_rule_hides_support(self):
+        accommodation = Accommodation.objects.create(name="Calculator", code="CALC")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Standard", code="STD")
+        assessment = Assessment.objects.create(name="Hidden Math", subject="Math", is_active=True)
+        assessment.supported_options.add(option)
+
+        rule = SupportRule.objects.create(name="No grade 03 calculators", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="in", value="04,05")
+
+        # Student is grade 03 -> criteria fail -> support hidden.
+        hidden = hidden_support_ids(self.student)
+        self.assertIn(accommodation.id, hidden)
+
+        # Grade 04 student keeps the support.
+        grade4 = CurrentStudent.objects.create(
+            stu_annual_key="grade4",
+            ssid="g4ssid",
+            student_id="g4",
+            student_name="Grade Four",
+            grade="04",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(grade4))
+
+    def test_support_rule_form_creates_rule(self):
+        project = User.objects.create_user(username="p@test.com", email="p@test.com", password="password123")
+        project.roles.add(self.project_role)
+        self.client.force_login(project)
+        accommodation = Accommodation.objects.create(name="Masking", code="M")
+
+        response = self.client.post(reverse("desi:support_rule_create"), {
+            "name": "Masking only grade 05",
+            "description": "",
+            "is_active": "on",
+            "supports": [str(accommodation.id)],
+            "crit_field[]": ["grade"],
+            "crit_operator[]": ["is"],
+            "crit_value[]": ["05"],
+        })
+        self.assertEqual(response.status_code, 302)
+        rule = SupportRule.objects.get(name="Masking only grade 05")
+        self.assertIn(accommodation, rule.supports.all())
+        self.assertEqual(rule.criteria.count(), 1)
+
+    def test_resource_crud_and_embed(self):
+        accommodation = Accommodation.objects.create(name="TTS", code="TTS")
+        resource = AccommodationResource.objects.create(
+            accommodation=accommodation,
+            label="Guide",
+            url="https://www.youtube.com/watch?v=abc123",
+            kind="youtube",
+        )
+        self.assertIn("youtube.com/embed/abc123", resource.get_embed_url())
+
+    def test_school_report_counts(self):
+        from desi.report_utils import build_school_report
+
+        assessment = Assessment.objects.create(name="Report Math", subject="Math", is_active=True)
+        CurrentStudent.objects.create(
+            stu_annual_key="r1",
+            ssid="r1ssid",
+            student_id="r1",
+            student_name="Report One",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        other = CurrentStudent.objects.create(
+            stu_annual_key="r2",
+            ssid="r2ssid",
+            student_id="r2",
+            student_name="Report Two",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        StudentAssessmentCompletion.objects.create(
+            student_annual_key="r1",
+            assessment=assessment,
+            is_completed=True,
+        )
+
+        report = build_school_report("SCH-A", "2025-2026")
+        summary = {row["assessment"].id: row for row in report["summary"]}
+        self.assertEqual(summary[assessment.id]["eligible"], 3)
+        self.assertEqual(summary[assessment.id]["completed"], 1)
+        self.assertEqual(summary[assessment.id]["pending"], 2)
+        self.assertIn(other, report["pending_by_assessment"][assessment.id])
+        self.assertIn(self.student, report["pending_by_assessment"][assessment.id])
+
+    def test_entered_supports_report(self):
+        from desi.report_utils import build_entered_supports_report
+
+        accommodation = Accommodation.objects.create(name="Calculator", code="CALC")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Scientific", code="SCI")
+        updater = User.objects.create_user(username="up@test.com", email="up@test.com", password="password123")
+        record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=self.student.stu_annual_key,
+        )
+        record.options.add(option)
+        record.updated_by = updater
+        record.save()
+
+        report = build_entered_supports_report("SCH-A", "2025-2026")
+        rows = {row["ssid"]: row for row in report["rows"]}
+        self.assertIn("Calculator: Scientific", rows["coordssid"]["supports"])
+        self.assertEqual(rows["coordssid"]["updated_by"], "up@test.com")
+
+    def test_coordinator_dashboard_access_tab_renders(self):
+        coord = User.objects.create_user(username="cd@test.com", email="cd@test.com", password="password123")
+        coord.roles.add(self.coordinator_role)
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.client.force_login(coord)
+
+        response = self.client.get(reverse("desi:coordinator_dashboard"), HTTP_HOST="localhost")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Support Admin")
+        self.assertContains(response, "Teacher Editing Access by School")

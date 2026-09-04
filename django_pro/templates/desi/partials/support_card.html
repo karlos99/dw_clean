@@ -71,11 +71,17 @@
             <p class="text-xs text-slate-600 leading-relaxed whitespace-pre-line">{{ acc.description }}</p>
             {% endif %}
 
-            {% if acc.get_youtube_embed_url %}
-            <button type="button" @click="videoOpen = true; embedUrl = '{{ acc.get_youtube_embed_url }}'"
-                    class="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 hover:underline bg-blue-50 px-2 py-1 rounded border border-blue-100">
-                🎥 Video Guide
-            </button>
+            {% if acc.resources.all %}
+            <div class="flex flex-wrap gap-1.5">
+                {% for res in acc.resources.all %}
+                <button type="button"
+                        @click="openEmbed('{{ res.label|default:res.get_kind_display|escapejs }}', '{{ res.get_embed_url|escapejs }}')"
+                        class="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 hover:underline bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                    {% if res.kind == 'youtube' %}🎥{% elif res.kind == 'video' %}📺{% elif res.kind == 'pdf' %}📄{% else %}🔗{% endif %}
+                    {{ res.label|default:res.get_kind_display }}
+                </button>
+                {% endfor %}
+            </div>
             {% endif %}
 
             <!-- Option Picker (Dropdown) -->
@@ -84,7 +90,7 @@
                 <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Select option</label>
                 <select name="student_options"
                         data-accommodation-id="{{ acc.id }}"
-                        class="acc-option-select block w-full rounded border-slate-300 bg-white text-xs py-2 px-3 focus:border-{{ card_color|default:'slate' }}-500 focus:ring-{{ card_color|default:'slate' }}-500">
+                        {% if not can_edit %}disabled class="acc-option-select block w-full rounded border-slate-200 bg-slate-100 text-slate-400 text-xs py-2 px-3"{% else %}class="acc-option-select block w-full rounded border-slate-300 bg-white text-xs py-2 px-3 focus:border-{{ card_color|default:'slate' }}-500 focus:ring-{{ card_color|default:'slate' }}-500"{% endif %}>
                     <option value="">-- Not selected --</option>
                     {% for opt in opts %}
                     <option value="{{ opt.id }}" {% if opt.id in student_option_ids %}selected{% endif %}>
@@ -92,11 +98,15 @@
                     </option>
                     {% endfor %}
                 </select>
+                {% if not can_edit %}
+                <p class="text-[9px] text-amber-600 font-semibold mt-1">View only - changes are disabled.</p>
+                {% endif %}
             </div>
             {% else %}
             <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                 <input type="checkbox" name="student_supports" value="{{ acc.id }}"
                        {% if acc_item.selected_direct %}checked{% endif %}
+                       {% if not can_edit %}disabled{% endif %}
                        class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
                 <span>Student needs this support</span>
             </label>
