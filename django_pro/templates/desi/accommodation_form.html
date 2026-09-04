@@ -152,7 +152,7 @@
                                     name="dependency_assessments"
                                     value="{{ ast.id }}"
                                     {% if ast.id in selected_dependency_assessment_ids %}checked{% endif %}>
-                                {{ ast.name }} ({{ ast.school_year }})
+                                {{ ast.name }}
                             </label>
                             {% empty %}
                             <span class="text-xs text-slate-500 italic">No active assessments available.</span>
@@ -241,7 +241,7 @@
                                    class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mt-1">
                             <div class="ml-3">
                                 <label for="ast_{{ ast.id }}" class="font-bold text-slate-800 text-sm cursor-pointer">{{ ast.name }}</label>
-                                <div class="text-[10px] text-slate-400">School Year: {{ ast.school_year }} | Subject: {{ ast.subject|default:"All" }}</div>
+                                <div class="text-[10px] text-slate-400">Subject: {{ ast.subject|default:"All" }}</div>
                             </div>
                         </div>
 

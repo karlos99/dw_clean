@@ -85,6 +85,7 @@ services:
       - ./django_pro:/app/django_pro
       - ./django_pro/files/staticfiles:/app/django_pro/files/staticfiles
       - ./django_pro/files/mediafiles:/app/django_pro/files/mediafiles
+      - ./ref:/app/ref
       - ./logs:/app/logs
     depends_on:
       postgres:

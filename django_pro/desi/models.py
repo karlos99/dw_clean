@@ -4,8 +4,20 @@ from django.conf import settings
 
 class Accommodation(models.Model):
     """Master list of accommodations available for any assessment. Acts as the screening question."""
-    name = models.CharField(max_length=255, unique=True, help_text="e.g., Text-to-Speech")
+    name = models.CharField(max_length=255, help_text="e.g., Text-to-Speech")
     code = models.CharField(max_length=50, blank=True, help_text="Short code for reporting, e.g. TTS")
+    column_letter = models.CharField(
+        max_length=2,
+        blank=True,
+        null=True,
+        help_text="Optional upload column letter this support maps to (e.g. 'B', 'AB')."
+    )
+    tag = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text="Source import tag (e.g. 'CAASPP', 'ELPAC') this support came from."
+    )
     category = models.CharField(max_length=100, blank=True, help_text="e.g., Presentation, Response, Setting, Timing")
     description = models.TextField(blank=True)
     
@@ -97,10 +109,15 @@ class AccommodationOption(models.Model):
 
 
 class Assessment(models.Model):
-    """An assessment config requiring accommodations (e.g. SBAC Math 2026)."""
+    """An assessment config requiring accommodations (e.g. Smarter Balanced Math)."""
     name = models.CharField(max_length=255, help_text="e.g., Smarter Balanced Math")
     subject = models.CharField(max_length=255, blank=True, help_text="e.g., Math, ELA, Science")
-    school_year = models.CharField(max_length=20, db_index=True, help_text="e.g., 2025-2026")
+    tag = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text="Source import tag (e.g. 'CAASPP', 'ELPAC') this assessment came from."
+    )
     description = models.TextField(blank=True)
     supported_options = models.ManyToManyField(
         AccommodationOption,
@@ -113,11 +130,11 @@ class Assessment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['school_year', 'name']
-        unique_together = ('name', 'subject', 'school_year')
+        ordering = ['name']
+        unique_together = ('name', 'subject')
 
     def __str__(self):
-        return f"{self.name} ({self.school_year})"
+        return self.name
 
 
 class AssessmentCriteria(models.Model):

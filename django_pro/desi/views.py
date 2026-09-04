@@ -34,9 +34,10 @@ BASE_EXPORT_COLUMNS = [
     ('school_year', 'School Year', 'student'),
     ('assessment_name', 'Assessment Name', 'support'),
     ('assessment_subject', 'Assessment Subject', 'support'),
-    ('assessment_school_year', 'Assessment School Year', 'support'),
     ('assessment_completed', 'Assessment Completed', 'support'),
 ]
+
+ASSESSMENT_CARD_COLORS = ('blue', 'emerald', 'violet', 'amber', 'rose', 'cyan')
 
 EXPORT_ENDPOINT_SIGNING_SALT = "desi-export-endpoint"
 EXPORT_ENDPOINT_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
@@ -335,7 +336,7 @@ def _get_student_list_context(request):
                 completions_map[c.student_annual_key] = set()
             completions_map[c.student_annual_key].add(c.assessment_id)
 
-    all_year_assessments = list(Assessment.objects.filter(school_year=school_year, is_active=True).prefetch_related('criteria'))
+    all_year_assessments = list(Assessment.objects.filter(is_active=True).prefetch_related('criteria'))
 
     for student in page_obj:
         eligible_ids = []
@@ -437,8 +438,21 @@ def admin_dashboard(request):
     except Exception:
         default_year = "2025-2026"
 
-    assessments = Assessment.objects.all().prefetch_related('criteria').order_by('-school_year', 'name')
-    accommodations = Accommodation.objects.all().prefetch_related('options')
+    assessments = list(Assessment.objects.prefetch_related('criteria', 'supported_options').order_by('name'))
+    accommodations = list(Accommodation.objects.all().prefetch_related('options'))
+
+    # Map each accommodation to the assessments connected through its options.
+    accommodation_assessments = {}
+    for ast in assessments:
+        seen_accommodations = set()
+        for opt in ast.supported_options.all():
+            accommodation_id = opt.accommodation_id
+            if accommodation_id in seen_accommodations:
+                continue
+            seen_accommodations.add(accommodation_id)
+            accommodation_assessments.setdefault(accommodation_id, []).append(ast)
+    for accommodation in accommodations:
+        accommodation.connected_assessments = accommodation_assessments.get(accommodation.id, [])
 
     context = {
         'assessments': assessments,
@@ -570,7 +584,34 @@ def _resolve_export_endpoint_user(auth_token):
     return User.objects.filter(id=uid, is_active=True).first()
 
 
-def _build_export_csv_response(
+def _build_support_pool(selected_assessments):
+    """
+    Designated supports available across the selected assessments, each with the
+    list of assessment names it applies to (ordered for display in the picker).
+    """
+    supports = {}
+    for ast in selected_assessments:
+        for opt in ast.supported_options.all().select_related('accommodation'):
+            support = opt.accommodation
+            entry = supports.setdefault(support.id, {'support': support, 'assessments': set()})
+            entry['assessments'].add(ast.name)
+
+    items = []
+    for entry in supports.values():
+        support = entry['support']
+        items.append({
+            'id': support.id,
+            'name': support.name,
+            'code': support.code or support.column_letter or '',
+            'tag': support.tag,
+            'category': support.category,
+            'assessments': sorted(entry['assessments']),
+        })
+    items.sort(key=lambda s: (s['name'].casefold(), s['id']))
+    return items
+
+
+def _build_export_rows(
     user,
     school_year,
     selected_assessments,
@@ -579,8 +620,13 @@ def _build_export_csv_response(
     included_columns,
     only_with_supports,
     support_value_field,
+    max_students=None,
 ):
-    students = list(get_visible_students(user).filter(school_year=school_year).order_by('student_name'))
+    """Build the export row dictionaries (used by both CSV and the preview)."""
+    students_qs = get_visible_students(user).filter(school_year=school_year).order_by('student_name')
+    if max_students is not None:
+        students_qs = students_qs[:max_students]
+    students = list(students_qs)
     student_keys = [s.stu_annual_key for s in students]
 
     student_option_map = {}
@@ -623,7 +669,6 @@ def _build_export_csv_response(
                 'school_year': student.school_year or '',
                 'assessment_name': ast.name or '',
                 'assessment_subject': ast.subject or '',
-                'assessment_school_year': ast.school_year or '',
                 'assessment_completed': 'Yes' if completion_map.get((student.stu_annual_key, ast.id), False) else 'No',
             }
             supports = assessment_supports.get(ast.id, {})
@@ -641,14 +686,35 @@ def _build_export_csv_response(
                 if not selected_opt:
                     row[col['key']] = ''
                 else:
-                    if support_value_field == 'code':
-                        row[col['key']] = selected_opt.code or ''
-                    else:
-                        row[col['key']] = selected_opt.name or ''
+                    row[col['key']] = selected_opt.code if support_value_field == 'code' else (selected_opt.name or '')
                     has_any_support_selected = True
             if only_with_supports and not has_any_support_selected:
                 continue
             rows.append(row)
+
+    return rows
+
+
+def _build_export_csv_response(
+    user,
+    school_year,
+    selected_assessments,
+    selected_assessment_ids,
+    available_columns,
+    included_columns,
+    only_with_supports,
+    support_value_field,
+):
+    rows = _build_export_rows(
+        user,
+        school_year,
+        selected_assessments,
+        selected_assessment_ids,
+        available_columns,
+        included_columns,
+        only_with_supports,
+        support_value_field,
+    )
 
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="desi_export_{school_year}.csv"'
@@ -683,16 +749,16 @@ def export_data(request):
     if selected_config:
         saved_config = selected_config.config
         school_year = saved_config.get('school_year', school_year)
-        support_value_field = saved_config.get('support_value_field', 'name').strip().lower()
+        support_value_field = saved_config.get('support_value_field', 'code').strip().lower()
         if support_value_field not in {'name', 'code'}:
-            support_value_field = 'name'
+            support_value_field = 'code'
         only_with_supports = bool(saved_config.get('only_with_supports', False))
         selected_assessment_ids = {int(x) for x in saved_config.get('assessment_ids', []) if str(x).isdigit()}
         selected_config_id = selected_config.id
     else:
-        support_value_field = request_data.get('support_value_field', 'name').strip().lower()
+        support_value_field = request_data.get('support_value_field', 'code').strip().lower()
         if support_value_field not in {'name', 'code'}:
-            support_value_field = 'name'
+            support_value_field = 'code'
         only_with_supports = request.method == 'POST' and request_data.get('only_with_supports') == 'on'
         selected_assessment_ids = {
             int(x) for x in request_data.getlist('assessment_ids') if str(x).isdigit()
@@ -700,7 +766,7 @@ def export_data(request):
         selected_config_id = None
 
     assessments = list(
-        Assessment.objects.filter(school_year=school_year, is_active=True)
+        Assessment.objects.filter(is_active=True)
         .prefetch_related('supported_options__accommodation')
         .order_by('name')
     )
@@ -712,9 +778,36 @@ def export_data(request):
         assessments = [a for a in assessments if a.id in selected_assessment_ids]
     selected_assessments = [a for a in assessments if a.id in selected_assessment_ids]
     available_columns = _build_export_columns(selected_assessments)
+    supports = _build_support_pool(selected_assessments)
+
+    def _render_export_page(column_config, *, preview_rows=None, preview_columns=None):
+        """Render the export builder page with the current selections/columns."""
+        selected_support_ids = {
+            c['support_id'] for c in column_config if c.get('support_id') and c.get('include')
+        }
+        context = {
+            'school_year': school_year,
+            'assessments': assessments,
+            'selected_assessment_ids': selected_assessment_ids,
+            'supports': supports,
+            'selected_support_ids': selected_support_ids,
+            'column_config': column_config,
+            'only_with_supports': only_with_supports,
+            'support_value_field': support_value_field,
+            'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
+            'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
+            'saved_configs': saved_configs,
+            'selected_config_id': selected_config_id,
+        }
+        if preview_rows is not None:
+            context['preview_rows'] = preview_rows
+            context['preview_columns'] = preview_columns or []
+            context['preview_active'] = True
+        return render(request, 'desi/export_data.html', context)
 
     if request.method == 'POST':
         column_config, included_columns = _parse_export_column_config(request.POST, available_columns)
+
         if request.POST.get('save_configuration') == '1' or request.POST.get('save_configuration_name', '').strip():
             config_name = request.POST.get('save_configuration_name', '').strip()
             if not config_name:
@@ -737,51 +830,36 @@ def export_data(request):
                 saved_configs = DesiExportConfiguration.objects.filter(owner=request.user).order_by('-updated_at')
                 selected_config = saved_configs.filter(name=config_name).first()
                 selected_config_id = selected_config.id if selected_config else None
-            context = {
-                'school_year': school_year,
-                'assessments': assessments,
-                'selected_assessment_ids': selected_assessment_ids,
-                'column_config': column_config,
-                'only_with_supports': only_with_supports,
-                'support_value_field': support_value_field,
-                'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-                'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
-                'saved_configs': saved_configs,
-                'selected_config_id': selected_config_id,
-            }
-            return render(request, 'desi/export_data.html', context)
-
-        if not included_columns:
-            messages.error(request, "Select at least one column to export.")
-            context = {
-                'school_year': school_year,
-                'assessments': assessments,
-                'selected_assessment_ids': selected_assessment_ids,
-                'column_config': column_config,
-                'only_with_supports': only_with_supports,
-                'support_value_field': support_value_field,
-                'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-                'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
-                'saved_configs': saved_configs,
-                'selected_config_id': selected_config_id,
-            }
-            return render(request, 'desi/export_data.html', context)
+            return _render_export_page(column_config)
 
         if not selected_assessments:
             messages.error(request, "Select at least one assessment to export.")
-            context = {
-                'school_year': school_year,
-                'assessments': assessments,
-                'selected_assessment_ids': selected_assessment_ids,
-                'column_config': column_config,
-                'only_with_supports': only_with_supports,
-                'support_value_field': support_value_field,
-                'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-                'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
-                'saved_configs': saved_configs,
-                'selected_config_id': selected_config_id,
-            }
-            return render(request, 'desi/export_data.html', context)
+            return _render_export_page(column_config)
+
+        if not included_columns:
+            messages.error(request, "Select at least one column to export.")
+            return _render_export_page(column_config)
+
+        previewing = request.POST.get('preview') == '1'
+        if previewing:
+            rows = _build_export_rows(
+                request.user,
+                school_year,
+                selected_assessments,
+                selected_assessment_ids,
+                available_columns,
+                included_columns,
+                only_with_supports,
+                support_value_field,
+                max_students=100,
+            )
+            preview_columns = [{'key': c['key'], 'header': c['header']} for c in included_columns]
+            return _render_export_page(
+                column_config,
+                preview_rows=rows[:25],
+                preview_columns=preview_columns,
+            )
+
         return _build_export_csv_response(
             request.user,
             school_year,
@@ -815,19 +893,7 @@ def export_data(request):
                 'support_id': col.get('support_id'),
             })
 
-    context = {
-        'school_year': school_year,
-        'assessments': assessments,
-        'selected_assessment_ids': selected_assessment_ids,
-        'column_config': column_config,
-        'only_with_supports': only_with_supports,
-        'support_value_field': support_value_field,
-        'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-        'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
-        'saved_configs': saved_configs,
-        'selected_config_id': selected_config_id,
-    }
-    return render(request, 'desi/export_data.html', context)
+    return _render_export_page(column_config)
 
 
 def export_data_endpoint(request):
@@ -849,7 +915,7 @@ def export_data_endpoint(request):
             school_year = "2025-2026"
 
     assessments = list(
-        Assessment.objects.filter(school_year=school_year, is_active=True)
+        Assessment.objects.filter(is_active=True)
         .prefetch_related('supported_options__accommodation')
         .order_by('name')
     )
@@ -907,10 +973,6 @@ def create_accommodation(request):
 
         if not name:
             messages.error(request, "Designated Support name is required.")
-            return redirect('desi:create_accommodation')
-
-        if Accommodation.objects.filter(name=name).exists():
-            messages.error(request, f"A designated support with the name '{name}' already exists.")
             return redirect('desi:create_accommodation')
 
         try:
@@ -1008,7 +1070,7 @@ def create_accommodation(request):
         messages.success(request, f"Designated support '{accommodation.name}' created successfully.")
         return redirect('desi:admin_dashboard')
 
-    assessments = Assessment.objects.filter(is_active=True).order_by('school_year', 'name')
+    assessments = Assessment.objects.filter(is_active=True).order_by('name')
     context = {
         'is_edit': False,
         'assessments': assessments,
@@ -1171,7 +1233,7 @@ def edit_accommodation(request, id):
         return redirect('desi:admin_dashboard')
 
     # Load active assessments
-    assessments = list(Assessment.objects.filter(is_active=True).order_by('school_year', 'name'))
+    assessments = list(Assessment.objects.filter(is_active=True).order_by('name'))
     
     # Pre-resolve selected assessments and options for mapping in view
     assigned_assessment_opts = {}
@@ -1225,15 +1287,9 @@ def create_assessment(request):
         messages.error(request, "Permission denied.")
         return redirect('landing:index')
 
-    try:
-        default_year = get_project_config().default_school_year
-    except Exception:
-        default_year = "2025-2026"
-
     if request.method == 'POST':
         name = request.POST.get('name', '').strip()
         subject = request.POST.get('subject', '').strip()
-        school_year = request.POST.get('school_year', default_year).strip()
         description = request.POST.get('description', '').strip()
         is_active = request.POST.get('is_active') == 'on'
 
@@ -1241,15 +1297,14 @@ def create_assessment(request):
             messages.error(request, "Assessment name is required.")
             return redirect('desi:create_assessment')
 
-        if Assessment.objects.filter(name=name, subject=subject, school_year=school_year).exists():
+        if Assessment.objects.filter(name=name, subject=subject).exists():
             subject_label = subject or ' no subject'
-            messages.error(request, f"An assessment named '{name}' with subject '{subject_label}' already exists for school year {school_year}.")
+            messages.error(request, f"An assessment named '{name}' with subject '{subject_label}' already exists.")
             return redirect('desi:create_assessment')
 
         assessment = Assessment.objects.create(
             name=name,
             subject=subject,
-            school_year=school_year,
             description=description,
             is_active=is_active
         )
@@ -1277,7 +1332,6 @@ def create_assessment(request):
     context = {
         'field_choices': field_choices,
         'operator_choices': operator_choices,
-        'default_year': default_year,
         'student_field_options_json': _get_student_field_options(),
         'is_edit': False,
     }
@@ -1296,13 +1350,11 @@ def edit_assessment(request, id):
     if request.method == 'POST':
         name = request.POST.get('name', '').strip()
         subject = request.POST.get('subject', '').strip()
-        school_year = request.POST.get('school_year', assessment.school_year).strip()
-        if Assessment.objects.filter(name=name, subject=subject, school_year=school_year).exclude(id=assessment.id).exists():
-            messages.error(request, f"An assessment named '{name}' with subject '{subject or 'no subject'}' already exists for school year {school_year}.")
+        if Assessment.objects.filter(name=name, subject=subject).exclude(id=assessment.id).exists():
+            messages.error(request, f"An assessment named '{name}' with subject '{subject or 'no subject'}' already exists.")
             return redirect('desi:edit_assessment', id=assessment.id)
         assessment.name = name
         assessment.subject = subject
-        assessment.school_year = school_year
         assessment.description = request.POST.get('description', '').strip()
         assessment.is_active = request.POST.get('is_active') == 'on'
         assessment.save()
@@ -1361,7 +1413,6 @@ def clone_assessment(request, id):
     cloned = Assessment.objects.create(
         name=f"Copy of {src.name}",
         subject=src.subject,
-        school_year=src.school_year,
         description=src.description,
         is_active=False
     )
@@ -1547,12 +1598,14 @@ def assign_accommodations(request, stu_annual_key):
 
     student_acc, student_annual_keys = _get_student_accommodation(student)
 
-    # Pull active assessments
-    assessments = Assessment.objects.filter(school_year=student.school_year, is_active=True).prefetch_related(
+    # Pull active assessments (color-coded consistently per assessment)
+    assessments = list(Assessment.objects.filter(is_active=True).prefetch_related(
         'criteria',
         'supported_options__accommodation__depends_on_option',
         'supported_options__accommodation__dependency_assessments',
-    )
+    ))
+    for index, ast in enumerate(assessments):
+        ast.card_color = ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)]
 
     # Evaluate dynamic eligibility
     eligible_assessments = []

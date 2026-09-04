@@ -21,17 +21,17 @@ class AccommodationOptionInline(admin.TabularInline):
 
 @admin.register(Accommodation)
 class AccommodationAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'category', 'description', 'question_text', 'order')
-    list_filter = ('category',)
-    search_fields = ('name', 'code', 'category', 'description')
+    list_display = ('name', 'code', 'tag', 'column_letter', 'category', 'description', 'question_text', 'order')
+    list_filter = ('category', 'tag')
+    search_fields = ('name', 'code', 'tag', 'column_letter', 'category', 'description')
     inlines = [AccommodationOptionInline]
 
 
 @admin.register(Assessment)
 class AssessmentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'subject', 'school_year', 'is_active', 'created_at')
-    list_filter = ('school_year', 'subject', 'is_active')
-    search_fields = ('name', 'subject', 'school_year')
+    list_display = ('name', 'subject', 'tag', 'is_active', 'created_at')
+    list_filter = ('subject', 'tag', 'is_active')
+    search_fields = ('name', 'subject', 'tag')
     filter_horizontal = ('supported_options',)
     inlines = [AssessmentCriteriaInline]
 

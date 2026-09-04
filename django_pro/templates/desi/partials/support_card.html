@@ -1,0 +1,109 @@
+{% with acc=acc_item.accommodation opts=acc_item.options %}
+{% with selected_option=acc_item.selected_option is_direct=acc_item.selected_direct %}
+
+<div class="support-card flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden"
+     data-accommodation-id="{{ acc.id }}"
+     data-depends-on-option-id="{{ acc_item.dependency_option_id|default:'' }}"
+     data-open="{% if selected_option or is_direct %}true{% else %}false{% endif %}">
+
+    <!-- Collapsible Header -->
+    <button type="button" data-accordion-toggle
+            class="w-full text-left px-4 py-3 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 transition">
+        <span class="flex items-start gap-3">
+            <span data-chevron class="shrink-0 text-slate-300 transition-transform duration-150 mt-0.5 {% if selected_option or is_direct %}rotate-90{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3.5 h-3.5"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>
+            </span>
+
+            <span class="flex-1 min-w-0">
+                <span class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span class="font-semibold text-sm text-slate-900">{{ acc.name }}</span>
+                    {% if acc.code %}
+                    <span class="font-mono text-[10px] text-slate-400 uppercase">{{ acc.code }}</span>
+                    {% endif %}
+                </span>
+                <span class="mt-1 flex flex-wrap items-center gap-1.5">
+                    {% if acc_item.applies_to %}
+                    {% for ast in acc_item.applies_to %}
+                    <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border bg-{{ ast.card_color }}-50 text-{{ ast.card_color }}-700 border-{{ ast.card_color }}-200">
+                        <span class="h-1.5 w-1.5 rounded-full bg-{{ ast.card_color }}-500"></span>
+                        {{ ast.name }}
+                    </span>
+                    {% endfor %}
+                    {% elif test_name %}
+                    <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border bg-{{ card_color }}-50 text-{{ card_color }}-700 border-{{ card_color }}-200">
+                        <span class="h-1.5 w-1.5 rounded-full bg-{{ card_color }}-500"></span>
+                        {{ test_name }}
+                    </span>
+                    {% endif %}
+                    {% if acc.category %}
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border
+                                 {% if 'embedded' in acc.category %}bg-indigo-50 text-indigo-600 border-indigo-100{% else %}bg-amber-50 text-amber-700 border-amber-100{% endif %}">
+                        {{ acc.category }}
+                    </span>
+                    {% endif %}
+                    {% if opts %}
+                    <span class="text-[10px] text-slate-400 normal-case font-normal">{{ opts|length }} option{{ opts|length|pluralize }}</span>
+                    {% endif %}
+                </span>
+            </span>
+
+            <!-- Selected Summary -->
+            <span data-selected-summary class="shrink-0 inline-flex items-center gap-1 max-w-[38%] truncate rounded-full px-2.5 py-1 text-[10px] font-semibold
+                 {% if selected_option or is_direct %}bg-emerald-50 text-emerald-700 border border-emerald-200{% else %}bg-slate-100 text-slate-400 border border-slate-200{% endif %}">
+                {% if selected_option %}
+                <span class="text-emerald-500">✓</span>
+                <span class="truncate">{{ selected_option.name }}</span>
+                {% elif is_direct %}
+                <span class="text-emerald-500">✓</span>
+                <span class="truncate">Selected</span>
+                {% else %}
+                Not selected
+                {% endif %}
+            </span>
+        </span>
+    </button>
+
+    <!-- Collapsible Body -->
+    <div data-accordion-body class="{% if selected_option or is_direct %}block{% else %}hidden{% endif %} border-t border-slate-100 bg-slate-50/60">
+        <div class="p-4 space-y-3">
+
+            {% if acc.description %}
+            <p class="text-xs text-slate-600 leading-relaxed whitespace-pre-line">{{ acc.description }}</p>
+            {% endif %}
+
+            {% if acc.get_youtube_embed_url %}
+            <button type="button" @click="videoOpen = true; embedUrl = '{{ acc.get_youtube_embed_url }}'"
+                    class="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 hover:underline bg-blue-50 px-2 py-1 rounded border border-blue-100">
+                🎥 Video Guide
+            </button>
+            {% endif %}
+
+            <!-- Option Picker (Dropdown) -->
+            {% if opts %}
+            <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Select option</label>
+                <select name="student_options"
+                        data-accommodation-id="{{ acc.id }}"
+                        class="acc-option-select block w-full rounded border-slate-300 bg-white text-xs py-2 px-3 focus:border-{{ card_color|default:'slate' }}-500 focus:ring-{{ card_color|default:'slate' }}-500">
+                    <option value="">-- Not selected --</option>
+                    {% for opt in opts %}
+                    <option value="{{ opt.id }}" {% if opt.id in student_option_ids %}selected{% endif %}>
+                        {{ opt.name }}{% if opt.code %} ({{ opt.code }}){% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% else %}
+            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                <input type="checkbox" name="student_supports" value="{{ acc.id }}"
+                       {% if acc_item.selected_direct %}checked{% endif %}
+                       class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                <span>Student needs this support</span>
+            </label>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% endwith %}
+{% endwith %}

@@ -39,9 +39,8 @@
                     <tr>
                         <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Assessment Name</th>
                         <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Subject</th>
-                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">School Year</th>
                         <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Rules</th>
-                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Questions</th>
+                        <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Supported Options</th>
                         <th scope="col" class="px-6 py-3.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
                         <th scope="col" class="relative px-6 py-3.5">
                             <span class="sr-only">Actions</span>
@@ -52,14 +51,16 @@
                     {% for ast in assessments %}
                     <tr class="hover:bg-slate-50 transition">
                         <td class="px-6 py-4">
-                            <div class="text-sm font-semibold text-slate-900">{{ ast.name }}</div>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <div class="text-sm font-semibold text-slate-900">{{ ast.name }}</div>
+                                {% if ast.tag %}
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-slate-800 text-slate-100">{{ ast.tag }}</span>
+                                {% endif %}
+                            </div>
                             <div class="text-xs text-slate-500 max-w-sm truncate">{{ ast.description|default:"No description" }}</div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
                             {{ ast.subject|default:"N/A" }}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                            {{ ast.school_year }}
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
                             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
@@ -68,7 +69,7 @@
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
                             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-100">
-                                {{ ast.questions.count }} Support Qs
+                                {{ ast.supported_options.count }} Options
                             </span>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
@@ -126,19 +127,40 @@
                     {% for acc in accommodations %}
                     <div class="border border-slate-200 rounded-lg p-5 bg-slate-50 hover:shadow-sm transition flex flex-col justify-between">
                         <div>
-                            <div class="flex justify-between items-start gap-2 mb-2">
+                            <div class="flex justify-between items-start gap-2 mb-2 flex-wrap">
                                 <h3 class="text-sm font-bold text-slate-900">{{ acc.name }}</h3>
-                                {% if acc.code %}
-                                <span class="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold uppercase rounded">
-                                    {{ acc.code }}
+                                <span class="flex items-center gap-1">
+                                    {% if acc.code %}
+                                    <span class="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold uppercase rounded">
+                                        {{ acc.code }}
+                                    </span>
+                                    {% endif %}
+                                    {% if acc.tag %}
+                                    <span class="px-2 py-0.5 bg-slate-800 text-slate-100 text-[10px] font-bold uppercase rounded">
+                                        {{ acc.tag }}
+                                    </span>
+                                    {% endif %}
                                 </span>
-                                {% endif %}
                             </div>
                             {% if acc.category %}
                             <span class="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">{{ acc.category }}</span>
                             {% endif %}
                             <p class="text-xs text-slate-600 leading-relaxed mb-4">{{ acc.description|default:"No description provided." }}</p>
-                            
+
+                            <div class="mb-4">
+                                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Connected Assessments ({{ acc.connected_assessments|length }})</label>
+                                <div class="flex flex-wrap gap-1">
+                                    {% for ast in acc.connected_assessments %}
+                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border {% if ast.is_active %}bg-blue-50 text-blue-700 border-blue-200{% else %}bg-slate-100 text-slate-500 border-slate-200{% endif %}"
+                                          title="{% if ast.is_active %}Active{% else %}Inactive{% endif %} assessment">
+                                        {{ ast.name }}{% if ast.subject %} — {{ ast.subject }}{% endif %}
+                                    </span>
+                                    {% empty %}
+                                    <span class="text-xs text-slate-400 italic">Not mapped to any assessment</span>
+                                    {% endfor %}
+                                </div>
+                            </div>
+
                             <div class="mb-4">
                                 <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Options</label>
                                 <select class="block w-full rounded border-slate-300 bg-white text-xs py-1.5 px-2.5 text-slate-700">

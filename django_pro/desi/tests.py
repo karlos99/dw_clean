@@ -17,6 +17,7 @@ from desi.models import (
     StudentAssessmentCompletion,
 )
 from desi.views import check_criteria, EXPORT_ENDPOINT_SIGNING_SALT
+from desi import importers
 
 User = get_user_model()
 
@@ -52,7 +53,6 @@ class DesiModelsAndEligibilityTests(TestCase):
         self.assessment = Assessment.objects.create(
             name="Smarter Balanced Math",
             subject="Math",
-            school_year="2025-2026",
             is_active=True
         )
         self.assessment.supported_options.add(self.opt_tts, self.opt_et)
@@ -146,12 +146,10 @@ class DesiWorkflowAndViewsTests(TestCase):
         # Assessment setup
         self.assessment_math = Assessment.objects.create(
             name="SBAC Math",
-            school_year="2025-2026",
             is_active=True
         )
         self.assessment_ela = Assessment.objects.create(
             name="SBAC ELA",
-            school_year="2025-2026",
             is_active=True
         )
 
@@ -718,3 +716,144 @@ class DesiWorkflowAndViewsTests(TestCase):
         reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
         rows = list(reader)
         self.assertEqual(rows[0], ['Student', 'Assessment'])
+
+
+CSV_SAMPLE = """Column,Display Name,Value,Value Definition,Content Area,Program,Setting Definition,Type
+A,"Student SSID
+(Example: 1234567890)",10 digits,NA,• all,•  all,This is a state-assigned student identifier.,NA
+B,"Abacus (NON-EMBEDDED)
+(Computer - M, S)",Blank (default),Abacus is not selected.,• math,"• Smarter math
+• CAA math
+• CAA science",Abacus resource text.,non-embedded accommodation
+B,"Abacus (NON-EMBEDDED)
+(Computer - M, S)",NEA_Abacus,Abacus is selected.,• math,"• Smarter math
+• CAA math
+• CAA science",Abacus resource text.,non-embedded accommodation
+I,"*Color Contrast (EMBEDDED)
+(Computer - E)",Blank (default),Color Contrast is not selected.,• ELA,• Smarter ELA,Color contrast text.,embedded designated support
+I,"*Color Contrast (EMBEDDED)
+(Computer - E)",TDS_CCInvert,Reverse Contrast,• ELA,• Smarter ELA,Color contrast text.,embedded designated support
+I,"*Color Contrast (EMBEDDED)
+(Computer - E)",TDS_CCMagenta,Black on Rose,• ELA,• Smarter ELA,Color contrast text.,embedded designated support
+N,"*Noise Buffers (NON-EMBEDDED)
+(Computer - M)",Blank (default),Noise Buffers is not selected.,• science,"• CAA Science
+• CAST",Noise buffers text.,non-embedded designated support
+N,"*Noise Buffers (NON-EMBEDDED)
+(Computer - M)",NEDS_NoiseBuf,Noise Buffers is selected.,• science,"• CAA Science
+• CAST",Noise buffers text.,non-embedded designated support
+"""
+
+
+class DesiCsvImporterTests(TestCase):
+
+    def _parsed(self):
+        return importers.parse_rows(csv.DictReader(io.StringIO(CSV_SAMPLE)))
+
+    def test_parse_groups_supports_and_dedupes_assessments(self):
+        parsed = self._parsed()
+
+        # SSID (Type = NA) and "Blank (default)" rows are skipped.
+        # 'CAA Science' (capital) on Noise Buffers folds into the earlier
+        # 'CAA science' spelling rather than creating a new assessment.
+        assessment_names = [a["name"] for a in parsed["assessments"]]
+        self.assertEqual(
+            assessment_names,
+            ["Smarter math", "CAA math", "CAA science", "Smarter ELA", "CAST"],
+        )
+
+        self.assertEqual(len(parsed["supports"]), 3)
+        by_letter = {s["column_letter"]: s for s in parsed["supports"]}
+        self.assertEqual(by_letter["B"]["name"], "Abacus")
+        self.assertEqual(by_letter["I"]["name"], "Color Contrast")
+        self.assertEqual(by_letter["N"]["name"], "Noise Buffers")
+        self.assertEqual(by_letter["N"]["category"], "non-embedded designated support")
+
+        # "Blank (default)" rows do not become options
+        self.assertEqual(len(by_letter["B"]["options"]), 1)
+        self.assertEqual(by_letter["B"]["options"][0]["code"], "NEA_Abacus")
+        self.assertEqual(len(by_letter["I"]["options"]), 2)
+        self.assertEqual(
+            [o["code"] for o in by_letter["I"]["options"]],
+            ["TDS_CCInvert", "TDS_CCMagenta"],
+        )
+
+    def test_import_builds_assessments_supports_and_mappings(self):
+        parsed = self._parsed()
+        summary = importers.import_configuration(parsed, clear=True)
+
+        self.assertEqual(summary, {"assessments": 5, "supports": 3, "options": 4})
+        self.assertEqual(Assessment.objects.count(), 5)
+        self.assertEqual(Accommodation.objects.count(), 3)
+        self.assertEqual(AccommodationOption.objects.count(), 4)
+
+        # Assessments are imported inactive by default
+        self.assertFalse(Assessment.objects.filter(is_active=True).exists())
+
+        caa_science = Assessment.objects.get(name="CAA science")
+        cast = Assessment.objects.get(name="CAST")
+        smarter_math = Assessment.objects.get(name="Smarter math")
+
+        noise = AccommodationOption.objects.get(code="NEDS_NoiseBuf")
+        self.assertIn(noise, caa_science.supported_options.all())
+        self.assertIn(noise, cast.supported_options.all())
+        self.assertNotIn(noise, smarter_math.supported_options.all())
+
+        # The option is present on the assessments listed in its Program cell
+        abacus = AccommodationOption.objects.get(code="NEA_Abacus")
+        self.assertIn(abacus, smarter_math.supported_options.all())
+        self.assertNotIn(abacus, cast.supported_options.all())
+
+    def test_import_can_activate_assessments(self):
+        parsed = self._parsed()
+        importers.import_configuration(parsed, clear=True, active=True)
+        self.assertEqual(Assessment.objects.filter(is_active=True).count(), 5)
+
+    def test_import_is_rebuildable_without_duplicates(self):
+        parsed = self._parsed()
+        importers.import_configuration(parsed, clear=True)
+        importers.import_configuration(parsed, clear=True)
+
+        self.assertEqual(Assessment.objects.count(), 5)
+        self.assertEqual(Accommodation.objects.count(), 3)
+        self.assertEqual(AccommodationOption.objects.count(), 4)
+        self.assertEqual(Accommodation.objects.filter(name="Color Contrast").count(), 1)
+
+    def test_import_is_additive_and_stamps_tag(self):
+        # Pre-existing manual records must survive an import (no wipe by default).
+        Assessment.objects.create(name="Manual Test", subject="X", is_active=True)
+        Accommodation.objects.create(name="Manual Support", code="M")
+
+        parsed = self._parsed()
+        importers.import_configuration(parsed, tag="CAASPP")
+
+        self.assertTrue(Assessment.objects.filter(name="Manual Test").exists())
+        self.assertTrue(Accommodation.objects.filter(name="Manual Support").exists())
+
+        # Imported records carry the tag.
+        self.assertEqual(Assessment.objects.get(name="Smarter math").tag, "CAASPP")
+        self.assertEqual(Accommodation.objects.filter(tag="CAASPP").count(), 3)
+
+        # Existing assessments are reused, not duplicated.
+        self.assertEqual(Assessment.objects.count(), 6)
+
+    def test_import_same_tag_is_idempotent(self):
+        parsed = self._parsed()
+        importers.import_configuration(parsed, tag="CAASPP")
+        importers.import_configuration(parsed, tag="CAASPP")
+
+        self.assertEqual(Assessment.objects.count(), 5)
+        self.assertEqual(Accommodation.objects.count(), 3)
+        self.assertEqual(AccommodationOption.objects.count(), 4)
+        self.assertEqual(Accommodation.objects.filter(tag="CAASPP").count(), 3)
+
+    def test_import_different_tags_keep_separate_supports(self):
+        parsed = self._parsed()
+        importers.import_configuration(parsed, tag="CAASPP")
+        importers.import_configuration(parsed, tag="ELPAC")
+
+        # Same assessment names are deduped across tags, but designated
+        # supports are kept separate per source file.
+        self.assertEqual(Assessment.objects.count(), 5)
+        self.assertEqual(Accommodation.objects.count(), 6)
+        self.assertEqual(AccommodationOption.objects.count(), 8)
+        self.assertEqual(set(Accommodation.objects.values_list("tag", flat=True)), {"CAASPP", "ELPAC"})
