@@ -12,11 +12,16 @@ supported columns to import a different set of assessments/supports.
 Assessments are imported as INACTIVE by default so they can be enabled per
 district need; pass --active to activate every imported assessment.
 
+--map-only only adds MISSING assessment<->support associations for the tagged
+supports that already exist; it never creates, edits, or removes any other
+data (no supports/options/assessments are changed).
+
 Usage:
     python manage.py import_desi_config --csv ref/ELPAC_Upload_Stu.csv --tag ELPAC
     python manage.py import_desi_config --csv ref/CAASPP_Upload.csv --tag CAASPP --active
     python manage.py import_desi_config path/to/file.csv
     python manage.py import_desi_config --csv some.csv --clear --active
+    python manage.py import_desi_config --csv ref/CAASPP_Upload.csv --tag CAASPP --map-only
 """
 
 import csv
@@ -85,6 +90,15 @@ class Command(BaseCommand):
             action="store_true",
             help="Parse the file and report what would be created without touching the DB.",
         )
+        parser.add_argument(
+            "--map-only",
+            action="store_true",
+            help=(
+                "Only add MISSING assessment<->support associations for supports "
+                "that already exist under this tag. Nothing else is created, "
+                "edited, or removed."
+            ),
+        )
 
     def _ref_roots(self):
         """Directories that may hold a ref/ folder with the reference CSVs."""
@@ -136,6 +150,7 @@ class Command(BaseCommand):
         dry_run = options.get("dry_run")
         clear = bool(options.get("clear", False))
         active = bool(options.get("active", False))
+        map_only = bool(options.get("map_only", False))
         tag = (options.get("tag") or "").strip() or path.stem
 
         self.stdout.write(f"Reading {path} (tag: {tag})")
@@ -151,6 +166,18 @@ class Command(BaseCommand):
         )
         self.stdout.write("Assessments: " + ", ".join(a["name"] for a in parsed["assessments"]))
         self.stdout.write("Designated supports: " + ", ".join(s["name"] for s in parsed["supports"]))
+
+        if map_only:
+            summary = importers.update_assessment_mappings(parsed, tag=tag, apply=not dry_run)
+            verb = "Would add" if dry_run else "Added"
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Map-only complete (tag '{tag}'): {verb} {summary['added_mappings']} "
+                    f"missing assessment association(s) "
+                    f"({summary['options_processed']} existing option(s) considered)."
+                )
+            )
+            return
 
         if dry_run:
             self.stdout.write("Dry run complete - no changes made.")

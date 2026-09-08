@@ -115,8 +115,11 @@
                            class="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
                     <span class="min-w-0">
                         <span class="font-semibold text-slate-800">{{ support.name }}</span>
+                        {% if support.category %}
+                        <span class="block text-[10px] text-slate-400">{{ support.category }}</span>
+                        {% endif %}
                         {% if support.code or support.tag %}
-                        <span class="block text-[10px] text-slate-400">{{ support.code }}{% if support.code and support.tag %} · {% endif %}{{ support.tag }}</span>
+                        <span class="block text-[10px] text-slate-400">{{ support.code }}{% if support.code and support.tag %} · {% endif %}{% if support.tag %}{{ support.tag }}{% endif %}</span>
                         {% endif %}
                     </span>
                 </label>

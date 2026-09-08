@@ -315,3 +315,63 @@ def import_csv(fileobj, tag="", clear=False, active=False):
     """Parse a CSV file object and import the configuration from it."""
     parsed = parse_rows(_read_rows(fileobj))
     return parsed, import_configuration(parsed, tag=tag, clear=clear, active=active)
+
+
+def update_assessment_mappings(parsed, tag="", apply=True):
+    """
+    Map-only update: for the supports that already exist, add any MISSING
+    assessment<->option associations described by the CSV.
+
+    Nothing else is edited or removed - existing accommodations, options,
+    assessments, tags, descriptions, active flags, and current mappings are all
+    left untouched. Assessments/options that do not exist yet are skipped.
+
+    Supports/options are matched by their upload column letter + option code.
+    ``tag`` is only a preference; if the tagged support isn't found, any support
+    with the same column letter and option code is used (so a run works even if
+    the records were imported under a different/default tag).
+
+    ``apply=False`` (dry-run) only counts what would be added.
+    """
+    tag = (tag or "").strip()
+    added = 0
+    would_add = 0
+    options_processed = 0
+
+    for support in parsed["supports"]:
+        letter = support["column_letter"]
+        for option_data in support["options"]:
+            option_code = option_data["code"]
+            option = (
+                AccommodationOption.objects
+                .filter(accommodation__column_letter=letter, code=option_code, accommodation__tag=tag)
+                .order_by("id")
+                .first()
+            )
+            if option is None:
+                # Fallback: any support with the same column letter + option code
+                # (e.g. imported under the default filename tag).
+                option = (
+                    AccommodationOption.objects
+                    .filter(accommodation__column_letter=letter, code=option_code)
+                    .order_by("id")
+                    .first()
+                )
+            if option is None:
+                continue
+            options_processed += 1
+
+            for assessment_name in option_data["assessments"]:
+                assessment = Assessment.objects.filter(name__iexact=assessment_name).order_by("id").first()
+                if assessment is None:
+                    continue
+                if assessment.supported_options.filter(id=option.id).exists():
+                    continue
+                would_add += 1
+                if apply:
+                    assessment.supported_options.add(option)
+                    added += 1
+
+    if apply:
+        return {"added_mappings": added, "options_processed": options_processed}
+    return {"added_mappings": would_add, "options_processed": options_processed}

@@ -867,6 +867,59 @@ class DesiCsvImporterTests(TestCase):
         self.assertEqual(AccommodationOption.objects.count(), 8)
         self.assertEqual(set(Accommodation.objects.values_list("tag", flat=True)), {"CAASPP", "ELPAC"})
 
+    def test_map_only_adds_missing_associations_without_other_changes(self):
+        parsed = self._parsed()
+
+        # Pre-seed the tagged support + option + assessments.
+        accommodation = Accommodation.objects.create(
+            name="Abacus", code="B", column_letter="B", tag="CAASPP"
+        )
+        option = AccommodationOption.objects.create(
+            accommodation=accommodation, name="Abacus is selected.", code="NEA_Abacus"
+        )
+        smarter = Assessment.objects.create(name="Smarter math", is_active=True)
+        caa_math = Assessment.objects.create(name="CAA math", is_active=True)
+        Assessment.objects.create(name="CAA science", is_active=True)
+        unrelated = Assessment.objects.create(name="Unrelated Test", is_active=False)
+        smarter.supported_options.add(option)  # already mapped
+
+        summary = importers.update_assessment_mappings(parsed, tag="CAASPP", apply=True)
+
+        # Added the two missing associations; existing one is untouched.
+        self.assertEqual(summary["added_mappings"], 2)
+        self.assertTrue(caa_math.supported_options.filter(id=option.id).exists())
+        self.assertTrue(Assessment.objects.get(name="CAA science").supported_options.filter(id=option.id).exists())
+        self.assertTrue(smarter.supported_options.filter(id=option.id).exists())
+        self.assertFalse(unrelated.supported_options.filter(id=option.id).exists())
+
+        # Nothing else was created or altered.
+        self.assertEqual(Assessment.objects.count(), 4)
+        self.assertEqual(Accommodation.objects.count(), 1)
+        self.assertEqual(AccommodationOption.objects.count(), 1)
+
+        # Idempotent: re-running adds nothing.
+        summary2 = importers.update_assessment_mappings(parsed, tag="CAASPP", apply=True)
+        self.assertEqual(summary2["added_mappings"], 0)
+
+    def test_map_only_falls_back_when_tag_differs(self):
+        parsed = self._parsed()
+
+        # Support imported under the DEFAULT filename tag (e.g. CAASPP_Upload).
+        accommodation = Accommodation.objects.create(
+            name="Abacus", code="B", column_letter="B", tag="CAASPP_Upload"
+        )
+        option = AccommodationOption.objects.create(
+            accommodation=accommodation, name="Abacus is selected.", code="NEA_Abacus"
+        )
+        for name in ("Smarter math", "CAA math", "CAA science"):
+            Assessment.objects.create(name=name, is_active=True)
+
+        # Running with a different --tag still adds the missing mappings.
+        summary = importers.update_assessment_mappings(parsed, tag="CAASPP", apply=True)
+        self.assertEqual(summary["added_mappings"], 3)
+        for name in ("Smarter math", "CAA math", "CAA science"):
+            self.assertTrue(Assessment.objects.get(name=name).supported_options.filter(id=option.id).exists())
+
 
 class DesiTestingCoordinatorAndRulesTests(TestCase):
 
@@ -1048,3 +1101,82 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Support Admin")
         self.assertContains(response, "Teacher Editing Access by School")
+
+
+class DesiMappingPreservationTests(TestCase):
+
+    def setUp(self):
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(username="map@test.com", email="map@test.com", password="password123")
+        self.user.roles.add(role)
+
+        self.acc = Accommodation.objects.create(name="Text-to-Speech Mapping", code="TTSM")
+        self.opt = AccommodationOption.objects.create(accommodation=self.acc, name="Standard", code="STD")
+
+        self.active = Assessment.objects.create(name="Active Mapping Test", is_active=True)
+        self.inactive = Assessment.objects.create(name="Inactive Mapping Test", is_active=False)
+        self.extra = Assessment.objects.create(name="Extra Mapping Test", is_active=True)
+        self.active.supported_options.add(self.opt)
+        self.inactive.supported_options.add(self.opt)
+
+    def _edit_post(self, map_action=None, supported=None):
+        data = {
+            "name": self.acc.name,
+            "code": self.acc.code,
+            "category": self.acc.category,
+            "description": "",
+            "order": "0",
+            "option_id[]": [str(self.opt.id)],
+            "option_name[]": ["Standard"],
+            "option_code[]": ["STD"],
+            "supported_assessments": supported or [],
+        }
+        if map_action:
+            data["map_action"] = map_action
+        self.client.force_login(self.user)
+        return self.client.post(reverse("desi:edit_accommodation", args=[self.acc.id]), data)
+
+    def test_replace_save_preserves_inactive_assessment_mapping(self):
+        response = self._edit_post(supported=[str(self.extra.id)])
+        self.assertEqual(response.status_code, 302)
+
+        # Active assessments not selected are removed; inactive stays mapped.
+        self.assertFalse(self.active.supported_options.filter(id=self.opt.id).exists())
+        self.assertTrue(self.inactive.supported_options.filter(id=self.opt.id).exists())
+        self.assertTrue(self.extra.supported_options.filter(id=self.opt.id).exists())
+
+    def test_merge_keeps_existing_mappings_and_adds_selected(self):
+        response = self._edit_post(map_action="merge", supported=[str(self.extra.id)])
+        self.assertEqual(response.status_code, 302)
+
+        # Existing mappings (active + inactive) are untouched; extra added.
+        self.assertTrue(self.active.supported_options.filter(id=self.opt.id).exists())
+        self.assertTrue(self.inactive.supported_options.filter(id=self.opt.id).exists())
+        self.assertTrue(self.extra.supported_options.filter(id=self.opt.id).exists())
+
+    def test_option_used_only_by_inactive_assessment_is_never_dropped(self):
+        self.client.force_login(self.user)
+
+        # An option that only serves the inactive assessment.
+        inactive_only = AccommodationOption.objects.create(
+            accommodation=self.acc, name="Inactive Only", code="INO"
+        )
+        self.inactive.supported_options.add(inactive_only)
+
+        # Edit posts ONLY the Standard option row (not Inactive Only).
+        response = self.client.post(reverse("desi:edit_accommodation", args=[self.acc.id]), {
+            "name": self.acc.name,
+            "code": self.acc.code,
+            "category": self.acc.category,
+            "description": "",
+            "order": "0",
+            "option_id[]": [str(self.opt.id)],
+            "option_name[]": ["Standard"],
+            "option_code[]": ["STD"],
+            "supported_assessments": [str(self.active.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+
+        inactive_only.refresh_from_db()
+        self.assertTrue(self.inactive.supported_options.filter(id=inactive_only.id).exists())
+        self.assertTrue(self.active.supported_options.filter(id=self.opt.id).exists())

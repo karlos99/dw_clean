@@ -1486,6 +1486,20 @@ def edit_accommodation(request, id):
         if not all_names_to_create:
             all_names_to_create.add("Standard")
 
+        # Capture mappings to NON-ACTIVE assessments so they are never lost,
+        # regardless of how the edit is submitted.
+        mapped_pairs_pre = list(
+            Assessment.supported_options.through.objects
+            .filter(accommodationoption__accommodation=accommodation)
+            .values_list('assessment_id', 'accommodationoption_id')
+        )
+        inactive_assessment_ids = set(
+            Assessment.objects.filter(is_active=False).values_list('id', flat=True)
+        )
+        protected_option_ids = {
+            opt_id for ast_id, opt_id in mapped_pairs_pre if ast_id in inactive_assessment_ids
+        }
+
         # ID-preserving option updates with editable name/code
         existing_opts = {str(opt.id): opt for opt in accommodation.options.all()}
         keep_opt_ids = []
@@ -1523,32 +1537,71 @@ def edit_accommodation(request, id):
             keep_opt_ids.append(new_opt.id)
             existing_names.add(name)
 
+        # Options still mapped to non-active assessments must never be deleted.
+        for opt_id in protected_option_ids:
+            if opt_id not in keep_opt_ids:
+                keep_opt_ids.append(opt_id)
+
         # Remove any options not in the new set
         accommodation.options.exclude(id__in=keep_opt_ids).delete()
 
-        # Clear old mappings of this accommodation on ALL assessments first
-        all_options = accommodation.options.all()
-        for ast in Assessment.objects.all():
-            ast.supported_options.remove(*all_options)
+        # ---- Assessment support mapping update ----
+        # Default ('replace') updates the mapping for the assessments shown in
+        # the form, preserving any mapping on assessments not shown (inactive).
+        # With 'merge' nothing is removed; options are only added to the chosen
+        # assessments, so the rest of the data is never wiped.
+        all_options_list = list(accommodation.options.all())
+        mapped_assessment_ids = set(
+            Assessment.objects.filter(supported_options__accommodation=accommodation)
+            .distinct()
+            .values_list('id', flat=True)
+        )
+        shown_assessment_ids = set(
+            Assessment.objects.filter(is_active=True).values_list('id', flat=True)
+        )
+        selected_assessment_ids_set = set(selected_assessment_ids)
+        map_action = (request.POST.get('map_action', '') or '').strip() or 'replace'
+        assessments_by_id = {ast.id: ast for ast in Assessment.objects.all()}
 
-        # Re-save mapping of options to selected assessments
-        all_options_list = list(all_options)
-        for ast_id in selected_assessment_ids:
-            try:
-                ast = Assessment.objects.get(id=ast_id)
-                custom_opts_text = request.POST.get(f'assessment_opts_custom_{ast_id}', '').strip()
-                if custom_opts_text:
-                    names_to_add = [x.strip() for x in custom_opts_text.split(',') if x.strip()]
-                    opts_to_add = [o for o in all_options_list if o.name in names_to_add]
+        if map_action != 'merge':
+            # Remove this support from assessments that were shown in the form
+            # but are no longer selected. Assessments not shown keep their map.
+            for ast_id in mapped_assessment_ids:
+                if ast_id in shown_assessment_ids and ast_id not in selected_assessment_ids_set:
+                    ast = assessments_by_id.get(ast_id)
+                    if ast:
+                        ast.supported_options.remove(*all_options_list)
+
+        # Add options to the selected assessments
+        for ast_id in selected_assessment_ids_set:
+            ast = assessments_by_id.get(ast_id)
+            if ast is None:
+                continue
+            custom_opts_text = request.POST.get(f'assessment_opts_custom_{ast_id}', '').strip()
+            if custom_opts_text:
+                names_to_add = [x.strip() for x in custom_opts_text.split(',') if x.strip()]
+                opts_to_add = [o for o in all_options_list if o.name in names_to_add]
+            else:
+                opt_names = request.POST.getlist(f'assessment_opts_{ast_id}')
+                if not opt_names:
+                    opts_to_add = [o for o in all_options_list if o.name in master_option_names]
                 else:
-                    opt_names = request.POST.getlist(f'assessment_opts_{ast_id}')
-                    if not opt_names:
-                        opts_to_add = [o for o in all_options_list if o.name in master_option_names]
-                    else:
-                        opts_to_add = [o for o in all_options_list if o.name in opt_names]
-                ast.supported_options.add(*opts_to_add)
-            except Assessment.DoesNotExist:
-                pass
+                    opts_to_add = [o for o in all_options_list if o.name in opt_names]
+            ast.supported_options.add(*opts_to_add)
+
+        # Re-assure that mappings to non-active assessments captured before the
+        # save still exist (they are never intentionally removed by this form).
+        for ast_id, opt_id in mapped_pairs_pre:
+            if ast_id not in inactive_assessment_ids:
+                continue
+            ast = assessments_by_id.get(ast_id)
+            if ast is None or ast.supported_options.filter(id=opt_id).exists():
+                continue
+            try:
+                opt = AccommodationOption.objects.get(id=opt_id)
+            except AccommodationOption.DoesNotExist:
+                continue
+            ast.supported_options.add(opt)
 
         parent_support, parent_option, dep_error = _validate_dependency(
             accommodation=accommodation,

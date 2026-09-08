@@ -229,6 +229,13 @@
             <div class="border-b border-slate-100 pb-2">
                 <h2 class="text-lg font-bold text-slate-900">3. Assessment Support Mapping</h2>
                 <p class="text-xs text-slate-500 mt-1">Select which assessments support this designated support question. If sub-options are defined, specify which options are allowed on each assessment. Leave options unchecked to allow all.</p>
+                {% if is_edit %}
+                <label class="inline-flex items-center gap-2 mt-3 text-xs text-slate-600 cursor-pointer">
+                    <input type="checkbox" name="map_action" value="merge"
+                           class="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+                    <span><strong>Merge</strong> into existing mappings — add options to the selected assessments without removing any existing mappings.</span>
+                </label>
+                {% endif %}
             </div>
 
             <div class="space-y-4">
