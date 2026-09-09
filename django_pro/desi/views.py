@@ -26,6 +26,7 @@ from .models import (
     SupportRule,
     SupportRuleCriteria,
 )
+from .seis_data import build_seis_option_map
 
 
 BASE_EXPORT_COLUMNS = [
@@ -573,6 +574,32 @@ def admin_dashboard(request):
         default_year = "2025-2026"
 
     assessments = list(Assessment.objects.prefetch_related('criteria', 'supported_options').order_by('name'))
+
+    # SEIS display settings: which assessments surface SEIS settings for
+    # students, independent of each assessment's is_active flag.
+    from .models import DesiSeisDisplaySettings
+    seis_settings = DesiSeisDisplaySettings.objects.first()
+    if request.method == 'POST':
+        seis_settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
+        selected_assessment_ids = {
+            int(x) for x in request.POST.getlist('seis_display_assessments') if x.isdigit()
+        }
+        seis_settings.assessments.set(
+            Assessment.objects.filter(id__in=selected_assessment_ids)
+        )
+        seis_settings.updated_by = request.user
+        seis_settings.save()
+        messages.success(
+            request,
+            "SEIS display settings saved. "
+            f"{len(selected_assessment_ids)} assessment(s) will display SEIS settings.",
+        )
+        return redirect('desi:admin_dashboard')
+
+    seis_selected_assessment_ids = (
+        set(seis_settings.assessments.values_list('id', flat=True))
+        if seis_settings else set()
+    )
     accommodations = list(Accommodation.objects.all().prefetch_related('options'))
 
     # Map each accommodation to the assessments connected through its options.
@@ -602,6 +629,9 @@ def admin_dashboard(request):
         'school_year': default_year,
         'pool_type_options': pool_type_options,
         'pool_test_options': pool_test_options,
+        'seis_settings': seis_settings,
+        'seis_selected_assessment_ids': seis_selected_assessment_ids,
+        'seis_selection_saved': DesiSeisDisplaySettings.objects.exists(),
     }
     return render(request, 'desi/admin_dashboard.html', context)
 
@@ -1457,7 +1487,14 @@ def edit_accommodation(request, id):
         for idx, raw_name in enumerate(option_names):
             opt_code = option_codes[idx].strip() if idx < len(option_codes) else ''
             opt_id = option_ids[idx].strip() if idx < len(option_ids) else ''
-            names = _split_option_values(raw_name)
+            # Existing options already have an id: their display name may
+            # legitimately contain commas (e.g. "…Large, Black."), so keep it
+            # as one literal value.  Only brand-new rows (no id yet) allow the
+            # comma-separated bulk shortcut.
+            if opt_id:
+                names = [raw_name.strip()] if raw_name.strip() else []
+            else:
+                names = _split_option_values(raw_name)
             for opt_name in names:
                 # A single value can safely retain its existing ID/code;
                 # comma-expanded values are new options.
@@ -1922,8 +1959,23 @@ def clone_assessment(request, id):
     return redirect('desi:admin_dashboard')
 
 
-def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True):
-    """Build workspace context for the DESI accommodation editor."""
+def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True, seis_option_map=None, seis_managed_assessments=None):
+    """
+    Build workspace context for the DESI accommodation editor.
+
+    ``eligible_assessments`` are the tests that remain editable for this
+    student (active + criteria-eligible, and NOT fully SEIS-managed).
+
+    ``seis_option_map`` is an optional dict keyed by ``(assessment_id,
+    accommodation_id)`` -> ``AccommodationOption`` produced from the read-only
+    SEIS source table.
+
+    ``seis_managed_assessments`` lists every assessment for which this student
+    has matched SEIS data.  These tests are fully read-only: they render as a
+    separate SEIS section that lists ONLY the SEIS supports (never the rest of
+    the editable test), and the user cannot edit any part of them.
+    """
+    seis_option_map = seis_option_map or {}
     shared_accommodations = []
     selected_support_ids = set(selected_support_ids or [])
     test_specific_accommodations = {ast.id: [] for ast in eligible_assessments}
@@ -1981,16 +2033,15 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
                 break
         is_multichoice = len(representative_opts) > 1 or (len(representative_opts) == 1 and representative_opts[0].name != "Standard")
 
-        acc_data = {
-            'accommodation': acc,
-            'options': representative_opts,
-            'is_multichoice': is_multichoice,
-            'selected_option': assigned_opt,
-            'dependency_option_id': acc.depends_on_option_id if dependency_applies(asts[0].id) else None,
-            'selected_direct': acc.id in selected_support_ids,
-        }
-
         if len(asts) > 1 and is_identical:
+            acc_data = {
+                'accommodation': acc,
+                'options': representative_opts,
+                'is_multichoice': is_multichoice,
+                'selected_option': assigned_opt,
+                'dependency_option_id': acc.depends_on_option_id if dependency_applies(asts[0].id) else None,
+                'selected_direct': acc.id in selected_support_ids,
+            }
             acc_data['applies_to'] = asts
             shared_accommodations.append(acc_data)
         else:
@@ -2040,13 +2091,44 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
                 'failed_rules': failed_rules_map.get(ast.id, []),
             })
 
+    # Assessments fully managed by SEIS for this student (any active state).
+    # Each renders read-only and lists ONLY the SEIS-matched supports - the
+    # rest of the test is intentionally not shown because the user is read-only
+    # for the entire test.
+    seis_count = 0
+    seis_readonly_cards = []
+    for ast in seis_managed_assessments or []:
+        acc_items = []
+        for (ast_id, acc_id), opt in seis_option_map.items():
+            if ast_id != ast.id:
+                continue
+            opts = list(ast.supported_options.filter(accommodation_id=acc_id))
+            acc_items.append({
+                'accommodation': opt.accommodation,
+                'options': opts or [opt],
+                'is_multichoice': True,
+                'selected_option': opt,
+                'dependency_option_id': None,
+                'selected_direct': False,
+                'seis_option': opt,
+            })
+        if acc_items:
+            seis_readonly_cards.append({
+                'assessment': ast,
+                'accommodations': acc_items,
+            })
+    seis_count += sum(len(card['accommodations']) for card in seis_readonly_cards)
+
     return {
         'student': student,
         'shared_accommodations': shared_accommodations,
         'assessment_cards': assessment_cards,
         'ineligible_cards': ineligible_cards,
+        'seis_readonly_cards': seis_readonly_cards,
         'student_option_ids': student_option_ids,
         'can_edit': can_edit,
+        'has_seis': bool(seis_count),
+        'seis_count': seis_count,
     }
 
 
@@ -2121,6 +2203,73 @@ def assign_accommodations(request, stu_annual_key):
         if eligible:
             eligible_assessments.append(ast)
 
+    # Read-only SEIS settings already configured for this student.
+    #
+    # SEIS data is authoritative and read-only: if a student has any matched
+    # SEIS support on an assessment, that assessment is shown read-only and
+    # lists ONLY the SEIS supports (the rest of the test is not editable).
+    # SEIS eligibility ignores every demographic criteria except grade.
+    #
+    # Project admins can restrict which assessments surface SEIS data via the
+    # "SEIS display settings" section of the DESI admin dashboard.  When a
+    # selection is saved, only the chosen assessments show SEIS settings;
+    # otherwise (no selection yet) SEIS settings are shown for every referenced
+    # assessment.
+    seis_option_map = {}
+    seis_locked_accommodation_ids = set()
+    seis_managed_assessments = []
+    if student.ssid:
+        from .seis_data import selected_seis_display_assessment_ids
+        selected_ids = selected_seis_display_assessment_ids()
+        all_assessments = list(
+            Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation')
+        )
+        _assessment_by_id = {ast.id: ast for ast in all_assessments}
+
+        def grade_eligible(ast):
+            """Only 'grade' criteria gate SEIS display; all others are ignored."""
+            grade_criteria = [c for c in ast.criteria.all() if c.field_name == 'grade']
+            if not grade_criteria:
+                return True
+            ok, _ = check_criteria(grade_criteria, student)
+            return ok
+
+        # Build the map across every assessment.  The mapping itself scopes each
+        # SEIS setting to the assessments that support the matched option (and,
+        # when a SEIS row names specific tests, to exactly those).  We then keep
+        # only entries that are admin-selected (when a selection exists) and
+        # grade-eligible.
+        raw_map, _ = build_seis_option_map(student.ssid, all_assessments)
+        seis_option_map = {
+            (ast_id, acc_id): opt
+            for (ast_id, acc_id), opt in raw_map.items()
+            if (selected_ids is None or ast_id in selected_ids)
+            and grade_eligible(_assessment_by_id[ast_id])
+        }
+        seis_locked_accommodation_ids = {acc_id for _ast_id, acc_id in seis_option_map}
+
+        managed_ids = {ast_id for ast_id, _acc_id in seis_option_map}
+        seis_managed_assessments = [
+            ast for ast in all_assessments if ast.id in managed_ids
+        ]
+        # Color code managed assessments (incl. inactive ones) so read-only
+        # sections render with a stable accent.
+        active_color = {
+            ast.id: ast.card_color for ast in assessments if hasattr(ast, 'card_color')
+        }
+        for index, ast in enumerate(seis_managed_assessments):
+            ast.card_color = active_color.get(
+                ast.id,
+                ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)],
+            )
+
+    # Assessments available for teacher entry = active + eligible by the
+    # configured criteria, EXCLUDING tests that are fully SEIS-managed.
+    managed_ids = {ast.id for ast in seis_managed_assessments}
+    editable_assessments = [
+        ast for ast in eligible_assessments if ast.id not in managed_ids
+    ]
+
     is_htmx = request.headers.get('HX-Request') == 'true' or request.META.get('HTTP_HX_REQUEST') == 'true'
 
     if request.method == 'POST':
@@ -2137,7 +2286,7 @@ def assign_accommodations(request, stu_annual_key):
 
         dependency_rules = {}
         support_contexts = {}
-        for ast in eligible_assessments:
+        for ast in editable_assessments:
             for opt in ast.supported_options.all():
                 support = opt.accommodation
                 support_contexts.setdefault(support.id, set()).add(ast.id)
@@ -2161,6 +2310,16 @@ def assign_accommodations(request, stu_annual_key):
             support_contexts,
             dependency_rules,
         )
+        # SEIS supports are read-only: their controls are disabled so they never
+        # post. Keep any option previously stored under a SEIS-locked support so
+        # an unrelated save does not silently erase it.
+        if seis_locked_accommodation_ids:
+            preserved_locked_opt_ids = set(
+                student_acc.options
+                .filter(accommodation_id__in=seis_locked_accommodation_ids)
+                .values_list('id', flat=True)
+            )
+            selected_opt_ids = list(set(selected_opt_ids) | preserved_locked_opt_ids)
         student_acc.options.set(AccommodationOption.objects.filter(id__in=selected_opt_ids))
         student_acc.selected_accommodations.set(Accommodation.objects.filter(id__in=selected_support_ids))
         student_acc.updated_by = request.user
@@ -2177,7 +2336,7 @@ def assign_accommodations(request, stu_annual_key):
         completed_ids_list = request.POST.getlist('completed_assessments')
         completed_ids = set(int(x) for x in completed_ids_list if x.isdigit())
 
-        for ast in eligible_assessments:
+        for ast in editable_assessments:
             is_comp = ast.id in completed_ids
             comp_record, _ = StudentAssessmentCompletion.objects.get_or_create(
                 student_annual_key=stu_annual_key,
@@ -2194,12 +2353,14 @@ def assign_accommodations(request, stu_annual_key):
             context = _build_assign_accommodations_context(
                 student,
                 stu_annual_key,
-                eligible_assessments,
+                editable_assessments,
                 assessments,
                 failed_rules_map,
                 selected_opt_ids,
                 selected_support_ids,
                 can_edit=can_edit,
+                seis_option_map=seis_option_map,
+                seis_managed_assessments=seis_managed_assessments,
             )
             list_context.update(context)
 
@@ -2235,7 +2396,7 @@ def assign_accommodations(request, stu_annual_key):
     option_to_accommodation = {opt.id: opt.accommodation_id for opt in student_options}
     dependency_rules = {}
     support_contexts = {}
-    for ast in eligible_assessments:
+    for ast in editable_assessments:
         for opt in ast.supported_options.all():
             support = opt.accommodation
             support_contexts.setdefault(support.id, set()).add(ast.id)
@@ -2251,6 +2412,14 @@ def assign_accommodations(request, stu_annual_key):
         support_contexts,
         dependency_rules,
     )
+    # Keep stored options that belong to SEIS-managed (read-only) supports.
+    if seis_locked_accommodation_ids:
+        preserved_locked_opt_ids = set(
+            student_acc.options
+            .filter(accommodation_id__in=seis_locked_accommodation_ids)
+            .values_list('id', flat=True)
+        )
+        student_option_ids = list(set(student_option_ids) | preserved_locked_opt_ids)
     if set(o.id for o in student_options) != student_option_ids:
         student_acc.options.set(AccommodationOption.objects.filter(id__in=student_option_ids))
         student_acc.updated_by = request.user
@@ -2259,12 +2428,14 @@ def assign_accommodations(request, stu_annual_key):
     context = _build_assign_accommodations_context(
         student,
         stu_annual_key,
-        eligible_assessments,
+        editable_assessments,
         assessments,
         failed_rules_map,
         student_option_ids,
         selected_support_ids,
         can_edit=can_edit,
+        seis_option_map=seis_option_map,
+        seis_managed_assessments=seis_managed_assessments,
     )
 
     if is_htmx:

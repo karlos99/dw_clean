@@ -1,9 +1,10 @@
 {% with acc=acc_item.accommodation opts=acc_item.options %}
-{% with selected_option=acc_item.selected_option is_direct=acc_item.selected_direct %}
+{% with selected_option=acc_item.selected_option is_direct=acc_item.selected_direct seis_option=acc_item.seis_option %}
 
 <div class="support-card flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden"
      data-accommodation-id="{{ acc.id }}"
      data-depends-on-option-id="{{ acc_item.dependency_option_id|default:'' }}"
+     data-seis-locked="{% if seis_option %}true{% else %}false{% endif %}"
      data-open="{% if selected_option or is_direct %}true{% else %}false{% endif %}">
 
     <!-- Collapsible Header -->
@@ -19,6 +20,12 @@
                     <span class="font-semibold text-sm text-slate-900">{{ acc.name }}</span>
                     {% if acc.code %}
                     <span class="font-mono text-[10px] text-slate-400 uppercase">{{ acc.code }}</span>
+                    {% endif %}
+                    {% if seis_option %}
+                    <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-violet-100 text-violet-700 border border-violet-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-2.5 w-2.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
+                        Imported from SEIS
+                    </span>
                     {% endif %}
                 </span>
                 <span class="mt-1 flex flex-wrap items-center gap-1.5">
@@ -67,6 +74,16 @@
     <div data-accordion-body class="{% if selected_option or is_direct %}block{% else %}hidden{% endif %} border-t border-slate-100 bg-slate-50/60">
         <div class="p-4 space-y-3">
 
+            {% if seis_option %}
+            <div class="inline-flex items-start gap-2 rounded-md bg-violet-50 border border-violet-200 px-3 py-2 text-xs text-violet-800">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 shrink-0 mt-0.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
+                <div>
+                    <p class="font-bold">Imported from SEIS — read only</p>
+                    <p class="text-[10px] text-violet-600 mt-0.5">This setting was configured in SEIS and cannot be edited here. Selected option: <strong>{{ seis_option.name }}{% if seis_option.code %} ({{ seis_option.code }}){% endif %}</strong>.</p>
+                </div>
+            </div>
+            {% endif %}
+
             {% if acc.description %}
             <p class="text-xs text-slate-600 leading-relaxed whitespace-pre-line">{{ acc.description }}</p>
             {% endif %}
@@ -90,15 +107,17 @@
                 <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Select option</label>
                 <select name="student_options"
                         data-accommodation-id="{{ acc.id }}"
-                        {% if not can_edit %}disabled class="acc-option-select block w-full rounded border-slate-200 bg-slate-100 text-slate-400 text-xs py-2 px-3"{% else %}class="acc-option-select block w-full rounded border-slate-300 bg-white text-xs py-2 px-3 focus:border-{{ card_color|default:'slate' }}-500 focus:ring-{{ card_color|default:'slate' }}-500"{% endif %}>
+                        {% if seis_option or not can_edit %}disabled class="acc-option-select block w-full rounded border-slate-200 bg-slate-100 text-slate-400 text-xs py-2 px-3"{% else %}class="acc-option-select block w-full rounded border-slate-300 bg-white text-xs py-2 px-3 focus:border-{{ card_color|default:'slate' }}-500 focus:ring-{{ card_color|default:'slate' }}-500"{% endif %}>
                     <option value="">-- Not selected --</option>
                     {% for opt in opts %}
-                    <option value="{{ opt.id }}" {% if opt.id in student_option_ids %}selected{% endif %}>
+                    <option value="{{ opt.id }}" {% if opt.id == seis_option.id %}selected{% elif opt.id in student_option_ids %}selected{% endif %}>
                         {{ opt.name }}{% if opt.code %} ({{ opt.code }}){% endif %}
                     </option>
                     {% endfor %}
                 </select>
-                {% if not can_edit %}
+                {% if seis_option %}
+                <p class="text-[9px] text-violet-600 font-semibold mt-1">Locked from SEIS - changes are disabled.</p>
+                {% elif not can_edit %}
                 <p class="text-[9px] text-amber-600 font-semibold mt-1">View only - changes are disabled.</p>
                 {% endif %}
             </div>
@@ -106,7 +125,7 @@
             <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                 <input type="checkbox" name="student_supports" value="{{ acc.id }}"
                        {% if acc_item.selected_direct %}checked{% endif %}
-                       {% if not can_edit %}disabled{% endif %}
+                       {% if seis_option or not can_edit %}disabled{% endif %}
                        class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
                 <span>Student needs this support</span>
             </label>

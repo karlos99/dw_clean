@@ -270,6 +270,7 @@
 
             function syncAccommodationGroup(accId, value) {
                 document.querySelectorAll(`.support-card[data-accommodation-id="${accId}"]`).forEach(card => {
+                    if (card.dataset.seisLocked === 'true') return;
                     const select = cardSelect(card);
                     if (!select) return;
                     if (value === '') {
@@ -291,6 +292,7 @@
                             .filter(v => v)
                     );
                     document.querySelectorAll('.support-card').forEach(card => {
+                        if (card.dataset.seisLocked === 'true') return;
                         const dep = card.dataset.dependsOnOptionId;
                         const isHidden = !!dep && ids.has(dep);
                         card.style.display = isHidden ? 'none' : '';

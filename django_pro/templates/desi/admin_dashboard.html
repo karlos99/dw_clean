@@ -27,6 +27,59 @@
         </div>
     </div>
 
+    <!-- SEIS Display Settings -->
+    <form method="POST" action="{% url 'desi:admin_dashboard' %}" class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-12">
+        {% csrf_token %}
+        <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+            <h2 class="text-lg font-bold">SEIS Display Settings</h2>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                {{ assessments|length }} assessments
+            </span>
+        </div>
+        <div class="p-6">
+            <p class="text-sm text-slate-600 mb-1">Choose which assessments show SEIS settings on the student workspace.</p>
+            <p class="text-[11px] text-slate-400 mb-4">SEIS supports are read-only and matched to each student from the SEIS source data. Assessments selected here display their SEIS settings for students — whether or not the assessment is currently active. If you do not select anything, SEIS settings are hidden.</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                {% for ast in assessments %}
+                <label class="flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer transition {% if ast.id in seis_selected_assessment_ids %}border-violet-300 bg-violet-50{% else %}border-slate-200 bg-white hover:border-slate-300{% endif %}">
+                    <input type="checkbox" name="seis_display_assessments" value="{{ ast.id }}"
+                           {% if ast.id in seis_selected_assessment_ids %}checked{% endif %}
+                           class="mt-0.5 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                           data-seis-check>
+                    <span class="min-w-0">
+                        <span class="block text-sm font-semibold text-slate-800">{{ ast.name }}</span>
+                        <span class="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {% if ast.subject %}
+                            <span class="text-[10px] text-slate-500">{{ ast.subject }}</span>
+                            {% endif %}
+                            {% if ast.tag %}
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-slate-800 text-slate-100">{{ ast.tag }}</span>
+                            {% endif %}
+                            {% if ast.is_active %}
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-green-100 text-green-800">Active</span>
+                            {% else %}
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-slate-100 text-slate-500">Inactive</span>
+                            {% endif %}
+                        </span>
+                    </span>
+                </label>
+                {% empty %}
+                <div class="col-span-full text-sm text-slate-500 italic">No assessments configured yet.</div>
+                {% endfor %}
+            </div>
+
+            <div class="mt-5 flex items-center justify-between gap-3 flex-wrap">
+                <p class="text-[11px] text-slate-400">
+                    <span id="seis-selected-count">{{ seis_selected_assessment_ids|length }}</span> assessment(s) selected to display SEIS settings.
+                </p>
+                <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-white bg-violet-600 hover:bg-violet-700 transition">
+                    Save SEIS Display Settings
+                </button>
+            </div>
+        </div>
+    </form>
+
     <!-- Active Assessments List -->
     <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-12">
         <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
@@ -248,7 +301,6 @@
         const emptyMessage = document.getElementById('pool-empty');
         const countEl = document.getElementById('pool-count');
         if (!grid || !countEl) return;
-
         const search = document.getElementById('pool-search');
         const typeSelect = document.getElementById('pool-type');
         const testSelect = document.getElementById('pool-test');
@@ -292,6 +344,28 @@
             });
         }
         applyFilters();
+    });
+</script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const boxes = Array.from(document.querySelectorAll('input[name="seis_display_assessments"]'));
+        const counter = document.getElementById('seis-selected-count');
+        if (!boxes.length || !counter) return;
+        const updateCount = () => {
+            const n = boxes.filter(b => b.checked).length;
+            counter.textContent = n;
+            boxes.forEach(box => {
+                const label = box.closest('label');
+                if (!label) return;
+                label.classList.toggle('border-violet-300', box.checked);
+                label.classList.toggle('bg-violet-50', box.checked);
+                label.classList.toggle('border-slate-200', !box.checked);
+                label.classList.toggle('bg-white', !box.checked);
+            });
+        };
+        boxes.forEach(box => box.addEventListener('change', updateCount));
+        updateCount();
     });
 </script>
 {% endblock %}

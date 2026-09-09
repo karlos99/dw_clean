@@ -255,6 +255,66 @@ class DesiSchoolAccess(models.Model):
         return f"{self.school_state_id} - {'Edit' if self.teachers_can_edit else 'View only'}"
 
 
+class DesiSeis(models.Model):
+    """
+    Read-only source record of SEIS assessment settings for a student.
+
+    Maps to the externally-populated ``desi_seis`` table (not managed by
+    Django). Each row belongs to one test program (``test_group``: caaspp /
+    elpac), names the DESI assessments the settings apply to (``assessments``)
+    and stores the selected support option codes per setting (``settings``).
+    """
+    id = models.CharField(max_length=64, primary_key=True)
+    ssid = models.CharField(max_length=32, db_index=True)
+    test_group = models.CharField(max_length=32)
+    settings = models.JSONField(default=dict, blank=True)
+    assessments = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'desi_seis'
+
+    def __str__(self):
+        return f"SEIS settings for {self.ssid} ({self.test_group})"
+
+
+class DesiSeisDisplaySettings(models.Model):
+    """
+    Project-level control over which assessments surface SEIS settings on the
+    student workspace.
+
+    Only assessments ticked here have their SEIS settings displayed (as locks
+    on editable cards or as read-only sections for tests that are not active).
+    This makes the selection explicit and independent of each assessment's
+    ``is_active`` flag.  An empty selection means SEIS settings are not shown
+    for any assessment.
+    """
+    assessments = models.ManyToManyField(
+        Assessment,
+        blank=True,
+        related_name='seis_display_selected',
+        help_text="Assessments whose SEIS settings should be displayed for students, "
+                  "regardless of whether the assessment is active.",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='desi_seis_display_updated',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'SEIS Display Settings'
+        verbose_name_plural = 'SEIS Display Settings'
+
+    def __str__(self):
+        count = self.assessments.count()
+        suffix = '' if count == 1 else 's'
+        return f"SEIS display settings ({count} assessment{suffix})"
+
+
 class SupportRule(models.Model):
     """
     A named demographic criteria rule. Supports attached via ``supports`` are

@@ -15,6 +15,8 @@ from desi.models import (
     AssessmentCriteria,
     DesiExportConfiguration,
     DesiSchoolAccess,
+    DesiSeis,
+    DesiSeisDisplaySettings,
     StudentAccommodation,
     StudentAssessmentCompletion,
     SupportRule,
@@ -321,6 +323,52 @@ class DesiWorkflowAndViewsTests(TestCase):
         self.opt.refresh_from_db()
         self.assertEqual(self.opt.name, 'Read Aloud')
         self.assertEqual(self.opt.code, 'RA')
+
+    def test_edit_support_with_comma_option_names_can_save_resources(self):
+        """Regression: option names may contain commas (e.g. '...Large, Black.').
+        Editing such a support (here to add a resource) must not split the names
+        or fail the unique-name validation."""
+        self.client.force_login(self.admin_user)
+        acc = Accommodation.objects.create(name="Mouse Pointer", code="MP")
+        opts = []
+        for name, code in [
+            ("Mouse Pointer is selected as Large, Black.", "MP_L_BLK"),
+            ("Mouse Pointer is selected as Large, White.", "MP_L_WHT"),
+            ("Mouse Pointer is selected as Extra Large, Black.", "MP_XL_BLK"),
+        ]:
+            opts.append(AccommodationOption.objects.create(
+                accommodation=acc, name=name, code=code
+            ))
+        for ast in (self.assessment_math, self.assessment_ela):
+            ast.supported_options.add(*opts)
+
+        edit_url = reverse('desi:edit_accommodation', args=[acc.id])
+        response = self.client.post(edit_url, {
+            'name': acc.name,
+            'code': acc.code,
+            'category': acc.category,
+            'description': acc.description,
+            'video_url': '',
+            'order': str(acc.order),
+            'option_id[]': [str(o.id) for o in opts],
+            'option_name[]': [o.name for o in opts],
+            'option_code[]': [o.code for o in opts],
+            'supported_assessments': [str(self.assessment_math.id), str(self.assessment_ela.id)],
+            f'assessment_opts_{self.assessment_math.id}': [o.name for o in opts],
+            f'assessment_opts_{self.assessment_ela.id}': [o.name for o in opts],
+            'resource_id[]': [''],
+            'resource_label[]': ['Video guide'],
+            'resource_url[]': ['https://www.youtube.com/watch?v=abc123'],
+            'resource_kind[]': ['youtube'],
+        })
+        self.assertEqual(response.status_code, 302)
+        acc.refresh_from_db()
+        # The three options still exist intact (not split on commas).
+        self.assertEqual(acc.options.count(), 3)
+        self.assertTrue(acc.options.filter(name="Mouse Pointer is selected as Large, Black.").exists())
+        self.assertTrue(acc.options.filter(name="Mouse Pointer is selected as Extra Large, Black.").exists())
+        # Resource was saved.
+        self.assertTrue(acc.resources.filter(url="https://www.youtube.com/watch?v=abc123").exists())
 
     def test_create_designated_support_with_dependency(self):
         self.client.force_login(self.admin_user)
@@ -1180,3 +1228,185 @@ class DesiMappingPreservationTests(TestCase):
         inactive_only.refresh_from_db()
         self.assertTrue(self.inactive.supported_options.filter(id=inactive_only.id).exists())
         self.assertTrue(self.active.supported_options.filter(id=self.opt.id).exists())
+
+
+class DesiSeisDisplaySettingsTests(TestCase):
+    """Admin SEIS display selection + workspace gating."""
+
+    def setUp(self):
+        self.role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="seis-admin@test.com",
+            email="seis-admin@test.com",
+            password="password123",
+        )
+        self.user.roles.add(self.role)
+        self.client.force_login(self.user)
+
+        # Assessments: one active, one inactive, one unrelated.
+        self.ast_math = Assessment.objects.create(name="Smarter math", is_active=True)
+        self.ast_ela = Assessment.objects.create(name="Smarter ELA", is_active=False)
+        self.ast_other = Assessment.objects.create(name="Unrelated Test", is_active=True)
+
+        self.acc = Accommodation.objects.create(name="Text-to-Speech", code="TTS")
+        self.opt = AccommodationOption.objects.create(
+            accommodation=self.acc, name="Standard", code="TTS"
+        )
+        self.ast_math.supported_options.add(self.opt)
+        self.ast_ela.supported_options.add(self.opt)
+        self.ast_other.supported_options.add(self.opt)
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="seis_display_student",
+            ssid="seisdisplay",
+            student_id="seis-local",
+            student_name="SEIS Display Student",
+            grade="04",
+            school_year="2025-2026",
+        )
+
+    def test_admin_dashboard_saves_selection(self):
+        url = reverse("desi:admin_dashboard")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "SEIS Display Settings")
+
+        # Save a selection of two assessments (one inactive).
+        response = self.client.post(url, {
+            "seis_display_assessments": [str(self.ast_math.id), str(self.ast_ela.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+
+        settings = DesiSeisDisplaySettings.objects.first()
+        self.assertIsNotNone(settings)
+        self.assertEqual(
+            set(settings.assessments.values_list("id", flat=True)),
+            {self.ast_math.id, self.ast_ela.id},
+        )
+
+    def test_dashboard_echoes_saved_selection(self):
+        import re
+        settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
+        settings.assessments.set([self.ast_math.id])
+        response = self.client.get(reverse("desi:admin_dashboard"))
+        html = response.content.decode()
+
+        def is_checked(value):
+            # value appears before the optional whitespace-separated "checked"
+            pattern = re.compile(r'name="seis_display_assessments" value="%s"\s*(checked)?' % value)
+            m = pattern.search(html)
+            return bool(m and m.group(1))
+
+        # The selected math row is checked; ELA is not.
+        self.assertTrue(is_checked(self.ast_math.id))
+        self.assertFalse(is_checked(self.ast_ela.id))
+
+class DesiSeisDisplaySettingsViewTests(TestCase):
+    """SEIS admin display selection applied on the student workspace view."""
+
+    def setUp(self):
+        from unittest import mock
+        self._patchers = []
+        self._fake_map = {}
+
+        def _fake_build(ssid, assessments):
+            return self._fake_map, {acc_id for _a, acc_id in self._fake_map}
+
+        patcher_build = mock.patch.object(
+            __import__("desi.views", fromlist=["build_seis_option_map"]),
+            "build_seis_option_map",
+            side_effect=_fake_build,
+        )
+        self._patchers.append(patcher_build)
+        for p in self._patchers:
+            p.start()
+        self.addCleanup(self._stop_patchers)
+
+        self.role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="seis-view-admin@test.com",
+            email="seis-view-admin@test.com",
+            password="password123",
+        )
+        self.user.roles.add(self.role)
+        self.client.force_login(self.user)
+
+        self.ast_math = Assessment.objects.create(name="Smarter math", is_active=True)
+        self.ast_ela = Assessment.objects.create(name="Smarter ELA", is_active=False)
+
+        self.acc = Accommodation.objects.create(name="Text-to-Speech", code="TTS")
+        self.opt = AccommodationOption.objects.create(
+            accommodation=self.acc, name="Standard", code="TTS"
+        )
+        self.ast_math.supported_options.add(self.opt)
+        self.ast_ela.supported_options.add(self.opt)
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="seis_view_student",
+            ssid="seisview",
+            student_id="seis-view",
+            student_name="SEIS View Student",
+            grade="04",
+            school_year="2025-2026",
+        )
+        # Make the superuser/PA an admin that can see the student.
+        self.user.is_superuser = True
+        self.user.save()
+
+    def _stop_patchers(self):
+        for p in self._patchers:
+            try:
+                p.stop()
+            except Exception:
+                pass
+
+    def test_selected_assessments_show_seis_locks_and_readonly(self):
+        # Simulate the student's SEIS row referencing both math and ELA.
+        self._fake_map = {
+            (self.ast_math.id, self.acc.id): self.opt,
+            (self.ast_ela.id, self.acc.id): self.opt,
+        }
+        DesiSeisDisplaySettings.objects.create(pk=1)
+        settings = DesiSeisDisplaySettings.objects.get(pk=1)
+        settings.assessments.set([self.ast_math.id, self.ast_ela.id])
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+
+        # Both math (active) and ELA (inactive) are SEIS-managed: the read-only
+        # SEIS section lists only their SEIS supports, and neither test is
+        # shown as an editable card.
+        self.assertIn("SEIS settings (read only)", html)
+        self.assertIn("Smarter math", html)
+        self.assertIn("Smarter ELA", html)
+        self.assertIn("Imported from SEIS", html)
+
+    def test_unselected_assessment_hides_its_seis(self):
+        self._fake_map = {
+            (self.ast_math.id, self.acc.id): self.opt,
+            (self.ast_ela.id, self.acc.id): self.opt,
+        }
+        # Admin only selected math -> ELA's SEIS is hidden even though the
+        # simulated SEIS source references it.
+        DesiSeisDisplaySettings.objects.create(pk=1)
+        settings = DesiSeisDisplaySettings.objects.get(pk=1)
+        settings.assessments.set([self.ast_math.id])
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+
+        # Math is SEIS-managed (read-only); ELA is not selected, so no SEIS
+        # section lists it.
+        self.assertIn("SEIS settings (read only)", html)
+        self.assertIn("Smarter math", html)
+        self.assertIn("Imported from SEIS", html)
+        # Smarter ELA must not appear at all (not selected => not SEIS).
+        self.assertNotIn("Smarter ELA", html)

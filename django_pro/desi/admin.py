@@ -7,6 +7,8 @@ from .models import (
     AssessmentCriteria,
     DesiExportConfiguration,
     DesiSchoolAccess,
+    DesiSeis,
+    DesiSeisDisplaySettings,
     StudentAccommodation,
     StudentAssessmentCompletion,
     SupportRule,
@@ -72,6 +74,35 @@ class StudentAssessmentCompletionAdmin(admin.ModelAdmin):
     list_display = ('student_annual_key', 'assessment', 'is_completed', 'updated_at', 'updated_by')
     list_filter = ('is_completed', 'assessment')
     search_fields = ('student_annual_key',)
+
+
+@admin.register(DesiSeis)
+class DesiSeisAdmin(admin.ModelAdmin):
+    list_display = ('ssid', 'test_group', 'id')
+    search_fields = ('ssid', 'id')
+    list_filter = ('test_group',)
+    readonly_fields = ('id', 'ssid', 'test_group', 'settings', 'assessments')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(DesiSeisDisplaySettings)
+class DesiSeisDisplaySettingsAdmin(admin.ModelAdmin):
+    list_display = ('id', 'updated_by', 'updated_at')
+    filter_horizontal = ('assessments',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(DesiSchoolAccess)

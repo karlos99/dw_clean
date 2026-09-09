@@ -39,6 +39,16 @@
         {% csrf_token %}
         <input type="hidden" name="action" value="save_accommodations">
 
+        {% if has_seis %}
+        <div class="bg-violet-50 border border-violet-200 rounded-xl px-4 py-3 flex items-start gap-3 text-xs text-violet-800">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 shrink-0 mt-0.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
+            <div>
+                <p class="font-bold">This student has {{ seis_count }} designated support{{ seis_count|pluralize }} imported from SEIS.</p>
+                <p class="text-[10px] text-violet-600 mt-0.5">Those supports are read-only and locked from the SEIS source and cannot be edited here.</p>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- SHARED / GROUPED SUPPORTS (ANSWER ONCE) -->
         {% if shared_accommodations %}
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden" data-accordion-scope>
@@ -118,11 +128,56 @@
                 </div>
             </div>
             {% empty %}
+            {% if not seis_readonly_cards %}
             <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center text-slate-500 italic text-sm">
                 No active assessments available for this student.
             </div>
+            {% endif %}
             {% endfor %}
         </div>
+
+        <!-- READ-ONLY SEIS SECTIONS (tests not active / not yet editable) -->
+        {% if seis_readonly_cards %}
+        <div class="space-y-4">
+            <div class="flex items-center gap-2">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-violet-100 text-violet-700 border border-violet-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-3 w-3"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
+                    SEIS settings (read only)
+                </span>
+                <p class="text-[10px] text-slate-400 italic">SEIS supports imported for this student. These tests are fully managed by SEIS and are read-only.</p>
+            </div>
+            {% for card in seis_readonly_cards %}
+            <div class="bg-white rounded-xl shadow-sm border-2 border-violet-100 overflow-hidden" data-accordion-scope>
+                <div class="flex items-center justify-between gap-3 px-4 py-3 border-b-2 border-violet-200">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <span class="w-1.5 self-stretch rounded-full bg-violet-400 shrink-0"></span>
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h2 class="text-sm font-bold text-slate-900">{{ card.assessment.name }}</h2>
+                                {% if card.assessment.subject %}
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-violet-50 text-violet-700 border border-violet-200">
+                                    {{ card.assessment.subject }}
+                                </span>
+                                {% endif %}
+                                {% if not card.assessment.is_active %}
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                                    Test not active
+                                </span>
+                                {% endif %}
+                            </div>
+                            <p class="text-[10px] text-slate-400 mt-0.5">{{ card.accommodations|length }} imported support{{ card.accommodations|length|pluralize }}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-3 md:p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {% for acc_item in card.accommodations %}
+                    {% include "desi/partials/support_card.html" with acc_item=acc_item test_name=card.assessment.name card_color="violet" %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
 
         <!-- SUBMIT ACTIONS -->
         {% if can_edit %}
