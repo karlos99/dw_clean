@@ -3,7 +3,7 @@
 import re
 from datetime import date, datetime, timezone
 
-from ..column_utils import RESULTS_BLANK_SSID_SQL, parse_markall_key, markall_key as _markall_key, get_mark_columns, parse_sat_column_key, sat_column_db_field
+from ..column_utils import RESULTS_BLANK_SSID_SQL, parse_markall_key, markall_key as _markall_key, get_mark_columns, parse_sat_column_key, sat_column_db_field, parse_apall_sort_key
 from .column_management import (
     get_column_expression,
     json_list_key_for_column,
@@ -302,6 +302,49 @@ def apply_column_filters(
                 )
                 params.extend(mark_base_params + blank_params)
 
+            if conditions:
+                where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
+        if col.startswith('apall_'):
+            parsed = parse_apall_sort_key(col)
+            if not parsed:
+                # Umbrella key — carries subject excludes, not a row filter.
+                continue
+            year = parsed['year']
+            idx = parsed['index']
+            field = "exam_name" if parsed['field'] == 'SUBJECT' else "exam_grade"
+            excludes = set()
+            _excl_vals = filters_to_apply.get(f"apall_{year.replace('-', '_')}")
+            if isinstance(_excl_vals, list):
+                excludes = {
+                    str(v)[len('exclude:'):] for v in _excl_vals if str(v).startswith('exclude:')
+                }
+            exclude_clause = ""
+            exclude_params = []
+            if excludes:
+                placeholders = ", ".join(["%s"] * len(excludes))
+                exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                exclude_params = sorted(excludes)
+            rank_sql = (
+                "SELECT ssid FROM ("
+                " SELECT a.ssid, e.name AS exam_name, a.exam_grade,"
+                " row_number() OVER (PARTITION BY a.ssid ORDER BY e.name) AS rn"
+                " FROM \"dataLoader_apexamresult\" a"
+                " INNER JOIN \"dataLoader_apexamcode\" e ON a.exam_id = e.code"
+                " INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id"
+                " WHERE a.admin_year = %s AND il.is_published = true"
+                f"{exclude_clause}"
+                ") t WHERE rn = %s"
+            )
+            rank_params = [year] + exclude_params + [idx]
+            conditions = []
+            if real_values:
+                conditions.append(f"cs.ssid IN ({rank_sql} AND t.{field} = ANY(%s))")
+                params.extend(rank_params + [real_values])
+            if has_blank:
+                conditions.append(f"cs.ssid NOT IN ({rank_sql} AND t.{field} IS NOT NULL AND t.{field} <> '')")
+                params.extend(rank_params)
             if conditions:
                 where_clauses.append(f"({' OR '.join(conditions)})")
             continue

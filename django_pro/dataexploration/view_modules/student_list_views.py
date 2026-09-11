@@ -284,9 +284,12 @@ def load_students(request):
     selected_columns = [resolve_relative_column_key(c) for c in selected_columns]
 
     # ── AP "All Results" expansion ──────────────────────────────────────────
-    # The `apall_<year>` umbrella key expands into wide subject/PL pairs
-    # (apall_<year>_1_SUBJECT, apall_<year>_1_PL, ...) one pair per result.
-    # Selecting it also unselects the individual ap_<year>_*_PL columns.
+    # The `apall_<year>` umbrella expands into wide assessment/result pairs
+    # (apall_<year>_1_SUBJECT, apall_<year>_1_PL, ...) — one pair per AP exam a
+    # student has, ranked by exam name. Selecting it also unselects the
+    # individual ap_<year>_*_PL columns. Subjects the user unchecked in the
+    # picker are stored under the umbrella key as 'exclude:<subject>' values
+    # and skipped during expansion.
     def _apall_year_key(col):
         if not isinstance(col, str) or not col.startswith('apall_'):
             return None
@@ -296,49 +299,32 @@ def load_students(request):
         return None
 
     apall_years = []
+    apall_max = {}
     for c in selected_columns:
         yk = _apall_year_key(c)
         if yk and yk.replace('_', '-') not in apall_years:
             apall_years.append(yk.replace('_', '-'))
 
-    apall_max = {}
+    # Collapse any already-expanded apall keys (saved/previous selection) back
+    # to their umbrella, and unselect the individual ap_<year>_*_PL columns.
+    # Expansion into wide pairs happens later once the filtered population is
+    # known, so we only emit pairs students actually have.
     if apall_years:
-        with connections['default'].cursor() as apall_cursor:
-            for year in apall_years:
-                apall_cursor.execute(
-                    """
-                    SELECT COALESCE(MAX(cnt), 0)
-                    FROM (
-                        SELECT r.ssid, COUNT(*) AS cnt
-                        FROM "dataLoader_apexamresult" r
-                        JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
-                        WHERE r.admin_year = %s AND il.is_published = true
-                        GROUP BY r.ssid
-                    ) t
-                    """,
-                    [year],
-                )
-                apall_max[year] = min(int(apall_cursor.fetchone()[0] or 0), 10)
-
         new_selected = []
         for c in selected_columns:
-            # Unselect individual AP subject PL columns for expanded years
-            if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_') and not c.startswith('apall_'):
-                tail = c[3:]
+            if isinstance(c, str) and c.startswith('apall_'):
+                yk = _apall_year_key(c)
+                if yk:
+                    umbrella = f"apall_{yk}"
+                    if umbrella not in new_selected:
+                        new_selected.append(umbrella)
+                    continue
+            if isinstance(c, str) and c.startswith('ap_') and not c.startswith(('apaward_', 'apawards_all_')):
+                tail = c[len('ap_'):]
                 parts = tail.split('_')
                 if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-                    yr = f"{parts[0]}-{parts[1]}"
-                    if yr in apall_years:
+                    if f"{parts[0]}-{parts[1]}" in apall_years:
                         continue
-            # Expand umbrella / already-expanded keys into wide pairs
-            yk = _apall_year_key(c)
-            if yk:
-                year = yk.replace('_', '-')
-                n = apall_max.get(year, 0)
-                for i in range(1, n + 1):
-                    new_selected.append(f"apall_{yk}_{i}_SUBJECT")
-                    new_selected.append(f"apall_{yk}_{i}_PL")
-                continue
             new_selected.append(c)
         selected_columns = new_selected
 
@@ -561,6 +547,21 @@ def load_students(request):
         if umbrella:
             return markall_excludes.get(umbrella, set())
         return set()
+
+    # Subjects the user unchecked from an "All Results" umbrella. Stored under
+    # the umbrella key as 'exclude:<subject>' values; like the marks course
+    # excludes these only shape the wide-pair columns, never the row population.
+    def _apall_subject_excludes(year):
+        if not isinstance(filters, dict):
+            return set()
+        vals = filters.get(f"apall_{year.replace('-', '_')}")
+        names = set()
+        if isinstance(vals, list):
+            for v in vals:
+                s = str(v)
+                if s.startswith('exclude:'):
+                    names.add(s[len('exclude:'):])
+        return names
 
     with QueryExecutor(analytics=True).cursor() as cursor:
         db_columns = get_current_student_columns()
@@ -1124,6 +1125,53 @@ def load_students(request):
                 new_selected.append(c)
             selected_columns = new_selected
 
+        # ── AP "All Results" expansion (filtered population) ───────────────
+        # Emit assessment/result wide pairs up to the max number of AP exams
+        # the *filtered* students actually have for the year (subjects the
+        # user unchecked in the picker are skipped).
+        if apall_years:
+            with connections['default'].cursor() as apall_cursor:
+                for year in apall_years:
+                    excludes = _apall_subject_excludes(year)
+                    exclude_clause = ""
+                    exclude_params = []
+                    if excludes:
+                        placeholders = ", ".join(["%s"] * len(excludes))
+                        exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                        exclude_params = sorted(excludes)
+                    apall_cursor.execute(
+                        f"""
+                        SELECT COALESCE(MAX(cnt), 0)
+                        FROM (
+                            SELECT r.ssid, COUNT(*) AS cnt
+                            FROM "dataLoader_apexamresult" r
+                            INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                            INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                            INNER JOIN current_student cs ON r.ssid = cs.ssid
+                            {join_sql}
+                            WHERE {where_sql}
+                              AND r.admin_year = %s AND il.is_published = true
+                              {exclude_clause}
+                            GROUP BY r.ssid
+                        ) t
+                        """,
+                        params + [year] + exclude_params,
+                    )
+                    apall_max[year] = min(int(apall_cursor.fetchone()[0] or 0), 10)
+
+            new_selected = []
+            for c in selected_columns:
+                yk = _apall_year_key(c)
+                if yk:
+                    year = yk.replace('_', '-')
+                    n = apall_max.get(year, 0)
+                    for i in range(1, n + 1):
+                        new_selected.append(f"apall_{yk}_{i}_SUBJECT")
+                        new_selected.append(f"apall_{yk}_{i}_PL")
+                    continue
+                new_selected.append(c)
+            selected_columns = new_selected
+
         # Copy params for later reuse
         filter_params = list(params)
         
@@ -1272,13 +1320,29 @@ def load_students(request):
                 apall_parsed = parse_apall_sort_key(sort_by)
                 if apall_parsed and apall_parsed['index'] >= 1:
                     _rn = int(apall_parsed['index'])
+                    _apall_year = apall_parsed['year']
+                    # Rank only over the subjects still included in the "All
+                    # Results" view, otherwise the sort slot (i-th exam) does not
+                    # line up with the displayed pair.
+                    _apall_excludes = _apall_subject_excludes(_apall_year)
+                    _apall_exclude_clause = ""
+                    _apall_exclude_params = []
+                    if _apall_excludes:
+                        _ph = ", ".join(["%s"] * len(_apall_excludes))
+                        _apall_exclude_clause = f" AND exam_name NOT IN ({_ph})"
+                        _apall_exclude_params = sorted(_apall_excludes)
                     if apall_parsed['field'] == 'SUBJECT':
                         _apall_select = "exam_name"
+                        # ClickHouse LEFT JOIN fills non-matching rows with ''
+                        # (not NULL), which would sort blanks first. Map the
+                        # sentinel to NULL so NULLS LAST actually applies.
+                        _apall_order = "nullIf(_sort._v, '')"
                     else:
                         _apall_select = (
                             "CAST(NULLIF(regexp_replace("
                             "NULLIF(btrim(exam_grade), ''), '[^0-9.]', '', 'g'), '') AS NUMERIC)"
                         )
+                        _apall_order = "nullIf(_sort._v, 0)"
                     sort_join_sql = (
                         " LEFT JOIN ("
                         f" SELECT ssid AS _k, {_apall_select} AS _v"
@@ -1286,12 +1350,12 @@ def load_students(request):
                         " SELECT ssid, exam_name, exam_grade,"
                         " row_number() OVER (PARTITION BY ssid ORDER BY exam_name) AS _rn"
                         " FROM analytics_ap_results"
-                        " WHERE admin_year = %s"
+                        f" WHERE admin_year = %s{_apall_exclude_clause}"
                         " ) t WHERE _rn = %s"
                         " ) _sort ON _sort._k = cs.ssid"
                     )
-                    order_by_expr = "_sort._v"
-                    params.extend([apall_parsed['year'], _rn])
+                    order_by_expr = _apall_order
+                    params.extend([_apall_year] + _apall_exclude_params + [_rn])
             elif sort_by.startswith('apawards_all_'):
                 _yr = sort_by[len('apawards_all_'):].replace('_', '-')
                 sort_join_sql = (
@@ -1302,7 +1366,7 @@ def load_students(request):
                     " GROUP BY ssid"
                     " ) _sort ON _sort._k = cs.ssid"
                 )
-                order_by_expr = "_sort._v"
+                order_by_expr = "nullIf(_sort._v, '')"
                 params.append(_yr)
             elif sort_by.startswith('ap_') and not sort_by.startswith('apaward_'):
                 ap_info = next((i for i in ap_exam_infos if i['col_name'] == sort_by), None)
@@ -1316,7 +1380,8 @@ def load_students(request):
                         " GROUP BY ssid"
                         " ) _sort ON _sort._k = cs.ssid"
                     )
-                    order_by_expr = "_sort._v"
+                    # ClickHouse LEFT JOIN defaults numeric misses to 0, not NULL.
+                    order_by_expr = "nullIf(_sort._v, 0)"
                     params.extend([ap_info['year'], ap_info['subject']])
             elif sort_by.startswith('apaward_'):
                 ap_info = next((i for i in ap_award_infos if i['col_name'] == sort_by), None)
@@ -1329,7 +1394,7 @@ def load_students(request):
                         " GROUP BY ssid"
                         " ) _sort ON _sort._k = cs.ssid"
                     )
-                    order_by_expr = "_sort._v"
+                    order_by_expr = "nullIf(_sort._v, '')"
                     params.extend([ap_info['year'], ap_info['award']])
             elif sort_by.startswith('sat_'):
                 sat_info = next((i for i in sat_infos if i['col_name'] == sort_by), None)
@@ -1381,6 +1446,7 @@ def load_students(request):
             'params': [str(p) for p in list(filter_params) + list(sort_params)],
             'sync': cache.get('analytics:clickhouse_sync_version', 'legacy'),
             'sort': f"{sort_by}:{sort_dir}:nulls_last" if is_dynamic_sort else f"{sort_by}:{sort_dir}",
+            'order': order_by_expr,
             'limit': limit,
             'offset': offset 
             , 'cursor': cursor_raw if cursor_value else ''
@@ -1595,6 +1661,7 @@ def load_students(request):
                     for year in apall_years:
                         yk = year.replace('-', '_')
                         n = apall_max.get(year, 0)
+                        excludes = _apall_subject_excludes(year)
                         ap_rows = _analytics_rows(
                             "SELECT ssid, exam_name, exam_grade FROM analytics_ap_results "
                             "WHERE ssid = ANY(%s) AND admin_year = %s "
@@ -1620,8 +1687,11 @@ def load_students(request):
                                 ]
                         by_ssid = {}
                         for row in ap_rows:
+                            exam_name = row.get('exam_name')
+                            if exam_name in excludes:
+                                continue
                             by_ssid.setdefault(str(row.get('ssid') or '').strip(), []).append(
-                                (row.get('exam_name'), row.get('exam_grade'))
+                                (exam_name, row.get('exam_grade'))
                             )
                         for student in students:
                             sid = str(student.get('ssid') or '').strip()
@@ -2106,6 +2176,98 @@ def load_students(request):
                                 filter_options[col_key] = values
                                 cache.set(cache_key, values, 300)
 
+            # Add filter options for AP "All Results" wide-pair columns
+            for year in apall_years:
+                yk = year.replace('-', '_')
+                n = apall_max.get(year, 0)
+                excludes = _apall_subject_excludes(year)
+                exclude_clause = ""
+                exclude_params = []
+                if excludes:
+                    placeholders = ", ".join(["%s"] * len(excludes))
+                    exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                    exclude_params = sorted(excludes)
+                for i in range(1, n + 1):
+                    for col_key, field in (
+                        (f"apall_{yk}_{i}_SUBJECT", "exam_name"),
+                        (f"apall_{yk}_{i}_PL", "exam_grade"),
+                    ):
+                        if isinstance(filters, dict) and col_key in filters:
+                            other_filters = {k: v for k, v in filters.items() if k != col_key}
+                        else:
+                            other_filters = filters
+
+                        cache_key = _get_filter_cache_key(col_key, other_filters)
+                        cached_values = cache.get(cache_key)
+                        if cached_values is not None:
+                            filter_options[col_key] = cached_values
+                            continue
+
+                        option_where = list(base_where_clauses)
+                        option_params = list(base_params)
+                        apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
+                        option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+
+                        rank_subquery = f"""
+                            SELECT a.ssid, e.name AS exam_name, a.exam_grade,
+                                   row_number() OVER (PARTITION BY a.ssid ORDER BY e.name) AS rn
+                            FROM "dataLoader_apexamresult" a
+                            INNER JOIN "dataLoader_apexamcode" e ON a.exam_id = e.code
+                            INNER JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                            WHERE a.admin_year = %s AND il.is_published = true
+                              {exclude_clause}
+                        """
+
+                        options_query = f"""
+                            SELECT DISTINCT t.{field} AS v
+                            FROM ({rank_subquery}) t
+                            INNER JOIN current_student cs ON t.ssid = cs.ssid
+                            {join_sql}
+                            WHERE t.rn = %s
+                              AND {option_where_sql}
+                              AND t.{field} IS NOT NULL AND t.{field} <> ''
+                            ORDER BY v ASC NULLS FIRST
+                            LIMIT 50
+                        """
+                        values = []
+                        try:
+                            with connections['default'].cursor() as pg_cursor:
+                                pg_cursor.execute(options_query, [year] + exclude_params + [i] + option_params)
+                                for row in pg_cursor.fetchall():
+                                    val = row[0]
+                                    if val is None:
+                                        val = ""
+                                    if val not in values:
+                                        values.append(val)
+                        except Exception:
+                            continue
+
+                        # Blank when a filtered student has no i-th exam (or a blank field)
+                        check_blank_query = f"""
+                            SELECT 1
+                            FROM current_student cs
+                            {join_sql}
+                            WHERE {option_where_sql}
+                            AND NOT EXISTS (
+                                SELECT 1 FROM ({rank_subquery}) t
+                                WHERE t.ssid = cs.ssid AND t.rn = %s
+                                  AND t.{field} IS NOT NULL AND t.{field} <> ''
+                            )
+                            LIMIT 1
+                        """
+                        try:
+                            with connections['default'].cursor() as pg_cursor:
+                                pg_cursor.execute(check_blank_query, option_params + [year] + exclude_params + [i])
+                                if pg_cursor.fetchone():
+                                    if "" not in values:
+                                        values.insert(0, "")
+                        except Exception:
+                            pass
+
+                        if values:
+                            filter_options[col_key] = values
+                            cache.set(cache_key, values, 300)
+
             # Add filter options for AP exam grades (PL columns)
             for ap_info in ap_exam_infos:
                 col_key = ap_info['col_name']
@@ -2314,13 +2476,15 @@ def load_students(request):
             label = f"{info['course_name']} ({info['subject']}) {period}\n{info['year']}"
             dynamic_definitions[info['col_name']] = label
 
-    # Definitions for the AP "All Results" wide-pair columns
+    # Definitions for the AP "All Results" wide-pair columns. Only number the
+    # sets when a student can have more than one AP exam that year.
     for year in apall_years:
         yk = year.replace('-', '_')
         n = apall_max.get(year, 0)
         for i in range(1, n + 1):
-            dynamic_definitions[f"apall_{yk}_{i}_SUBJECT"] = f"AP Subject {i}\n{year}"
-            dynamic_definitions[f"apall_{yk}_{i}_PL"] = f"AP PL {i}\n{year}"
+            suffix = f" {i}" if n > 1 else ""
+            dynamic_definitions[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix}\n{year}"
+            dynamic_definitions[f"apall_{yk}_{i}_PL"] = f"AP Results{suffix}\n{year}"
 
     # Definitions for the Marks "All Marks" wide-pair columns
     for (year, subject), umbrella in markall_years.items():
