@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import (
     Accommodation,
+    AccommodationCategory,
     AccommodationOption,
     AccommodationResource,
     Assessment,
@@ -36,11 +37,18 @@ class SupportRuleCriteriaInline(admin.TabularInline):
     extra = 1
 
 
+@admin.register(AccommodationCategory)
+class AccommodationCategoryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'order', 'description')
+    list_editable = ('order',)
+    search_fields = ('name', 'description')
+
+
 @admin.register(Accommodation)
 class AccommodationAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'tag', 'column_letter', 'category', 'description', 'question_text', 'order')
-    list_filter = ('category', 'tag')
-    search_fields = ('name', 'code', 'tag', 'column_letter', 'category', 'description')
+    list_display = ('name', 'code', 'tag', 'column_letter', 'category', 'section_category', 'description', 'question_text', 'order')
+    list_filter = ('category', 'section_category', 'tag')
+    search_fields = ('name', 'code', 'tag', 'column_letter', 'category', 'section_category__name', 'description')
     inlines = [AccommodationOptionInline, AccommodationResourceInline]
 
 

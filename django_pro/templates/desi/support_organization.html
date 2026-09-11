@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Support Organization - DESI - DS Data{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-8 pb-4 border-b border-slate-200">
+        <div>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900">Support Organization</h1>
+            <p class="mt-2 text-sm text-slate-600">Create section categories and organize the designated supports shown in the student workspace.</p>
+        </div>
+        <div class="mt-4 md:mt-0 flex gap-3 flex-wrap">
+            <a href="{% url 'desi:admin_dashboard' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                &larr; Admin Dashboard
+            </a>
+            <a href="{% url 'desi:student_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                Student List
+            </a>
+        </div>
+    </div>
+
+    <!-- Create Section Category -->
+    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-8">
+        <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+            <div>
+                <h2 class="text-lg font-bold">Section Categories</h2>
+                <p class="text-[11px] text-slate-300 mt-0.5">Create a new section to group supports in the student workspace.</p>
+            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                {{ order_categories|length }} sections
+            </span>
+        </div>
+        <form method="post" action="{% url 'desi:support_organization' %}" class="p-6 flex flex-col md:flex-row md:items-end gap-3">
+            {% csrf_token %}
+            <div class="flex-1">
+                <label for="name" class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Section Name</label>
+                <input type="text" name="name" id="name" required placeholder="e.g. Accessibility, Timing, Presentation"
+                       class="block w-full rounded border-slate-300 bg-white text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <div class="md:w-40">
+                <label for="order" class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Order (optional)</label>
+                <input type="number" name="order" id="order" placeholder="Auto"
+                       class="block w-full rounded border-slate-300 bg-white text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+            </div>
+            <button type="submit" class="inline-flex items-center px-5 py-2 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 transition">
+                ➕ Create Section
+            </button>
+        </form>
+    </div>
+
+    <!-- Organize -->
+    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-6 py-4 bg-slate-900 text-white">
+            <h2 class="text-lg font-bold">Organize Supports</h2>
+            <p class="text-[11px] text-slate-300 mt-0.5">Drag section categories and questions to control the order shown in the student workspace. Drag a question into another section to move it there.</p>
+        </div>
+        <form method="post" action="{% url 'desi:save_desi_order' %}" class="p-6" id="support-order-form">
+            {% csrf_token %}
+            <div id="category-order-list" class="space-y-4">
+                {% for cat in order_categories %}
+                <div class="category-order-item rounded-lg border border-slate-200 bg-slate-50" data-category-id="{{ cat.id }}">
+                    <input type="hidden" name="category_order" value="{{ cat.id }}">
+                    <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-white rounded-t-lg">
+                        <span class="category-drag-handle cursor-move text-slate-400" title="Drag to reorder">⠿</span>
+                        <span class="text-sm font-bold text-slate-800">{{ cat.name }}</span>
+                        <span class="ml-auto text-[10px] text-slate-400">{{ cat.accommodations.all|length }} question{{ cat.accommodations.all|length|pluralize }}</span>
+                    </div>
+                    <div class="support-order-list p-2 space-y-1 min-h-[2.5rem]" data-section-key="{{ cat.id }}">
+                        {% for acc in cat.accommodations.all %}
+                        <div class="support-order-item flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5" data-support-id="{{ acc.id }}">
+                            <input type="hidden" name="support_order_{{ cat.id }}" value="{{ acc.id }}">
+                            <span class="support-drag-handle cursor-move text-slate-300" title="Drag to reorder">⠿</span>
+                            <span class="text-xs text-slate-700">{{ acc.name }}{% if acc.category %} <span class="text-slate-400">— {{ acc.category }}</span>{% endif %}</span>
+                            {% if acc.code %}<span class="font-mono text-[9px] text-slate-400 uppercase">{{ acc.code }}</span>{% endif %}
+                        </div>
+                        {% empty %}
+                        <p class="text-[10px] text-slate-400 italic px-1 py-1">No questions in this section. Drag one here.</p>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% empty %}
+                <p class="text-sm text-slate-500 italic">No section categories yet. Create one above.</p>
+                {% endfor %}
+
+                {% if uncategorized_supports %}
+                <div class="category-order-item rounded-lg border border-dashed border-slate-300 bg-slate-50" data-category-id="none">
+                    <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-white rounded-t-lg">
+                        <span class="text-sm font-bold text-slate-500">Uncategorized</span>
+                        <span class="ml-auto text-[10px] text-slate-400">{{ uncategorized_supports|length }} question{{ uncategorized_supports|length|pluralize }}</span>
+                    </div>
+                    <div class="support-order-list p-2 space-y-1" data-section-key="none">
+                        {% for acc in uncategorized_supports %}
+                        <div class="support-order-item flex items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1.5" data-support-id="{{ acc.id }}">
+                            <input type="hidden" name="support_order_none" value="{{ acc.id }}">
+                            <span class="support-drag-handle cursor-move text-slate-300" title="Drag to reorder">⠿</span>
+                            <span class="text-xs text-slate-700">{{ acc.name }}{% if acc.category %} <span class="text-slate-400">— {{ acc.category }}</span>{% endif %}</span>
+                            {% if acc.code %}<span class="font-mono text-[9px] text-slate-400 uppercase">{{ acc.code }}</span>{% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            <div class="mt-4 flex justify-end">
+                <button type="submit" class="inline-flex items-center px-5 py-2 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 transition">
+                    Save Order
+                </button>
+            </div>
+        </form>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // A support's hidden input name encodes the section it belongs to. When
+        // a support is dragged into another section its name must be rewritten,
+        // otherwise the form would post the original section and move it back.
+        function syncSupportInputNames() {
+            document.querySelectorAll('.support-order-list').forEach(list => {
+                const key = list.dataset.sectionKey || 'none';
+                list.querySelectorAll('.support-order-item').forEach(item => {
+                    const input = item.querySelector('input[name^="support_order_"]');
+                    if (input) input.name = `support_order_${key}`;
+                });
+            });
+        }
+
+        const categoryList = document.getElementById('category-order-list');
+        if (categoryList && window.Sortable) {
+            new Sortable(categoryList, {
+                handle: '.category-drag-handle',
+                animation: 150,
+                draggable: '.category-order-item',
+            });
+        }
+        document.querySelectorAll('.support-order-list').forEach(list => {
+            new Sortable(list, {
+                handle: '.support-drag-handle',
+                animation: 150,
+                draggable: '.support-order-item',
+                // Shared group so a question can be dragged into another section.
+                group: 'desi-supports',
+                onEnd: syncSupportInputNames,
+            });
+        });
+
+        const orderForm = document.getElementById('support-order-form');
+        if (orderForm) {
+            orderForm.addEventListener('submit', syncSupportInputNames);
+        }
+    });
+</script>
+{% endblock %}

@@ -2,6 +2,29 @@ from django.db import models
 from django.conf import settings
 
 
+class AccommodationCategory(models.Model):
+    """
+    Reusable section category that groups designated supports (screening
+    questions) into sections in the student workspace matrix.
+
+    Sections are created while editing a support (or in the admin ordering
+    section) and can be reused by any number of supports. The order controls
+    how the section is rendered. This is independent of the free-text
+    ``Accommodation.category`` field, which is kept as-is.
+    """
+    name = models.CharField(max_length=100, unique=True)
+    order = models.IntegerField(default=0, help_text="Order in which this section is displayed")
+    description = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['order', 'name']
+        verbose_name = 'Designated Support Section Category'
+        verbose_name_plural = 'Designated Support Section Categories'
+
+    def __str__(self):
+        return self.name
+
+
 class Accommodation(models.Model):
     """Master list of accommodations available for any assessment. Acts as the screening question."""
     name = models.CharField(max_length=255, help_text="e.g., Text-to-Speech")
@@ -19,6 +42,14 @@ class Accommodation(models.Model):
         help_text="Source import tag (e.g. 'CAASPP', 'ELPAC') this support came from."
     )
     category = models.CharField(max_length=100, blank=True, help_text="e.g., Presentation, Response, Setting, Timing")
+    section_category = models.ForeignKey(
+        AccommodationCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='accommodations',
+        help_text="Section used to group this support in the student workspace.",
+    )
     description = models.TextField(blank=True)
     
     question_text = models.CharField(
@@ -59,7 +90,7 @@ class Accommodation(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['order', 'category', 'name']
+        ordering = ['order', 'section_category__order', 'section_category__name', 'name']
 
     def __str__(self):
         if self.code:

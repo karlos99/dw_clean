@@ -198,106 +198,53 @@
                 }
             });
 
-            // 2. Accordion cards + option dropdown picker for designated supports
-            const SUMMARY_SELECTED = 'shrink-0 inline-flex items-center gap-1 max-w-[38%] truncate rounded-full px-2.5 py-1 text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
-            const SUMMARY_EMPTY = 'shrink-0 inline-flex items-center gap-1 max-w-[38%] truncate rounded-full px-2.5 py-1 text-[10px] font-semibold bg-slate-100 text-slate-400 border border-slate-200';
-
-            function setCardOpen(card, open) {
-                open = typeof open === 'boolean' ? open : card.dataset.open === 'true';
-                card.dataset.open = open ? 'true' : 'false';
-                const body = card.querySelector('[data-accordion-body]');
-                if (body) body.classList.toggle('hidden', !open);
-                const chevron = card.querySelector('[data-chevron]');
-                if (chevron) chevron.classList.toggle('rotate-90', open);
+            // 2. Designated supports matrix: dependencies, synchronization, popover
+            function supportInfoMap() {
+                const el = document.getElementById('desi-support-info');
+                if (!el) return {};
+                try { return JSON.parse(el.textContent) || {}; } catch (err) { return {}; }
             }
 
-            function cardSelect(card) {
-                return card.querySelector('select.acc-option-select') || null;
-            }
-
-            function cardCheckbox(card) {
-                return card.querySelector('input[name="student_supports"]') || null;
-            }
-
-            function cardSelectedOptionText(card) {
-                const select = cardSelect(card);
-                if (select && select.value !== '') {
-                    const option = select.options[select.selectedIndex];
-                    return option ? option.textContent.trim() : '';
-                }
-                const checkbox = cardCheckbox(card);
-                if (checkbox && checkbox.checked) return 'Selected';
-                return '';
-            }
-
-            function cardHasSelection(card) {
-                const select = cardSelect(card);
-                if (select && select.value !== '') return true;
-                const checkbox = cardCheckbox(card);
-                return !!(checkbox && checkbox.checked);
-            }
-
-            function clearCardSelection(card) {
-                const select = cardSelect(card);
-                if (select) select.value = '';
-                const checkbox = cardCheckbox(card);
-                if (checkbox) checkbox.checked = false;
-            }
-
-            function refreshSummary(card) {
-                const summary = card.querySelector('[data-selected-summary]');
-                if (!summary) return;
-                const text = cardSelectedOptionText(card);
-                summary.className = text ? SUMMARY_SELECTED : SUMMARY_EMPTY;
-                summary.textContent = '';
-                if (text) {
-                    const mark = document.createElement('span');
-                    mark.className = 'text-emerald-500';
-                    mark.textContent = '✓';
-                    const span = document.createElement('span');
-                    span.className = 'truncate';
-                    span.textContent = text;
-                    summary.appendChild(mark);
-                    summary.appendChild(span);
-                } else {
-                    summary.textContent = 'Not selected';
-                }
-            }
-
-            function refreshAllSummaries() {
-                document.querySelectorAll('.support-card').forEach(refreshSummary);
+            function matrixSelects() {
+                return Array.from(document.querySelectorAll('select.acc-option-select'));
             }
 
             function syncAccommodationGroup(accId, value) {
-                document.querySelectorAll(`.support-card[data-accommodation-id="${accId}"]`).forEach(card => {
-                    if (card.dataset.seisLocked === 'true') return;
-                    const select = cardSelect(card);
-                    if (!select) return;
-                    if (value === '') {
-                        select.value = '';
-                        return;
-                    }
+                matrixSelects().forEach(select => {
+                    if (select.dataset.accommodationId !== String(accId)) return;
+                    if (select.disabled) return;
+                    if (value === '') { select.value = ''; return; }
                     const option = Array.from(select.options).find(o => o.value === value);
                     if (option) select.value = value;
                 });
+            }
+
+            function rowHasSelection(row) {
+                const select = row.querySelector('select.acc-option-select');
+                if (select && select.value !== '') return true;
+                const checkbox = row.querySelector('input[name="student_supports"]');
+                return !!(checkbox && checkbox.checked);
+            }
+
+            function clearRowSelection(row) {
+                const select = row.querySelector('select.acc-option-select');
+                if (select) select.value = '';
+                const checkbox = row.querySelector('input[name="student_supports"]');
+                if (checkbox) checkbox.checked = false;
             }
 
             function applyDependencies() {
                 let guard = 0;
                 while (guard++ < 25) {
                     let changed = false;
-                    const ids = new Set(
-                        Array.from(document.querySelectorAll('select.acc-option-select'))
-                            .map(s => s.value)
-                            .filter(v => v)
-                    );
-                    document.querySelectorAll('.support-card').forEach(card => {
-                        if (card.dataset.seisLocked === 'true') return;
-                        const dep = card.dataset.dependsOnOptionId;
-                        const isHidden = !!dep && ids.has(dep);
-                        card.style.display = isHidden ? 'none' : '';
-                        if (isHidden && cardHasSelection(card)) {
-                            clearCardSelection(card);
+                    const ids = new Set(matrixSelects().map(s => s.value).filter(v => v));
+                    document.querySelectorAll('tr.support-row').forEach(row => {
+                        const dep = row.dataset.dependsOnOptionId;
+                        if (!dep) return;
+                        const isHidden = ids.has(dep);
+                        row.style.display = isHidden ? 'none' : '';
+                        if (isHidden && rowHasSelection(row)) {
+                            clearRowSelection(row);
                             changed = true;
                         }
                     });
@@ -305,47 +252,107 @@
                 }
             }
 
-            // Accordion toggle + expand/collapse all (event delegation survives HTMX swaps)
-            document.addEventListener('click', (e) => {
-                const toggle = e.target.closest('[data-accordion-toggle]');
-                if (toggle) {
-                    const card = toggle.closest('.support-card');
-                    if (card) setCardOpen(card, card.dataset.open !== 'true');
-                    return;
-                }
-                const action = e.target.closest('[data-accordion-action]');
-                if (action) {
-                    const open = action.dataset.accordionAction === 'expand';
-                    const scope = action.closest('[data-accordion-scope]') || document;
-                    scope.querySelectorAll('.support-card').forEach(card => setCardOpen(card, open));
-                }
-            });
+            function hideSupportPopover() {
+                const pop = document.getElementById('desi-support-popover');
+                if (pop) pop.classList.add('hidden');
+            }
 
-            // Option picker + shared synchronization
+            function showSupportPopover(anchor, accId) {
+                const info = supportInfoMap()[String(accId)];
+                const pop = document.getElementById('desi-support-popover');
+                if (!pop || !info) return;
+
+                document.getElementById('desi-popover-name').textContent = info.code ? `${info.name} (${info.code})` : info.name;
+                const metaParts = [];
+                if (info.section_category) metaParts.push(info.section_category);
+                if (info.category) metaParts.push(info.category);
+                document.getElementById('desi-popover-meta').textContent = metaParts.join(' · ');
+                const desc = document.getElementById('desi-popover-description');
+                desc.textContent = info.description || '';
+                desc.classList.toggle('hidden', !info.description);
+
+                const resWrap = document.getElementById('desi-popover-resources');
+                resWrap.innerHTML = '';
+                (info.resources || []).forEach(res => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded border border-blue-100';
+                    const icon = res.kind === 'youtube' ? '🎥' : res.kind === 'video' ? '📺' : res.kind === 'pdf' ? '📄' : '🔗';
+                    btn.textContent = `${icon} ${res.label}`;
+                    btn.addEventListener('click', () => {
+                        window.dispatchEvent(new CustomEvent('desi-open-resource', { detail: { label: res.label, url: res.url } }));
+                    });
+                    resWrap.appendChild(btn);
+                });
+
+                pop.classList.remove('hidden');
+                const rect = anchor.getBoundingClientRect();
+                const popRect = pop.getBoundingClientRect();
+                let left = Math.min(rect.left, window.innerWidth - popRect.width - 12);
+                left = Math.max(12, left);
+                let top = rect.bottom + 8;
+                if (top + popRect.height > window.innerHeight - 12) {
+                    top = Math.max(12, rect.top - popRect.height - 8);
+                }
+                pop.style.left = `${left}px`;
+                pop.style.top = `${top}px`;
+            }
+
             document.addEventListener('change', (e) => {
                 const select = e.target.closest('select.acc-option-select');
-                if (!select) return;
-                const card = select.closest('.support-card');
-                if (!card) return;
-                const accId = card.dataset.accommodationId;
-                if (accId) syncAccommodationGroup(accId, select.value);
-                applyDependencies();
-                refreshAllSummaries();
+                if (select) {
+                    const accId = select.dataset.accommodationId;
+                    if (accId) syncAccommodationGroup(accId, select.value);
+                    applyDependencies();
+                    if (select.value) {
+                        showSupportPopover(select, accId);
+                    } else {
+                        hideSupportPopover();
+                    }
+                    return;
+                }
+                const checkbox = e.target.closest('input[name="student_supports"]');
+                if (checkbox) {
+                    applyDependencies();
+                    if (checkbox.checked) {
+                        const row = checkbox.closest('tr.support-row');
+                        if (row) showSupportPopover(checkbox, row.dataset.accommodationId);
+                    } else {
+                        hideSupportPopover();
+                    }
+                }
             });
 
-            function refreshWorkspace() {
-                applyDependencies();
-                refreshAllSummaries();
-            }
+            document.addEventListener('click', (e) => {
+                const infoBtn = e.target.closest('[data-support-info]');
+                if (infoBtn) {
+                    showSupportPopover(infoBtn, infoBtn.dataset.supportInfo);
+                    return;
+                }
+                if (e.target.closest('[data-popover-close]')) {
+                    hideSupportPopover();
+                    return;
+                }
+                const pop = document.getElementById('desi-support-popover');
+                if (pop && !pop.classList.contains('hidden') && !pop.contains(e.target)
+                    && !e.target.closest('select.acc-option-select') && !e.target.closest('input[name="student_supports"]')) {
+                    hideSupportPopover();
+                }
+            });
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') hideSupportPopover();
+            });
 
             document.body.addEventListener('htmx:afterSwap', (e) => {
                 if (e.target && e.target.id === 'workspace-container') {
-                    refreshWorkspace();
+                    hideSupportPopover();
+                    applyDependencies();
                 }
             });
 
-            document.querySelectorAll('.support-card').forEach(card => setCardOpen(card));
-            refreshWorkspace();
+            hideSupportPopover();
+            applyDependencies();
         });
     </script>
 

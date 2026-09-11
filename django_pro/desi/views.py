@@ -4,7 +4,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.core import signing
-from django.db.models import Count, Q
+from django.db import transaction
+from django.db.models import Count, Prefetch, Q
 from django.http import HttpResponse, HttpResponseForbidden
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -15,6 +16,7 @@ from studata.models import CurrentStudent, School as StudataSchool, TeacherAcces
 from landing.utils import get_project_config
 from .models import (
     Accommodation,
+    AccommodationCategory,
     AccommodationOption,
     AccommodationResource,
     Assessment,
@@ -398,40 +400,44 @@ def _get_student_list_context(request):
     teacher_names = []
     teacher_options_by_filter = {}
     try:
-        teacher_access_qs = TeacherAccess.objects.filter(
-            school_year=school_year,
-            stu_annual_key__in=students_qs.values('stu_annual_key'),
-        )
-        student_details = {
-            row['stu_annual_key']: row
-            for row in students_qs.values('stu_annual_key', 'school_state_id', 'grade')
-        }
-        for access in teacher_access_qs.values('staff_name', 'stu_annual_key'):
-            name = (access['staff_name'] or '').strip()
-            student_detail = student_details.get(access['stu_annual_key'])
-            if not name or not student_detail:
-                continue
-            school_key = student_detail['school_state_id'] or ''
-            grade_key = student_detail['grade'] or ''
-            for key in ('::', f'{school_key}::', f'::{grade_key}', f'{school_key}::{grade_key}'):
-                teacher_options_by_filter.setdefault(key, set()).add(name)
-
-        teacher_options_by_filter = {
-            key: sorted(names, key=str.casefold)
-            for key, names in teacher_options_by_filter.items()
-        }
-        current_school = school_filter_id or getattr(active_school, 'state_id', '') or ''
-        teacher_names = teacher_options_by_filter.get(
-            f'{current_school}::{grade_filter}',
-            teacher_options_by_filter.get(f'{current_school}::', []) if current_school
-            else teacher_options_by_filter.get(f'::{grade_filter}', teacher_options_by_filter.get('::', [])),
-        )
-        if teacher_filter:
-            students_qs = students_qs.filter(
-                stu_annual_key__in=teacher_access_qs.filter(
-                    staff_name__iexact=teacher_filter
-                ).values('stu_annual_key')
+        # Wrap in a savepoint: some deployments do not have the teacher-access
+        # view/table, and a swallowed DB error would otherwise abort the whole
+        # surrounding transaction (PostgreSQL) and break every later query.
+        with transaction.atomic():
+            teacher_access_qs = TeacherAccess.objects.filter(
+                school_year=school_year,
+                stu_annual_key__in=students_qs.values('stu_annual_key'),
             )
+            student_details = {
+                row['stu_annual_key']: row
+                for row in students_qs.values('stu_annual_key', 'school_state_id', 'grade')
+            }
+            for access in teacher_access_qs.values('staff_name', 'stu_annual_key'):
+                name = (access['staff_name'] or '').strip()
+                student_detail = student_details.get(access['stu_annual_key'])
+                if not name or not student_detail:
+                    continue
+                school_key = student_detail['school_state_id'] or ''
+                grade_key = student_detail['grade'] or ''
+                for key in ('::', f'{school_key}::', f'::{grade_key}', f'{school_key}::{grade_key}'):
+                    teacher_options_by_filter.setdefault(key, set()).add(name)
+
+            teacher_options_by_filter = {
+                key: sorted(names, key=str.casefold)
+                for key, names in teacher_options_by_filter.items()
+            }
+            current_school = school_filter_id or getattr(active_school, 'state_id', '') or ''
+            teacher_names = teacher_options_by_filter.get(
+                f'{current_school}::{grade_filter}',
+                teacher_options_by_filter.get(f'{current_school}::', []) if current_school
+                else teacher_options_by_filter.get(f'::{grade_filter}', teacher_options_by_filter.get('::', [])),
+            )
+            if teacher_filter:
+                students_qs = students_qs.filter(
+                    stu_annual_key__in=teacher_access_qs.filter(
+                        staff_name__iexact=teacher_filter
+                    ).values('stu_annual_key')
+                )
     except Exception:
         # Some deployments do not have the teacher-access view available.
         teacher_names = []
@@ -634,6 +640,94 @@ def admin_dashboard(request):
         'seis_selection_saved': DesiSeisDisplaySettings.objects.exists(),
     }
     return render(request, 'desi/admin_dashboard.html', context)
+
+
+def _section_organization_context():
+    """Shared context for the support organization page."""
+    order_categories = list(
+        AccommodationCategory.objects.all().prefetch_related(
+            Prefetch('accommodations', queryset=Accommodation.objects.order_by('order', 'name'))
+        )
+    )
+    uncategorized_supports = list(
+        Accommodation.objects.filter(section_category__isnull=True).order_by('order', 'name')
+    )
+    return {
+        'order_categories': order_categories,
+        'uncategorized_supports': uncategorized_supports,
+    }
+
+
+@login_required
+def support_organization(request):
+    """Dedicated page to create/reorder section categories and organize supports."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        if not name:
+            messages.error(request, "Section name is required.")
+            return redirect('desi:support_organization')
+
+        existing = AccommodationCategory.objects.filter(name__iexact=name).first()
+        if existing:
+            messages.info(request, f"Section '{existing.name}' already exists.")
+            return redirect('desi:support_organization')
+
+        order_val = request.POST.get('order', '').strip()
+        try:
+            order = int(order_val) if order_val else None
+        except ValueError:
+            order = None
+        if order is None:
+            highest = AccommodationCategory.objects.order_by('-order').values_list('order', flat=True).first()
+            order = (highest or 0) + 1
+
+        AccommodationCategory.objects.create(name=name, order=order)
+        messages.success(request, f"Section '{name}' created.")
+        return redirect('desi:support_organization')
+
+    return render(request, 'desi/support_organization.html', _section_organization_context())
+
+
+@login_required
+def save_desi_order(request):
+    """Persist the admin drag-and-drop order of section categories and supports."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    if request.method != 'POST':
+        return redirect('desi:support_organization')
+
+    # Categories are posted in DOM order via repeated ``category_order`` inputs.
+    category_ids = [
+        int(x) for x in request.POST.getlist('category_order') if str(x).isdigit()
+    ]
+    for index, category_id in enumerate(category_ids, start=1):
+        AccommodationCategory.objects.filter(id=category_id).update(order=index)
+
+    # Supports are posted per section as ``support_order_<section_id|none>``.
+    # The key a support arrives under determines its section, so dragging a
+    # support into another list moves it to that section.
+    for key in request.POST.keys():
+        if not key.startswith('support_order_'):
+            continue
+        section_key = key[len('support_order_'):]
+        section_id = int(section_key) if section_key.isdigit() else None
+        support_ids = [
+            int(x) for x in request.POST.getlist(key) if str(x).isdigit()
+        ]
+        for index, support_id in enumerate(support_ids, start=1):
+            Accommodation.objects.filter(id=support_id).update(
+                order=index,
+                section_category_id=section_id,
+            )
+
+    messages.success(request, "Support organization saved.")
+    return redirect('desi:support_organization')
 
 
 def _coordinator_allowed_schools_qs(user):
@@ -1317,6 +1411,28 @@ def export_data_endpoint(request):
     )
 
 
+def _resolve_section_category(request):
+    """
+    Resolve a support's section category from the form.
+
+    Accepts either an existing ``section_category_id`` or a freshly typed
+    ``new_section_category`` name. A new section is created (reusing any
+    existing case-insensitive match) and appended to the end of the order.
+    Nothing is ever deleted.
+    """
+    new_name = request.POST.get('new_section_category', '').strip()
+    if new_name:
+        section = AccommodationCategory.objects.filter(name__iexact=new_name).first()
+        if section is None:
+            highest = AccommodationCategory.objects.order_by('-order').values_list('order', flat=True).first()
+            section = AccommodationCategory.objects.create(name=new_name, order=(highest or 0) + 1)
+        return section
+    section_id = request.POST.get('section_category_id', '').strip()
+    if section_id.isdigit():
+        return AccommodationCategory.objects.filter(id=int(section_id)).first()
+    return None
+
+
 @login_required
 def create_accommodation(request):
     """Create a new accommodation question and selectively map to assessments and options."""
@@ -1332,6 +1448,7 @@ def create_accommodation(request):
         name = request.POST.get('name', '').strip()
         code = request.POST.get('code', '').strip()
         category = request.POST.get('category', '').strip()
+        section_category = _resolve_section_category(request)
         description = request.POST.get('description', '').strip()
         
         order_val = request.POST.get('order', '0').strip() or '0'
@@ -1362,6 +1479,7 @@ def create_accommodation(request):
             name=name,
             code=code,
             category=category,
+            section_category=section_category,
             description=description,
             order=order,
             depends_on_accommodation=parent_support,
@@ -1444,6 +1562,7 @@ def create_accommodation(request):
     context = {
         'is_edit': False,
         'assessments': assessments,
+        'section_categories': AccommodationCategory.objects.all(),
         'dependency_supports': Accommodation.objects.all().prefetch_related('options'),
         'selected_dependency_support_id': None,
         'selected_dependency_option_id': None,
@@ -1465,6 +1584,7 @@ def edit_accommodation(request, id):
         accommodation.name = request.POST.get('name', '').strip()
         accommodation.code = request.POST.get('code', '').strip()
         accommodation.category = request.POST.get('category', '').strip()
+        accommodation.section_category = _resolve_section_category(request)
         accommodation.description = request.POST.get('description', '').strip()
         
         order_val = request.POST.get('order', '0').strip() or '0'
@@ -1685,6 +1805,7 @@ def edit_accommodation(request, id):
         'accommodation': accommodation,
         'options': accommodation.options.all(),
         'assessments': assessments,
+        'section_categories': AccommodationCategory.objects.all(),
         'assigned_assessment_opts': assigned_assessment_opts,
         'assigned_custom_opts': assigned_custom_opts,
         'is_edit': True,
@@ -1976,31 +2097,89 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
     the editable test), and the user cannot edit any part of them.
     """
     seis_option_map = seis_option_map or {}
-    shared_accommodations = []
     selected_support_ids = set(selected_support_ids or [])
-    test_specific_accommodations = {ast.id: [] for ast in eligible_assessments}
+    student_option_ids = set(student_option_ids or [])
     hidden_ids = hidden_support_ids(student)
 
-    # Map: accommodation -> { assessment: options_list }
-    acc_ast_opts = {}
+    eligible_assessments = list(eligible_assessments)
+    seis_managed_assessments = list(seis_managed_assessments or [])
+    eligible_ids = {ast.id for ast in eligible_assessments}
+
+    # ---- Columns: editable tests first, then SEIS-managed tests ----
+    columns = []
     for ast in eligible_assessments:
-        opts = list(ast.supported_options.all().select_related('accommodation'))
-        for opt in opts:
+        columns.append({
+            'assessment': ast,
+            'assessment_id': ast.id,
+            'card_color': getattr(ast, 'card_color', 'slate'),
+            'is_seis': False,
+            'is_active': ast.is_active,
+        })
+    for ast in seis_managed_assessments:
+        if ast.id in eligible_ids:
+            continue
+        columns.append({
+            'assessment': ast,
+            'assessment_id': ast.id,
+            'card_color': getattr(ast, 'card_color', 'violet'),
+            'is_seis': True,
+            'is_active': ast.is_active,
+        })
+
+    # ---- Gather support -> test -> options, including SEIS ----
+    # acc_ast_opts: accommodation_id -> { assessment_id: {options, is_seis, seis_option} }
+    acc_ast_opts = {}
+    acc_objects = {}
+
+    for ast in eligible_assessments:
+        for opt in ast.supported_options.all().select_related('accommodation', 'accommodation__section_category'):
             acc = opt.accommodation
             if acc.id in hidden_ids:
                 continue
-            if acc not in acc_ast_opts:
-                acc_ast_opts[acc] = {}
-            if ast not in acc_ast_opts[acc]:
-                acc_ast_opts[acc][ast] = []
-            acc_ast_opts[acc][ast].append(opt)
+            acc_objects[acc.id] = acc
+            bucket = acc_ast_opts.setdefault(acc.id, {})
+            if ast.id not in bucket:
+                bucket[ast.id] = {'options': [], 'is_seis': False, 'seis_option': None}
+            bucket[ast.id]['options'].append(opt)
 
-    # Sort accommodations
-    sorted_accs = sorted(acc_ast_opts.keys(), key=lambda a: (a.order, a.category, a.name))
+    column_by_id = {c['assessment_id']: c for c in columns}
+    for (ast_id, acc_id), seis_opt in seis_option_map.items():
+        if acc_id in hidden_ids or ast_id not in column_by_id:
+            continue
+        ast = column_by_id[ast_id]['assessment']
+        options = list(ast.supported_options.filter(accommodation_id=acc_id))
+        if not options:
+            options = [seis_opt]
+        acc_objects[acc_id] = seis_opt.accommodation
+        acc_ast_opts.setdefault(acc_id, {})[ast_id] = {
+            'options': options,
+            'is_seis': True,
+            'seis_option': seis_opt,
+        }
 
+    # ---- Sort supports, then group by section category ----
+    def support_sort_key(acc):
+        section = acc.section_category if acc.section_category_id else None
+        return (
+            section.order if section else 10 ** 9,
+            (section.name or '').casefold() if section else 'zzzz',
+            acc.order,
+            acc.name.casefold(),
+        )
+
+    sorted_accs = sorted(acc_objects.values(), key=support_sort_key)
+
+    category_groups = []
+    group_index = {}
     for acc in sorted_accs:
-        ast_map = acc_ast_opts[acc]
-        asts = list(ast_map.keys())
+        section = acc.section_category if acc.section_category_id else None
+        key = section.id if section else None
+        if key not in group_index:
+            group = {'category': section, 'rows': []}
+            group_index[key] = group
+            category_groups.append(group)
+
+        row_map = acc_ast_opts.get(acc.id, {})
         dependency_scope_ids = set(acc.dependency_assessments.values_list('id', flat=True))
 
         def dependency_applies(assessment_id):
@@ -2010,76 +2189,91 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
                 return True
             return assessment_id in dependency_scope_ids
 
-        # Check if options are identical across all supported assessments for this student
-        is_identical = True
-        if len(asts) > 1:
-            first_set = set(o.id for o in list(ast_map.values())[0])
-            first_dep_applies = dependency_applies(asts[0].id)
-            for ast, opts in ast_map.items():
-                if set(o.id for o in opts) != first_set:
-                    is_identical = False
-                    break
-                if dependency_applies(ast.id) != first_dep_applies:
-                    is_identical = False
-                    break
-        else:
-            is_identical = False
+        def cell_signature(assessment_id):
+            data = row_map[assessment_id]
+            option_ids = tuple(sorted(o.id for o in data['options']))
+            seis_id = data['seis_option'].id if data['seis_option'] else None
+            return (option_ids, data['is_seis'], dependency_applies(assessment_id), seis_id)
 
-        representative_opts = list(ast_map.values())[0]
-        assigned_opt = None
-        for opt in representative_opts:
-            if opt.id in student_option_ids:
-                assigned_opt = opt
-                break
-        is_multichoice = len(representative_opts) > 1 or (len(representative_opts) == 1 and representative_opts[0].name != "Standard")
-
-        if len(asts) > 1 and is_identical:
-            acc_data = {
+        def build_cell(run):
+            representative = row_map[run[0]['assessment_id']]
+            options = representative['options']
+            is_seis = representative['is_seis']
+            seis_option = representative['seis_option']
+            if is_seis:
+                selected_option = seis_option
+            else:
+                selected_option = next((o for o in options if o.id in student_option_ids), None)
+            is_multichoice = is_seis or len(options) > 1 or (len(options) == 1 and options[0].name != "Standard")
+            return {
                 'accommodation': acc,
-                'options': representative_opts,
+                'colspan': len(run),
+                'test_ids': [c['assessment_id'] for c in run],
+                'test_names': [c['assessment'].name for c in run],
+                'card_color': run[0]['card_color'],
+                'options': options,
                 'is_multichoice': is_multichoice,
-                'selected_option': assigned_opt,
-                'dependency_option_id': acc.depends_on_option_id if dependency_applies(asts[0].id) else None,
+                'selected_option': selected_option,
+                'dependency_option_id': acc.depends_on_option_id if dependency_applies(run[0]['assessment_id']) else None,
                 'selected_direct': acc.id in selected_support_ids,
+                'is_seis': is_seis,
+                'seis_option': seis_option,
+                'readonly': (not can_edit) or is_seis,
             }
-            acc_data['applies_to'] = asts
-            shared_accommodations.append(acc_data)
-        else:
-            # Add unique configurations to each assessment
-            for ast, opts in ast_map.items():
-                ast_assigned = None
-                for opt in opts:
-                    if opt.id in student_option_ids:
-                        ast_assigned = opt
-                        break
-                ast_is_multi = len(opts) > 1 or (len(opts) == 1 and opts[0].name != "Standard")
 
-                test_specific_accommodations[ast.id].append({
-                    'accommodation': acc,
-                    'options': opts,
-                    'is_multichoice': ast_is_multi,
-                    'selected_option': ast_assigned,
-                    'dependency_option_id': acc.depends_on_option_id if dependency_applies(ast.id) else None,
-                    'selected_direct': acc.id in selected_support_ids,
-                })
+        # Walk the columns in order, emitting merged cells and filler spans so
+        # every row covers all columns exactly once.
+        segments = []
+        i = 0
+        total = len(columns)
+        while i < total:
+            col_id = columns[i]['assessment_id']
+            if col_id not in row_map:
+                j = i
+                while j < total and columns[j]['assessment_id'] not in row_map:
+                    j += 1
+                segments.append({'kind': 'filler', 'colspan': j - i})
+                i = j
+                continue
+            signature = cell_signature(col_id)
+            j = i + 1
+            while j < total:
+                nxt_id = columns[j]['assessment_id']
+                if nxt_id not in row_map or cell_signature(nxt_id) != signature:
+                    break
+                j += 1
+            segments.append({'kind': 'cell', 'colspan': j - i, 'cell': build_cell(columns[i:j])})
+            i = j
 
-    # Completions status
-    completions = StudentAssessmentCompletion.objects.filter(
-        student_annual_key=stu_annual_key,
-        assessment__in=eligible_assessments,
-        is_completed=True
-    ).values_list('assessment_id', flat=True)
-    completed_assessment_ids = set(completions)
-
-    # Format assessment cards packaging
-    assessment_cards = []
-    for ast in eligible_assessments:
-        assessment_cards.append({
-            'assessment': ast,
-            'accommodations': test_specific_accommodations[ast.id],
-            'is_completed': ast.id in completed_assessment_ids,
-            'is_eligible': True,
+        row_dependency = None
+        if acc.depends_on_option_id and any(dependency_applies(test_id) for test_id in row_map):
+            row_dependency = acc.depends_on_option_id
+        group_index[key]['rows'].append({
+            'accommodation': acc,
+            'segments': segments,
+            'dependency_option_id': row_dependency,
         })
+
+    # ---- Completion status per editable column ----
+    editable_columns = [c['assessment'] for c in columns if not c['is_seis']]
+    completed_assessment_ids = set(
+        StudentAssessmentCompletion.objects.filter(
+            student_annual_key=stu_annual_key,
+            assessment__in=editable_columns,
+            is_completed=True,
+        ).values_list('assessment_id', flat=True)
+    )
+    for col in columns:
+        col['is_completed'] = col['assessment_id'] in completed_assessment_ids
+        col['is_eligible'] = not col['is_seis']
+
+    # ---- Count SEIS cells for the banner ----
+    seis_count = 0
+    for group in category_groups:
+        for row in group['rows']:
+            for segment in row['segments']:
+                if segment['kind'] == 'cell' and segment['cell']['is_seis']:
+                    seis_count += 1
 
     # Include warning details for ineligible tests in active school year
     ineligible_cards = []
@@ -2091,40 +2285,31 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
                 'failed_rules': failed_rules_map.get(ast.id, []),
             })
 
-    # Assessments fully managed by SEIS for this student (any active state).
-    # Each renders read-only and lists ONLY the SEIS-matched supports - the
-    # rest of the test is intentionally not shown because the user is read-only
-    # for the entire test.
-    seis_count = 0
-    seis_readonly_cards = []
-    for ast in seis_managed_assessments or []:
-        acc_items = []
-        for (ast_id, acc_id), opt in seis_option_map.items():
-            if ast_id != ast.id:
-                continue
-            opts = list(ast.supported_options.filter(accommodation_id=acc_id))
-            acc_items.append({
-                'accommodation': opt.accommodation,
-                'options': opts or [opt],
-                'is_multichoice': True,
-                'selected_option': opt,
-                'dependency_option_id': None,
-                'selected_direct': False,
-                'seis_option': opt,
-            })
-        if acc_items:
-            seis_readonly_cards.append({
-                'assessment': ast,
-                'accommodations': acc_items,
-            })
-    seis_count += sum(len(card['accommodations']) for card in seis_readonly_cards)
+    # Serialisable support details for the selection popover.
+    support_info = {}
+    for acc in acc_objects.values():
+        support_info[acc.id] = {
+            'name': acc.name,
+            'code': acc.code or '',
+            'category': acc.category or '',
+            'section_category': acc.section_category.name if acc.section_category_id else '',
+            'description': acc.description or '',
+            'resources': [
+                {
+                    'label': res.label or res.get_kind_display(),
+                    'url': res.get_embed_url() or res.url,
+                    'kind': res.kind,
+                }
+                for res in acc.resources.all()
+            ],
+        }
 
     return {
         'student': student,
-        'shared_accommodations': shared_accommodations,
-        'assessment_cards': assessment_cards,
+        'matrix_columns': columns,
+        'category_groups': category_groups,
         'ineligible_cards': ineligible_cards,
-        'seis_readonly_cards': seis_readonly_cards,
+        'support_info': support_info,
         'student_option_ids': student_option_ids,
         'can_edit': can_edit,
         'has_seis': bool(seis_count),
