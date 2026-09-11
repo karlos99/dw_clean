@@ -6,369 +6,145 @@
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <!-- Header -->
-    <div class="mb-8">
-        <div class="flex justify-between items-center">
-            <div>
-                <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Data Loader</h1>
-                <p class="mt-2 text-slate-600">Import survey and assessment data from CSV files</p>
-            </div>
-            <div class="flex space-x-3">
-                <a href="{% url 'dataLoader:upload' %}"
-                   class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-200">
-                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                    </svg>
-                    Upload Survey
-                </a>
-                <a href="{% url 'dataLoader:ap_upload' %}"
-                   class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition duration-200">
-                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                    </svg>
-                    Upload AP Data
-                </a>
-                <a href="{% url 'dataLoader:sat_upload' %}"
-                   class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition duration-200">
-                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                    </svg>
-                    Upload SAT Data
-                </a>
-            </div>
+    <div class="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Data Loader</h1>
+            <p class="mt-2 text-slate-600">Import survey and assessment data from CSV files.</p>
+        </div>
+        <div class="flex items-center gap-2 text-sm">
+            <span class="inline-flex items-center px-3 py-1.5 rounded-full bg-slate-100 text-slate-700">
+                {{ total_import_count }} import{{ total_import_count|pluralize }}
+            </span>
+            <span class="inline-flex items-center px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800">
+                {{ published_import_count }} published
+            </span>
         </div>
     </div>
 
-    <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
-        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6">
-            <div class="flex items-center">
-                <div class="p-3 rounded-md bg-blue-100">
-                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <!-- Loader cards (extensible: add entries in _build_loader_cards) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        {% for loader in loader_cards %}
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 flex flex-col">
+            <div class="flex items-start justify-between">
+                <div class="p-3 rounded-lg {{ loader.icon_bg }}">
+                    <svg class="w-6 h-6 {{ loader.icon_css }}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                     </svg>
                 </div>
-                <div class="ml-4">
-                    <p class="text-sm font-medium text-slate-500">Survey Imports</p>
-                    <p class="text-2xl font-bold text-slate-900">{{ imports.paginator.count|default:0 }}</p>
+                <div class="text-right">
+                    <p class="text-2xl font-bold text-slate-900">{{ loader.count }}</p>
+                    <p class="text-xs text-slate-400">{{ loader.published }} published</p>
                 </div>
+            </div>
+            <h2 class="mt-4 text-lg font-semibold text-slate-900">{{ loader.name }}</h2>
+            <p class="mt-1 text-sm text-slate-500 flex-1">{{ loader.description }}</p>
+            <div class="mt-5 flex items-center gap-2">
+                <a href="{{ loader.upload_url }}"
+                   class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2 transition duration-200 {{ loader.button_css }}">
+                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                    </svg>
+                    Upload
+                </a>
+                {% if loader.settings_url %}
+                <a href="{{ loader.settings_url }}"
+                   class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50 transition duration-200">
+                    Settings
+                </a>
+                {% endif %}
             </div>
         </div>
+        {% endfor %}
 
-        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6">
-            <div class="flex items-center">
-                <div class="p-3 rounded-md bg-purple-100">
-                    <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                    </svg>
-                </div>
-                <div class="ml-4">
-                    <p class="text-sm font-medium text-slate-500">AP Imports</p>
-                    <p class="text-2xl font-bold text-slate-900">{{ ap_import_count|default:0 }}</p>
-                </div>
-            </div>
-        </div>
-
-        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6">
-            <div class="flex items-center">
-                <div class="p-3 rounded-md bg-emerald-100">
-                    <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                    </svg>
-                </div>
-                <div class="ml-4">
-                    <p class="text-sm font-medium text-slate-500">SAT Imports</p>
-                    <p class="text-2xl font-bold text-slate-900">{{ sat_import_count|default:0 }}</p>
-                </div>
-            </div>
-        </div>
-
-        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6">
-            <div class="flex items-center">
-                <div class="p-3 rounded-md bg-green-100">
-                    <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
-                    </svg>
-                </div>
-                <div class="ml-4">
-                    <p class="text-sm font-medium text-slate-500">Survey Definitions</p>
-                    <p class="text-2xl font-bold text-slate-900">{{ survey_definitions.count|default:0 }}</p>
-                </div>
-            </div>
-        </div>
-
-        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6">
-            <div class="flex items-center">
-                <div class="p-3 rounded-md bg-indigo-100">
-                    <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
-                    </svg>
-                </div>
-                <div class="ml-4">
-                    <p class="text-sm font-medium text-slate-500">Quick Links</p>
-                    <a href="{% url 'dataLoader:survey_list' %}" class="text-blue-600 hover:text-blue-800 text-sm block">View Surveys &rarr;</a>
-                    <a href="{% url 'dataLoader:topic_list' %}" class="text-indigo-600 hover:text-indigo-800 text-sm block mt-1">Manage Topics &rarr;</a>
-                </div>
-            </div>
+        <!-- Placeholder for future loaders -->
+        <div class="rounded-xl border-2 border-dashed border-slate-200 p-6 flex flex-col items-center justify-center text-center min-h-[196px]">
+            <svg class="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            <p class="mt-2 text-sm font-medium text-slate-500">More loaders coming</p>
+            <p class="mt-1 text-xs text-slate-400">Additional assessments and surveys can be added as new loaders.</p>
         </div>
     </div>
 
-    <!-- AP Imports Section -->
-    {% if ap_imports %}
-    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
-        <div class="px-6 py-4 border-b border-slate-200">
-            <h2 class="text-lg font-semibold text-slate-900">AP Imports</h2>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-slate-200">
-                <thead class="bg-slate-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">School Year</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Exams</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Match Rate</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Uploaded</th>
-                        <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">Published</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-slate-200">
-                    {% for ap_import in ap_imports %}
-                    <tr class="hover:bg-slate-50 transition duration-150">
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="text-sm font-medium text-slate-900">{{ ap_import.name }}</div>
-                            <div class="text-xs text-slate-500">{{ ap_import.filename|truncatechars:40 }}</div>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ ap_import.school_year }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            {% if ap_import.status == 'COMPLETED' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">Completed</span>
-                            {% elif ap_import.status == 'FAILED' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">Failed</span>
-                            {% elif ap_import.status == 'PROCESSING' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">Processing</span>
-                            {% elif ap_import.status == 'PARTIAL' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">Partial</span>
-                            {% else %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-800">{{ ap_import.get_status_display }}</span>
-                            {% endif %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                            {{ ap_import.exams_created }}
-                            {% if ap_import.exams_skipped > 0 %}
-                            <span class="text-xs text-slate-400">(+{{ ap_import.exams_skipped }} skipped)</span>
-                            {% endif %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                            {% with total=ap_import.students_matched|add:ap_import.students_unmatched %}
-                                {% if total > 0 %}
-                                    {% widthratio ap_import.students_matched total 100 %}%
-                                {% else %}
-                                    -
-                                {% endif %}
-                            {% endwith %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                            {{ ap_import.uploaded_at|date:"M d, Y H:i" }}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-center">
-                            {% if ap_import.status == 'COMPLETED' %}
-                            <form method="post" action="{% url 'dataLoader:ap_toggle_publish' ap_import.pk %}" class="inline">
-                                {% csrf_token %}
-                                <button type="submit"
-                                        class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 {% if ap_import.is_published %}bg-purple-600{% else %}bg-slate-200{% endif %}"
-                                        title="{% if ap_import.is_published %}Click to unpublish from Data Exploration{% else %}Click to publish to Data Exploration{% endif %}">
-                                    <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {% if ap_import.is_published %}translate-x-5{% else %}translate-x-0{% endif %}"></span>
-                                </button>
-                            </form>
-                            {% else %}
-                            <span class="text-xs text-slate-400">—</span>
-                            {% endif %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm">
-                            {% if ap_import.status == 'PROCESSING' %}
-                            <a href="{% url 'dataLoader:ap_import_progress' ap_import.pk %}"
-                               class="text-purple-600 hover:text-purple-900">View Progress</a>
-                            {% else %}
-                            <a href="{% url 'dataLoader:ap_import_detail' ap_import.pk %}"
-                               class="text-purple-600 hover:text-purple-900 mr-3">View</a>
-                            <a href="{% url 'dataLoader:ap_delete_import' ap_import.pk %}"
-                               class="text-red-600 hover:text-red-900">Delete</a>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- SAT Imports Section -->
-    {% if sat_imports %}
-    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
-        <div class="px-6 py-4 border-b border-slate-200">
-            <h2 class="text-lg font-semibold text-slate-900">SAT Imports</h2>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-slate-200">
-                <thead class="bg-slate-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">School Year</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Records</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Match Rate</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Uploaded</th>
-                        <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">Published</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-slate-200">
-                    {% for sat_import in sat_imports %}
-                    <tr class="hover:bg-slate-50 transition duration-150">
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="text-sm font-medium text-slate-900">{{ sat_import.name }}</div>
-                            <div class="text-xs text-slate-500">{{ sat_import.filename|truncatechars:40 }}</div>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ sat_import.school_year }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            {% if sat_import.status == 'COMPLETED' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">Completed</span>
-                            {% elif sat_import.status == 'FAILED' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">Failed</span>
-                            {% elif sat_import.status == 'PROCESSING' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">Processing</span>
-                            {% elif sat_import.status == 'PARTIAL' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">Partial</span>
-                            {% else %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-800">{{ sat_import.get_status_display }}</span>
-                            {% endif %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                            {{ sat_import.records_created }}
-                            {% if sat_import.records_skipped > 0 %}
-                            <span class="text-xs text-slate-400">(+{{ sat_import.records_skipped }} skipped)</span>
-                            {% endif %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                            {% with total=sat_import.students_matched|add:sat_import.students_unmatched %}
-                                {% if total > 0 %}{% widthratio sat_import.students_matched total 100 %}%{% else %}-{% endif %}
-                            {% endwith %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{{ sat_import.uploaded_at|date:"M d, Y H:i" }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-center">
-                            {% if sat_import.status == 'COMPLETED' %}
-                            <form method="post" action="{% url 'dataLoader:sat_toggle_publish' sat_import.pk %}" class="inline">
-                                {% csrf_token %}
-                                <button type="submit"
-                                        class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 {% if sat_import.is_published %}bg-emerald-600{% else %}bg-slate-200{% endif %}"
-                                        title="{% if sat_import.is_published %}Click to unpublish from Data Exploration{% else %}Click to publish to Data Exploration{% endif %}">
-                                    <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {% if sat_import.is_published %}translate-x-5{% else %}translate-x-0{% endif %}"></span>
-                                </button>
-                            </form>
-                            {% else %}
-                            <span class="text-xs text-slate-400">—</span>
-                            {% endif %}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm">
-                            {% if sat_import.status == 'PROCESSING' %}
-                            <a href="{% url 'dataLoader:sat_import_progress' sat_import.pk %}"
-                               class="text-emerald-600 hover:text-emerald-900">View Progress</a>
-                            {% else %}
-                            <a href="{% url 'dataLoader:sat_import_detail' sat_import.pk %}"
-                               class="text-emerald-600 hover:text-emerald-900 mr-3">View</a>
-                            <a href="{% url 'dataLoader:sat_delete_import' sat_import.pk %}"
-                               class="text-red-600 hover:text-red-900">Delete</a>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Survey Imports -->
+    <!-- Recent Imports -->
     <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200">
-        <div class="px-6 py-4 border-b border-slate-200">
-            <h2 class="text-lg font-semibold text-slate-900">Survey Imports</h2>
+        <div class="px-6 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold text-slate-900">Recent Imports</h2>
+            <div class="flex items-center gap-1 text-xs font-medium">
+                <a href="?type=" class="px-3 py-1.5 rounded-full transition {% if not type_filter %}bg-slate-900 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                    All ({{ type_counts.all }})
+                </a>
+                <a href="?type=survey" class="px-3 py-1.5 rounded-full transition {% if type_filter == 'survey' %}bg-blue-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                    Surveys ({{ type_counts.survey }})
+                </a>
+                <a href="?type=ap" class="px-3 py-1.5 rounded-full transition {% if type_filter == 'ap' %}bg-purple-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                    AP ({{ type_counts.ap }})
+                </a>
+                <a href="?type=sat" class="px-3 py-1.5 rounded-full transition {% if type_filter == 'sat' %}bg-emerald-600 text-white{% else %}bg-slate-100 text-slate-600 hover:bg-slate-200{% endif %}">
+                    SAT ({{ type_counts.sat }})
+                </a>
+            </div>
         </div>
-        {% if imports %}
+
+        {% if recent_imports %}
         <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-slate-200">
+            <table class="w-full table-fixed divide-y divide-slate-200">
                 <thead class="bg-slate-50">
                     <tr>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">School Year</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Window</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Records</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Match Rate</th>
-                        <th scope="col" class="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">Published</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Uploaded</th>
-                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                        <th scope="col" class="w-[26%] px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Name</th>
+                        <th scope="col" class="w-[9%] px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Year</th>
+                        <th scope="col" class="w-[12%] px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                        <th scope="col" class="w-[12%] px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Data</th>
+                        <th scope="col" class="w-[9%] px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Match</th>
+                        <th scope="col" class="w-[13%] px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Uploaded</th>
+                        <th scope="col" class="w-[7%] px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">Pub.</th>
+                        <th scope="col" class="w-[12%] px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-slate-200">
-                    {% for import in imports %}
+                    {% for item in recent_imports %}
                     <tr class="hover:bg-slate-50 transition duration-150">
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="text-sm font-medium text-slate-900">{{ import.name }}</div>
-                            <div class="text-xs text-slate-500">{{ import.filename|truncatechars:40 }}</div>
+                        <td class="px-4 py-3">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span class="flex-shrink-0 inline-flex px-2 py-0.5 text-[11px] font-semibold rounded-full {{ item.type_badge }}">{{ item.type_label }}</span>
+                                <div class="min-w-0">
+                                    <div class="text-sm font-medium text-slate-900 truncate" title="{{ item.name }}">{{ item.name }}</div>
+                                    <div class="text-xs text-slate-400 truncate" title="{{ item.filename }}">{{ item.filename|default:"—" }}</div>
+                                </div>
+                            </div>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ import.school_year }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ import.get_testing_window_display }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            {% if import.status == 'COMPLETED' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">Completed</span>
-                            {% elif import.status == 'FAILED' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">Failed</span>
-                            {% elif import.status == 'PROCESSING' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">Processing</span>
-                            {% elif import.status == 'PARTIAL' %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">Partial</span>
-                            {% else %}
-                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-800">{{ import.get_status_display }}</span>
-                            {% endif %}
+                        <td class="px-4 py-3 text-sm text-slate-600 truncate">{{ item.school_year|default:"—" }}</td>
+                        <td class="px-4 py-3">
+                            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full {{ item.status_css }}">{{ item.status_display }}</span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">{{ import.records_processed }}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
-                            {% with total=import.students_matched|add:import.students_unmatched %}
-                                {% if total > 0 %}
-                                    {% widthratio import.students_matched total 100 %}%
-                                {% else %}
-                                    -
-                                {% endif %}
-                            {% endwith %}
+                        <td class="px-4 py-3 text-sm text-slate-600">
+                            {{ item.metric_value }}
+                            {% if item.metric_note %}<span class="block text-xs text-slate-400">{{ item.metric_note }}</span>{% endif %}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-center">
-                            {% if import.status == 'COMPLETED' %}
-                            <form method="post" action="{% url 'dataLoader:quick_toggle_publish_import' import.pk %}" class="inline">
+                        <td class="px-4 py-3 text-sm text-slate-600">
+                            {% if item.match_rate is not None %}{{ item.match_rate }}%{% else %}<span class="text-slate-400">—</span>{% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-slate-500 whitespace-nowrap">{{ item.uploaded_at|date:"M d, Y H:i" }}</td>
+                        <td class="px-4 py-3 text-center">
+                            {% if item.publish_url %}
+                            <form method="post" action="{{ item.publish_url }}" class="inline">
                                 {% csrf_token %}
                                 <button type="submit"
-                                    class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 {% if import.ready_for_exploration %}bg-blue-600{% else %}bg-slate-200{% endif %}"
-                                    title="{% if import.ready_for_exploration %}Click to unpublish{% else %}Click to publish to Data Exploration{% endif %}">
-                                    <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {% if import.ready_for_exploration %}translate-x-5{% else %}translate-x-0{% endif %}"></span>
+                                        class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 {{ item.publish_css }}"
+                                        title="{% if item.is_published %}Click to unpublish from Data Exploration{% else %}Click to publish to Data Exploration{% endif %}">
+                                    <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out {% if item.is_published %}translate-x-5{% else %}translate-x-0{% endif %}"></span>
                                 </button>
                             </form>
                             {% else %}
-                            <span class="text-slate-400">&mdash;</span>
+                            <span class="text-xs text-slate-400">—</span>
                             {% endif %}
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                            {{ import.uploaded_at|date:"M d, Y H:i" }}
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm">
-                            {% if import.status == 'PROCESSING' %}
-                            <a href="{% url 'dataLoader:import_progress' import.pk %}"
-                               class="text-blue-600 hover:text-blue-900">View Progress</a>
+                        <td class="px-4 py-3 text-right text-sm whitespace-nowrap">
+                            {% if item.progress_url %}
+                            <a href="{{ item.progress_url }}" class="font-medium text-slate-600 hover:text-slate-900">Progress</a>
                             {% else %}
-                            <a href="{% url 'dataLoader:import_detail' import.pk %}"
-                               class="text-blue-600 hover:text-blue-900 mr-3">View</a>
-                            <a href="{% url 'dataLoader:delete_import' import.pk %}"
-                               class="text-red-600 hover:text-red-900">Delete</a>
+                            <a href="{{ item.detail_url }}" class="font-medium text-slate-600 hover:text-slate-900">View</a>
+                            <a href="{{ item.delete_url }}" class="ml-3 font-medium text-red-600 hover:text-red-800">Delete</a>
                             {% endif %}
                         </td>
                     </tr>
@@ -377,7 +153,6 @@
             </table>
         </div>
 
-        <!-- Pagination -->
         {% if is_paginated %}
         <div class="px-6 py-4 border-t border-slate-200 flex items-center justify-between">
             <div class="text-sm text-slate-500">
@@ -385,23 +160,33 @@
             </div>
             <div class="flex space-x-2">
                 {% if page_obj.has_previous %}
-                <a href="?page={{ page_obj.previous_page_number }}" class="px-3 py-1 border border-slate-300 rounded text-sm hover:bg-slate-50">Previous</a>
+                <a href="?page={{ page_obj.previous_page_number }}{% if type_filter %}&type={{ type_filter }}{% endif %}" class="px-3 py-1 border border-slate-300 rounded text-sm hover:bg-slate-50">Previous</a>
                 {% endif %}
                 {% if page_obj.has_next %}
-                <a href="?page={{ page_obj.next_page_number }}" class="px-3 py-1 border border-slate-300 rounded text-sm hover:bg-slate-50">Next</a>
+                <a href="?page={{ page_obj.next_page_number }}{% if type_filter %}&type={{ type_filter }}{% endif %}" class="px-3 py-1 border border-slate-300 rounded text-sm hover:bg-slate-50">Next</a>
                 {% endif %}
             </div>
         </div>
         {% endif %}
 
         {% else %}
-        <div class="px-6 py-12 text-center">
-            <svg class="mx-auto h-12 w-12 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="px-6 py-16 text-center">
+            <svg class="mx-auto h-12 w-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
             </svg>
-            <h3 class="mt-2 text-sm font-medium text-slate-900">No survey imports yet</h3>
+            <h3 class="mt-2 text-sm font-medium text-slate-900">No imports yet</h3>
+            <p class="mt-1 text-sm text-slate-500">Use one of the loaders above to upload data.</p>
         </div>
         {% endif %}
     </div>
+
+    <!-- Survey definitions quick links -->
+    {% if survey_definitions %}
+    <div class="mt-8 flex flex-wrap items-center gap-3 text-sm">
+        <span class="text-slate-500">Survey definitions:</span>
+        <a href="{% url 'dataLoader:survey_list' %}" class="text-blue-600 hover:text-blue-800 font-medium">View all &rarr;</a>
+        <a href="{% url 'dataLoader:topic_list' %}" class="text-indigo-600 hover:text-indigo-800 font-medium">Manage topics &rarr;</a>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

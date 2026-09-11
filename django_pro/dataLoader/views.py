@@ -9,10 +9,11 @@ import tempfile
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.http import JsonResponse
-from django.views.generic import ListView, DetailView, View
+from django.views.generic import ListView, DetailView, View, TemplateView
 from django.urls import reverse
 from django.utils import timezone
 from django.core.cache import cache
+from django.core.paginator import Paginator
 from django.conf import settings
 
 from .access_control import project_admin_required, ProjectAdminRequiredMixin
@@ -39,31 +40,204 @@ def get_school_year_choices():
     return choices
 
 
-class DataLoaderDashboardView(ProjectAdminRequiredMixin, ListView):
-    """Dashboard showing recent imports and upload option."""
-    model = ImportLog
+def _match_rate(matched, unmatched):
+    total = (matched or 0) + (unmatched or 0)
+    if total <= 0:
+        return None
+    return round((matched or 0) / total * 100)
+
+
+def _status_css(status):
+    return {
+        'COMPLETED': 'bg-green-100 text-green-800',
+        'FAILED': 'bg-red-100 text-red-800',
+        'PROCESSING': 'bg-blue-100 text-blue-800',
+        'PARTIAL': 'bg-amber-100 text-amber-800',
+        'PENDING': 'bg-slate-100 text-slate-800',
+    }.get(status, 'bg-slate-100 text-slate-800')
+
+
+def _normalize_survey_import(obj):
+    return {
+        'type': 'survey',
+        'type_label': 'Survey',
+        'type_badge': 'bg-blue-100 text-blue-800',
+        'name': obj.name,
+        'filename': obj.filename,
+        'school_year': obj.school_year,
+        'metric_label': 'Records',
+        'metric_value': obj.records_processed,
+        'metric_note': obj.get_testing_window_display() or '',
+        'status': obj.status,
+        'status_display': obj.get_status_display(),
+        'status_css': _status_css(obj.status),
+        'match_rate': _match_rate(obj.students_matched, obj.students_unmatched),
+        'is_published': obj.ready_for_exploration,
+        'uploaded_at': obj.uploaded_at,
+        'detail_url': reverse('dataLoader:import_detail', args=[obj.pk]),
+        'progress_url': reverse('dataLoader:import_progress', args=[obj.pk]) if obj.status == 'PROCESSING' else None,
+        'delete_url': reverse('dataLoader:delete_import', args=[obj.pk]),
+        'publish_url': reverse('dataLoader:quick_toggle_publish_import', args=[obj.pk]) if obj.status == 'COMPLETED' else None,
+        'publish_css': 'bg-blue-600' if obj.ready_for_exploration else 'bg-slate-200',
+    }
+
+
+def _normalize_ap_import(obj):
+    return {
+        'type': 'ap',
+        'type_label': 'AP',
+        'type_badge': 'bg-purple-100 text-purple-800',
+        'name': obj.name,
+        'filename': obj.filename,
+        'school_year': obj.school_year,
+        'metric_label': 'Exams',
+        'metric_value': obj.exams_created,
+        'metric_note': f"+{obj.exams_skipped} skipped" if obj.exams_skipped else '',
+        'status': obj.status,
+        'status_display': obj.get_status_display(),
+        'status_css': _status_css(obj.status),
+        'match_rate': _match_rate(obj.students_matched, obj.students_unmatched),
+        'is_published': obj.is_published,
+        'uploaded_at': obj.uploaded_at,
+        'detail_url': reverse('dataLoader:ap_import_detail', args=[obj.pk]),
+        'progress_url': reverse('dataLoader:ap_import_progress', args=[obj.pk]) if obj.status == 'PROCESSING' else None,
+        'delete_url': reverse('dataLoader:ap_delete_import', args=[obj.pk]),
+        'publish_url': reverse('dataLoader:ap_toggle_publish', args=[obj.pk]) if obj.status == 'COMPLETED' else None,
+        'publish_css': 'bg-purple-600' if obj.is_published else 'bg-slate-200',
+    }
+
+
+def _normalize_sat_import(obj):
+    return {
+        'type': 'sat',
+        'type_label': 'SAT',
+        'type_badge': 'bg-emerald-100 text-emerald-800',
+        'name': obj.name,
+        'filename': obj.filename,
+        'school_year': obj.school_year,
+        'metric_label': 'Records',
+        'metric_value': obj.records_created,
+        'metric_note': f"+{obj.records_skipped} skipped" if obj.records_skipped else '',
+        'status': obj.status,
+        'status_display': obj.get_status_display(),
+        'status_css': _status_css(obj.status),
+        'match_rate': _match_rate(obj.students_matched, obj.students_unmatched),
+        'is_published': obj.is_published,
+        'uploaded_at': obj.uploaded_at,
+        'detail_url': reverse('dataLoader:sat_import_detail', args=[obj.pk]),
+        'progress_url': reverse('dataLoader:sat_import_progress', args=[obj.pk]) if obj.status == 'PROCESSING' else None,
+        'delete_url': reverse('dataLoader:sat_delete_import', args=[obj.pk]),
+        'publish_url': reverse('dataLoader:sat_toggle_publish', args=[obj.pk]) if obj.status == 'COMPLETED' else None,
+        'publish_css': 'bg-emerald-600' if obj.is_published else 'bg-slate-200',
+    }
+
+
+# Registry of data loaders shown on the dashboard. New assessment/survey
+# loaders can be added here without touching the template layout.
+def _build_loader_cards():
+    survey_count = ImportLog.objects.count()
+    survey_published = ImportLog.objects.filter(ready_for_exploration=True).count()
+    ap_count = APImportLog.objects.count()
+    ap_published = APImportLog.objects.filter(is_published=True).count()
+    sat_count = SATImportLog.objects.count()
+    sat_published = SATImportLog.objects.filter(is_published=True).count()
+
+    return [
+        {
+            'key': 'survey',
+            'name': 'Surveys',
+            'description': 'Panorama SEL skills, competencies, and other survey CSV exports.',
+            'upload_url': reverse('dataLoader:upload'),
+            'accent': 'blue',
+            'button_css': 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
+            'icon_bg': 'bg-blue-100',
+            'icon_css': 'text-blue-600',
+            'count': survey_count,
+            'published': survey_published,
+        },
+        {
+            'key': 'ap',
+            'name': 'AP Exams',
+            'description': 'College Board AP Student Datafile with exam results and awards.',
+            'upload_url': reverse('dataLoader:ap_upload'),
+            'accent': 'purple',
+            'button_css': 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500',
+            'icon_bg': 'bg-purple-100',
+            'icon_css': 'text-purple-600',
+            'count': ap_count,
+            'published': ap_published,
+        },
+        {
+            'key': 'sat',
+            'name': 'SAT',
+            'description': 'College Board SAT results with scores and percentile regions.',
+            'upload_url': reverse('dataLoader:sat_upload'),
+            'settings_url': reverse('dataLoader:sat_settings'),
+            'accent': 'emerald',
+            'button_css': 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500',
+            'icon_bg': 'bg-emerald-100',
+            'icon_css': 'text-emerald-600',
+            'count': sat_count,
+            'published': sat_published,
+        },
+    ]
+
+
+class DataLoaderDashboardView(ProjectAdminRequiredMixin, TemplateView):
+    """Dashboard: loader cards + a unified, browsable list of recent imports."""
     template_name = 'dataLoader/dashboard.html'
-    context_object_name = 'imports'
-    paginate_by = 20
-    
-    def get_queryset(self):
-        return ImportLog.objects.select_related(
-            'survey_definition', 'uploaded_by'
-        ).order_by('-uploaded_at')
-    
+    page_size = 25
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+
+        survey_imports = list(
+            ImportLog.objects.select_related('survey_definition', 'uploaded_by')
+            .order_by('-uploaded_at')[:100]
+        )
+        ap_imports = list(
+            APImportLog.objects.select_related('uploaded_by').order_by('-uploaded_at')[:100]
+        )
+        sat_imports = list(
+            SATImportLog.objects.select_related('uploaded_by').order_by('-uploaded_at')[:100]
+        )
+
+        recent = (
+            [_normalize_survey_import(o) for o in survey_imports]
+            + [_normalize_ap_import(o) for o in ap_imports]
+            + [_normalize_sat_import(o) for o in sat_imports]
+        )
+        recent.sort(key=lambda r: r['uploaded_at'], reverse=True)
+
+        type_filter = self.request.GET.get('type', '').strip().lower()
+        if type_filter in ('survey', 'ap', 'sat'):
+            recent = [r for r in recent if r['type'] == type_filter]
+
+        paginator = Paginator(recent, self.page_size)
+        page_obj = paginator.get_page(self.request.GET.get('page'))
+
+        context['loader_cards'] = _build_loader_cards()
+        context['page_obj'] = page_obj
+        context['recent_imports'] = page_obj.object_list
+        context['is_paginated'] = page_obj.has_other_pages()
+        context['total_import_count'] = (
+            ImportLog.objects.count() + APImportLog.objects.count() + SATImportLog.objects.count()
+        )
+        context['published_import_count'] = (
+            ImportLog.objects.filter(ready_for_exploration=True).count()
+            + APImportLog.objects.filter(is_published=True).count()
+            + SATImportLog.objects.filter(is_published=True).count()
+        )
         context['survey_definitions'] = SurveyDefinition.objects.filter(
             is_active=True
         ).order_by('-school_year')
-        context['ap_imports'] = APImportLog.objects.select_related(
-            'uploaded_by'
-        ).order_by('-uploaded_at')[:20]
-        context['ap_import_count'] = APImportLog.objects.count()
-        context['sat_imports'] = SATImportLog.objects.select_related(
-            'uploaded_by'
-        ).order_by('-uploaded_at')[:20]
-        context['sat_import_count'] = SATImportLog.objects.count()
+        context['type_filter'] = type_filter
+        context['type_counts'] = {
+            'all': ImportLog.objects.count() + APImportLog.objects.count() + SATImportLog.objects.count(),
+            'survey': ImportLog.objects.count(),
+            'ap': APImportLog.objects.count(),
+            'sat': SATImportLog.objects.count(),
+        }
         return context
 
 
@@ -1349,11 +1523,6 @@ class SATImportDetailView(ProjectAdminRequiredMixin, DetailView):
             match_rate = round((import_log.students_matched / total) * 100)
         context['match_rate'] = match_rate
 
-        settings_obj = SATSettings.get_solo()
-        context['sat_settings'] = settings_obj
-        context['percentile_region_choices'] = SAT_PERCENTILE_REGIONS
-        context['percentile_metric_choices'] = SAT_PERCENTILE_METRICS
-
         return context
 
 
@@ -1445,56 +1614,52 @@ def sat_toggle_publish(request, pk):
     return redirect('dataLoader:sat_import_detail', pk=pk)
 
 
-@project_admin_required
-def save_sat_settings(request, pk):
-    """Save the global SAT publish settings (percentiles + latest/highest)."""
-    sat_import_log = get_object_or_404(SATImportLog, pk=pk)
+class SATSettingsView(ProjectAdminRequiredMixin, View):
+    """Global SAT publish settings page (percentiles + latest/highest)."""
+    template_name = 'dataLoader/sat_settings.html'
 
-    if request.method != 'POST':
-        return redirect('dataLoader:sat_import_detail', pk=pk)
+    def get(self, request):
+        context = {
+            'sat_settings': SATSettings.get_solo(),
+            'percentile_region_choices': SAT_PERCENTILE_REGIONS,
+            'percentile_metric_choices': SAT_PERCENTILE_METRICS,
+            'published_import_count': SATImportLog.objects.filter(is_published=True).count(),
+        }
+        return render(request, self.template_name, context)
 
-    regions = [r for r in request.POST.getlist('percentile_regions') if r in dict(SAT_PERCENTILE_REGIONS)]
-    metrics = [m for m in request.POST.getlist('percentile_metrics') if m in dict(SAT_PERCENTILE_METRICS)]
-    result_mode = request.POST.get('result_mode', 'latest')
-    if result_mode not in ('latest', 'highest'):
-        result_mode = 'latest'
-    highest_metric = request.POST.get('highest_metric', 'total')
-    if highest_metric not in ('total', 'rw', 'math'):
-        highest_metric = 'total'
+    def post(self, request):
+        regions = [r for r in request.POST.getlist('percentile_regions') if r in dict(SAT_PERCENTILE_REGIONS)]
+        metrics = [m for m in request.POST.getlist('percentile_metrics') if m in dict(SAT_PERCENTILE_METRICS)]
+        result_mode = request.POST.get('result_mode', 'latest')
+        if result_mode not in ('latest', 'highest'):
+            result_mode = 'latest'
+        highest_metric = request.POST.get('highest_metric', 'total')
+        if highest_metric not in ('total', 'rw', 'math'):
+            highest_metric = 'total'
 
-    settings_obj = SATSettings.get_solo()
-    settings_obj.percentile_regions = regions
-    settings_obj.percentile_metrics = metrics
-    settings_obj.result_mode = result_mode
-    settings_obj.highest_metric = highest_metric
-    settings_obj.updated_by = request.user
-    settings_obj.save()
+        settings_obj = SATSettings.get_solo()
+        settings_obj.percentile_regions = regions
+        settings_obj.percentile_metrics = metrics
+        settings_obj.result_mode = result_mode
+        settings_obj.highest_metric = highest_metric
+        settings_obj.updated_by = request.user
+        settings_obj.save()
 
-    _invalidate_sat_caches()
-    messages.success(
-        request,
-        "SAT publish settings saved. Re-publish SAT data to apply them in Data Exploration."
-    )
-    return redirect('dataLoader:sat_import_detail', pk=pk)
+        _invalidate_sat_caches()
 
-
-@project_admin_required
-def republish_sat(request, pk):
-    """Re-sync published SAT data to ClickHouse using the current settings."""
-    sat_import_log = get_object_or_404(SATImportLog, pk=pk)
-
-    if request.method != 'POST':
-        return redirect('dataLoader:sat_import_detail', pk=pk)
-
-    from django.core.management import call_command
-    try:
-        call_command('sync_to_clickhouse', tables='analytics_sat_results', full=True)
-        messages.success(request, "SAT data re-published to Data Exploration.")
-    except Exception as e:
-        messages.error(request, f"Could not re-publish SAT data: {e}")
-
-    _invalidate_sat_caches()
-    return redirect('dataLoader:sat_import_detail', pk=pk)
+        if request.POST.get('republish'):
+            from .utils.sat_response_loader import run_sat_clickhouse_sync_async
+            run_sat_clickhouse_sync_async()
+            messages.success(
+                request,
+                "SAT settings saved. Re-publishing SAT data to Data Exploration in the background."
+            )
+        else:
+            messages.success(
+                request,
+                "SAT settings saved. Re-publish SAT data to apply them in Data Exploration."
+            )
+        return redirect('dataLoader:sat_settings')
 
 
 def _invalidate_sat_caches():
