@@ -198,69 +198,154 @@
                 }
             });
 
-            // 2. Shared option synchronization across select dropdowns
-            window.isSyncing = false;
-            function sync(accommodationId, optionValue) {
-                if (window.isSyncing) return;
-                window.isSyncing = true;
+            // 2. Accordion cards + option dropdown picker for designated supports
+            const SUMMARY_SELECTED = 'shrink-0 inline-flex items-center gap-1 max-w-[38%] truncate rounded-full px-2.5 py-1 text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+            const SUMMARY_EMPTY = 'shrink-0 inline-flex items-center gap-1 max-w-[38%] truncate rounded-full px-2.5 py-1 text-[10px] font-semibold bg-slate-100 text-slate-400 border border-slate-200';
 
-                try {
-                    document.querySelectorAll(`select.acc-option-select[data-accommodation-id="${accommodationId}"]`).forEach(select => {
-                        const hasOption = Array.from(select.options).some(o => o.value == optionValue);
-                        if (hasOption || optionValue === '') {
-                            if (select.value != optionValue) {
-                                select.value = optionValue;
-                            }
-                        }
-                    });
-                } finally {
-                    window.isSyncing = false;
+            function setCardOpen(card, open) {
+                open = typeof open === 'boolean' ? open : card.dataset.open === 'true';
+                card.dataset.open = open ? 'true' : 'false';
+                const body = card.querySelector('[data-accordion-body]');
+                if (body) body.classList.toggle('hidden', !open);
+                const chevron = card.querySelector('[data-chevron]');
+                if (chevron) chevron.classList.toggle('rotate-90', open);
+            }
+
+            function cardSelect(card) {
+                return card.querySelector('select.acc-option-select') || null;
+            }
+
+            function cardCheckbox(card) {
+                return card.querySelector('input[name="student_supports"]') || null;
+            }
+
+            function cardSelectedOptionText(card) {
+                const select = cardSelect(card);
+                if (select && select.value !== '') {
+                    const option = select.options[select.selectedIndex];
+                    return option ? option.textContent.trim() : '';
                 }
+                const checkbox = cardCheckbox(card);
+                if (checkbox && checkbox.checked) return 'Selected';
+                return '';
+            }
+
+            function cardHasSelection(card) {
+                const select = cardSelect(card);
+                if (select && select.value !== '') return true;
+                const checkbox = cardCheckbox(card);
+                return !!(checkbox && checkbox.checked);
+            }
+
+            function clearCardSelection(card) {
+                const select = cardSelect(card);
+                if (select) select.value = '';
+                const checkbox = cardCheckbox(card);
+                if (checkbox) checkbox.checked = false;
+            }
+
+            function refreshSummary(card) {
+                const summary = card.querySelector('[data-selected-summary]');
+                if (!summary) return;
+                const text = cardSelectedOptionText(card);
+                summary.className = text ? SUMMARY_SELECTED : SUMMARY_EMPTY;
+                summary.textContent = '';
+                if (text) {
+                    const mark = document.createElement('span');
+                    mark.className = 'text-emerald-500';
+                    mark.textContent = '✓';
+                    const span = document.createElement('span');
+                    span.className = 'truncate';
+                    span.textContent = text;
+                    summary.appendChild(mark);
+                    summary.appendChild(span);
+                } else {
+                    summary.textContent = 'Not selected';
+                }
+            }
+
+            function refreshAllSummaries() {
+                document.querySelectorAll('.support-card').forEach(refreshSummary);
+            }
+
+            function syncAccommodationGroup(accId, value) {
+                document.querySelectorAll(`.support-card[data-accommodation-id="${accId}"]`).forEach(card => {
+                    if (card.dataset.seisLocked === 'true') return;
+                    const select = cardSelect(card);
+                    if (!select) return;
+                    if (value === '') {
+                        select.value = '';
+                        return;
+                    }
+                    const option = Array.from(select.options).find(o => o.value === value);
+                    if (option) select.value = value;
+                });
             }
 
             function applyDependencies() {
-                const selectedOptionIds = new Set(
-                    Array.from(document.querySelectorAll('select.acc-option-select'))
-                        .map(s => s.value)
-                        .filter(v => v)
-                );
-
-                let changed = false;
-                document.querySelectorAll('.support-card').forEach((card) => {
-                    const depOptionId = card.getAttribute('data-depends-on-option-id');
-                    const isHidden = depOptionId && selectedOptionIds.has(depOptionId);
-                    card.style.display = isHidden ? 'none' : '';
-
-                    if (isHidden) {
-                        card.querySelectorAll('select.acc-option-select').forEach((select) => {
-                            if (select.value !== '') {
-                                select.value = '';
-                                changed = true;
-                            }
-                        });
-                    }
-                });
-
-                if (changed) {
-                    applyDependencies();
+                let guard = 0;
+                while (guard++ < 25) {
+                    let changed = false;
+                    const ids = new Set(
+                        Array.from(document.querySelectorAll('select.acc-option-select'))
+                            .map(s => s.value)
+                            .filter(v => v)
+                    );
+                    document.querySelectorAll('.support-card').forEach(card => {
+                        if (card.dataset.seisLocked === 'true') return;
+                        const dep = card.dataset.dependsOnOptionId;
+                        const isHidden = !!dep && ids.has(dep);
+                        card.style.display = isHidden ? 'none' : '';
+                        if (isHidden && cardHasSelection(card)) {
+                            clearCardSelection(card);
+                            changed = true;
+                        }
+                    });
+                    if (!changed) break;
                 }
             }
 
-            document.addEventListener('change', (e) => {
-                if (e.target.matches('.acc-option-select')) {
-                    const accId = e.target.getAttribute('data-accommodation-id');
-                    sync(accId, e.target.value);
-                    applyDependencies();
+            // Accordion toggle + expand/collapse all (event delegation survives HTMX swaps)
+            document.addEventListener('click', (e) => {
+                const toggle = e.target.closest('[data-accordion-toggle]');
+                if (toggle) {
+                    const card = toggle.closest('.support-card');
+                    if (card) setCardOpen(card, card.dataset.open !== 'true');
+                    return;
+                }
+                const action = e.target.closest('[data-accordion-action]');
+                if (action) {
+                    const open = action.dataset.accordionAction === 'expand';
+                    const scope = action.closest('[data-accordion-scope]') || document;
+                    scope.querySelectorAll('.support-card').forEach(card => setCardOpen(card, open));
                 }
             });
+
+            // Option picker + shared synchronization
+            document.addEventListener('change', (e) => {
+                const select = e.target.closest('select.acc-option-select');
+                if (!select) return;
+                const card = select.closest('.support-card');
+                if (!card) return;
+                const accId = card.dataset.accommodationId;
+                if (accId) syncAccommodationGroup(accId, select.value);
+                applyDependencies();
+                refreshAllSummaries();
+            });
+
+            function refreshWorkspace() {
+                applyDependencies();
+                refreshAllSummaries();
+            }
 
             document.body.addEventListener('htmx:afterSwap', (e) => {
                 if (e.target && e.target.id === 'workspace-container') {
-                    applyDependencies();
+                    refreshWorkspace();
                 }
             });
 
-            applyDependencies();
+            document.querySelectorAll('.support-card').forEach(card => setCardOpen(card));
+            refreshWorkspace();
         });
     </script>
 

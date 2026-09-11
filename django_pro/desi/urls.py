@@ -12,6 +12,12 @@ from .views import (
     delete_accommodation,
     export_data,
     export_data_endpoint,
+    coordinator_dashboard,
+    coordinator_report_csv,
+    coordinator_entered_csv,
+    support_rule_list,
+    support_rule_form,
+    delete_support_rule,
 )
 
 app_name = 'desi'
@@ -29,4 +35,11 @@ urlpatterns = [
     path('accommodations/create/', create_accommodation, name='create_accommodation'),
     path('accommodations/<int:id>/edit/', edit_accommodation, name='edit_accommodation'),
     path('accommodations/<int:id>/delete/', delete_accommodation, name='delete_accommodation'),
+    path('support-rules/', support_rule_list, name='support_rule_list'),
+    path('support-rules/create/', support_rule_form, name='support_rule_create'),
+    path('support-rules/<int:id>/edit/', support_rule_form, name='support_rule_edit'),
+    path('support-rules/<int:id>/delete/', delete_support_rule, name='support_rule_delete'),
+    path('coordinator/', coordinator_dashboard, name='coordinator_dashboard'),
+    path('coordinator/report.csv/', coordinator_report_csv, name='coordinator_report_csv'),
+    path('coordinator/entered.csv/', coordinator_entered_csv, name='coordinator_entered_csv'),
 ]

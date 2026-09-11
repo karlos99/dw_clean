@@ -4,8 +4,20 @@ from django.conf import settings
 
 class Accommodation(models.Model):
     """Master list of accommodations available for any assessment. Acts as the screening question."""
-    name = models.CharField(max_length=255, unique=True, help_text="e.g., Text-to-Speech")
+    name = models.CharField(max_length=255, help_text="e.g., Text-to-Speech")
     code = models.CharField(max_length=50, blank=True, help_text="Short code for reporting, e.g. TTS")
+    column_letter = models.CharField(
+        max_length=2,
+        blank=True,
+        null=True,
+        help_text="Optional upload column letter this support maps to (e.g. 'B', 'AB')."
+    )
+    tag = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text="Source import tag (e.g. 'CAASPP', 'ELPAC') this support came from."
+    )
     category = models.CharField(max_length=100, blank=True, help_text="e.g., Presentation, Response, Setting, Timing")
     description = models.TextField(blank=True)
     
@@ -97,10 +109,15 @@ class AccommodationOption(models.Model):
 
 
 class Assessment(models.Model):
-    """An assessment config requiring accommodations (e.g. SBAC Math 2026)."""
+    """An assessment config requiring accommodations (e.g. Smarter Balanced Math)."""
     name = models.CharField(max_length=255, help_text="e.g., Smarter Balanced Math")
     subject = models.CharField(max_length=255, blank=True, help_text="e.g., Math, ELA, Science")
-    school_year = models.CharField(max_length=20, db_index=True, help_text="e.g., 2025-2026")
+    tag = models.CharField(
+        max_length=100,
+        blank=True,
+        db_index=True,
+        help_text="Source import tag (e.g. 'CAASPP', 'ELPAC') this assessment came from."
+    )
     description = models.TextField(blank=True)
     supported_options = models.ManyToManyField(
         AccommodationOption,
@@ -113,11 +130,11 @@ class Assessment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['school_year', 'name']
-        unique_together = ('name', 'subject', 'school_year')
+        ordering = ['name']
+        unique_together = ('name', 'subject')
 
     def __str__(self):
-        return f"{self.name} ({self.school_year})"
+        return self.name
 
 
 class AssessmentCriteria(models.Model):
@@ -216,3 +233,162 @@ class DesiExportConfiguration(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class DesiSchoolAccess(models.Model):
+    """Per-school teacher editing policy for DESI, managed by Testing Coordinators."""
+    school_state_id = models.CharField(max_length=50, unique=True, db_index=True)
+    teachers_can_edit = models.BooleanField(
+        default=True,
+        help_text="If unchecked, teachers at this school can view DESI but cannot save supports or completions.",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='desi_school_access_updated',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.school_state_id} - {'Edit' if self.teachers_can_edit else 'View only'}"
+
+
+class DesiSeis(models.Model):
+    """
+    Read-only source record of SEIS assessment settings for a student.
+
+    Maps to the externally-populated ``desi_seis`` table (not managed by
+    Django). Each row belongs to one test program (``test_group``: caaspp /
+    elpac), names the DESI assessments the settings apply to (``assessments``)
+    and stores the selected support option codes per setting (``settings``).
+    """
+    id = models.CharField(max_length=64, primary_key=True)
+    ssid = models.CharField(max_length=32, db_index=True)
+    test_group = models.CharField(max_length=32)
+    settings = models.JSONField(default=dict, blank=True)
+    assessments = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'desi_seis'
+
+    def __str__(self):
+        return f"SEIS settings for {self.ssid} ({self.test_group})"
+
+
+class DesiSeisDisplaySettings(models.Model):
+    """
+    Project-level control over which assessments surface SEIS settings on the
+    student workspace.
+
+    Only assessments ticked here have their SEIS settings displayed (as locks
+    on editable cards or as read-only sections for tests that are not active).
+    This makes the selection explicit and independent of each assessment's
+    ``is_active`` flag.  An empty selection means SEIS settings are not shown
+    for any assessment.
+    """
+    assessments = models.ManyToManyField(
+        Assessment,
+        blank=True,
+        related_name='seis_display_selected',
+        help_text="Assessments whose SEIS settings should be displayed for students, "
+                  "regardless of whether the assessment is active.",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='desi_seis_display_updated',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'SEIS Display Settings'
+        verbose_name_plural = 'SEIS Display Settings'
+
+    def __str__(self):
+        count = self.assessments.count()
+        suffix = '' if count == 1 else 's'
+        return f"SEIS display settings ({count} assessment{suffix})"
+
+
+class SupportRule(models.Model):
+    """
+    A named demographic criteria rule. Supports attached via ``supports`` are
+    hidden for a student when this rule's criteria are not met.
+    """
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    supports = models.ManyToManyField(
+        Accommodation,
+        blank=True,
+        related_name='visibility_rules',
+        help_text="Designated supports hidden when this rule's criteria fail.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return self.name
+
+
+class SupportRuleCriteria(models.Model):
+    """One demographic condition belonging to a SupportRule (all conditions AND together)."""
+    rule = models.ForeignKey(SupportRule, on_delete=models.CASCADE, related_name='criteria')
+    field_name = models.CharField(max_length=50, choices=AssessmentCriteria.FIELD_CHOICES)
+    operator = models.CharField(max_length=20, choices=AssessmentCriteria.OPERATOR_CHOICES)
+    value = models.CharField(max_length=255, help_text="Comparison value (e.g. '03,04,05' or 'Y')")
+
+    def __str__(self):
+        return f"{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
+
+
+class AccommodationResource(models.Model):
+    """Extra resource links (video/page/pdf) attached to a designated support."""
+    KIND_CHOICES = [
+        ('youtube', 'YouTube'),
+        ('video', 'Video'),
+        ('page', 'Web Page'),
+        ('pdf', 'PDF / Document'),
+    ]
+    accommodation = models.ForeignKey(
+        Accommodation,
+        on_delete=models.CASCADE,
+        related_name='resources',
+    )
+    label = models.CharField(max_length=255, blank=True, help_text="Short label shown on the button, e.g. 'Video guide'")
+    url = models.URLField(max_length=500, help_text="Link to a video, page, or PDF document")
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default='page')
+    order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        label = self.label or self.url
+        return f"{label} ({self.get_kind_display()})"
+
+    def get_embed_url(self):
+        """Return an embeddable URL for youtube; other types embed as-is when possible."""
+        if self.kind == 'youtube':
+            import re
+            patterns = [
+                r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&\s]+)',
+                r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^\?\s]+)',
+                r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^\?\s]+)',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, self.url)
+                if match:
+                    return f"https://www.youtube.com/embed/{match.group(1)}"
+            return None
+        return self.url

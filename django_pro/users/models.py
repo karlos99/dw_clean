@@ -6,6 +6,18 @@ from django.utils.translation import gettext_lazy as _
 # Import Page model from models_pages
 from .models_pages import Page
 
+# Roles that see all students at row level (then scoped by school via user.schools /
+# active_school). Membership-based so add-on roles work regardless of the active role.
+UNRESTRICTED_ROLE_NAMES = frozenset({
+    'Project Admin',
+    'District Admin',
+    'District View',
+    'School Admin',
+    'School Gr View',
+    'School View',
+    'Testing Coordinator',
+})
+
 class School(models.Model):
     name = models.CharField(max_length=255)
 
@@ -53,71 +65,55 @@ class User(AbstractUser):
 
     @property
     def is_project_admin(self):
-        if hasattr(self, 'active_role') and self.active_role:
-             return self.active_role.name == 'Project Admin'
-        return False
+        return 'Project Admin' in self.role_names()
+
+    def role_names(self):
+        """Effective role names: all assigned roles plus the active role."""
+        names = set(self.roles.values_list('name', flat=True))
+        active_role = getattr(self, 'active_role', None)
+        if active_role:
+            names.add(active_role.name)
+        return names
+
+    def has_role(self, name):
+        """Membership check - an add-on role works even when not the active role."""
+        return name in self.role_names()
 
     def get_accessible_student_keys(self):
         """
-        Returns a list of stu_annual_keys that this user is allowed to access.
-        Returns None if user has full access (subject to school restrictions).
-        Only applies teacher-level restrictions when user is actively in Teacher role.
+        Returns a list of stu_annual_key that this user is allowed to access.
+        Returns None if the user has school-wide (row-unrestricted) access, i.e.
+        subject only to school filters. Teacher roster restrictions are applied
+        only when the user holds no school-wide role.
+
+        Membership-based: holding a school-wide role (e.g. Testing Coordinator)
+        grants school-wide access regardless of which role is currently active.
         """
-        # Determine if we need to restrict based on role
-        # Unrestricted roles:
         if self.is_superuser:
             return None
-            
-        # Check active role if it exists (set by middleware in request context)
-        active_role_name = None
-        if hasattr(self, 'active_role') and self.active_role:
-            active_role_name = self.active_role.name
-        
-        # If user has only one role, use that
-        if active_role_name is None and self.roles.count() == 1:
-            active_role_name = self.roles.first().name
-            
-        unrestricted_roles = ['Project Admin', 'District Admin', 'School Admin', 'School Gr View', 'School View']
-        
-        # Fallback: if active_role_name is still None, check if user has any unrestricted roles
-        if active_role_name is None:
-            if self.roles.filter(name__in=unrestricted_roles).exists() or self.roles.filter(name__icontains='District').exists():
-                return None
 
-        if active_role_name and (active_role_name in unrestricted_roles or 'District' in active_role_name):
+        role_names = self.role_names()
+        if any(r in UNRESTRICTED_ROLE_NAMES or 'District' in r for r in role_names):
             return None
-        
-        # Only apply teacher restrictions if explicitly in Teacher role
-        # If user has Teacher role but is using another role context, don't restrict
-        if active_role_name and active_role_name != 'Teacher':
+
+        # Non-teacher, non-school-wide roles are not row-restricted.
+        if 'Teacher' not in role_names:
             return None
-        
-        # At this point, user is in Teacher role or has only Teacher role
-        # Apply the specific restrictions for teachers
+
+        # Teacher-only users are restricted to their scheduled students.
         if not self.staff_id:
-             # If no staff_id, teacher has no access
-             return []
-             
+            return []
+
         # Import here to avoid circular dependencies
         from studata.models import Schedule, School as StudataSchool
-        
-        # Query: select DISTINCT sl.stu_annual_key ... 
-        # from schedule_list sl 
-        # inner join schools sch on sch.state_id = sl.state_school_id hiding students from invalid schools
-        
-        # We need filtering where state_school_id is valid (exists in School table) & staff_id matches.
-        
-        # Subquery for valid schools
+
         valid_schools = StudataSchool.objects.values('state_id')
-        
         keys = Schedule.objects.filter(
             staff_employee_id=self.staff_id,
             state_school_id__in=valid_schools
         ).values_list('stu_annual_key', flat=True).distinct()
-        
-        return list(keys)
 
-        return self.roles.filter(name='Project Admin').exists()
+        return list(keys)
 
     _school_cache = {}
 

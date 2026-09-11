@@ -4,7 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.core import signing
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import HttpResponse, HttpResponseForbidden
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -16,12 +16,17 @@ from landing.utils import get_project_config
 from .models import (
     Accommodation,
     AccommodationOption,
+    AccommodationResource,
     Assessment,
     AssessmentCriteria,
     DesiExportConfiguration,
+    DesiSchoolAccess,
     StudentAccommodation,
     StudentAssessmentCompletion,
+    SupportRule,
+    SupportRuleCriteria,
 )
+from .seis_data import build_seis_option_map
 
 
 BASE_EXPORT_COLUMNS = [
@@ -34,9 +39,10 @@ BASE_EXPORT_COLUMNS = [
     ('school_year', 'School Year', 'student'),
     ('assessment_name', 'Assessment Name', 'support'),
     ('assessment_subject', 'Assessment Subject', 'support'),
-    ('assessment_school_year', 'Assessment School Year', 'support'),
     ('assessment_completed', 'Assessment Completed', 'support'),
 ]
+
+ASSESSMENT_CARD_COLORS = ('blue', 'emerald', 'violet', 'amber', 'rose', 'cyan')
 
 EXPORT_ENDPOINT_SIGNING_SALT = "desi-export-endpoint"
 EXPORT_ENDPOINT_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
@@ -60,6 +66,70 @@ def _is_teacher(user):
     if active_role:
         return active_role.name == 'Teacher'
     return user.roles.filter(name='Teacher').exists() if hasattr(user, 'roles') else False
+
+
+def _has_role(user, name):
+    """Membership-based role check (add-on roles work regardless of active role)."""
+    if not user or not user.is_authenticated:
+        return False
+    if name in user.role_names():
+        return True
+    return user.roles.filter(name=name).exists() if hasattr(user, 'roles') else False
+
+
+def _has_district_role(user):
+    if not user or not user.is_authenticated:
+        return False
+    return any('District' in role for role in user.role_names())
+
+
+def _is_testing_coordinator(user):
+    return _has_role(user, 'Testing Coordinator')
+
+
+def _coordinator_school_ids(user):
+    """Schools a coordinator administers (from user.schools; all if project-level)."""
+    if user.is_superuser or _has_role(user, 'Project Admin') or _has_district_role(user):
+        return None  # unrestricted
+    schools = getattr(user, 'schools', None)
+    return list(schools) if isinstance(schools, list) and schools else []
+
+
+def can_edit_desi(user, student=None, school_state_id=None):
+    """
+    Whether the user may save designated supports/completions for a student.
+
+    Project/District/School Admin -> edit. A Teacher (including one who also
+    holds an add-on Testing Coordinator role) edits their own students unless
+    the school's DesiSchoolAccess.teachers_can_edit is False. Non-teacher
+    viewers (School View / School Gr View / Testing Coordinator) are read-only.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or _has_role(user, 'Project Admin') or _has_district_role(user):
+        return True
+
+    role_names = user.role_names()
+
+    if 'School Admin' in role_names:
+        return True
+
+    if 'Teacher' in role_names:
+        if school_state_id is None and student is not None:
+            school_state_id = getattr(student, 'school_state_id', None)
+        if school_state_id:
+            try:
+                access = DesiSchoolAccess.objects.get(school_state_id=school_state_id)
+                if not access.teachers_can_edit:
+                    return False
+            except DesiSchoolAccess.DoesNotExist:
+                pass
+        return True
+
+    if any(r in {'School View', 'School Gr View', 'Testing Coordinator'} for r in role_names):
+        return False
+
+    return False
 
 
 def _get_student_field_options():
@@ -148,6 +218,31 @@ def check_criteria(criteria_list, student):
     return len(failed_reasons) == 0, failed_reasons
 
 
+def hidden_support_ids(student):
+    """
+    Designated supports that should be hidden for this student.
+
+    A support is hidden when at least one active SupportRule attached to it has
+    demographic criteria that the student does NOT meet. Returns a set of
+    Accommodation ids.
+    """
+    hidden = set()
+    rules = (
+        SupportRule.objects.filter(is_active=True)
+        .exclude(supports__isnull=True)
+        .prefetch_related('criteria', 'supports')
+        .distinct()
+    )
+    for rule in rules:
+        criteria = list(rule.criteria.all())
+        if not criteria:
+            continue
+        eligible, _failed = check_criteria(criteria, student)
+        if not eligible:
+            hidden.update(rule.supports.values_list('id', flat=True))
+    return hidden
+
+
 def _parse_dependency_fields(post_data):
     dependency_support_id = post_data.get('depends_on_accommodation', '').strip()
     dependency_option_id = post_data.get('depends_on_option', '').strip()
@@ -164,6 +259,47 @@ def _parse_dependency_assessments(post_data):
 def _split_option_values(raw_value):
     """Turn one option field into one or more trimmed comma-separated values."""
     return [value.strip() for value in (raw_value or '').split(',') if value.strip()]
+
+
+def _save_resource_rows(accommodation, post_data):
+    """Create/update/delete AccommodationResource rows from dynamic form arrays."""
+    ids = post_data.getlist('resource_id[]')
+    labels = post_data.getlist('resource_label[]')
+    urls = post_data.getlist('resource_url[]')
+    kinds = post_data.getlist('resource_kind[]')
+
+    existing = {str(r.id): r for r in accommodation.resources.all()}
+    valid_kinds = {kind for kind, _label in AccommodationResource.KIND_CHOICES}
+    keep_ids = []
+
+    for index, url in enumerate(urls):
+        url = (url or '').strip()
+        if not url:
+            continue
+        posted_id = ids[index].strip() if index < len(ids) else ''
+        label = (labels[index].strip() if index < len(labels) else '') or url
+        kind = (kinds[index].strip() if index < len(kinds) else '') or 'page'
+        if kind not in valid_kinds:
+            kind = 'page'
+
+        if posted_id in existing:
+            resource = existing[posted_id]
+            if resource.url != url or resource.label != label or resource.kind != kind:
+                resource.url = url
+                resource.label = label
+                resource.kind = kind
+                resource.save()
+            keep_ids.append(resource.id)
+        else:
+            resource = AccommodationResource.objects.create(
+                accommodation=accommodation,
+                label=label,
+                url=url,
+                kind=kind,
+            )
+            keep_ids.append(resource.id)
+
+    accommodation.resources.exclude(id__in=keep_ids).delete()
 
 
 def _validate_dependency(accommodation, dep_support_id, dep_option_id):
@@ -335,7 +471,7 @@ def _get_student_list_context(request):
                 completions_map[c.student_annual_key] = set()
             completions_map[c.student_annual_key].add(c.assessment_id)
 
-    all_year_assessments = list(Assessment.objects.filter(school_year=school_year, is_active=True).prefetch_related('criteria'))
+    all_year_assessments = list(Assessment.objects.filter(is_active=True).prefetch_related('criteria'))
 
     for student in page_obj:
         eligible_ids = []
@@ -437,15 +573,263 @@ def admin_dashboard(request):
     except Exception:
         default_year = "2025-2026"
 
-    assessments = Assessment.objects.all().prefetch_related('criteria').order_by('-school_year', 'name')
-    accommodations = Accommodation.objects.all().prefetch_related('options')
+    assessments = list(Assessment.objects.prefetch_related('criteria', 'supported_options').order_by('name'))
+
+    # SEIS display settings: which assessments surface SEIS settings for
+    # students, independent of each assessment's is_active flag.
+    from .models import DesiSeisDisplaySettings
+    seis_settings = DesiSeisDisplaySettings.objects.first()
+    if request.method == 'POST':
+        seis_settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
+        selected_assessment_ids = {
+            int(x) for x in request.POST.getlist('seis_display_assessments') if x.isdigit()
+        }
+        seis_settings.assessments.set(
+            Assessment.objects.filter(id__in=selected_assessment_ids)
+        )
+        seis_settings.updated_by = request.user
+        seis_settings.save()
+        messages.success(
+            request,
+            "SEIS display settings saved. "
+            f"{len(selected_assessment_ids)} assessment(s) will display SEIS settings.",
+        )
+        return redirect('desi:admin_dashboard')
+
+    seis_selected_assessment_ids = (
+        set(seis_settings.assessments.values_list('id', flat=True))
+        if seis_settings else set()
+    )
+    accommodations = list(Accommodation.objects.all().prefetch_related('options'))
+
+    # Map each accommodation to the assessments connected through its options.
+    accommodation_assessments = {}
+    for ast in assessments:
+        seen_accommodations = set()
+        for opt in ast.supported_options.all():
+            accommodation_id = opt.accommodation_id
+            if accommodation_id in seen_accommodations:
+                continue
+            seen_accommodations.add(accommodation_id)
+            accommodation_assessments.setdefault(accommodation_id, []).append(ast)
+    for accommodation in accommodations:
+        accommodation.connected_assessments = accommodation_assessments.get(accommodation.id, [])
+
+    # Filter options for the Master Designated Supports Pool.
+    pool_type_options = sorted({
+        a.category for a in accommodations if a.category
+    })
+    pool_test_options = sorted({
+        ast.name for asts in accommodation_assessments.values() for ast in asts
+    })
 
     context = {
         'assessments': assessments,
         'accommodations': accommodations,
         'school_year': default_year,
+        'pool_type_options': pool_type_options,
+        'pool_test_options': pool_test_options,
+        'seis_settings': seis_settings,
+        'seis_selected_assessment_ids': seis_selected_assessment_ids,
+        'seis_selection_saved': DesiSeisDisplaySettings.objects.exists(),
     }
     return render(request, 'desi/admin_dashboard.html', context)
+
+
+def _coordinator_allowed_schools_qs(user):
+    """Schools the coordinator can manage; all schools for project-level users."""
+    school_ids = _coordinator_school_ids(user)
+    qs = StudataSchool.objects.order_by('school_name')
+    if school_ids is not None:
+        qs = qs.filter(state_id__in=school_ids)
+    return qs
+
+
+@login_required
+def coordinator_dashboard(request):
+    """Testing Coordinator DESI page: school teacher-access settings + reports."""
+    allowed = (
+        request.user.is_superuser
+        or _is_project_admin(request.user)
+        or _is_testing_coordinator(request.user)
+    )
+    if not allowed:
+        messages.error(request, "You do not have permission to access DESI coordinator settings.")
+        return redirect('landing:index')
+
+    allowed_qs = _coordinator_allowed_schools_qs(request.user)
+    allowed_ids = set(allowed_qs.values_list('state_id', flat=True))
+
+    if request.method == 'POST':
+        for school_state_id in request.POST.getlist('school_id'):
+            if not school_state_id or school_state_id not in allowed_ids:
+                continue
+            access_value = request.POST.get(f'teachers_access__{school_state_id}', 'edit')
+            can_edit = access_value == 'edit'
+            DesiSchoolAccess.objects.update_or_create(
+                school_state_id=school_state_id,
+                defaults={'teachers_can_edit': can_edit, 'updated_by': request.user},
+            )
+        messages.success(request, "Teacher access settings saved.")
+        return redirect(reverse('desi:coordinator_dashboard') + '?tab=access')
+
+    raw_tab = request.GET.get('tab', 'access')
+    tab = raw_tab if raw_tab in ('access', 'completion', 'entered') else 'access'
+    schools = list(allowed_qs)
+
+    access_map = {
+        a.school_state_id: a
+        for a in DesiSchoolAccess.objects.filter(
+            school_state_id__in=[s.state_id for s in schools]
+        )
+    }
+    for school in schools:
+        school.desi_access = access_map.get(school.state_id)
+
+    default_year = None
+    try:
+        default_year = get_project_config().default_school_year
+    except Exception:
+        default_year = None
+    if not default_year:
+        latest = CurrentStudent.objects.order_by('-school_year').values_list('school_year', flat=True).first()
+        default_year = latest or ''
+
+    selected_year = request.GET.get('year', '').strip() or default_year
+    school_param = request.GET.get('school', '').strip()
+    valid_ids = {s.state_id for s in schools}
+    selected_school = next((s for s in schools if s.state_id == school_param), None)
+    if selected_school is None and schools:
+        active_school = getattr(request.user, 'active_school', None)
+        if active_school:
+            selected_school = next((s for s in schools if s.state_id == active_school.state_id), schools[0])
+        else:
+            selected_school = schools[0]
+
+    completion = None
+    entered = None
+    teacher_options = []
+    selected_teacher = ''
+    scope = request.GET.get('scope', 'school')
+
+    if tab in ('completion', 'report') and selected_school and selected_year:
+        from .report_utils import build_school_report
+        completion = build_school_report(selected_school.state_id, selected_year)
+
+    if tab == 'entered' and selected_school and selected_year:
+        from .report_utils import build_entered_supports_report, list_school_teachers
+        teacher_options = list_school_teachers(selected_school.state_id, selected_year)
+        selected_teacher = request.GET.get('teacher', '').strip()
+        if scope == 'teacher' and selected_teacher in teacher_options:
+            entered = build_entered_supports_report(selected_school.state_id, selected_year, teacher=selected_teacher)
+        else:
+            scope = 'school'
+            entered = build_entered_supports_report(selected_school.state_id, selected_year)
+
+    context = {
+        'tab': tab,
+        'schools': schools,
+        'report_school': selected_school,
+        'report_year': selected_year,
+        'report': completion,
+        'entered': entered,
+        'teacher_options': teacher_options,
+        'selected_teacher': selected_teacher,
+        'scope': scope,
+    }
+    return render(request, 'desi/coordinator_dashboard.html', context)
+
+
+@login_required
+def coordinator_report_csv(request):
+    """CSV export of the completion report for a school/year."""
+    allowed = (
+        request.user.is_superuser
+        or _is_project_admin(request.user)
+        or _is_testing_coordinator(request.user)
+    )
+    if not allowed:
+        return HttpResponseForbidden("Permission denied.")
+
+    allowed_qs = _coordinator_allowed_schools_qs(request.user)
+    school_state_id = request.GET.get('school', '').strip()
+    if not allowed_qs.filter(state_id=school_state_id).exists():
+        return HttpResponseForbidden("Permission denied for this school.")
+
+    report_year = request.GET.get('year', '').strip()
+    if not report_year:
+        try:
+            report_year = get_project_config().default_school_year
+        except Exception:
+            report_year = ''
+    if not report_year:
+        return HttpResponseForbidden("Select a school year.")
+
+    from .report_utils import build_report_rows, build_school_report
+    report = build_school_report(school_state_id, report_year)
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="desi_completion_report_{school_state_id}_{report_year}.csv"'
+    writer = csv.writer(response)
+    header = ['SSID', 'Student Name', 'Grade'] + [a.name for a in report['assessments']]
+    writer.writerow(header)
+    for row in build_report_rows(report):
+        writer.writerow([row['ssid'], row['student_name'], row['grade']] + [row[a.id] for a in report['assessments']])
+    return response
+
+
+@login_required
+def coordinator_entered_csv(request):
+    """CSV export of the supports users have entered, for the whole school or one teacher."""
+    allowed = (
+        request.user.is_superuser
+        or _is_project_admin(request.user)
+        or _is_testing_coordinator(request.user)
+    )
+    if not allowed:
+        return HttpResponseForbidden("Permission denied.")
+
+    allowed_qs = _coordinator_allowed_schools_qs(request.user)
+    school_state_id = request.GET.get('school', '').strip()
+    if not allowed_qs.filter(state_id=school_state_id).exists():
+        return HttpResponseForbidden("Permission denied for this school.")
+
+    report_year = request.GET.get('year', '').strip()
+    if not report_year:
+        try:
+            report_year = get_project_config().default_school_year
+        except Exception:
+            report_year = ''
+    if not report_year:
+        return HttpResponseForbidden("Select a school year.")
+
+    teacher = request.GET.get('teacher', '').strip()
+    if request.GET.get('scope', 'school') == 'teacher' and teacher:
+        from .report_utils import list_school_teachers
+        if teacher not in list_school_teachers(school_state_id, report_year):
+            return HttpResponseForbidden("Teacher not found in this school.")
+    else:
+        teacher = ''
+
+    from .report_utils import build_entered_supports_report
+    report = build_entered_supports_report(school_state_id, report_year, teacher=teacher)
+
+    response = HttpResponse(content_type='text/csv')
+    suffix = teacher.replace(' ', '_') if teacher else 'entire_school'
+    response['Content-Disposition'] = f'attachment; filename="desi_entered_supports_{school_state_id}_{report_year}_{suffix}.csv"'
+    writer = csv.writer(response)
+    writer.writerow(['SSID', 'Student Name', 'Grade', 'Supports Entered', 'Completed Assessments', 'Updated By', 'Updated At'])
+    for row in report['rows']:
+        writer.writerow([
+            row['ssid'],
+            row['student_name'],
+            row['grade'],
+            row['supports'],
+            row['completions'],
+            row['updated_by'],
+            row['updated_at'],
+        ])
+    return response
 
 
 def _build_export_columns(selected_assessments):
@@ -570,7 +954,34 @@ def _resolve_export_endpoint_user(auth_token):
     return User.objects.filter(id=uid, is_active=True).first()
 
 
-def _build_export_csv_response(
+def _build_support_pool(selected_assessments):
+    """
+    Designated supports available across the selected assessments, each with the
+    list of assessment names it applies to (ordered for display in the picker).
+    """
+    supports = {}
+    for ast in selected_assessments:
+        for opt in ast.supported_options.all().select_related('accommodation'):
+            support = opt.accommodation
+            entry = supports.setdefault(support.id, {'support': support, 'assessments': set()})
+            entry['assessments'].add(ast.name)
+
+    items = []
+    for entry in supports.values():
+        support = entry['support']
+        items.append({
+            'id': support.id,
+            'name': support.name,
+            'code': support.code or support.column_letter or '',
+            'tag': support.tag,
+            'category': support.category,
+            'assessments': sorted(entry['assessments']),
+        })
+    items.sort(key=lambda s: (s['name'].casefold(), s['id']))
+    return items
+
+
+def _build_export_rows(
     user,
     school_year,
     selected_assessments,
@@ -579,8 +990,13 @@ def _build_export_csv_response(
     included_columns,
     only_with_supports,
     support_value_field,
+    max_students=None,
 ):
-    students = list(get_visible_students(user).filter(school_year=school_year).order_by('student_name'))
+    """Build the export row dictionaries (used by both CSV and the preview)."""
+    students_qs = get_visible_students(user).filter(school_year=school_year).order_by('student_name')
+    if max_students is not None:
+        students_qs = students_qs[:max_students]
+    students = list(students_qs)
     student_keys = [s.stu_annual_key for s in students]
 
     student_option_map = {}
@@ -623,7 +1039,6 @@ def _build_export_csv_response(
                 'school_year': student.school_year or '',
                 'assessment_name': ast.name or '',
                 'assessment_subject': ast.subject or '',
-                'assessment_school_year': ast.school_year or '',
                 'assessment_completed': 'Yes' if completion_map.get((student.stu_annual_key, ast.id), False) else 'No',
             }
             supports = assessment_supports.get(ast.id, {})
@@ -641,14 +1056,35 @@ def _build_export_csv_response(
                 if not selected_opt:
                     row[col['key']] = ''
                 else:
-                    if support_value_field == 'code':
-                        row[col['key']] = selected_opt.code or ''
-                    else:
-                        row[col['key']] = selected_opt.name or ''
+                    row[col['key']] = selected_opt.code if support_value_field == 'code' else (selected_opt.name or '')
                     has_any_support_selected = True
             if only_with_supports and not has_any_support_selected:
                 continue
             rows.append(row)
+
+    return rows
+
+
+def _build_export_csv_response(
+    user,
+    school_year,
+    selected_assessments,
+    selected_assessment_ids,
+    available_columns,
+    included_columns,
+    only_with_supports,
+    support_value_field,
+):
+    rows = _build_export_rows(
+        user,
+        school_year,
+        selected_assessments,
+        selected_assessment_ids,
+        available_columns,
+        included_columns,
+        only_with_supports,
+        support_value_field,
+    )
 
     response = HttpResponse(content_type='text/csv')
     response['Content-Disposition'] = f'attachment; filename="desi_export_{school_year}.csv"'
@@ -683,16 +1119,16 @@ def export_data(request):
     if selected_config:
         saved_config = selected_config.config
         school_year = saved_config.get('school_year', school_year)
-        support_value_field = saved_config.get('support_value_field', 'name').strip().lower()
+        support_value_field = saved_config.get('support_value_field', 'code').strip().lower()
         if support_value_field not in {'name', 'code'}:
-            support_value_field = 'name'
+            support_value_field = 'code'
         only_with_supports = bool(saved_config.get('only_with_supports', False))
         selected_assessment_ids = {int(x) for x in saved_config.get('assessment_ids', []) if str(x).isdigit()}
         selected_config_id = selected_config.id
     else:
-        support_value_field = request_data.get('support_value_field', 'name').strip().lower()
+        support_value_field = request_data.get('support_value_field', 'code').strip().lower()
         if support_value_field not in {'name', 'code'}:
-            support_value_field = 'name'
+            support_value_field = 'code'
         only_with_supports = request.method == 'POST' and request_data.get('only_with_supports') == 'on'
         selected_assessment_ids = {
             int(x) for x in request_data.getlist('assessment_ids') if str(x).isdigit()
@@ -700,7 +1136,7 @@ def export_data(request):
         selected_config_id = None
 
     assessments = list(
-        Assessment.objects.filter(school_year=school_year, is_active=True)
+        Assessment.objects.filter(is_active=True)
         .prefetch_related('supported_options__accommodation')
         .order_by('name')
     )
@@ -712,9 +1148,36 @@ def export_data(request):
         assessments = [a for a in assessments if a.id in selected_assessment_ids]
     selected_assessments = [a for a in assessments if a.id in selected_assessment_ids]
     available_columns = _build_export_columns(selected_assessments)
+    supports = _build_support_pool(selected_assessments)
+
+    def _render_export_page(column_config, *, preview_rows=None, preview_columns=None):
+        """Render the export builder page with the current selections/columns."""
+        selected_support_ids = {
+            c['support_id'] for c in column_config if c.get('support_id') and c.get('include')
+        }
+        context = {
+            'school_year': school_year,
+            'assessments': assessments,
+            'selected_assessment_ids': selected_assessment_ids,
+            'supports': supports,
+            'selected_support_ids': selected_support_ids,
+            'column_config': column_config,
+            'only_with_supports': only_with_supports,
+            'support_value_field': support_value_field,
+            'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
+            'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
+            'saved_configs': saved_configs,
+            'selected_config_id': selected_config_id,
+        }
+        if preview_rows is not None:
+            context['preview_rows'] = preview_rows
+            context['preview_columns'] = preview_columns or []
+            context['preview_active'] = True
+        return render(request, 'desi/export_data.html', context)
 
     if request.method == 'POST':
         column_config, included_columns = _parse_export_column_config(request.POST, available_columns)
+
         if request.POST.get('save_configuration') == '1' or request.POST.get('save_configuration_name', '').strip():
             config_name = request.POST.get('save_configuration_name', '').strip()
             if not config_name:
@@ -737,51 +1200,36 @@ def export_data(request):
                 saved_configs = DesiExportConfiguration.objects.filter(owner=request.user).order_by('-updated_at')
                 selected_config = saved_configs.filter(name=config_name).first()
                 selected_config_id = selected_config.id if selected_config else None
-            context = {
-                'school_year': school_year,
-                'assessments': assessments,
-                'selected_assessment_ids': selected_assessment_ids,
-                'column_config': column_config,
-                'only_with_supports': only_with_supports,
-                'support_value_field': support_value_field,
-                'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-                'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
-                'saved_configs': saved_configs,
-                'selected_config_id': selected_config_id,
-            }
-            return render(request, 'desi/export_data.html', context)
-
-        if not included_columns:
-            messages.error(request, "Select at least one column to export.")
-            context = {
-                'school_year': school_year,
-                'assessments': assessments,
-                'selected_assessment_ids': selected_assessment_ids,
-                'column_config': column_config,
-                'only_with_supports': only_with_supports,
-                'support_value_field': support_value_field,
-                'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-                'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
-                'saved_configs': saved_configs,
-                'selected_config_id': selected_config_id,
-            }
-            return render(request, 'desi/export_data.html', context)
+            return _render_export_page(column_config)
 
         if not selected_assessments:
             messages.error(request, "Select at least one assessment to export.")
-            context = {
-                'school_year': school_year,
-                'assessments': assessments,
-                'selected_assessment_ids': selected_assessment_ids,
-                'column_config': column_config,
-                'only_with_supports': only_with_supports,
-                'support_value_field': support_value_field,
-                'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-                'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
-                'saved_configs': saved_configs,
-                'selected_config_id': selected_config_id,
-            }
-            return render(request, 'desi/export_data.html', context)
+            return _render_export_page(column_config)
+
+        if not included_columns:
+            messages.error(request, "Select at least one column to export.")
+            return _render_export_page(column_config)
+
+        previewing = request.POST.get('preview') == '1'
+        if previewing:
+            rows = _build_export_rows(
+                request.user,
+                school_year,
+                selected_assessments,
+                selected_assessment_ids,
+                available_columns,
+                included_columns,
+                only_with_supports,
+                support_value_field,
+                max_students=100,
+            )
+            preview_columns = [{'key': c['key'], 'header': c['header']} for c in included_columns]
+            return _render_export_page(
+                column_config,
+                preview_rows=rows[:25],
+                preview_columns=preview_columns,
+            )
+
         return _build_export_csv_response(
             request.user,
             school_year,
@@ -815,19 +1263,7 @@ def export_data(request):
                 'support_id': col.get('support_id'),
             })
 
-    context = {
-        'school_year': school_year,
-        'assessments': assessments,
-        'selected_assessment_ids': selected_assessment_ids,
-        'column_config': column_config,
-        'only_with_supports': only_with_supports,
-        'support_value_field': support_value_field,
-        'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-        'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
-        'saved_configs': saved_configs,
-        'selected_config_id': selected_config_id,
-    }
-    return render(request, 'desi/export_data.html', context)
+    return _render_export_page(column_config)
 
 
 def export_data_endpoint(request):
@@ -849,7 +1285,7 @@ def export_data_endpoint(request):
             school_year = "2025-2026"
 
     assessments = list(
-        Assessment.objects.filter(school_year=school_year, is_active=True)
+        Assessment.objects.filter(is_active=True)
         .prefetch_related('supported_options__accommodation')
         .order_by('name')
     )
@@ -898,7 +1334,6 @@ def create_accommodation(request):
         category = request.POST.get('category', '').strip()
         description = request.POST.get('description', '').strip()
         
-        video_url = request.POST.get('video_url', '').strip() or None
         order_val = request.POST.get('order', '0').strip() or '0'
         
         bulk_options_text = request.POST.get('bulk_options', '').strip()
@@ -907,10 +1342,6 @@ def create_accommodation(request):
 
         if not name:
             messages.error(request, "Designated Support name is required.")
-            return redirect('desi:create_accommodation')
-
-        if Accommodation.objects.filter(name=name).exists():
-            messages.error(request, f"A designated support with the name '{name}' already exists.")
             return redirect('desi:create_accommodation')
 
         try:
@@ -932,7 +1363,6 @@ def create_accommodation(request):
             code=code,
             category=category,
             description=description,
-            video_url=video_url,
             order=order,
             depends_on_accommodation=parent_support,
             depends_on_option=parent_option,
@@ -1005,10 +1435,12 @@ def create_accommodation(request):
             except Assessment.DoesNotExist:
                 pass
 
+        _save_resource_rows(accommodation, request.POST)
+
         messages.success(request, f"Designated support '{accommodation.name}' created successfully.")
         return redirect('desi:admin_dashboard')
 
-    assessments = Assessment.objects.filter(is_active=True).order_by('school_year', 'name')
+    assessments = Assessment.objects.filter(is_active=True).order_by('name')
     context = {
         'is_edit': False,
         'assessments': assessments,
@@ -1035,8 +1467,6 @@ def edit_accommodation(request, id):
         accommodation.category = request.POST.get('category', '').strip()
         accommodation.description = request.POST.get('description', '').strip()
         
-        accommodation.video_url = request.POST.get('video_url', '').strip() or None
-        
         order_val = request.POST.get('order', '0').strip() or '0'
         try:
             accommodation.order = int(order_val)
@@ -1057,7 +1487,14 @@ def edit_accommodation(request, id):
         for idx, raw_name in enumerate(option_names):
             opt_code = option_codes[idx].strip() if idx < len(option_codes) else ''
             opt_id = option_ids[idx].strip() if idx < len(option_ids) else ''
-            names = _split_option_values(raw_name)
+            # Existing options already have an id: their display name may
+            # legitimately contain commas (e.g. "…Large, Black."), so keep it
+            # as one literal value.  Only brand-new rows (no id yet) allow the
+            # comma-separated bulk shortcut.
+            if opt_id:
+                names = [raw_name.strip()] if raw_name.strip() else []
+            else:
+                names = _split_option_values(raw_name)
             for opt_name in names:
                 # A single value can safely retain its existing ID/code;
                 # comma-expanded values are new options.
@@ -1085,6 +1522,20 @@ def edit_accommodation(request, id):
 
         if not all_names_to_create:
             all_names_to_create.add("Standard")
+
+        # Capture mappings to NON-ACTIVE assessments so they are never lost,
+        # regardless of how the edit is submitted.
+        mapped_pairs_pre = list(
+            Assessment.supported_options.through.objects
+            .filter(accommodationoption__accommodation=accommodation)
+            .values_list('assessment_id', 'accommodationoption_id')
+        )
+        inactive_assessment_ids = set(
+            Assessment.objects.filter(is_active=False).values_list('id', flat=True)
+        )
+        protected_option_ids = {
+            opt_id for ast_id, opt_id in mapped_pairs_pre if ast_id in inactive_assessment_ids
+        }
 
         # ID-preserving option updates with editable name/code
         existing_opts = {str(opt.id): opt for opt in accommodation.options.all()}
@@ -1123,32 +1574,71 @@ def edit_accommodation(request, id):
             keep_opt_ids.append(new_opt.id)
             existing_names.add(name)
 
+        # Options still mapped to non-active assessments must never be deleted.
+        for opt_id in protected_option_ids:
+            if opt_id not in keep_opt_ids:
+                keep_opt_ids.append(opt_id)
+
         # Remove any options not in the new set
         accommodation.options.exclude(id__in=keep_opt_ids).delete()
 
-        # Clear old mappings of this accommodation on ALL assessments first
-        all_options = accommodation.options.all()
-        for ast in Assessment.objects.all():
-            ast.supported_options.remove(*all_options)
+        # ---- Assessment support mapping update ----
+        # Default ('replace') updates the mapping for the assessments shown in
+        # the form, preserving any mapping on assessments not shown (inactive).
+        # With 'merge' nothing is removed; options are only added to the chosen
+        # assessments, so the rest of the data is never wiped.
+        all_options_list = list(accommodation.options.all())
+        mapped_assessment_ids = set(
+            Assessment.objects.filter(supported_options__accommodation=accommodation)
+            .distinct()
+            .values_list('id', flat=True)
+        )
+        shown_assessment_ids = set(
+            Assessment.objects.filter(is_active=True).values_list('id', flat=True)
+        )
+        selected_assessment_ids_set = set(selected_assessment_ids)
+        map_action = (request.POST.get('map_action', '') or '').strip() or 'replace'
+        assessments_by_id = {ast.id: ast for ast in Assessment.objects.all()}
 
-        # Re-save mapping of options to selected assessments
-        all_options_list = list(all_options)
-        for ast_id in selected_assessment_ids:
-            try:
-                ast = Assessment.objects.get(id=ast_id)
-                custom_opts_text = request.POST.get(f'assessment_opts_custom_{ast_id}', '').strip()
-                if custom_opts_text:
-                    names_to_add = [x.strip() for x in custom_opts_text.split(',') if x.strip()]
-                    opts_to_add = [o for o in all_options_list if o.name in names_to_add]
+        if map_action != 'merge':
+            # Remove this support from assessments that were shown in the form
+            # but are no longer selected. Assessments not shown keep their map.
+            for ast_id in mapped_assessment_ids:
+                if ast_id in shown_assessment_ids and ast_id not in selected_assessment_ids_set:
+                    ast = assessments_by_id.get(ast_id)
+                    if ast:
+                        ast.supported_options.remove(*all_options_list)
+
+        # Add options to the selected assessments
+        for ast_id in selected_assessment_ids_set:
+            ast = assessments_by_id.get(ast_id)
+            if ast is None:
+                continue
+            custom_opts_text = request.POST.get(f'assessment_opts_custom_{ast_id}', '').strip()
+            if custom_opts_text:
+                names_to_add = [x.strip() for x in custom_opts_text.split(',') if x.strip()]
+                opts_to_add = [o for o in all_options_list if o.name in names_to_add]
+            else:
+                opt_names = request.POST.getlist(f'assessment_opts_{ast_id}')
+                if not opt_names:
+                    opts_to_add = [o for o in all_options_list if o.name in master_option_names]
                 else:
-                    opt_names = request.POST.getlist(f'assessment_opts_{ast_id}')
-                    if not opt_names:
-                        opts_to_add = [o for o in all_options_list if o.name in master_option_names]
-                    else:
-                        opts_to_add = [o for o in all_options_list if o.name in opt_names]
-                ast.supported_options.add(*opts_to_add)
-            except Assessment.DoesNotExist:
-                pass
+                    opts_to_add = [o for o in all_options_list if o.name in opt_names]
+            ast.supported_options.add(*opts_to_add)
+
+        # Re-assure that mappings to non-active assessments captured before the
+        # save still exist (they are never intentionally removed by this form).
+        for ast_id, opt_id in mapped_pairs_pre:
+            if ast_id not in inactive_assessment_ids:
+                continue
+            ast = assessments_by_id.get(ast_id)
+            if ast is None or ast.supported_options.filter(id=opt_id).exists():
+                continue
+            try:
+                opt = AccommodationOption.objects.get(id=opt_id)
+            except AccommodationOption.DoesNotExist:
+                continue
+            ast.supported_options.add(opt)
 
         parent_support, parent_option, dep_error = _validate_dependency(
             accommodation=accommodation,
@@ -1167,11 +1657,13 @@ def edit_accommodation(request, id):
         else:
             accommodation.dependency_assessments.clear()
 
+        _save_resource_rows(accommodation, request.POST)
+
         messages.success(request, f"Designated support '{accommodation.name}' updated successfully.")
         return redirect('desi:admin_dashboard')
 
     # Load active assessments
-    assessments = list(Assessment.objects.filter(is_active=True).order_by('school_year', 'name'))
+    assessments = list(Assessment.objects.filter(is_active=True).order_by('name'))
     
     # Pre-resolve selected assessments and options for mapping in view
     assigned_assessment_opts = {}
@@ -1219,21 +1711,113 @@ def delete_accommodation(request, id):
 
 
 @login_required
+def support_rule_list(request):
+    """List SupportRules that hide supports based on student demographics."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rules = SupportRule.objects.annotate(
+        support_count=Count('supports'),
+        criteria_count=Count('criteria'),
+    ).order_by('-is_active', '-updated_at')
+    return render(request, 'desi/support_rule_list.html', {'rules': rules})
+
+
+@login_required
+def support_rule_form(request, id=None):
+    """Create/edit a SupportRule and the supports it affects."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rule = None
+    criteria = []
+    selected_support_ids = set()
+    if id:
+        rule = get_object_or_404(SupportRule, id=id)
+        criteria = list(rule.criteria.all())
+        selected_support_ids = set(rule.supports.values_list('id', flat=True))
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        if not name:
+            messages.error(request, "Rule name is required.")
+            return redirect('desi:support_rule_list')
+
+        description = request.POST.get('description', '').strip()
+        is_active = request.POST.get('is_active') == 'on'
+        support_ids = {int(x) for x in request.POST.getlist('supports') if x.isdigit()}
+
+        if not support_ids:
+            messages.error(request, "Select at least one designated support affected by this rule.")
+            url = reverse('desi:support_rule_edit', args=[rule.id]) if rule else reverse('desi:support_rule_create')
+            return redirect(url)
+
+        if rule:
+            rule.name = name
+            rule.description = description
+            rule.is_active = is_active
+            rule.save()
+        else:
+            rule = SupportRule.objects.create(name=name, description=description, is_active=is_active)
+
+        rule.supports.set(Accommodation.objects.filter(id__in=support_ids))
+        rule.criteria.all().delete()
+
+        crit_fields = request.POST.getlist('crit_field[]')
+        crit_operators = request.POST.getlist('crit_operator[]')
+        crit_values = request.POST.getlist('crit_value[]')
+        for field, op, val in zip(crit_fields, crit_operators, crit_values):
+            if field and op and val:
+                SupportRuleCriteria.objects.create(rule=rule, field_name=field, operator=op, value=val)
+
+        messages.success(request, f"Support rule '{rule.name}' saved.")
+        return redirect('desi:support_rule_list')
+
+    supports = list(
+        Accommodation.objects.order_by('tag', 'category', 'name').select_related()
+    )
+    field_choices = AssessmentCriteria.FIELD_CHOICES
+    operator_choices = AssessmentCriteria.OPERATOR_CHOICES
+
+    context = {
+        'rule': rule,
+        'criteria': criteria,
+        'supports': supports,
+        'selected_support_ids': selected_support_ids,
+        'field_choices': field_choices,
+        'operator_choices': operator_choices,
+        'student_field_options_json': _get_student_field_options(),
+        'is_edit': bool(rule),
+    }
+    return render(request, 'desi/support_rule_form.html', context)
+
+
+@login_required
+def delete_support_rule(request, id):
+    """Delete a support rule."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rule = get_object_or_404(SupportRule, id=id)
+    name = rule.name
+    rule.delete()
+    messages.success(request, f"Support rule '{name}' deleted successfully.")
+    return redirect('desi:support_rule_list')
+
+
+@login_required
 def create_assessment(request):
     """Create a new assessment configuration with criteria."""
     if not _is_project_admin(request.user):
         messages.error(request, "Permission denied.")
         return redirect('landing:index')
 
-    try:
-        default_year = get_project_config().default_school_year
-    except Exception:
-        default_year = "2025-2026"
-
     if request.method == 'POST':
         name = request.POST.get('name', '').strip()
         subject = request.POST.get('subject', '').strip()
-        school_year = request.POST.get('school_year', default_year).strip()
         description = request.POST.get('description', '').strip()
         is_active = request.POST.get('is_active') == 'on'
 
@@ -1241,15 +1825,14 @@ def create_assessment(request):
             messages.error(request, "Assessment name is required.")
             return redirect('desi:create_assessment')
 
-        if Assessment.objects.filter(name=name, subject=subject, school_year=school_year).exists():
+        if Assessment.objects.filter(name=name, subject=subject).exists():
             subject_label = subject or ' no subject'
-            messages.error(request, f"An assessment named '{name}' with subject '{subject_label}' already exists for school year {school_year}.")
+            messages.error(request, f"An assessment named '{name}' with subject '{subject_label}' already exists.")
             return redirect('desi:create_assessment')
 
         assessment = Assessment.objects.create(
             name=name,
             subject=subject,
-            school_year=school_year,
             description=description,
             is_active=is_active
         )
@@ -1277,7 +1860,6 @@ def create_assessment(request):
     context = {
         'field_choices': field_choices,
         'operator_choices': operator_choices,
-        'default_year': default_year,
         'student_field_options_json': _get_student_field_options(),
         'is_edit': False,
     }
@@ -1296,13 +1878,11 @@ def edit_assessment(request, id):
     if request.method == 'POST':
         name = request.POST.get('name', '').strip()
         subject = request.POST.get('subject', '').strip()
-        school_year = request.POST.get('school_year', assessment.school_year).strip()
-        if Assessment.objects.filter(name=name, subject=subject, school_year=school_year).exclude(id=assessment.id).exists():
-            messages.error(request, f"An assessment named '{name}' with subject '{subject or 'no subject'}' already exists for school year {school_year}.")
+        if Assessment.objects.filter(name=name, subject=subject).exclude(id=assessment.id).exists():
+            messages.error(request, f"An assessment named '{name}' with subject '{subject or 'no subject'}' already exists.")
             return redirect('desi:edit_assessment', id=assessment.id)
         assessment.name = name
         assessment.subject = subject
-        assessment.school_year = school_year
         assessment.description = request.POST.get('description', '').strip()
         assessment.is_active = request.POST.get('is_active') == 'on'
         assessment.save()
@@ -1361,7 +1941,6 @@ def clone_assessment(request, id):
     cloned = Assessment.objects.create(
         name=f"Copy of {src.name}",
         subject=src.subject,
-        school_year=src.school_year,
         description=src.description,
         is_active=False
     )
@@ -1380,11 +1959,27 @@ def clone_assessment(request, id):
     return redirect('desi:admin_dashboard')
 
 
-def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None):
-    """Build workspace context for the DESI accommodation editor."""
+def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True, seis_option_map=None, seis_managed_assessments=None):
+    """
+    Build workspace context for the DESI accommodation editor.
+
+    ``eligible_assessments`` are the tests that remain editable for this
+    student (active + criteria-eligible, and NOT fully SEIS-managed).
+
+    ``seis_option_map`` is an optional dict keyed by ``(assessment_id,
+    accommodation_id)`` -> ``AccommodationOption`` produced from the read-only
+    SEIS source table.
+
+    ``seis_managed_assessments`` lists every assessment for which this student
+    has matched SEIS data.  These tests are fully read-only: they render as a
+    separate SEIS section that lists ONLY the SEIS supports (never the rest of
+    the editable test), and the user cannot edit any part of them.
+    """
+    seis_option_map = seis_option_map or {}
     shared_accommodations = []
     selected_support_ids = set(selected_support_ids or [])
     test_specific_accommodations = {ast.id: [] for ast in eligible_assessments}
+    hidden_ids = hidden_support_ids(student)
 
     # Map: accommodation -> { assessment: options_list }
     acc_ast_opts = {}
@@ -1392,6 +1987,8 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
         opts = list(ast.supported_options.all().select_related('accommodation'))
         for opt in opts:
             acc = opt.accommodation
+            if acc.id in hidden_ids:
+                continue
             if acc not in acc_ast_opts:
                 acc_ast_opts[acc] = {}
             if ast not in acc_ast_opts[acc]:
@@ -1436,16 +2033,15 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
                 break
         is_multichoice = len(representative_opts) > 1 or (len(representative_opts) == 1 and representative_opts[0].name != "Standard")
 
-        acc_data = {
-            'accommodation': acc,
-            'options': representative_opts,
-            'is_multichoice': is_multichoice,
-            'selected_option': assigned_opt,
-            'dependency_option_id': acc.depends_on_option_id if dependency_applies(asts[0].id) else None,
-            'selected_direct': acc.id in selected_support_ids,
-        }
-
         if len(asts) > 1 and is_identical:
+            acc_data = {
+                'accommodation': acc,
+                'options': representative_opts,
+                'is_multichoice': is_multichoice,
+                'selected_option': assigned_opt,
+                'dependency_option_id': acc.depends_on_option_id if dependency_applies(asts[0].id) else None,
+                'selected_direct': acc.id in selected_support_ids,
+            }
             acc_data['applies_to'] = asts
             shared_accommodations.append(acc_data)
         else:
@@ -1495,12 +2091,44 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
                 'failed_rules': failed_rules_map.get(ast.id, []),
             })
 
+    # Assessments fully managed by SEIS for this student (any active state).
+    # Each renders read-only and lists ONLY the SEIS-matched supports - the
+    # rest of the test is intentionally not shown because the user is read-only
+    # for the entire test.
+    seis_count = 0
+    seis_readonly_cards = []
+    for ast in seis_managed_assessments or []:
+        acc_items = []
+        for (ast_id, acc_id), opt in seis_option_map.items():
+            if ast_id != ast.id:
+                continue
+            opts = list(ast.supported_options.filter(accommodation_id=acc_id))
+            acc_items.append({
+                'accommodation': opt.accommodation,
+                'options': opts or [opt],
+                'is_multichoice': True,
+                'selected_option': opt,
+                'dependency_option_id': None,
+                'selected_direct': False,
+                'seis_option': opt,
+            })
+        if acc_items:
+            seis_readonly_cards.append({
+                'assessment': ast,
+                'accommodations': acc_items,
+            })
+    seis_count += sum(len(card['accommodations']) for card in seis_readonly_cards)
+
     return {
         'student': student,
         'shared_accommodations': shared_accommodations,
         'assessment_cards': assessment_cards,
         'ineligible_cards': ineligible_cards,
+        'seis_readonly_cards': seis_readonly_cards,
         'student_option_ids': student_option_ids,
+        'can_edit': can_edit,
+        'has_seis': bool(seis_count),
+        'seis_count': seis_count,
     }
 
 
@@ -1547,12 +2175,24 @@ def assign_accommodations(request, stu_annual_key):
 
     student_acc, student_annual_keys = _get_student_accommodation(student)
 
-    # Pull active assessments
-    assessments = Assessment.objects.filter(school_year=student.school_year, is_active=True).prefetch_related(
+    can_edit = can_edit_desi(request.user, student=student)
+
+    if request.method == 'POST' and not can_edit:
+        messages.error(
+            request,
+            "DESI is view-only for this school. You can review supports but cannot save or enter changes.",
+        )
+        return redirect(reverse('desi:assign_accommodations', args=[stu_annual_key]))
+
+    # Pull active assessments (color-coded consistently per assessment)
+    assessments = list(Assessment.objects.filter(is_active=True).prefetch_related(
         'criteria',
         'supported_options__accommodation__depends_on_option',
         'supported_options__accommodation__dependency_assessments',
-    )
+        'supported_options__accommodation__resources',
+    ))
+    for index, ast in enumerate(assessments):
+        ast.card_color = ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)]
 
     # Evaluate dynamic eligibility
     eligible_assessments = []
@@ -1562,6 +2202,73 @@ def assign_accommodations(request, stu_annual_key):
         failed_rules_map[ast.id] = failed_rules
         if eligible:
             eligible_assessments.append(ast)
+
+    # Read-only SEIS settings already configured for this student.
+    #
+    # SEIS data is authoritative and read-only: if a student has any matched
+    # SEIS support on an assessment, that assessment is shown read-only and
+    # lists ONLY the SEIS supports (the rest of the test is not editable).
+    # SEIS eligibility ignores every demographic criteria except grade.
+    #
+    # Project admins can restrict which assessments surface SEIS data via the
+    # "SEIS display settings" section of the DESI admin dashboard.  When a
+    # selection is saved, only the chosen assessments show SEIS settings;
+    # otherwise (no selection yet) SEIS settings are shown for every referenced
+    # assessment.
+    seis_option_map = {}
+    seis_locked_accommodation_ids = set()
+    seis_managed_assessments = []
+    if student.ssid:
+        from .seis_data import selected_seis_display_assessment_ids
+        selected_ids = selected_seis_display_assessment_ids()
+        all_assessments = list(
+            Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation')
+        )
+        _assessment_by_id = {ast.id: ast for ast in all_assessments}
+
+        def grade_eligible(ast):
+            """Only 'grade' criteria gate SEIS display; all others are ignored."""
+            grade_criteria = [c for c in ast.criteria.all() if c.field_name == 'grade']
+            if not grade_criteria:
+                return True
+            ok, _ = check_criteria(grade_criteria, student)
+            return ok
+
+        # Build the map across every assessment.  The mapping itself scopes each
+        # SEIS setting to the assessments that support the matched option (and,
+        # when a SEIS row names specific tests, to exactly those).  We then keep
+        # only entries that are admin-selected (when a selection exists) and
+        # grade-eligible.
+        raw_map, _ = build_seis_option_map(student.ssid, all_assessments)
+        seis_option_map = {
+            (ast_id, acc_id): opt
+            for (ast_id, acc_id), opt in raw_map.items()
+            if (selected_ids is None or ast_id in selected_ids)
+            and grade_eligible(_assessment_by_id[ast_id])
+        }
+        seis_locked_accommodation_ids = {acc_id for _ast_id, acc_id in seis_option_map}
+
+        managed_ids = {ast_id for ast_id, _acc_id in seis_option_map}
+        seis_managed_assessments = [
+            ast for ast in all_assessments if ast.id in managed_ids
+        ]
+        # Color code managed assessments (incl. inactive ones) so read-only
+        # sections render with a stable accent.
+        active_color = {
+            ast.id: ast.card_color for ast in assessments if hasattr(ast, 'card_color')
+        }
+        for index, ast in enumerate(seis_managed_assessments):
+            ast.card_color = active_color.get(
+                ast.id,
+                ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)],
+            )
+
+    # Assessments available for teacher entry = active + eligible by the
+    # configured criteria, EXCLUDING tests that are fully SEIS-managed.
+    managed_ids = {ast.id for ast in seis_managed_assessments}
+    editable_assessments = [
+        ast for ast in eligible_assessments if ast.id not in managed_ids
+    ]
 
     is_htmx = request.headers.get('HX-Request') == 'true' or request.META.get('HTTP_HX_REQUEST') == 'true'
 
@@ -1579,7 +2286,7 @@ def assign_accommodations(request, stu_annual_key):
 
         dependency_rules = {}
         support_contexts = {}
-        for ast in eligible_assessments:
+        for ast in editable_assessments:
             for opt in ast.supported_options.all():
                 support = opt.accommodation
                 support_contexts.setdefault(support.id, set()).add(ast.id)
@@ -1603,6 +2310,16 @@ def assign_accommodations(request, stu_annual_key):
             support_contexts,
             dependency_rules,
         )
+        # SEIS supports are read-only: their controls are disabled so they never
+        # post. Keep any option previously stored under a SEIS-locked support so
+        # an unrelated save does not silently erase it.
+        if seis_locked_accommodation_ids:
+            preserved_locked_opt_ids = set(
+                student_acc.options
+                .filter(accommodation_id__in=seis_locked_accommodation_ids)
+                .values_list('id', flat=True)
+            )
+            selected_opt_ids = list(set(selected_opt_ids) | preserved_locked_opt_ids)
         student_acc.options.set(AccommodationOption.objects.filter(id__in=selected_opt_ids))
         student_acc.selected_accommodations.set(Accommodation.objects.filter(id__in=selected_support_ids))
         student_acc.updated_by = request.user
@@ -1619,7 +2336,7 @@ def assign_accommodations(request, stu_annual_key):
         completed_ids_list = request.POST.getlist('completed_assessments')
         completed_ids = set(int(x) for x in completed_ids_list if x.isdigit())
 
-        for ast in eligible_assessments:
+        for ast in editable_assessments:
             is_comp = ast.id in completed_ids
             comp_record, _ = StudentAssessmentCompletion.objects.get_or_create(
                 student_annual_key=stu_annual_key,
@@ -1636,11 +2353,14 @@ def assign_accommodations(request, stu_annual_key):
             context = _build_assign_accommodations_context(
                 student,
                 stu_annual_key,
-                eligible_assessments,
+                editable_assessments,
                 assessments,
                 failed_rules_map,
                 selected_opt_ids,
                 selected_support_ids,
+                can_edit=can_edit,
+                seis_option_map=seis_option_map,
+                seis_managed_assessments=seis_managed_assessments,
             )
             list_context.update(context)
 
@@ -1676,7 +2396,7 @@ def assign_accommodations(request, stu_annual_key):
     option_to_accommodation = {opt.id: opt.accommodation_id for opt in student_options}
     dependency_rules = {}
     support_contexts = {}
-    for ast in eligible_assessments:
+    for ast in editable_assessments:
         for opt in ast.supported_options.all():
             support = opt.accommodation
             support_contexts.setdefault(support.id, set()).add(ast.id)
@@ -1692,6 +2412,14 @@ def assign_accommodations(request, stu_annual_key):
         support_contexts,
         dependency_rules,
     )
+    # Keep stored options that belong to SEIS-managed (read-only) supports.
+    if seis_locked_accommodation_ids:
+        preserved_locked_opt_ids = set(
+            student_acc.options
+            .filter(accommodation_id__in=seis_locked_accommodation_ids)
+            .values_list('id', flat=True)
+        )
+        student_option_ids = list(set(student_option_ids) | preserved_locked_opt_ids)
     if set(o.id for o in student_options) != student_option_ids:
         student_acc.options.set(AccommodationOption.objects.filter(id__in=student_option_ids))
         student_acc.updated_by = request.user
@@ -1700,11 +2428,14 @@ def assign_accommodations(request, stu_annual_key):
     context = _build_assign_accommodations_context(
         student,
         stu_annual_key,
-        eligible_assessments,
+        editable_assessments,
         assessments,
         failed_rules_map,
         student_option_ids,
         selected_support_ids,
+        can_edit=can_edit,
+        seis_option_map=seis_option_map,
+        seis_managed_assessments=seis_managed_assessments,
     )
 
     if is_htmx:

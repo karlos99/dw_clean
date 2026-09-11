@@ -165,5 +165,25 @@ class NavbarConfig(models.Model):
     @classmethod
     def get(cls):
         """Return the singleton, creating it (with defaults) if it doesn't exist yet."""
-        obj, _ = cls.objects.get_or_create(pk=1)
-        return obj
+        from django.core.exceptions import MultipleObjectsReturned
+        try:
+            obj, _ = cls.objects.get_or_create(pk=1)
+            return obj
+        except MultipleObjectsReturned:
+            # Defensive: a restored DB can temporarily hold duplicate rows with
+            # the same id (missing unique index). Keep the newest and retry.
+            from django.db import connection
+            table = cls._meta.db_table
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    DELETE FROM {table} a
+                     WHERE a.ctid <> (
+                           SELECT b.ctid FROM {table} b
+                            WHERE b.id = a.id
+                            ORDER BY b.updated_at DESC NULLS LAST, b.ctid
+                            LIMIT 1)
+                    """
+                )
+            obj, _ = cls.objects.get_or_create(pk=1)
+            return obj

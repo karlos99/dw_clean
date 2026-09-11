@@ -10,11 +10,12 @@ from django.db import connections
 from django.core.cache import cache
 import json
 import hashlib
+import math
 import statistics
 
 from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
-from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL
+from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL, normalize_score_value
 from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from ..survey_utils import get_survey_columns
 from .student_data_utils import (
@@ -490,15 +491,20 @@ def get_column_statistics(request):
                      sub_norm = _norm_part(subject)
                      win_norm = _norm_part(test_window).strip('_')
                      key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
-                     
-                     for metric in ['SS', 'PL']:
+
+                     for metric in ['SS', 'PL', 'DFP']:
                          norm_key = f"test_{key_base}_{metric.upper()}"
                          original_key = normalized_to_original.get(norm_key)
                          if original_key:
-                             test_col_map[original_key] = {
+                             info = {
                                  'year': yr, 'test_name': test_name, 'subject': subject, 'test_window': (test_window or '').strip() or None,
                                  'metric': metric.lower(), 'col_name': original_key
                              }
+                             if metric == 'DFP':
+                                 # DFP is promoted out of other_info (see get_test_columns),
+                                 # backed by the "dfp" key in results.other_info.
+                                 info['other_info_key'] = 'dfp'
+                             test_col_map[original_key] = info
                              test_col_map[original_key.replace('-', '_')] = test_col_map[original_key]
 
                  # Other Info logic implementation
@@ -719,21 +725,24 @@ def get_column_statistics(request):
                 
                 # Fetch raw values (no SQL cast, handle determining numeric in Python)
                 val_expr = col_expr
-                
+
+                # Restrict to the filtered cohort by joining current_student.
+                # A correlated EXISTS reading outer r.* columns is rejected by the
+                # ClickHouse analytics read model ("Resolve identifier 'r.ssid' from
+                # parent scope..."), so join instead (current_student is unique per
+                # student/year, so this does not multiply counts).
                 query = f"""
                     SELECT {val_expr} as val, COUNT(*) as cnt
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE EXISTS (
-                        SELECT 1 FROM current_student cs {join_sql}
-                        WHERE {where_sql}
-                          AND {RESULTS_STUDENT_MATCH_SQL}
-                    )
-                    AND r.school_year = %s
-                    AND t.test_name ILIKE %s
-                    AND t.subject ILIKE %s
-                    {window_clause}
-                    AND {col_expr} IS NOT NULL
+                    INNER JOIN current_student cs ON {RESULTS_STUDENT_MATCH_SQL}
+                    {join_sql}
+                    WHERE {where_sql}
+                      AND r.school_year = %s
+                      AND t.test_name ILIKE %s
+                      AND t.subject ILIKE %s
+                      {window_clause}
+                      AND {col_expr} IS NOT NULL
                     GROUP BY val
                     ORDER BY val
                 """
@@ -889,31 +898,30 @@ def get_column_statistics(request):
             numeric_count = 0
             
             for val, cnt in rows:
+                # Placeholder score values (NaN/NS/N/A/None/...) are treated as
+                # blank everywhere else in the data explorer (load_students,
+                # export_cell) — never surface them on the summary chart.
+                norm_val = normalize_score_value(val)
+                if norm_val is None:
+                    continue
                 total_count += cnt
-                if is_string_stats_column and val is not None:
-                    val = str(val)
                 is_num_val = False
-                if val is not None and not is_string_stats_column:
+                fval = None
+                if not is_string_stats_column:
                     # Try to parse as float
                     try:
-                        fval = float(val)
-                        # Ensure string isn't something like "123 Main St" which float() might handle oddly or allow
-                        # Actually float() is strict enough for our needs (excludes "123 Main St", but allows "123").
-                        # Also check if it looks numeric if it's a string
-                        if isinstance(val, str) and not val.strip().replace('.','',1).isdigit():
-                             # E.g. "12.3.4" or "12-4" might fail or pass depending.
-                             # Simple float cast is usually okay but let's be safe.
-                             # Keep it simple: if float(val) worked, we use it for stats
-                             pass
-                        
-                        numeric_values.extend([fval] * cnt) 
+                        fval = float(norm_val)
+                    except (ValueError, TypeError):
+                        fval = None
+                    # Skip non-finite values (e.g. an "NaN" sentinel that
+                    # slipped through) so averages never render as NaN.
+                    if fval is not None and math.isfinite(fval):
+                        numeric_values.extend([fval] * cnt)
                         numeric_count += cnt
                         is_num_val = True
-                    except (ValueError, TypeError):
-                        pass
-                
+
                 # Check for sorting purposes later
-                values.append({'value': val, 'count': cnt, 'numeric_val': fval if is_num_val else None})
+                values.append({'value': norm_val, 'count': cnt, 'numeric_val': fval if is_num_val else None})
 
             # If > 90% of values are numeric, treat as numeric type
             if is_string_stats_column:
