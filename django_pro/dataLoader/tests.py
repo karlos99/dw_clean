@@ -121,3 +121,30 @@ class SATAnalyzerTests(SimpleTestCase):
         # Falls back to name + dob when both IDs are missing
         key2 = build_record_key('', '', 'ELENA', 'CESAR', '2008-02-01', '')
         self.assertEqual(key2, 'ELENA|CESAR|2008-02-01|nodate')
+
+
+class SATSchoolResolverTests(SimpleTestCase):
+    """Tests for mapping SAT institutions to district school short names."""
+
+    def test_canonical_forms_match(self):
+        from dataLoader.utils.sat_school_resolver import _canonical
+        self.assertEqual(_canonical('INDIO HIGH SCHOOL'), _canonical('Indio HS'))
+        self.assertEqual(_canonical('SUMMIT HIGH SCHOOL'), _canonical('Summit HS'))
+
+    def test_resolve_school_short_name(self):
+        from unittest.mock import patch
+        from dataLoader.utils import sat_school_resolver as resolver
+
+        by_name = {
+            resolver._canonical('Indio HS'): 'Indio HS',
+            resolver._normalize('Palm Desert HS'): 'Palm Desert HS',
+        }
+        by_code = {'33670583330669': 'Indio HS'}
+        with patch.object(resolver, '_get_lookup', return_value=(by_name, by_code)):
+            self.assertEqual(
+                resolver.resolve_school_short_name('INDIO HIGH SCHOOL'), 'Indio HS')
+            self.assertEqual(
+                resolver.resolve_school_short_name('', '33670583330669'), 'Indio HS')
+            self.assertEqual(
+                resolver.resolve_school_short_name('Some Other Academy'),
+                resolver.NON_DS_SCHOOL)

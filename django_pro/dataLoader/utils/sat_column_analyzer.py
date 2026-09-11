@@ -75,6 +75,7 @@ class SATStudentPreview:
     state_student_id: str
     cb_id: str
     dob: str
+    school_code: str
     school_name: str
     test_date: str
     total_score: str
@@ -241,6 +242,7 @@ def analyze_sat_csv(file_content: str, filename: str = '', sample_rows: int = 5)
             state_student_id=_to_str(cell(row, "STATE_STUDENT_ID")),
             cb_id=_to_str(cell(row, "CB_ID")),
             dob=dob.isoformat() if dob else "",
+            school_code=_to_str(cell(row, "AI_CODE")),
             school_name=_to_str(cell(row, "AI_NAME")),
             test_date=test_date.isoformat() if test_date else "",
             total_score=_to_str(cell(row, "LATEST_SAT_TOTAL")),

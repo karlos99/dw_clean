@@ -121,7 +121,7 @@
                         <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-slate-900">{{ result.total_score|default:"—" }}</td>
                         <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ result.ebrw_score|default:"—" }}</td>
                         <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ result.math_score|default:"—" }}</td>
-                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ result.school_name }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ result.school_name|default:"(non-DS School)" }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>

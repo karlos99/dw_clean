@@ -670,7 +670,10 @@ class SATResult(models.Model):
     birth_date = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=20, blank=True)
     school_code = models.CharField(max_length=50, blank=True, help_text="AI institution school code")
-    school_name = models.CharField(max_length=255, blank=True, help_text="AI institution name")
+    school_name = models.CharField(
+        max_length=255, blank=True,
+        help_text="District school short name, or '(non-DS School)' when unmatched",
+    )
 
     test_date = models.DateField(null=True, blank=True, help_text="LATEST_SAT_DATE administration date")
     school_year = models.CharField(max_length=9, help_text="School year the SAT was administered")

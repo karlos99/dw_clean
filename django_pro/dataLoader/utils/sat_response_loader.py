@@ -21,6 +21,7 @@ from dataLoader.utils.sat_column_analyzer import (
     parse_int, parse_date, _to_str,
 )
 from dataLoader.utils.sat_student_matcher import SATStudentMatcher
+from dataLoader.utils.sat_school_resolver import resolve_school_short_name
 
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,7 @@ class SATResponseLoader:
         errors: List[dict] = []
 
         batch_size = self.config.batch_size
+        school_cache: Dict[Tuple[str, str], str] = {}
 
         for batch_start in range(0, total_students, batch_size):
             if self._stop_flag:
@@ -140,7 +142,12 @@ class SATResponseLoader:
                     middle_initial = _to_str(row.get("NAME_MI", ""))
                     gender = _to_str(row.get("GENDER", ""))
                     school_code = _to_str(row.get("AI_CODE", ""))
-                    school_name = _to_str(row.get("AI_NAME", ""))
+                    school_name_raw = _to_str(row.get("AI_NAME", ""))
+                    school_key = (school_name_raw, school_code)
+                    school_name = school_cache.get(school_key)
+                    if school_name is None:
+                        school_name = resolve_school_short_name(school_name_raw, school_code)
+                        school_cache[school_key] = school_name
 
                     dob_date = parse_date(row.get("BIRTH_DATE", ""))
                     test_date = parse_date(row.get("LATEST_SAT_DATE", ""))

@@ -1289,6 +1289,7 @@ class SATUploadView(ProjectAdminRequiredMixin, View):
             f.write(file_content)
 
         from .utils.sat_column_analyzer import analyze_sat_csv
+        from .utils.sat_school_resolver import resolve_school_short_name
 
         try:
             analysis = analyze_sat_csv(file_content, csv_file.name)
@@ -1320,7 +1321,8 @@ class SATUploadView(ProjectAdminRequiredMixin, View):
                         'state_student_id': s.state_student_id,
                         'cb_id': s.cb_id,
                         'dob': s.dob,
-                        'school_name': s.school_name,
+                        'school_code': s.school_code,
+                        'school_name': resolve_school_short_name(s.school_name, s.school_code),
                         'test_date': s.test_date,
                         'total_score': s.total_score,
                         'ebrw_score': s.ebrw_score,
@@ -1387,12 +1389,15 @@ class SATPreviewView(ProjectAdminRequiredMixin, View):
         matched_count = 0
         unmatched_students = []
 
+        from .utils.sat_school_resolver import resolve_school_short_name
+
         for row in rows:
             state_student_id = _to_str(row.get('STATE_STUDENT_ID', ''))
             cb_id = _to_str(row.get('CB_ID', ''))
             last_name = _to_str(row.get('NAME_LAST', ''))
             first_name = _to_str(row.get('NAME_FIRST', ''))
-            school_name = _to_str(row.get('AI_NAME', ''))
+            school_code = _to_str(row.get('AI_CODE', ''))
+            school_name = resolve_school_short_name(_to_str(row.get('AI_NAME', '')), school_code)
             dob_date = parse_date(row.get('BIRTH_DATE', ''))
             test_date = parse_date(row.get('LATEST_SAT_DATE', ''))
 

@@ -646,14 +646,24 @@ def _fetch_sat_rows_from_pg(ssids: list[str]) -> list[dict]:
     from dataLoader.models import SATSettings
 
     columns = [
-        'ssid', 'school_year', 'test_date', 'school_name',
-        'total_score', 'ebrw_score', 'math_score',
-        'percentile_state_total', 'percentile_state_rw', 'percentile_state_math',
-        'percentile_country_total', 'percentile_country_rw', 'percentile_country_math',
-        'percentile_natrep_total', 'percentile_natrep_rw', 'percentile_natrep_math',
-        'percentile_natuser_total', 'percentile_natuser_rw', 'percentile_natuser_math',
+        ('ssid', 'r.ssid'), ('school_year', 'r.school_year'),
+        ('test_date', 'r.test_date'), ('school_name', 'r.school_name'),
+        ('total_score', 'r.total_score'), ('ebrw_score', 'r.ebrw_score'), ('math_score', 'r.math_score'),
+        ('percentile_state_total', 'r.percentile_state_total'),
+        ('percentile_state_rw', 'r.percentile_state_rw'),
+        ('percentile_state_math', 'r.percentile_state_math'),
+        ('percentile_country_total', 'r.percentile_country_total'),
+        ('percentile_country_rw', 'r.percentile_country_rw'),
+        ('percentile_country_math', 'r.percentile_country_math'),
+        ('percentile_natrep_total', 'r.percentile_natrep_total'),
+        ('percentile_natrep_rw', 'r.percentile_natrep_rw'),
+        ('percentile_natrep_math', 'r.percentile_natrep_math'),
+        ('percentile_natuser_total', 'r.percentile_natuser_total'),
+        ('percentile_natuser_rw', 'r.percentile_natuser_rw'),
+        ('percentile_natuser_math', 'r.percentile_natuser_math'),
     ]
-    select_cols = ', '.join(f'r.{c}' for c in columns)
+    col_names = [name for name, _ in columns]
+    select_cols = ', '.join(f'{expr} AS {name}' for name, expr in columns)
     try:
         with connections['default'].cursor() as cursor:
             cursor.execute(
@@ -665,7 +675,7 @@ def _fetch_sat_rows_from_pg(ssids: list[str]) -> list[dict]:
                 """,
                 [ssids],
             )
-            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            rows = [dict(zip(col_names, row)) for row in cursor.fetchall()]
     except Exception:
         return []
 
