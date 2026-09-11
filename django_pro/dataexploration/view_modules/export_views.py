@@ -15,6 +15,7 @@ from ..column_utils import (
     enrich_students_tests_marks,
     parse_markall_key,
     markall_key as _markall_key,
+    parse_sat_column_key,
 )
 from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
 from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
@@ -225,6 +226,55 @@ def export_students_csv(request):
     # Courses the user deselected from an "All Marks" umbrella (exclude:<course>)
     markall_excludes = extract_markall_course_excludes(filters)
 
+    # ── AP "All Results" expansion setup ───────────────────────────────────
+    # The apall_<year> umbrella (or already-expanded pairs) collapses back to
+    # the umbrella; expansion into assessment/result wide pairs happens inside
+    # the stream once the filtered population is known.
+    def _apall_year_key(col):
+        if not isinstance(col, str) or not col.startswith('apall_'):
+            return None
+        parts = col[len('apall_'):].split('_')
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            return f"{parts[0]}_{parts[1]}"
+        return None
+
+    apall_years = []
+    for c in selected_columns:
+        yk = _apall_year_key(c)
+        if yk and yk.replace('_', '-') not in apall_years:
+            apall_years.append(yk.replace('_', '-'))
+
+    if apall_years:
+        new_selected = []
+        for c in selected_columns:
+            if isinstance(c, str) and c.startswith('apall_'):
+                yk = _apall_year_key(c)
+                if yk:
+                    umbrella = f"apall_{yk}"
+                    if umbrella not in new_selected:
+                        new_selected.append(umbrella)
+                    continue
+            if isinstance(c, str) and c.startswith('ap_') and not c.startswith(('apaward_', 'apawards_all_')):
+                tail = c[len('ap_'):]
+                parts = tail.split('_')
+                if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                    if f"{parts[0]}-{parts[1]}" in apall_years:
+                        continue
+            new_selected.append(c)
+        selected_columns = new_selected
+
+    def _apall_subject_excludes(year):
+        if not isinstance(filters, dict):
+            return set()
+        vals = filters.get(f"apall_{year.replace('-', '_')}")
+        names = set()
+        if isinstance(vals, list):
+            for v in vals:
+                s = str(v)
+                if s.startswith('exclude:'):
+                    names.add(s[len('exclude:'):])
+        return names
+
     # 2. Preparation for Query
     db_columns = get_current_student_columns()
     enroll_columns = get_student_enroll_columns()
@@ -247,10 +297,14 @@ def export_students_csv(request):
         [c for c in selected_columns if isinstance(c, str) and (c.startswith('apaward_') or c.startswith('apawards_all_'))] +
         [k for k in filter_keys if isinstance(k, str) and (k.startswith('apaward_') or k.startswith('apawards_all_'))]
     ))
+    selected_sat_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
+    ))
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
-        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_')))
+        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
         and c in COLUMN_DEFINITIONS
     ]
 
@@ -496,6 +550,19 @@ def export_students_csv(request):
                     except Exception:
                         ap_exam_infos = ap_award_infos = []
 
+                sat_infos = []
+                for _col in selected_sat_cols:
+                    _parsed = parse_sat_column_key(_col)
+                    if _parsed:
+                        sat_infos.append({
+                            'col_name': _col,
+                            'year': _parsed['year'],
+                            'kind': _parsed['kind'],
+                            'field': _parsed.get('field'),
+                            'region': _parsed.get('region'),
+                            'metric': _parsed.get('metric'),
+                        })
+
                 # Prepare Dynamic Headers
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
                 if test_cols_info:
@@ -516,6 +583,14 @@ def export_students_csv(request):
                         period = info.get('mark_period') or 'Unknown'
                         label = f"{info['course_name']} ({info['subject']}) {period} {info['year']}"
                         dynamic_labels[info['col_name']] = label
+
+                for info in ap_exam_infos:
+                    dynamic_labels[info['col_name']] = f"{info['subject']} Performance Level {info['year']}"
+                for info in ap_award_infos:
+                    if info.get('award') == '__ALL__':
+                        dynamic_labels[info['col_name']] = f"All Awards {info['year']}"
+                    else:
+                        dynamic_labels[info['col_name']] = f"{info['award']} {info['year']}"
 
                 # Build Where Clauses
                 base_where_clauses = ["1=1"]
@@ -711,6 +786,60 @@ def export_students_csv(request):
                         dynamic_labels[f"{umbrella}_{i}_COURSE"] = f"Course {i} ({subject}) {year}"
                         dynamic_labels[f"{umbrella}_{i}_MARKS"] = f"Marks {i} ({subject}) {year}"
 
+                # ── AP "All Results" expansion (filtered population) ───────
+                apall_max = {}
+                if apall_years:
+                    with connections['default'].cursor() as apall_cursor:
+                        for year in apall_years:
+                            excludes = _apall_subject_excludes(year)
+                            exclude_clause = ""
+                            exclude_params = []
+                            if excludes:
+                                placeholders = ", ".join(["%s"] * len(excludes))
+                                exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                                exclude_params = sorted(excludes)
+                            apall_cursor.execute(
+                                f"""
+                                SELECT COALESCE(MAX(cnt), 0)
+                                FROM (
+                                    SELECT r.ssid, COUNT(*) AS cnt
+                                    FROM "dataLoader_apexamresult" r
+                                    INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                                    INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                                    INNER JOIN current_student cs ON r.ssid = cs.ssid
+                                    {join_sql}
+                                    WHERE {where_sql}
+                                      AND r.admin_year = %s AND il.is_published = true
+                                      {exclude_clause}
+                                    GROUP BY r.ssid
+                                ) t
+                                """,
+                                params + [year] + exclude_params,
+                            )
+                            apall_max[year] = min(int(apall_cursor.fetchone()[0] or 0), 10)
+
+                    new_selected = []
+                    for c in export_cols:
+                        yk = _apall_year_key(c)
+                        if yk:
+                            year = yk.replace('_', '-')
+                            n = apall_max.get(year, 0)
+                            for i in range(1, n + 1):
+                                new_selected.append(f"apall_{yk}_{i}_SUBJECT")
+                                new_selected.append(f"apall_{yk}_{i}_PL")
+                            continue
+                        new_selected.append(c)
+                    export_cols = new_selected
+
+                # Definitions for the AP "All Results" wide-pair columns
+                for year in apall_years:
+                    yk = year.replace('-', '_')
+                    n = apall_max.get(year, 0)
+                    for i in range(1, n + 1):
+                        suffix = f" {i}" if n > 1 else ""
+                        dynamic_labels[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix} {year}"
+                        dynamic_labels[f"apall_{yk}_{i}_PL"] = f"AP Results{suffix} {year}"
+
                 # Yield Header
                 header_labels = [dynamic_labels.get(col, col) for col in export_cols]
                 yield writer.writerow(header_labels)
@@ -768,6 +897,89 @@ def export_students_csv(request):
                     enrich_students_tests_marks(
                         chunk_students, test_cols_info, mark_cols_info, blank='',
                     )
+
+                    if sat_infos:
+                        try:
+                            from dataviz.utils.data_loader import _fetch_sat_data
+                            _fetch_sat_data(chunk_students, sat_infos)
+                        except Exception:
+                            pass
+
+                    # Fetch AP (College Board) exam + award values for this chunk
+                    if ap_exam_infos or ap_award_infos:
+                        try:
+                            from dataviz.utils.data_loader import (
+                                _fetch_ap_exam_data,
+                                _fetch_ap_award_data,
+                            )
+                            if ap_exam_infos:
+                                _fetch_ap_exam_data(chunk_students, ap_exam_infos)
+                            if ap_award_infos:
+                                _fetch_ap_award_data(chunk_students, ap_award_infos)
+                            for _student in chunk_students:
+                                for _info in ap_exam_infos + ap_award_infos:
+                                    _student.setdefault(_info['col_name'], '')
+                        except Exception:
+                            pass
+
+                    # Fetch AP "All Results" wide-pair data for this chunk
+                    if apall_years:
+                        try:
+                            chunk_ssids = [
+                                str(s.get('ssid') or '').strip()
+                                for s in chunk_students if str(s.get('ssid') or '').strip()
+                            ]
+                            if chunk_ssids:
+                                from dataviz.utils.data_loader import _analytics_rows
+                                for year in apall_years:
+                                    yk = year.replace('-', '_')
+                                    n = apall_max.get(year, 0)
+                                    excludes = _apall_subject_excludes(year)
+                                    ap_rows = _analytics_rows(
+                                        "SELECT ssid, exam_name, exam_grade FROM analytics_ap_results "
+                                        "WHERE ssid = ANY(%s) AND admin_year = %s "
+                                        "ORDER BY ssid, exam_name",
+                                        [chunk_ssids, year],
+                                    )
+                                    if ap_rows is None:
+                                        with connections['default'].cursor() as apall_cur:
+                                            apall_cur.execute(
+                                                """
+                                                SELECT r.ssid, e.name, r.exam_grade
+                                                FROM "dataLoader_apexamresult" r
+                                                INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                                                INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                                                WHERE r.ssid = ANY(%s) AND r.admin_year = %s AND il.is_published = true
+                                                ORDER BY r.ssid, e.name
+                                                """,
+                                                [chunk_ssids, year],
+                                            )
+                                            ap_rows = [
+                                                {'ssid': r[0], 'exam_name': r[1], 'exam_grade': r[2]}
+                                                for r in apall_cur.fetchall()
+                                            ]
+                                    by_ssid = {}
+                                    for row in ap_rows:
+                                        exam_name = row.get('exam_name')
+                                        if exam_name in excludes:
+                                            continue
+                                        by_ssid.setdefault(str(row.get('ssid') or '').strip(), []).append(
+                                            (exam_name, row.get('exam_grade'))
+                                        )
+                                    for student in chunk_students:
+                                        sid = str(student.get('ssid') or '').strip()
+                                        results = by_ssid.get(sid, [])
+                                        for i in range(1, n + 1):
+                                            subj_key = f"apall_{yk}_{i}_SUBJECT"
+                                            pl_key = f"apall_{yk}_{i}_PL"
+                                            if i <= len(results):
+                                                student[subj_key] = results[i - 1][0]
+                                                student[pl_key] = str(results[i - 1][1]).strip() if results[i - 1][1] else ''
+                                            else:
+                                                student[subj_key] = ''
+                                                student[pl_key] = ''
+                        except Exception:
+                            pass
 
                     # Fetch Marks "All Marks" wide-pair data for this chunk
                     if markall_years:

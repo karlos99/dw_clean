@@ -864,7 +864,7 @@ def column_structures_api(request):
 
     from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
     from dataexploration.column_utils import (
-        get_test_columns, get_mark_columns, get_ap_columns,
+        get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns,
         invert_test_to_assessment_first, invert_marks_to_assessment_first,
     )
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
@@ -872,7 +872,8 @@ def column_structures_api(request):
     test_structure = get_test_columns()
     mark_structure = get_mark_columns()
     ap_structure = get_ap_columns()
-    all_years = list(test_structure.keys()) + list(mark_structure.keys()) + list(ap_structure.keys())
+    sat_structure = get_sat_columns()
+    all_years = list(test_structure.keys()) + list(mark_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys())
 
     # Build assessment-first views for the new assessment-centric picker UI
     assessment_structure = invert_test_to_assessment_first(test_structure)
@@ -884,6 +885,7 @@ def column_structures_api(request):
         'test_structure':          test_structure,
         'mark_structure':          mark_structure,
         'ap_structure':            ap_structure,
+        'sat_structure':           sat_structure,
         'assessment_structure':    assessment_structure,
         'mark_assessment_structure': mark_assessment_structure,
         'year_labels':             get_year_labels_map(all_years),

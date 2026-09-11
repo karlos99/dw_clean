@@ -9,10 +9,11 @@ import tempfile
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.http import JsonResponse
-from django.views.generic import ListView, DetailView, View
+from django.views.generic import ListView, DetailView, View, TemplateView
 from django.urls import reverse
 from django.utils import timezone
 from django.core.cache import cache
+from django.core.paginator import Paginator
 from django.conf import settings
 
 from .access_control import project_admin_required, ProjectAdminRequiredMixin
@@ -20,6 +21,8 @@ from .models import (
     SurveyDefinition, SurveyQuestion, SurveyResponse, ImportLog,
     TestingWindow, ImportStatus, SurveyTopic,
     APExamCode, APAwardType, APImportLog, APStudentAward, APExamResult, APImportStatus,
+    SATImportLog, SATResult, SATSettings, SATImportStatus,
+    SAT_PERCENTILE_REGIONS, SAT_PERCENTILE_METRICS,
 )
 from .utils.column_analyzer import analyze_csv, AnalysisResult
 from .utils.response_loader import ResponseLoader, LoaderConfig
@@ -37,27 +40,204 @@ def get_school_year_choices():
     return choices
 
 
-class DataLoaderDashboardView(ProjectAdminRequiredMixin, ListView):
-    """Dashboard showing recent imports and upload option."""
-    model = ImportLog
+def _match_rate(matched, unmatched):
+    total = (matched or 0) + (unmatched or 0)
+    if total <= 0:
+        return None
+    return round((matched or 0) / total * 100)
+
+
+def _status_css(status):
+    return {
+        'COMPLETED': 'bg-green-100 text-green-800',
+        'FAILED': 'bg-red-100 text-red-800',
+        'PROCESSING': 'bg-blue-100 text-blue-800',
+        'PARTIAL': 'bg-amber-100 text-amber-800',
+        'PENDING': 'bg-slate-100 text-slate-800',
+    }.get(status, 'bg-slate-100 text-slate-800')
+
+
+def _normalize_survey_import(obj):
+    return {
+        'type': 'survey',
+        'type_label': 'Survey',
+        'type_badge': 'bg-blue-100 text-blue-800',
+        'name': obj.name,
+        'filename': obj.filename,
+        'school_year': obj.school_year,
+        'metric_label': 'Records',
+        'metric_value': obj.records_processed,
+        'metric_note': obj.get_testing_window_display() or '',
+        'status': obj.status,
+        'status_display': obj.get_status_display(),
+        'status_css': _status_css(obj.status),
+        'match_rate': _match_rate(obj.students_matched, obj.students_unmatched),
+        'is_published': obj.ready_for_exploration,
+        'uploaded_at': obj.uploaded_at,
+        'detail_url': reverse('dataLoader:import_detail', args=[obj.pk]),
+        'progress_url': reverse('dataLoader:import_progress', args=[obj.pk]) if obj.status == 'PROCESSING' else None,
+        'delete_url': reverse('dataLoader:delete_import', args=[obj.pk]),
+        'publish_url': reverse('dataLoader:quick_toggle_publish_import', args=[obj.pk]) if obj.status == 'COMPLETED' else None,
+        'publish_css': 'bg-blue-600' if obj.ready_for_exploration else 'bg-slate-200',
+    }
+
+
+def _normalize_ap_import(obj):
+    return {
+        'type': 'ap',
+        'type_label': 'AP',
+        'type_badge': 'bg-purple-100 text-purple-800',
+        'name': obj.name,
+        'filename': obj.filename,
+        'school_year': obj.school_year,
+        'metric_label': 'Exams',
+        'metric_value': obj.exams_created,
+        'metric_note': f"+{obj.exams_skipped} skipped" if obj.exams_skipped else '',
+        'status': obj.status,
+        'status_display': obj.get_status_display(),
+        'status_css': _status_css(obj.status),
+        'match_rate': _match_rate(obj.students_matched, obj.students_unmatched),
+        'is_published': obj.is_published,
+        'uploaded_at': obj.uploaded_at,
+        'detail_url': reverse('dataLoader:ap_import_detail', args=[obj.pk]),
+        'progress_url': reverse('dataLoader:ap_import_progress', args=[obj.pk]) if obj.status == 'PROCESSING' else None,
+        'delete_url': reverse('dataLoader:ap_delete_import', args=[obj.pk]),
+        'publish_url': reverse('dataLoader:ap_toggle_publish', args=[obj.pk]) if obj.status == 'COMPLETED' else None,
+        'publish_css': 'bg-purple-600' if obj.is_published else 'bg-slate-200',
+    }
+
+
+def _normalize_sat_import(obj):
+    return {
+        'type': 'sat',
+        'type_label': 'SAT',
+        'type_badge': 'bg-emerald-100 text-emerald-800',
+        'name': obj.name,
+        'filename': obj.filename,
+        'school_year': obj.school_year,
+        'metric_label': 'Records',
+        'metric_value': obj.records_created,
+        'metric_note': f"+{obj.records_skipped} skipped" if obj.records_skipped else '',
+        'status': obj.status,
+        'status_display': obj.get_status_display(),
+        'status_css': _status_css(obj.status),
+        'match_rate': _match_rate(obj.students_matched, obj.students_unmatched),
+        'is_published': obj.is_published,
+        'uploaded_at': obj.uploaded_at,
+        'detail_url': reverse('dataLoader:sat_import_detail', args=[obj.pk]),
+        'progress_url': reverse('dataLoader:sat_import_progress', args=[obj.pk]) if obj.status == 'PROCESSING' else None,
+        'delete_url': reverse('dataLoader:sat_delete_import', args=[obj.pk]),
+        'publish_url': reverse('dataLoader:sat_toggle_publish', args=[obj.pk]) if obj.status == 'COMPLETED' else None,
+        'publish_css': 'bg-emerald-600' if obj.is_published else 'bg-slate-200',
+    }
+
+
+# Registry of data loaders shown on the dashboard. New assessment/survey
+# loaders can be added here without touching the template layout.
+def _build_loader_cards():
+    survey_count = ImportLog.objects.count()
+    survey_published = ImportLog.objects.filter(ready_for_exploration=True).count()
+    ap_count = APImportLog.objects.count()
+    ap_published = APImportLog.objects.filter(is_published=True).count()
+    sat_count = SATImportLog.objects.count()
+    sat_published = SATImportLog.objects.filter(is_published=True).count()
+
+    return [
+        {
+            'key': 'survey',
+            'name': 'Surveys',
+            'description': 'Panorama SEL skills, competencies, and other survey CSV exports.',
+            'upload_url': reverse('dataLoader:upload'),
+            'accent': 'blue',
+            'button_css': 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
+            'icon_bg': 'bg-blue-100',
+            'icon_css': 'text-blue-600',
+            'count': survey_count,
+            'published': survey_published,
+        },
+        {
+            'key': 'ap',
+            'name': 'AP Exams',
+            'description': 'College Board AP Student Datafile with exam results and awards.',
+            'upload_url': reverse('dataLoader:ap_upload'),
+            'accent': 'purple',
+            'button_css': 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500',
+            'icon_bg': 'bg-purple-100',
+            'icon_css': 'text-purple-600',
+            'count': ap_count,
+            'published': ap_published,
+        },
+        {
+            'key': 'sat',
+            'name': 'SAT',
+            'description': 'College Board SAT results with scores and percentile regions.',
+            'upload_url': reverse('dataLoader:sat_upload'),
+            'settings_url': reverse('dataLoader:sat_settings'),
+            'accent': 'emerald',
+            'button_css': 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500',
+            'icon_bg': 'bg-emerald-100',
+            'icon_css': 'text-emerald-600',
+            'count': sat_count,
+            'published': sat_published,
+        },
+    ]
+
+
+class DataLoaderDashboardView(ProjectAdminRequiredMixin, TemplateView):
+    """Dashboard: loader cards + a unified, browsable list of recent imports."""
     template_name = 'dataLoader/dashboard.html'
-    context_object_name = 'imports'
-    paginate_by = 20
-    
-    def get_queryset(self):
-        return ImportLog.objects.select_related(
-            'survey_definition', 'uploaded_by'
-        ).order_by('-uploaded_at')
-    
+    page_size = 25
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+
+        survey_imports = list(
+            ImportLog.objects.select_related('survey_definition', 'uploaded_by')
+            .order_by('-uploaded_at')[:100]
+        )
+        ap_imports = list(
+            APImportLog.objects.select_related('uploaded_by').order_by('-uploaded_at')[:100]
+        )
+        sat_imports = list(
+            SATImportLog.objects.select_related('uploaded_by').order_by('-uploaded_at')[:100]
+        )
+
+        recent = (
+            [_normalize_survey_import(o) for o in survey_imports]
+            + [_normalize_ap_import(o) for o in ap_imports]
+            + [_normalize_sat_import(o) for o in sat_imports]
+        )
+        recent.sort(key=lambda r: r['uploaded_at'], reverse=True)
+
+        type_filter = self.request.GET.get('type', '').strip().lower()
+        if type_filter in ('survey', 'ap', 'sat'):
+            recent = [r for r in recent if r['type'] == type_filter]
+
+        paginator = Paginator(recent, self.page_size)
+        page_obj = paginator.get_page(self.request.GET.get('page'))
+
+        context['loader_cards'] = _build_loader_cards()
+        context['page_obj'] = page_obj
+        context['recent_imports'] = page_obj.object_list
+        context['is_paginated'] = page_obj.has_other_pages()
+        context['total_import_count'] = (
+            ImportLog.objects.count() + APImportLog.objects.count() + SATImportLog.objects.count()
+        )
+        context['published_import_count'] = (
+            ImportLog.objects.filter(ready_for_exploration=True).count()
+            + APImportLog.objects.filter(is_published=True).count()
+            + SATImportLog.objects.filter(is_published=True).count()
+        )
         context['survey_definitions'] = SurveyDefinition.objects.filter(
             is_active=True
         ).order_by('-school_year')
-        context['ap_imports'] = APImportLog.objects.select_related(
-            'uploaded_by'
-        ).order_by('-uploaded_at')[:20]
-        context['ap_import_count'] = APImportLog.objects.count()
+        context['type_filter'] = type_filter
+        context['type_counts'] = {
+            'all': ImportLog.objects.count() + APImportLog.objects.count() + SATImportLog.objects.count(),
+            'survey': ImportLog.objects.count(),
+            'ap': APImportLog.objects.count(),
+            'sat': SATImportLog.objects.count(),
+        }
         return context
 
 
@@ -1055,5 +1235,443 @@ def _invalidate_ap_caches():
         cache.delete_pattern('ap_columns*')
         cache.delete_pattern('dv_ap_exam_cols*')
         cache.delete_pattern('dv_ap_award_cols*')
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SAT Results import
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SATUploadView(ProjectAdminRequiredMixin, View):
+    template_name = 'dataLoader/sat_upload.html'
+
+    def get(self, request):
+        context = {
+            'school_year_choices': get_school_year_choices(),
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        name = request.POST.get('name', '').strip()
+        school_year = request.POST.get('school_year', '')
+        csv_file = request.FILES.get('csv_file')
+
+        errors = []
+        if not name:
+            errors.append("Upload name is required")
+        if not school_year:
+            errors.append("School year is required")
+        if not csv_file:
+            errors.append("CSV file is required")
+
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+            return redirect('dataLoader:sat_upload')
+
+        try:
+            file_content = csv_file.read().decode('utf-8-sig')
+        except UnicodeDecodeError:
+            csv_file.seek(0)
+            try:
+                file_content = csv_file.read().decode('latin-1')
+            except Exception as e:
+                messages.error(request, f"Could not decode CSV file: {e}")
+                return redirect('dataLoader:sat_upload')
+
+        file_hash = hashlib.sha256(file_content.encode()).hexdigest()
+
+        tmp_dir = os.path.join(tempfile.gettempdir(), 'sat_uploads')
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_path = os.path.join(tmp_dir, f"{file_hash}.csv")
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            f.write(file_content)
+
+        from .utils.sat_column_analyzer import analyze_sat_csv
+        from .utils.sat_school_resolver import resolve_school_short_name
+
+        try:
+            analysis = analyze_sat_csv(file_content, csv_file.name)
+        except Exception as e:
+            messages.error(request, f"Could not analyze CSV: {e}")
+            return redirect('dataLoader:sat_upload')
+
+        request.session['sat_upload_data'] = {
+            'name': name,
+            'school_year': school_year,
+            'filename': csv_file.name,
+            'file_hash': file_hash,
+            'tmp_path': tmp_path,
+            'analysis': {
+                'student_columns': analysis.student_columns,
+                'score_columns': analysis.score_columns,
+                'percentile_columns': analysis.percentile_columns,
+                'total_students': analysis.total_students,
+                'total_with_scores': analysis.total_with_scores,
+                'total_missing_state_id': analysis.total_missing_state_id,
+                'available_percentile_regions': analysis.available_percentile_regions,
+                'header_row_index': analysis.header_row_index,
+                'total_columns': analysis.total_columns,
+                'warnings': analysis.warnings,
+                'sample_students': [
+                    {
+                        'last_name': s.last_name,
+                        'first_name': s.first_name,
+                        'state_student_id': s.state_student_id,
+                        'cb_id': s.cb_id,
+                        'dob': s.dob,
+                        'school_code': s.school_code,
+                        'school_name': resolve_school_short_name(s.school_name, s.school_code),
+                        'test_date': s.test_date,
+                        'total_score': s.total_score,
+                        'ebrw_score': s.ebrw_score,
+                        'math_score': s.math_score,
+                    }
+                    for s in analysis.sample_students
+                ],
+            }
+        }
+
+        return redirect('dataLoader:sat_preview')
+
+
+class SATPreviewView(ProjectAdminRequiredMixin, View):
+    template_name = 'dataLoader/sat_preview.html'
+
+    def get(self, request):
+        upload_data = request.session.get('sat_upload_data')
+        if not upload_data:
+            messages.warning(request, "No upload data found. Please upload a file first.")
+            return redirect('dataLoader:sat_upload')
+
+        from .utils.sat_student_matcher import SATStudentMatcher
+        from .utils.sat_column_analyzer import parse_sat_csv_rows, parse_date, parse_int, _to_str
+        from .utils.sat_response_loader import build_record_key
+
+        matcher = SATStudentMatcher(upload_data['school_year'])
+        analysis = upload_data['analysis']
+        diagnostics = []
+
+        db_students = matcher.total_students_loaded
+        diagnostics.append(f"Database: {db_students} student records loaded for school year {upload_data['school_year']}")
+        if db_students == 0:
+            diagnostics.append(
+                f"WARNING: No students found in StudentEnroll for school year '{upload_data['school_year']}'. "
+                "Check that the school year matches the database."
+            )
+
+        try:
+            tmp_path = upload_data.get('tmp_path', '')
+            if tmp_path and os.path.exists(tmp_path):
+                with open(tmp_path, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+            else:
+                file_content = upload_data.get('file_content', '')
+                if not file_content:
+                    diagnostics.append("WARNING: No file content found in session or on disk.")
+        except Exception as e:
+            diagnostics.append(f"ERROR reading file: {e}")
+            file_content = upload_data.get('file_content', '')
+
+        try:
+            rows = list(parse_sat_csv_rows(file_content, analysis['header_row_index']))
+        except Exception as e:
+            diagnostics.append(f"ERROR parsing CSV: {e}")
+            rows = []
+
+        diagnostics.append(
+            f"CSV: {len(rows)} student rows parsed, "
+            f"{analysis.get('total_with_scores', 0)} with scores, "
+            f"{analysis.get('total_missing_state_id', 0)} missing STATE_STUDENT_ID"
+        )
+
+        matched_count = 0
+        unmatched_students = []
+
+        from .utils.sat_school_resolver import resolve_school_short_name
+
+        for row in rows:
+            state_student_id = _to_str(row.get('STATE_STUDENT_ID', ''))
+            cb_id = _to_str(row.get('CB_ID', ''))
+            last_name = _to_str(row.get('NAME_LAST', ''))
+            first_name = _to_str(row.get('NAME_FIRST', ''))
+            school_code = _to_str(row.get('AI_CODE', ''))
+            school_name = resolve_school_short_name(_to_str(row.get('AI_NAME', '')), school_code)
+            dob_date = parse_date(row.get('BIRTH_DATE', ''))
+            test_date = parse_date(row.get('LATEST_SAT_DATE', ''))
+
+            if not state_student_id and not cb_id and not last_name and not first_name:
+                continue
+
+            record_key = build_record_key(
+                cb_id, state_student_id, last_name, first_name,
+                dob_date.isoformat() if dob_date else "",
+                test_date.isoformat() if test_date else "",
+            )
+
+            result = matcher.match_student(
+                record_key=record_key,
+                state_student_id=state_student_id,
+                first_name=first_name,
+                last_name=last_name,
+                dob=dob_date.isoformat() if dob_date else "",
+                school=school_name,
+                cb_id=cb_id,
+            )
+
+            if result.matched:
+                matched_count += 1
+            else:
+                unmatched_students.append({
+                    'record_key': record_key,
+                    'state_student_id': state_student_id,
+                    'cb_id': cb_id,
+                    'last_name': last_name,
+                    'first_name': first_name,
+                    'dob': dob_date.isoformat() if dob_date else "",
+                    'school': school_name,
+                    'total_score': parse_int(row.get('LATEST_SAT_TOTAL', '')),
+                    'reason': result.reason or 'No match found',
+                })
+
+        context = {
+            'upload_data': upload_data,
+            'analysis': analysis,
+            'matched_count': matched_count,
+            'unmatched_count': len(unmatched_students),
+            'unmatched_students': unmatched_students[:200],
+            'total_students': analysis.get('total_students', 0),
+            'total_with_scores': analysis.get('total_with_scores', 0),
+            'total_missing_state_id': analysis.get('total_missing_state_id', 0),
+            'total_sis_students': db_students,
+            'diagnostics': diagnostics,
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        upload_data = request.session.get('sat_upload_data')
+        if not upload_data:
+            messages.error(request, "Upload data expired. Please upload again.")
+            return redirect('dataLoader:sat_upload')
+
+        manual_overrides = {}
+        for key, value in request.POST.items():
+            if key.startswith('ssid_override_') and value.strip():
+                record_key = key.replace('ssid_override_', '')
+                manual_overrides[record_key] = value.strip()
+
+        sat_import_log = SATImportLog.objects.create(
+            name=upload_data['name'],
+            school_year=upload_data['school_year'],
+            filename=upload_data['filename'],
+            file_hash=upload_data['file_hash'],
+            uploaded_by=request.user,
+            status=SATImportStatus.PENDING,
+            manual_overrides=manual_overrides,
+        )
+
+        from .utils.sat_response_loader import run_sat_import_async
+
+        tmp_path = upload_data.get('tmp_path', '')
+        if tmp_path and os.path.exists(tmp_path):
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+        else:
+            file_content = upload_data.get('file_content', '')
+
+        run_sat_import_async(
+            import_log_id=sat_import_log.pk,
+            file_content=file_content,
+            analysis_data=upload_data['analysis'],
+            user_id=request.user.pk,
+        )
+
+        del request.session['sat_upload_data']
+
+        messages.info(request, "SAT import started! Progress will update automatically.")
+        return redirect('dataLoader:sat_import_progress', pk=sat_import_log.pk)
+
+
+@project_admin_required
+def sat_student_search(request):
+    first_name = request.GET.get('first_name', '').strip()
+    last_name = request.GET.get('last_name', '').strip()
+    school_year = request.GET.get('school_year', '').strip()
+
+    if not school_year:
+        return JsonResponse({'error': 'School year is required'}, status=400)
+
+    from .utils.sat_student_matcher import SATStudentMatcher
+    matcher = SATStudentMatcher(school_year)
+    results = matcher.search_students(first_name=first_name, last_name=last_name)
+
+    return JsonResponse({'students': results})
+
+
+class SATImportDetailView(ProjectAdminRequiredMixin, DetailView):
+    model = SATImportLog
+    template_name = 'dataLoader/sat_import_detail.html'
+    context_object_name = 'import_log'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        import_log = self.object
+
+        context['sat_results'] = SATResult.objects.filter(
+            import_log=import_log
+        )[:50]
+
+        match_rate = 0
+        total = import_log.students_matched + import_log.students_unmatched
+        if total > 0:
+            match_rate = round((import_log.students_matched / total) * 100)
+        context['match_rate'] = match_rate
+
+        return context
+
+
+class SATImportProgressView(ProjectAdminRequiredMixin, DetailView):
+    model = SATImportLog
+    template_name = 'dataLoader/sat_import_progress.html'
+    context_object_name = 'import_log'
+
+
+@project_admin_required
+def sat_import_status(request, pk):
+    import_log = get_object_or_404(SATImportLog, pk=pk)
+
+    progress = 0
+    if import_log.total_students > 0:
+        progress = int((import_log.records_processed / import_log.total_students) * 100)
+
+    return JsonResponse({
+        'status': import_log.status,
+        'status_display': import_log.get_status_display(),
+        'records_processed': import_log.records_processed,
+        'total_students': import_log.total_students,
+        'records_detected': import_log.records_detected,
+        'records_created': import_log.records_created,
+        'records_skipped': import_log.records_skipped,
+        'students_matched': import_log.students_matched,
+        'students_unmatched': import_log.students_unmatched,
+        'error_count': import_log.error_count,
+        'progress': progress,
+        'is_complete': import_log.status in [
+            SATImportStatus.COMPLETED, SATImportStatus.FAILED, SATImportStatus.PARTIAL
+        ],
+    })
+
+
+@project_admin_required
+def sat_delete_import(request, pk):
+    sat_import_log = get_object_or_404(SATImportLog, pk=pk)
+
+    if request.method == 'POST':
+        name = sat_import_log.name
+        record_count = SATResult.objects.filter(import_log=sat_import_log).count()
+        sat_import_log.delete()
+
+        messages.success(
+            request,
+            f"Deleted SAT import '{name}' and {record_count:,} SAT results."
+        )
+        return redirect('dataLoader:dashboard')
+
+    record_count = SATResult.objects.filter(import_log=sat_import_log).count()
+
+    return render(request, 'dataLoader/sat_delete_confirm.html', {
+        'import_log': sat_import_log,
+        'record_count': record_count,
+    })
+
+
+@project_admin_required
+def sat_toggle_publish(request, pk):
+    """Toggle whether a SAT import is published (available in the Data Explorer)."""
+    sat_import_log = get_object_or_404(SATImportLog, pk=pk)
+
+    if request.method != 'POST':
+        return redirect('dataLoader:sat_import_detail', pk=pk)
+
+    if sat_import_log.status != SATImportStatus.COMPLETED:
+        messages.error(request, "Only completed SAT imports can be published.")
+        return redirect('dataLoader:sat_import_detail', pk=pk)
+
+    if sat_import_log.is_published:
+        sat_import_log.is_published = False
+        sat_import_log.published_at = None
+        sat_import_log.published_by = None
+        sat_import_log.save(update_fields=['is_published', 'published_at', 'published_by'])
+        messages.success(request, f"'{sat_import_log.name}' unpublished from Data Exploration.")
+    else:
+        sat_import_log.is_published = True
+        sat_import_log.published_at = timezone.now()
+        sat_import_log.published_by = request.user
+        sat_import_log.save(update_fields=['is_published', 'published_at', 'published_by'])
+        messages.success(request, f"'{sat_import_log.name}' is now available in Data Exploration.")
+
+    _invalidate_sat_caches()
+
+    from .utils.sat_response_loader import run_sat_clickhouse_sync_async
+    run_sat_clickhouse_sync_async()
+
+    return redirect('dataLoader:sat_import_detail', pk=pk)
+
+
+class SATSettingsView(ProjectAdminRequiredMixin, View):
+    """Global SAT publish settings page (percentiles + latest/highest)."""
+    template_name = 'dataLoader/sat_settings.html'
+
+    def get(self, request):
+        context = {
+            'sat_settings': SATSettings.get_solo(),
+            'percentile_region_choices': SAT_PERCENTILE_REGIONS,
+            'percentile_metric_choices': SAT_PERCENTILE_METRICS,
+            'published_import_count': SATImportLog.objects.filter(is_published=True).count(),
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        regions = [r for r in request.POST.getlist('percentile_regions') if r in dict(SAT_PERCENTILE_REGIONS)]
+        metrics = [m for m in request.POST.getlist('percentile_metrics') if m in dict(SAT_PERCENTILE_METRICS)]
+        result_mode = request.POST.get('result_mode', 'latest')
+        if result_mode not in ('latest', 'highest'):
+            result_mode = 'latest'
+        highest_metric = request.POST.get('highest_metric', 'total')
+        if highest_metric not in ('total', 'rw', 'math'):
+            highest_metric = 'total'
+
+        settings_obj = SATSettings.get_solo()
+        settings_obj.percentile_regions = regions
+        settings_obj.percentile_metrics = metrics
+        settings_obj.result_mode = result_mode
+        settings_obj.highest_metric = highest_metric
+        settings_obj.updated_by = request.user
+        settings_obj.save()
+
+        _invalidate_sat_caches()
+
+        if request.POST.get('republish'):
+            from .utils.sat_response_loader import run_sat_clickhouse_sync_async
+            run_sat_clickhouse_sync_async()
+            messages.success(
+                request,
+                "SAT settings saved. Re-publishing SAT data to Data Exploration in the background."
+            )
+        else:
+            messages.success(
+                request,
+                "SAT settings saved. Re-publish SAT data to apply them in Data Exploration."
+            )
+        return redirect('dataLoader:sat_settings')
+
+
+def _invalidate_sat_caches():
+    """Invalidate cached SAT column structures so publish changes reflect immediately."""
+    from django.core.cache import cache
+    try:
+        cache.delete_pattern('sat_columns*')
+        cache.delete_pattern('dv_sat_cols*')
     except Exception:
         pass

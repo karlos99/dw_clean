@@ -15,7 +15,7 @@ import statistics
 
 from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
-from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL, normalize_score_value
+from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL, normalize_score_value, parse_sat_column_key, sat_column_db_field, parse_apall_sort_key
 from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from ..survey_utils import get_survey_columns
 from .student_data_utils import (
@@ -308,6 +308,48 @@ def get_column_statistics(request):
 
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            # AP "All Results" wide-pair columns (apall_<year>_<i>_SUBJECT|PL)
+            if col.startswith('apall_'):
+                apall_parsed = parse_apall_sort_key(col)
+                if not apall_parsed:
+                    continue
+                _apall_year = apall_parsed['year']
+                _apall_field = "exam_name" if apall_parsed['field'] == 'SUBJECT' else "exam_grade"
+                _apall_excludes = set()
+                _excl_vals = filters_to_apply.get(f"apall_{_apall_year.replace('-', '_')}")
+                if isinstance(_excl_vals, list):
+                    _apall_excludes = {
+                        str(v)[len('exclude:'):] for v in _excl_vals if str(v).startswith('exclude:')
+                    }
+                _excl_clause = ""
+                _excl_params = []
+                if _apall_excludes:
+                    _placeholders = ", ".join(["%s"] * len(_apall_excludes))
+                    _excl_clause = f" AND e.name NOT IN ({_placeholders})"
+                    _excl_params = sorted(_apall_excludes)
+                _rank_sql = (
+                    "SELECT ssid FROM ("
+                    " SELECT a.ssid, e.name AS exam_name, a.exam_grade,"
+                    " row_number() OVER (PARTITION BY a.ssid ORDER BY e.name) AS rn"
+                    " FROM \"dataLoader_apexamresult\" a"
+                    " INNER JOIN \"dataLoader_apexamcode\" e ON a.exam_id = e.code"
+                    " INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id"
+                    " WHERE a.admin_year = %s AND il.is_published = true"
+                    f"{_excl_clause}"
+                    ") t WHERE rn = %s"
+                )
+                _rank_params = [_apall_year] + _excl_params + [apall_parsed['index']]
+                _conditions = []
+                if real_values:
+                    _conditions.append(f"cs.ssid IN ({_rank_sql} AND t.{_apall_field} = ANY(%s))")
+                    params.extend(_rank_params + [real_values])
+                if has_blank:
+                    _conditions.append(f"cs.ssid NOT IN ({_rank_sql} AND t.{_apall_field} IS NOT NULL AND t.{_apall_field} <> '')")
+                    params.extend(_rank_params)
+                if _conditions:
+                    where_clauses.append(f"({' OR '.join(_conditions)})")
                 continue
 
             # AP exam performance-level columns (ap_<year>_<subject>_PL)
@@ -641,6 +683,23 @@ def get_column_statistics(request):
             except Exception:
                 ap_exam_infos = ap_award_infos = []
 
+        selected_sat_cols = list(set(
+            [c for c in filter_keys if isinstance(c, str) and c.startswith('sat_')] +
+            [c for c in target_columns if isinstance(c, str) and c.startswith('sat_')]
+        ))
+        sat_infos = []
+        for _col in selected_sat_cols:
+            _parsed = parse_sat_column_key(_col)
+            if _parsed:
+                sat_infos.append({
+                    'col_name': _col,
+                    'year': _parsed['year'],
+                    'kind': _parsed['kind'],
+                    'field': _parsed.get('field'),
+                    'region': _parsed.get('region'),
+                    'metric': _parsed.get('metric'),
+                })
+
         # Build Base Where
         base_where_clauses = ["1=1"]
         base_params = []
@@ -807,6 +866,47 @@ def get_column_statistics(request):
                     _survey_meta['question_order'],
                 ]
 
+            # --- AP "All Results" wide-pair columns (apall_<year>_<i>_SUBJECT|PL) ---
+            elif col.startswith('apall_'):
+                apall_parsed = parse_apall_sort_key(col)
+                if not apall_parsed:
+                    continue
+                is_string_stats_column = True
+                _apall_year = apall_parsed['year']
+                _apall_excludes = set()
+                _excl_vals = filters.get(f"apall_{_apall_year.replace('-', '_')}") if isinstance(filters, dict) else None
+                if isinstance(_excl_vals, list):
+                    _apall_excludes = {
+                        str(v)[len('exclude:'):] for v in _excl_vals if str(v).startswith('exclude:')
+                    }
+                _excl_clause = ""
+                _excl_params = []
+                if _apall_excludes:
+                    _placeholders = ", ".join(["%s"] * len(_apall_excludes))
+                    _excl_clause = f" AND e.name NOT IN ({_placeholders})"
+                    _excl_params = sorted(_apall_excludes)
+                _val_expr = "e.name" if apall_parsed['field'] == 'SUBJECT' else "a.exam_grade"
+                query = f"""
+                    SELECT val, COUNT(*) as cnt
+                    FROM (
+                        SELECT {_val_expr} AS val,
+                               row_number() OVER (PARTITION BY a.ssid ORDER BY e.name) AS rn
+                        FROM "dataLoader_apexamresult" a
+                        INNER JOIN "dataLoader_apexamcode" e ON a.exam_id = e.code
+                        INNER JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                        WHERE a.ssid IN (
+                            SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
+                        )
+                        AND a.admin_year = %s
+                        AND il.is_published = true
+                        {_excl_clause}
+                    ) t
+                    WHERE rn = %s AND val IS NOT NULL AND val <> ''
+                    GROUP BY val
+                    ORDER BY val
+                """
+                q_params = base_params + [_apall_year] + _excl_params + [apall_parsed['index']]
+
             # --- AP Exam PL Columns ---
             elif col.startswith('ap_') and not col.startswith('apaward_') and not col.startswith('apawards_all_'):
                 ap_info = next((i for i in ap_exam_infos if i['col_name'] == col), None)
@@ -867,6 +967,30 @@ def get_column_statistics(request):
                         ORDER BY val
                     """
                     q_params = base_params + [ap_info['year'], ap_info['award']]
+
+            # --- SAT Score / Percentile Columns ---
+            elif col.startswith('sat_'):
+                sat_info = next((i for i in sat_infos if i['col_name'] == col), None)
+                if not sat_info:
+                    continue
+                sat_db_field = sat_column_db_field(col)
+                if not sat_db_field:
+                    continue
+                is_string_stats_column = True
+                query = f"""
+                    SELECT r.{sat_db_field}::text as val, COUNT(*) as cnt
+                    FROM "dataLoader_satresult" r
+                    INNER JOIN "dataLoader_satimportlog" il ON r.import_log_id = il.id
+                    WHERE r.ssid IN (
+                        SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
+                    )
+                    AND r.school_year = %s
+                    AND il.is_published = true
+                    AND r.{sat_db_field} IS NOT NULL
+                    GROUP BY val
+                    ORDER BY val
+                """
+                q_params = base_params + [sat_info['year']]
 
             # --- Standard Columns ---
             else:

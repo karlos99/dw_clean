@@ -39,6 +39,7 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'student_attendance', 'student_incidents',
     'analytics_student_profile', 'analytics_student_results',
     'analytics_student_marks', 'analytics_ap_results', 'analytics_ap_awards',
+    'analytics_sat_results',
     'analytics_survey_responses',
 })
 
@@ -55,6 +56,11 @@ _PG_ONLY_TABLE_MARKERS = (
     'elementary_homeroom_teacher',
     'students',
     'dataexploration_studentlistitem',
+    # Data Loader tables (AP/SAT/survey imports, import logs, lookups) are not
+    # part of the ClickHouse read model. Filter-option and metadata queries that
+    # reference them must run on PostgreSQL or ClickHouse raises "Unknown table
+    # expression identifier".
+    'dataloader_',
 )
 
 

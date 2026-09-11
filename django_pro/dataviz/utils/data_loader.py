@@ -641,6 +641,106 @@ def _fetch_ap_award_data(students: list[dict], award_infos: list[dict]):
                 s_obj[info['col_name']] = ', '.join(sorted(a for a in awards if a))
 
 
+def _fetch_sat_rows_from_pg(ssids: list[str]) -> list[dict]:
+    """Fallback: read published SAT rows from Postgres and resolve latest/highest."""
+    from dataLoader.models import SATSettings
+
+    columns = [
+        ('ssid', 'r.ssid'), ('school_year', 'r.school_year'),
+        ('test_date', 'r.test_date'), ('school_name', 'r.school_name'),
+        ('total_score', 'r.total_score'), ('ebrw_score', 'r.ebrw_score'), ('math_score', 'r.math_score'),
+        ('percentile_state_total', 'r.percentile_state_total'),
+        ('percentile_state_rw', 'r.percentile_state_rw'),
+        ('percentile_state_math', 'r.percentile_state_math'),
+        ('percentile_country_total', 'r.percentile_country_total'),
+        ('percentile_country_rw', 'r.percentile_country_rw'),
+        ('percentile_country_math', 'r.percentile_country_math'),
+        ('percentile_natrep_total', 'r.percentile_natrep_total'),
+        ('percentile_natrep_rw', 'r.percentile_natrep_rw'),
+        ('percentile_natrep_math', 'r.percentile_natrep_math'),
+        ('percentile_natuser_total', 'r.percentile_natuser_total'),
+        ('percentile_natuser_rw', 'r.percentile_natuser_rw'),
+        ('percentile_natuser_math', 'r.percentile_natuser_math'),
+    ]
+    col_names = [name for name, _ in columns]
+    select_cols = ', '.join(f'{expr} AS {name}' for name, expr in columns)
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT {select_cols}
+                FROM "dataLoader_satresult" r
+                JOIN "dataLoader_satimportlog" il ON r.import_log_id = il.id
+                WHERE r.ssid = ANY(%s) AND il.is_published = true
+                """,
+                [ssids],
+            )
+            rows = [dict(zip(col_names, row)) for row in cursor.fetchall()]
+    except Exception:
+        return []
+
+    try:
+        sat_settings = SATSettings.get_solo()
+        mode = sat_settings.result_mode
+        highest_metric = sat_settings.highest_metric
+    except Exception:
+        mode, highest_metric = 'latest', 'total'
+
+    metric_attr = {'total': 'total_score', 'rw': 'ebrw_score', 'math': 'math_score'}.get(
+        highest_metric, 'total_score'
+    )
+
+    best: dict = {}
+    for row in rows:
+        key = (str(row.get('ssid') or '').strip(), str(row.get('school_year') or '').strip())
+        current = best.get(key)
+        if current is None:
+            best[key] = row
+            continue
+        if mode == 'highest':
+            if (row.get(metric_attr) or -1) > (current.get(metric_attr) or -1):
+                best[key] = row
+        else:
+            if (str(row.get('test_date') or '')) > (str(current.get('test_date') or '')):
+                best[key] = row
+    return list(best.values())
+
+
+def _fetch_sat_data(students: list[dict], sat_infos: list[dict]):
+    """Bulk-fetch SAT scores/percentiles and merge into *students* in-place."""
+    if not students or not sat_infos:
+        return
+    ssids = list({str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()})
+    if not ssids:
+        return
+
+    from dataexploration.column_utils import sat_column_db_field
+
+    rows = _analytics_rows(
+        "SELECT * FROM analytics_sat_results WHERE ssid = ANY(%s)",
+        [ssids],
+    )
+    if rows is None:
+        rows = _fetch_sat_rows_from_pg(ssids)
+
+    by_key = {}
+    for row in rows:
+        ssid = str(row.get('ssid') or '').strip()
+        year = str(row.get('school_year') or '').strip()
+        by_key[(ssid, year)] = row
+
+    for student in students:
+        ssid = str(student.get('ssid') or '').strip()
+        for info in sat_infos:
+            row = by_key.get((ssid, info.get('year')))
+            field = sat_column_db_field(info['col_name'])
+            value = row.get(field) if (row and field) else None
+            if value is None or str(value).strip() == '':
+                student[info['col_name']] = '\u2014'
+            else:
+                student[info['col_name']] = str(value).strip()
+
+
 def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str], students: list[dict],
                      tested_school_codes: list[str] | None = None):
     """Bulk-fetch test scores and merge into student dicts (mutates *students* in-place).

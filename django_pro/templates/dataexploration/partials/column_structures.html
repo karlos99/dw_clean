@@ -273,6 +273,29 @@
                         class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
                     <span class="text-sm font-semibold text-slate-800">All Results</span>
                 </label>
+
+                {% comment %}Subject picker for "All Results": lets users uncheck subjects
+                   they don't want included in the assessment/result wide pairs. Hidden
+                   until the umbrella is selected (toggled in student_tests_app.js).{% endcomment %}
+                <div data-apall-subject-box data-apall-year="{{ year }}" class="hidden ml-1 mt-0.5 space-y-1">
+                    <div class="flex items-center justify-between px-1">
+                        <span class="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Include subjects</span>
+                        <span data-apall-subject-hint class="text-[10px] text-slate-400"></span>
+                    </div>
+                    <div class="ml-1 space-y-0.5 pl-2 border-l border-indigo-100">
+                        {% for subject, metrics in bucket.subjects.items %}
+                        <label class="flex items-center gap-1.5 p-0.5 hover:bg-indigo-50 rounded cursor-pointer transition-colors"
+                               title="{{ subject }}">
+                            <input type="checkbox" data-apall-subject="1"
+                                data-apall-subject-name="{{ subject }}"
+                                data-apall-year="{{ year }}"
+                                class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5 flex-shrink-0"
+                                checked>
+                            <span class="text-xs text-slate-700 truncate">{{ subject }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
                 {% endif %}
                 {% for subject, metrics in bucket.subjects.items %}
                 <div class="pl-2 border-l border-slate-200">
@@ -330,6 +353,91 @@
         {% endfor %}
             </div>
         </div>
+        {% if sat_structure %}
+        {# SAT group — College Board SAT scores + percentiles loaded by Data Loader #}
+        <div class="border-b border-slate-100 pb-1 mt-2">
+            <button data-toggle-category="sat_group"
+                class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
+                <span class="text-xs font-semibold text-slate-700">SAT</span>
+                <span data-caret="closed" class="text-slate-400">▶</span>
+                <span data-caret="open" class="hidden text-slate-400">▼</span>
+            </button>
+
+            <div data-category="sat_group" class="ml-3 mt-1 space-y-1 pl-3 border-l-2 border-emerald-100 hidden">
+                {% for year, bucket in sat_structure.items %}
+                {% with alias=year_to_alias|get_item:year|default:'' %}
+                <div class="mt-2" data-year-group="{{ year }}" data-year-alias="{{ alias }}">
+                    <button data-toggle-category="sat_{{ year|slugify }}"
+                        class="w-full flex items-center justify-between p-1.5 hover:bg-slate-50 rounded text-left transition-colors">
+                        <span class="text-sm font-medium text-slate-700"
+                              data-year-header-label="{{ year }}"
+                              data-specific-label="{{ year }}"
+                              data-relative-label="{{ year_labels|get_item:year|default:year }}">
+                            {{ year_labels|get_item:year|default:year }}
+                        </span>
+                        <span data-caret="closed" class="text-slate-400">▶</span>
+                        <span data-caret="open" class="hidden text-slate-400">▼</span>
+                    </button>
+
+                    <div data-category="sat_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                        {# Scores #}
+                        <div class="pl-2 border-l border-slate-200">
+                            <button data-toggle-category="sat_scores_{{ year|slugify }}"
+                                class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left transition-colors">
+                                <span class="text-xs font-semibold text-slate-700">Scores</span>
+                                <span data-caret="closed" class="text-slate-400">▶</span>
+                                <span data-caret="open" class="hidden text-slate-400">▼</span>
+                            </button>
+                            <div data-category="sat_scores_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                                {% for label, col_key in bucket.scores.items %}
+                                <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                                    <input type="checkbox" data-column="{{ col_key }}"
+                                        class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4">
+                                    <span class="text-sm text-slate-700">{{ label }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        {# Percentiles by region #}
+                        {% if bucket.percentiles %}
+                        <div class="pl-2 border-l border-slate-200">
+                            <button data-toggle-category="sat_pct_{{ year|slugify }}"
+                                class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left transition-colors">
+                                <span class="text-xs font-semibold text-slate-700">Percentiles</span>
+                                <span data-caret="closed" class="text-slate-400">▶</span>
+                                <span data-caret="open" class="hidden text-slate-400">▼</span>
+                            </button>
+                            <div data-category="sat_pct_{{ year|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                                {% for region_label, metrics in bucket.percentiles.items %}
+                                <div class="pl-2 border-l border-slate-200">
+                                    <button data-toggle-category="sat_pct_{{ year|slugify }}_{{ region_label|slugify }}"
+                                        class="w-full flex items-center justify-between p-1 hover:bg-slate-50 rounded text-left transition-colors">
+                                        <span class="text-xs font-semibold text-slate-700">{{ region_label }}</span>
+                                        <span data-caret="closed" class="text-slate-400">▶</span>
+                                        <span data-caret="open" class="hidden text-slate-400">▼</span>
+                                    </button>
+                                    <div data-category="sat_pct_{{ year|slugify }}_{{ region_label|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
+                                        {% for metric_label, col_key in metrics.items %}
+                                        <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                                            <input type="checkbox" data-column="{{ col_key }}"
+                                                class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4">
+                                            <span class="text-sm text-slate-700">{{ metric_label }}</span>
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endwith %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endif %}

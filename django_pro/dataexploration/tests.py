@@ -381,3 +381,31 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('student_marks_list', where_clauses[0])
 		self.assertIn('stu_annual_key', where_clauses[0])
+
+
+class SATColumnKeyTests(SimpleTestCase):
+	def test_sat_column_key_round_trip(self):
+		from dataexploration.column_utils import (
+			sat_column_key, parse_sat_column_key, sat_column_db_field,
+		)
+		score_key = sat_column_key('2025-2026', 'score', field='TOTAL')
+		self.assertEqual(score_key, 'sat_2025_2026_TOTAL')
+		self.assertEqual(
+			parse_sat_column_key(score_key),
+			{'year': '2025-2026', 'kind': 'score', 'field': 'TOTAL'},
+		)
+		self.assertEqual(sat_column_db_field(score_key), 'total_score')
+
+		pct_key = sat_column_key('2025-2026', 'percentile', region='natrep', metric='rw')
+		self.assertEqual(pct_key, 'sat_2025_2026_PCT_NATREP_RW')
+		parsed = parse_sat_column_key(pct_key)
+		self.assertEqual(parsed['kind'], 'percentile')
+		self.assertEqual(parsed['region'], 'natrep')
+		self.assertEqual(parsed['metric'], 'rw')
+		self.assertEqual(sat_column_db_field(pct_key), 'percentile_natrep_rw')
+
+	def test_parse_sat_column_key_rejects_other_keys(self):
+		from dataexploration.column_utils import parse_sat_column_key
+		self.assertIsNone(parse_sat_column_key('ap_2025_2026_Math_PL'))
+		self.assertIsNone(parse_sat_column_key('sat_bogus'))
+		self.assertIsNone(parse_sat_column_key('sat_2025_2026_PCT_BOGUS_RW'))

@@ -29,6 +29,7 @@ class AnalyticsRoutingTests(SimpleTestCase):
             'elementary_homeroom_teacher',
             'students',
             'dataexploration_studentlistitem',
+            'dataLoader_apimportlog',
         ]
         for table in pg_tables:
             executor = QueryExecutor(analytics=True)
