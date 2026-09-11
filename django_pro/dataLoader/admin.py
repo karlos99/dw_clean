@@ -4,6 +4,7 @@ from .models import (
     SurveyDefinition, SurveyQuestion, SurveyResponse, ImportLog,
     ResponseScaleLabel, SurveyTopic, APExamCode, APAwardType,
     APImportLog, APStudentAward, APExamResult,
+    SATImportLog, SATResult, SATSettings,
 )
 
 
@@ -233,3 +234,53 @@ class APExamResultAdmin(admin.ModelAdmin):
     search_fields = ['ap_number', 'ssid', 'ai_institution_name']
     raw_id_fields = ['import_log', 'exam']
     ordering = ['-admin_year', 'ap_number']
+
+
+@admin.register(SATImportLog)
+class SATImportLogAdmin(admin.ModelAdmin):
+    list_display = ['name', 'school_year', 'status_badge', 'students_matched',
+                    'records_created', 'records_skipped', 'uploaded_by', 'uploaded_at']
+    list_filter = ['status', 'school_year', 'uploaded_at']
+    search_fields = ['name', 'filename', 'uploaded_by__username']
+    readonly_fields = ['uploaded_at', 'completed_at', 'file_hash',
+                       'total_students', 'records_detected', 'records_created',
+                       'records_skipped', 'students_matched', 'students_unmatched',
+                       'records_processed', 'error_count']
+    ordering = ['-uploaded_at']
+
+    fieldsets = (
+        (None, {'fields': ('name', 'filename', 'school_year')}),
+        ('Upload Info', {'fields': ('uploaded_by', 'uploaded_at', 'completed_at', 'status', 'file_hash')}),
+        ('Statistics', {'fields': ('total_students', 'students_matched', 'students_unmatched',
+                                   'records_detected', 'records_created', 'records_skipped')}),
+        ('Publishing', {'fields': ('is_published', 'published_at', 'published_by')}),
+        ('Manual Overrides', {'fields': ('manual_overrides',), 'classes': ('collapse',)}),
+        ('Errors', {'fields': ('error_count', 'error_log', 'warnings'), 'classes': ('collapse',)}),
+    )
+
+    def status_badge(self, obj):
+        colors = {
+            'PENDING': 'orange', 'PROCESSING': 'blue', 'COMPLETED': 'green',
+            'FAILED': 'red', 'PARTIAL': 'yellow',
+        }
+        color = colors.get(obj.status, 'gray')
+        return format_html(
+            '<span style="background-color: {}; padding: 3px 8px; border-radius: 3px; color: white;">{}</span>',
+            color, obj.get_status_display()
+        )
+    status_badge.short_description = 'Status'
+
+
+@admin.register(SATResult)
+class SATResultAdmin(admin.ModelAdmin):
+    list_display = ['last_name', 'first_name', 'ssid', 'state_student_id', 'test_date',
+                    'total_score', 'ebrw_score', 'math_score', 'school_name']
+    list_filter = ['school_year', 'test_date', 'import_log__school_year']
+    search_fields = ['last_name', 'first_name', 'ssid', 'state_student_id', 'cb_id']
+    raw_id_fields = ['import_log']
+    ordering = ['-test_date', 'last_name']
+
+
+@admin.register(SATSettings)
+class SATSettingsAdmin(admin.ModelAdmin):
+    list_display = ['result_mode', 'highest_metric', 'updated_at', 'updated_by']

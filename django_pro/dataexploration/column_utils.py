@@ -346,6 +346,152 @@ def markall_key(year, subject):
     return f"markall_{year_key}_{subj_key}"
 
 
+# ── SAT (College Board) columns ──────────────────────────────────────────────
+SAT_REGIONS = (
+    ('state', 'State'),
+    ('country', 'Country'),
+    ('natrep', 'National'),
+    ('natuser', 'National User'),
+)
+SAT_REGION_LABELS = dict(SAT_REGIONS)
+SAT_METRICS = (
+    ('total', 'Total'),
+    ('rw', 'Reading & Writing'),
+    ('math', 'Math'),
+)
+SAT_METRIC_LABELS = dict(SAT_METRICS)
+# (field suffix, display label, ClickHouse column)
+SAT_SCORE_FIELDS = (
+    ('TOTAL', 'Total', 'total_score'),
+    ('RW', 'Reading & Writing', 'ebrw_score'),
+    ('MATH', 'Math', 'math_score'),
+    ('DATE', 'Test Date', 'test_date'),
+    ('SCHOOL', 'School', 'school_name'),
+)
+SAT_SCORE_DB_FIELDS = {f[0]: f[2] for f in SAT_SCORE_FIELDS}
+
+
+def sat_column_key(year, kind, field=None, region=None, metric=None):
+    """Build a stable column key for SAT score / percentile columns."""
+    year_key = re.sub(r'[^A-Za-z0-9_]+', '_', (year or '')).strip('_') or 'Unknown'
+    if kind == 'score':
+        return f"sat_{year_key}_{(field or 'TOTAL').upper()}"
+    region_key = (region or '').upper()
+    metric_key = (metric or '').upper()
+    return f"sat_{year_key}_PCT_{region_key}_{metric_key}"
+
+
+def parse_sat_column_key(col_key):
+    """Parse a ``sat_`` column key into year/kind/field or region/metric."""
+    if not isinstance(col_key, str) or not col_key.startswith('sat_'):
+        return None
+    parts = col_key[len('sat_'):].split('_')
+    if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    year = f"{parts[0]}-{parts[1]}"
+    rest = parts[2:]
+    if len(rest) == 1 and rest[0] in SAT_SCORE_DB_FIELDS:
+        return {'year': year, 'kind': 'score', 'field': rest[0]}
+    if (len(rest) == 3 and rest[0] == 'PCT'
+            and rest[1].lower() in SAT_REGION_LABELS
+            and rest[2].lower() in SAT_METRIC_LABELS):
+        return {
+            'year': year, 'kind': 'percentile',
+            'region': rest[1].lower(), 'metric': rest[2].lower(),
+        }
+    return None
+
+
+def sat_column_db_field(col_key):
+    """Return the analytics_sat_results column for a ``sat_`` key, or None."""
+    parsed = parse_sat_column_key(col_key)
+    if not parsed:
+        return None
+    if parsed['kind'] == 'score':
+        return SAT_SCORE_DB_FIELDS.get(parsed['field'])
+    return f"percentile_{parsed['region']}_{parsed['metric']}"
+
+
+def get_sat_columns(column_filters=None):
+    """Get dynamic SAT score/percentile columns organized by school year.
+
+    Returns structure:
+        {
+            year: {
+                'scores': {label: column_key},
+                'percentiles': {region_label: {metric_label: column_key}},
+                'available_regions': [...],
+                'available_metrics': [...],
+            }
+        }
+    Only published SAT imports contribute, and only the percentile regions /
+    metrics enabled in the global SAT publish settings are emitted.
+    """
+    cache_key = _generate_cache_key("sat_columns", column_filters, "")
+    cached_data = cache.get(cache_key)
+    if cached_data:
+        columns, definitions = cached_data
+        COLUMN_DEFINITIONS.update(definitions)
+        return columns
+
+    new_definitions = {}
+    columns = {}
+
+    with connections['default'].cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT DISTINCT r.school_year
+            FROM "dataLoader_satresult" r
+            JOIN "dataLoader_satimportlog" il ON r.import_log_id = il.id
+            WHERE il.is_published = true AND r.ssid <> ''
+            ORDER BY r.school_year DESC
+            """
+        )
+        years = [row[0] for row in cursor.fetchall() if row[0]]
+
+    try:
+        from dataLoader.models import SATSettings
+        sat_settings = SATSettings.get_solo()
+        selected_regions = set(sat_settings.percentile_regions or [])
+        selected_metrics = set(sat_settings.percentile_metrics or [])
+    except Exception:
+        selected_regions = set(SAT_REGION_LABELS)
+        selected_metrics = set(SAT_METRIC_LABELS)
+
+    regions = [r for r, _ in SAT_REGIONS if r in selected_regions]
+    metrics = [m for m, _ in SAT_METRICS if m in selected_metrics]
+
+    for year in years:
+        bucket = {
+            'scores': {},
+            'percentiles': {},
+            'available_regions': regions,
+            'available_metrics': metrics,
+        }
+        for field, label, _db in SAT_SCORE_FIELDS:
+            key = sat_column_key(year, 'score', field=field)
+            disp = f"SAT {label} ({year})"
+            COLUMN_DEFINITIONS[key] = disp
+            new_definitions[key] = disp
+            bucket['scores'][label] = key
+
+        for region in regions:
+            region_label = SAT_REGION_LABELS[region]
+            bucket['percentiles'][region_label] = {}
+            for metric in metrics:
+                metric_label = SAT_METRIC_LABELS[metric]
+                key = sat_column_key(year, 'percentile', region=region, metric=metric)
+                disp = f"SAT {metric_label} Percentile ({region_label}) ({year})"
+                COLUMN_DEFINITIONS[key] = disp
+                new_definitions[key] = disp
+                bucket['percentiles'][region_label][metric_label] = key
+
+        columns[year] = bucket
+
+    cache.set(cache_key, (columns, new_definitions), timeout=3600)
+    return columns
+
+
 def parse_markall_key(col_key):
     """Resolve a ``markall_`` umbrella/expanded key to (year, subject_norm, idx, kind).
 
@@ -466,7 +612,7 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
     # (and some, like the "All Marks" umbrella, are bookkeeping only), so skip
     # them entirely — otherwise they fall through to a bogus cs.<col> predicate.
     if isinstance(col, str) and col.startswith(
-        ('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_')
+        ('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')
     ):
         return
 
@@ -517,7 +663,7 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
             where_clauses.append(f"({' OR '.join(conditions)})")
         return
 
-    if col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_', 'ap_')):
+    if col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_', 'ap_', 'sat_')):
         where_clauses.append(f"cs.{col} = ANY(%s)")
         params.append(vals)
 

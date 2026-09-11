@@ -3,7 +3,7 @@
 import re
 from datetime import date, datetime, timezone
 
-from ..column_utils import RESULTS_BLANK_SSID_SQL, parse_markall_key, markall_key as _markall_key, get_mark_columns
+from ..column_utils import RESULTS_BLANK_SSID_SQL, parse_markall_key, markall_key as _markall_key, get_mark_columns, parse_sat_column_key, sat_column_db_field
 from .column_management import (
     get_column_expression,
     json_list_key_for_column,
@@ -368,6 +368,30 @@ def apply_column_filters(
             if real_values:
                 conditions.append(f"cs.ssid IN ({sub_base} AND t.description = ANY(%s))")
                 params.extend(sub_params + [real_values])
+            if has_blank:
+                conditions.append(f"cs.ssid NOT IN ({sub_base})")
+                params.extend(sub_params)
+            if conditions:
+                where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
+        if col.startswith('sat_'):
+            parsed = parse_sat_column_key(col)
+            if not parsed:
+                continue
+            sat_db_field = sat_column_db_field(col)
+            if not sat_db_field:
+                continue
+            sub_base = (
+                "SELECT r.ssid FROM \"dataLoader_satresult\" r "
+                "INNER JOIN \"dataLoader_satimportlog\" il ON r.import_log_id = il.id "
+                "WHERE r.school_year = %s AND il.is_published = true "
+            )
+            sub_params = [parsed['year']]
+            conditions = []
+            if real_values:
+                conditions.append(f"cs.ssid IN ({sub_base} AND r.{sat_db_field}::text = ANY(%s))")
+                params.extend(sub_params + [[str(v) for v in real_values]])
             if has_blank:
                 conditions.append(f"cs.ssid NOT IN ({sub_base})")
                 params.extend(sub_params)

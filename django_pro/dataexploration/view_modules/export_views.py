@@ -15,6 +15,7 @@ from ..column_utils import (
     enrich_students_tests_marks,
     parse_markall_key,
     markall_key as _markall_key,
+    parse_sat_column_key,
 )
 from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
 from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
@@ -247,10 +248,14 @@ def export_students_csv(request):
         [c for c in selected_columns if isinstance(c, str) and (c.startswith('apaward_') or c.startswith('apawards_all_'))] +
         [k for k in filter_keys if isinstance(k, str) and (k.startswith('apaward_') or k.startswith('apawards_all_'))]
     ))
+    selected_sat_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
+    ))
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
-        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_')))
+        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
         and c in COLUMN_DEFINITIONS
     ]
 
@@ -495,6 +500,19 @@ def export_students_csv(request):
                                 ap_award_infos, _ = _build_ap_award_columns_from_db(ap_meta_cursor, selected_award_cols)
                     except Exception:
                         ap_exam_infos = ap_award_infos = []
+
+                sat_infos = []
+                for _col in selected_sat_cols:
+                    _parsed = parse_sat_column_key(_col)
+                    if _parsed:
+                        sat_infos.append({
+                            'col_name': _col,
+                            'year': _parsed['year'],
+                            'kind': _parsed['kind'],
+                            'field': _parsed.get('field'),
+                            'region': _parsed.get('region'),
+                            'metric': _parsed.get('metric'),
+                        })
 
                 # Prepare Dynamic Headers
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
@@ -768,6 +786,13 @@ def export_students_csv(request):
                     enrich_students_tests_marks(
                         chunk_students, test_cols_info, mark_cols_info, blank='',
                     )
+
+                    if sat_infos:
+                        try:
+                            from dataviz.utils.data_loader import _fetch_sat_data
+                            _fetch_sat_data(chunk_students, sat_infos)
+                        except Exception:
+                            pass
 
                     # Fetch Marks "All Marks" wide-pair data for this chunk
                     if markall_years:

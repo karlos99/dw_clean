@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}SAT Import Detail - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">SAT Import</li>
+            </ol>
+        </nav>
+        <div class="flex justify-between items-start">
+            <div>
+                <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ import_log.name }}</h1>
+                <p class="mt-1 text-slate-500">{{ import_log.school_year }} — {{ import_log.filename }}</p>
+                <p class="text-sm text-slate-400">Uploaded {{ import_log.uploaded_at|date:"M d, Y H:i" }}</p>
+            </div>
+            <div>
+                {% if import_log.status == 'COMPLETED' %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-green-100 text-green-800">Completed</span>
+                {% elif import_log.status == 'FAILED' %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-red-100 text-red-800">Failed</span>
+                {% elif import_log.status == 'PROCESSING' %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-blue-100 text-blue-800">Processing</span>
+                {% elif import_log.status == 'PARTIAL' %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-amber-100 text-amber-800">Partial</span>
+                {% else %}
+                <span class="inline-flex px-3 py-1 text-sm font-semibold rounded-full bg-slate-100 text-slate-800">{{ import_log.get_status_display }}</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm text-slate-500">Students</p>
+            <p class="text-2xl font-bold text-slate-900">{{ import_log.total_students }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm text-slate-500">Match Rate</p>
+            <p class="text-2xl font-bold {% if match_rate >= 90 %}text-green-600{% elif match_rate >= 50 %}text-amber-600{% else %}text-red-600{% endif %}">
+                {{ match_rate }}%
+            </p>
+            <p class="text-xs text-slate-400">{{ import_log.students_matched }} matched / {{ import_log.students_unmatched }} unmatched</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm text-slate-500">Records Created</p>
+            <p class="text-2xl font-bold text-emerald-600">{{ import_log.records_created }}</p>
+            {% if import_log.records_skipped > 0 %}
+            <p class="text-xs text-slate-400">{{ import_log.records_skipped }} skipped (already existed)</p>
+            {% endif %}
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm text-slate-500">Errors</p>
+            <p class="text-2xl font-bold {% if import_log.error_count %}text-red-600{% else %}text-slate-900{% endif %}">{{ import_log.error_count }}</p>
+        </div>
+    </div>
+
+    <!-- SAT Publish Settings (global) -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+        <h2 class="text-lg font-semibold text-slate-900 mb-1">SAT Publish Settings</h2>
+        <p class="text-sm text-slate-500 mb-4">Global settings that control which SAT data appears in Data Exploration. Changes apply to all published SAT imports when re-published.</p>
+        <form method="post" action="{% url 'dataLoader:save_sat_settings' import_log.pk %}" class="space-y-5">
+            {% csrf_token %}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                    <p class="text-sm font-medium text-slate-700 mb-2">Percentile Regions</p>
+                    <div class="space-y-2">
+                        {% for value, label in percentile_region_choices %}
+                        <label class="flex items-center space-x-2 text-sm text-slate-700">
+                            <input type="checkbox" name="percentile_regions" value="{{ value }}"
+                                   {% if value in sat_settings.percentile_regions %}checked{% endif %}
+                                   class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+                            <span>{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div>
+                    <p class="text-sm font-medium text-slate-700 mb-2">Percentile Metrics</p>
+                    <div class="space-y-2">
+                        {% for value, label in percentile_metric_choices %}
+                        <label class="flex items-center space-x-2 text-sm text-slate-700">
+                            <input type="checkbox" name="percentile_metrics" value="{{ value }}"
+                                   {% if value in sat_settings.percentile_metrics %}checked{% endif %}
+                                   class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
+                            <span>{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div>
+                    <p class="text-sm font-medium text-slate-700 mb-2">Multiple Results</p>
+                    <div class="space-y-2 text-sm text-slate-700">
+                        <label class="flex items-center space-x-2">
+                            <input type="radio" name="result_mode" value="latest"
+                                   {% if sat_settings.result_mode == 'latest' %}checked{% endif %}
+                                   class="border-slate-300 text-emerald-600 focus:ring-emerald-500">
+                            <span>Latest administration</span>
+                        </label>
+                        <label class="flex items-center space-x-2">
+                            <input type="radio" name="result_mode" value="highest"
+                                   {% if sat_settings.result_mode == 'highest' %}checked{% endif %}
+                                   class="border-slate-300 text-emerald-600 focus:ring-emerald-500">
+                            <span>Highest score</span>
+                        </label>
+                        <div class="pl-6">
+                            <label for="highest_metric" class="block text-xs text-slate-500 mb-1">Rank highest by</label>
+                            <select name="highest_metric" id="highest_metric"
+                                    class="w-full px-3 py-1.5 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
+                                <option value="total" {% if sat_settings.highest_metric == 'total' %}selected{% endif %}>Total</option>
+                                <option value="rw" {% if sat_settings.highest_metric == 'rw' %}selected{% endif %}>Reading &amp; Writing</option>
+                                <option value="math" {% if sat_settings.highest_metric == 'math' %}selected{% endif %}>Math</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 pt-2 border-t border-slate-200">
+                <button type="submit"
+                        class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition duration-200">
+                    Save Settings
+                </button>
+                <span class="text-xs text-slate-400">Last updated {{ sat_settings.updated_at|date:"M d, Y H:i" }}</span>
+            </div>
+        </form>
+
+        {% if import_log.is_published %}
+        <form method="post" action="{% url 'dataLoader:republish_sat' import_log.pk %}" class="mt-4 pt-4 border-t border-slate-200">
+            {% csrf_token %}
+            <button type="submit"
+                    class="px-4 py-2 border border-emerald-300 text-emerald-700 rounded-md hover:bg-emerald-50 transition duration-200">
+                Re-publish SAT Data
+            </button>
+            <span class="text-xs text-slate-400 ml-2">Re-syncs published SAT results to Data Exploration using the settings above.</span>
+        </form>
+        {% endif %}
+    </div>
+
+    <!-- Manual Overrides -->
+    {% if import_log.manual_overrides %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+        <h2 class="text-lg font-semibold text-slate-900 mb-4">Manual SSID Overrides ({{ import_log.manual_overrides|length }})</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+            {% for key, ssid in import_log.manual_overrides.items %}
+            <span class="text-sm text-slate-600 break-all">{{ key }} → {{ ssid }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Results Sample -->
+    {% if sat_results %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">SAT Results (showing first 50)</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Student</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">SSID</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Test Date</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Total</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">RW</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Math</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">School</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for result in sat_results %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-900">{{ result.last_name }}, {{ result.first_name }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ result.ssid|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ result.test_date|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-slate-900">{{ result.total_score|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ result.ebrw_score|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ result.math_score|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ result.school_name }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Errors -->
+    {% if import_log.error_log %}
+    <div class="bg-red-50 border border-red-200 rounded-md p-4 mb-8">
+        <h3 class="text-sm font-medium text-red-800 mb-2">Errors ({{ import_log.error_count }})</h3>
+        <ul class="list-disc pl-5 text-sm text-red-700 space-y-1">
+            {% for error in import_log.error_log|slice:":20" %}
+            <li>{% if error.row %}Row {{ error.row }}: {% endif %}{{ error.error }}</li>
+            {% endfor %}
+            {% if import_log.error_log|length > 20 %}
+            <li class="text-red-500">... and {{ import_log.error_log|length|add:"-20" }} more errors</li>
+            {% endif %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Actions -->
+    <div class="flex justify-between items-center gap-3">
+        <div class="flex items-center gap-3">
+            <a href="{% url 'dataLoader:sat_delete_import' import_log.pk %}"
+               class="px-4 py-2 border border-red-300 rounded-md text-red-700 hover:bg-red-50 transition duration-200">
+                Delete Import
+            </a>
+            {% if import_log.status == 'COMPLETED' %}
+            <form method="post" action="{% url 'dataLoader:sat_toggle_publish' import_log.pk %}" class="inline">
+                {% csrf_token %}
+                <button type="submit"
+                        class="inline-flex items-center gap-2 px-4 py-2 rounded-md border transition duration-200
+                               {% if import_log.is_published %}bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700
+                               {% else %}bg-white border-slate-300 text-slate-700 hover:bg-slate-50{% endif %}">
+                    <span class="relative inline-flex h-4 w-7 items-center rounded-full transition-colors
+                                 {% if import_log.is_published %}bg-emerald-500{% else %}bg-slate-300{% endif %}">
+                        <span class="inline-block h-3 w-3 transform rounded-full bg-white transition
+                                     {% if import_log.is_published %}translate-x-3.5{% else %}translate-x-0.5{% endif %}"></span>
+                    </span>
+                    {% if import_log.is_published %}Published — available in Data Exploration{% else %}Publish to Data Exploration{% endif %}
+                </button>
+            </form>
+            {% endif %}
+        </div>
+        <a href="{% url 'dataLoader:dashboard' %}"
+           class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition duration-200">
+            Back to Dashboard
+        </a>
+    </div>
+</div>
+{% endblock %}

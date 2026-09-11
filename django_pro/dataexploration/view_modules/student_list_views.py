@@ -18,10 +18,11 @@ from clickhouse_utils.pagination import decode_cursor, cursor_from_row, keyset_c
 from ..models import SavedQuery, StudentList
 from studata.models import CurrentStudent
 from ..column_utils import (
-    get_test_columns, get_mark_columns, get_ap_columns, _get_display_name,
+    get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns, _get_display_name,
     RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
     enrich_students_tests_marks,
     PL_SORT_SQL, SS_SORT_SQL, parse_apall_sort_key,
+    parse_sat_column_key, sat_column_db_field,
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
@@ -100,6 +101,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         marks_structure = get_mark_columns()
         survey_structure = get_survey_columns()
         ap_structure = get_ap_columns()
+        sat_structure = get_sat_columns()
         
         # Get unique values for filters using cache
         school_years_key = "dataexp:school_years"
@@ -171,7 +173,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         
         context['school_years'] = school_years
         context['school_year_choices'] = get_school_year_choices(school_years)
-        all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys())
+        all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys())
         context['year_labels'] = get_year_labels_map(all_years)
         year_to_alias = get_year_alias_map()
         context['year_to_alias'] = year_to_alias
@@ -182,6 +184,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['marks_structure'] = marks_structure
         context['survey_structure'] = survey_structure.get('structure', {})
         context['ap_structure'] = ap_structure
+        context['sat_structure'] = sat_structure
         enabled_defs, enabled_cats = get_enabled_columns()
         context['column_categories'] = enabled_cats
         context['column_definitions'] = enabled_defs
@@ -934,10 +937,26 @@ def load_students(request):
             [c for c in selected_columns if isinstance(c, str) and (c.startswith('apaward_') or c.startswith('apawards_all_'))] +
             [k for k in filter_keys if isinstance(k, str) and (k.startswith('apaward_') or k.startswith('apawards_all_'))]
         ))
+        selected_sat_cols = list(set(
+            [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
+            [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
+        ))
+        sat_infos = []
+        for _col in selected_sat_cols:
+            _parsed = parse_sat_column_key(_col)
+            if _parsed:
+                sat_infos.append({
+                    'col_name': _col,
+                    'year': _parsed['year'],
+                    'kind': _parsed['kind'],
+                    'field': _parsed.get('field'),
+                    'region': _parsed.get('region'),
+                    'metric': _parsed.get('metric'),
+                })
         base_cols = [
             c for c in selected_columns
             if isinstance(c, str)
-            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_')))
+            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
             and c in COLUMN_DEFINITIONS
         ]
 
@@ -1312,6 +1331,20 @@ def load_students(request):
                     )
                     order_by_expr = "_sort._v"
                     params.extend([ap_info['year'], ap_info['award']])
+            elif sort_by.startswith('sat_'):
+                sat_info = next((i for i in sat_infos if i['col_name'] == sort_by), None)
+                if sat_info:
+                    sat_db_field = sat_column_db_field(sort_by)
+                    if sat_db_field:
+                        sort_join_sql = (
+                            " LEFT JOIN ("
+                            f" SELECT ssid AS _k, {sat_db_field} AS _v"
+                            " FROM analytics_sat_results"
+                            " WHERE school_year = %s"
+                            " ) _sort ON _sort._k = cs.ssid"
+                        )
+                        order_by_expr = "_sort._v"
+                        params.append(sat_info['year'])
 
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
         # Put blank/missing assessment values at the end for both directions.
@@ -1320,7 +1353,7 @@ def load_students(request):
         is_dynamic_sort = bool(sort_by) and (
             sort_by in test_col_map
             or sort_by in mark_col_map
-            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_'))
+            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_'))
         )
         order_nulls_sql = ' NULLS LAST' if is_dynamic_sort else ''
         # sort_join placeholders come before WHERE in the SQL, so they must
@@ -1542,6 +1575,14 @@ def load_students(request):
                 for student in students:
                     for _info in ap_exam_infos + ap_award_infos:
                         student.setdefault(_info['col_name'], '\u2014')
+            except Exception:
+                pass
+
+        # Fetch SAT (College Board) score/percentile data in bulk
+        if sat_infos and students:
+            try:
+                from dataviz.utils.data_loader import _fetch_sat_data
+                _fetch_sat_data(students, sat_infos)
             except Exception:
                 pass
 

@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Preview SAT Data - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li><a href="{% url 'dataLoader:sat_upload' %}" class="text-slate-500 hover:text-slate-700">SAT Upload</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">Preview</li>
+            </ol>
+        </nav>
+        <div class="flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Preview SAT Import</h1>
+                <p class="mt-2 text-slate-600">{{ upload_data.name }} — {{ upload_data.school_year }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Diagnostics -->
+    {% if diagnostics %}
+    <div class="bg-slate-50 border border-slate-200 rounded-md p-3 mb-6">
+        <details class="text-sm text-slate-600">
+            <summary class="cursor-pointer font-medium text-slate-700">Diagnostics</summary>
+            <ul class="mt-2 list-disc pl-5 space-y-0.5 text-xs">
+                {% for d in diagnostics %}
+                <li class="{% if 'WARNING' in d %}text-amber-700{% elif 'ERROR' in d %}text-red-700{% else %}text-slate-600{% endif %}">{{ d }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+    </div>
+    {% endif %}
+
+    <!-- Matching Data Source Info -->
+    <div class="bg-indigo-50 border border-indigo-200 rounded-md p-3 mb-6 flex items-center">
+        <svg class="h-5 w-5 text-indigo-500 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div class="text-sm text-indigo-800">
+            Matching against <strong>StudentEnroll database</strong> — {{ total_sis_students|default:"0" }} student records loaded
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Total Students</p>
+            <p class="text-2xl font-bold text-slate-900">{{ total_students }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">With Scores</p>
+            <p class="text-2xl font-bold text-emerald-600">{{ total_with_scores }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Missing State ID</p>
+            <p class="text-2xl font-bold text-amber-600">{{ total_missing_state_id }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-sm font-medium text-slate-500">Match Rate</p>
+            <p class="text-2xl font-bold {% if unmatched_count == 0 %}text-green-600{% elif unmatched_count < total_students %}text-amber-600{% else %}text-red-600{% endif %}">
+                {% if total_students > 0 %}{{ matched_count }} / {{ total_students }}{% else %}—{% endif %}
+            </p>
+        </div>
+    </div>
+
+    <!-- Sample Data -->
+    {% if analysis.sample_students %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Sample Data</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Last Name</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">First Name</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">State ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">CB ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Test Date</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Total</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">RW</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Math</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">School</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for s in analysis.sample_students %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-900">{{ s.last_name }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ s.first_name }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ s.state_student_id|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ s.cb_id|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ s.test_date|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-slate-900">{{ s.total_score|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ s.ebrw_score|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ s.math_score|default:"—" }}</td>
+                        <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ s.school_name }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Unmatched Students -->
+    {% if unmatched_students %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-8">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">
+                Unmatched Students ({{ unmatched_count }})
+                <span class="text-sm font-normal text-slate-500 ml-2">Enter SSIDs manually for students that could not be auto-matched</span>
+            </h2>
+        </div>
+        <form method="post" id="preview-form">
+            {% csrf_token %}
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200">
+                    <thead class="bg-slate-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">State ID</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">CB ID</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Last Name</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">First Name</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">DOB</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Total</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Reason</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">SSID (Manual)</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase w-24">Search</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-slate-200">
+                        {% for student in unmatched_students %}
+                        <tr class="hover:bg-slate-50">
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-900">{{ student.state_student_id|default:"—" }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ student.cb_id|default:"—" }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ student.last_name }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{{ student.first_name }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ student.dob }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-slate-500">{{ student.total_score|default:"—" }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-amber-600">{{ student.reason }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                <input type="text"
+                                       name="ssid_override_{{ student.record_key }}"
+                                       placeholder="Enter SSID"
+                                       class="w-32 px-2 py-1.5 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap text-center">
+                                <button type="button"
+                                        onclick="findStudent(this, '{{ student.first_name|escapejs }}', '{{ student.last_name|escapejs }}')"
+                                        class="px-3 py-1 text-xs font-medium text-emerald-700 bg-emerald-100 rounded-md hover:bg-emerald-200 transition">
+                                    Find
+                                </button>
+                                <div class="text-xs text-slate-500 mt-1 hidden" data-results></div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </form>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
+        <div class="flex items-center">
+            <svg class="h-8 w-8 text-green-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <div>
+                <h3 class="text-lg font-medium text-green-800">All students matched successfully</h3>
+                <p class="text-sm text-green-600">{{ matched_count }} out of {{ total_students }} students were matched to district records.</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Warnings -->
+    {% if analysis.warnings %}
+    <div class="bg-amber-50 border border-amber-200 rounded-md p-4 mb-8">
+        <h3 class="text-sm font-medium text-amber-800">Warnings</h3>
+        <ul class="mt-2 list-disc pl-5 text-sm text-amber-700">
+            {% for warning in analysis.warnings %}
+            <li>{{ warning }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Confirm Button -->
+    <div class="flex justify-end space-x-3">
+        <a href="{% url 'dataLoader:sat_upload' %}"
+           class="px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition duration-200">
+            Back
+        </a>
+        <button type="button"
+                onclick="document.getElementById('preview-form').submit();"
+                class="px-6 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition duration-200">
+            Confirm &amp; Start Import
+        </button>
+    </div>
+</div>
+
+<script>
+function findStudent(btn, firstName, lastName) {
+    const cell = btn.parentElement;
+    const resultsEl = cell.querySelector('[data-results]');
+    const year = '{{ upload_data.school_year|escapejs }}';
+    const url = '{% url "dataLoader:sat_student_search" %}?first_name=' + encodeURIComponent(firstName)
+        + '&last_name=' + encodeURIComponent(lastName) + '&school_year=' + encodeURIComponent(year);
+    resultsEl.classList.remove('hidden');
+    resultsEl.textContent = 'Searching...';
+    fetch(url, { credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(data => {
+            const students = data.students || [];
+            if (!students.length) {
+                resultsEl.textContent = 'No matches';
+                return;
+            }
+            resultsEl.innerHTML = students.map(s =>
+                '<button type="button" class="block text-left text-emerald-700 hover:underline" onclick="useSsid(this,\'' + s.ssid + '\')">'
+                + s.ssid + ' — ' + s.first_name + ' ' + s.last_name + '</button>'
+            ).join('');
+        })
+        .catch(() => { resultsEl.textContent = 'Search failed'; });
+}
+
+function useSsid(btn, ssid) {
+    const row = btn.closest('tr');
+    const input = row.querySelector('input[name^="ssid_override_"]');
+    if (input) input.value = ssid;
+}
+</script>
+{% endblock %}

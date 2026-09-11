@@ -563,3 +563,196 @@ class APExamResult(models.Model):
 
     def __str__(self):
         return f"{self.ap_number}: {self.exam.name} ({self.admin_year}) = {self.exam_grade}"
+
+
+class SATImportStatus(models.TextChoices):
+    PENDING = 'PENDING', 'Pending'
+    PROCESSING = 'PROCESSING', 'Processing'
+    COMPLETED = 'COMPLETED', 'Completed'
+    FAILED = 'FAILED', 'Failed'
+    PARTIAL = 'PARTIAL', 'Partially Completed'
+
+
+SAT_PERCENTILE_REGIONS = (
+    ('state', 'State'),
+    ('country', 'Country'),
+    ('natrep', 'National'),
+    ('natuser', 'National User'),
+)
+
+SAT_PERCENTILE_METRICS = (
+    ('total', 'Total'),
+    ('rw', 'Reading & Writing'),
+    ('math', 'Math'),
+)
+
+
+class SATImportLog(models.Model):
+    """Tracks each College Board SAT results import operation."""
+    name = models.CharField(max_length=255, help_text="User-provided name for this import")
+    school_year = models.CharField(max_length=9, help_text="School year (e.g., '2025-2026')")
+    filename = models.CharField(max_length=255, help_text="Original filename uploaded")
+    file_hash = models.CharField(max_length=64, blank=True, help_text="SHA256 hash for duplicate detection")
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='sat_data_imports'
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=SATImportStatus.choices,
+        default=SATImportStatus.PENDING
+    )
+
+    total_students = models.PositiveIntegerField(default=0)
+    records_detected = models.PositiveIntegerField(default=0, help_text="Total SAT records found in CSV")
+    records_created = models.PositiveIntegerField(default=0, help_text="New SAT records inserted into DB")
+    records_skipped = models.PositiveIntegerField(default=0, help_text="SAT records that already existed")
+    students_matched = models.PositiveIntegerField(default=0)
+    students_unmatched = models.PositiveIntegerField(default=0)
+    records_processed = models.PositiveIntegerField(default=0, help_text="Student rows processed")
+
+    manual_overrides = models.JSONField(
+        default=dict,
+        help_text="Manually-entered SSID overrides (e.g., {'record_key': 'ssid'})"
+    )
+    error_count = models.PositiveIntegerField(default=0)
+    error_log = models.JSONField(default=list, help_text="List of error messages")
+    warnings = models.JSONField(default=list, help_text="List of warning messages")
+
+    # Publishing: only published imports are available in the Data Explorer
+    is_published = models.BooleanField(
+        default=False,
+        help_text="When enabled, this import's SAT results are available in the Data Explorer",
+    )
+    published_at = models.DateTimeField(null=True, blank=True, help_text="When this import was published")
+    published_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='published_sat_imports',
+    )
+
+    class Meta:
+        ordering = ['-uploaded_at']
+        verbose_name = 'SAT Import Log'
+        verbose_name_plural = 'SAT Import Logs'
+
+    def __str__(self):
+        return f"{self.name} - {self.uploaded_at.strftime('%Y-%m-%d %H:%M')}"
+
+    @staticmethod
+    def compute_file_hash(file_content):
+        if isinstance(file_content, str):
+            file_content = file_content.encode('utf-8')
+        return hashlib.sha256(file_content).hexdigest()
+
+
+class SATResult(models.Model):
+    """Latest SAT scores (and percentiles) for a student, linked by SSID."""
+    import_log = models.ForeignKey(
+        SATImportLog, on_delete=models.CASCADE, related_name='results'
+    )
+    record_key = models.CharField(
+        max_length=120, unique=True, db_index=True,
+        help_text="Stable dedupe key: CB_ID or STATE_STUDENT_ID + test date"
+    )
+    ssid = models.CharField(max_length=50, db_index=True, blank=True, help_text="Matched State Student ID")
+    state_student_id = models.CharField(max_length=50, db_index=True, blank=True, help_text="STATE_STUDENT_ID from file")
+    cb_id = models.CharField(max_length=50, db_index=True, blank=True, help_text="College Board ID")
+    last_name = models.CharField(max_length=100, blank=True)
+    first_name = models.CharField(max_length=100, blank=True)
+    middle_initial = models.CharField(max_length=10, blank=True)
+    birth_date = models.DateField(null=True, blank=True)
+    gender = models.CharField(max_length=20, blank=True)
+    school_code = models.CharField(max_length=50, blank=True, help_text="AI institution school code")
+    school_name = models.CharField(max_length=255, blank=True, help_text="AI institution name")
+
+    test_date = models.DateField(null=True, blank=True, help_text="LATEST_SAT_DATE administration date")
+    school_year = models.CharField(max_length=9, help_text="School year the SAT was administered")
+
+    total_score = models.PositiveIntegerField(null=True, blank=True)
+    ebrw_score = models.PositiveIntegerField(null=True, blank=True, help_text="Evidence-Based Reading & Writing")
+    math_score = models.PositiveIntegerField(null=True, blank=True)
+
+    percentile_state_total = models.PositiveIntegerField(null=True, blank=True)
+    percentile_state_rw = models.PositiveIntegerField(null=True, blank=True)
+    percentile_state_math = models.PositiveIntegerField(null=True, blank=True)
+    percentile_country_total = models.PositiveIntegerField(null=True, blank=True)
+    percentile_country_rw = models.PositiveIntegerField(null=True, blank=True)
+    percentile_country_math = models.PositiveIntegerField(null=True, blank=True)
+    percentile_natrep_total = models.PositiveIntegerField(null=True, blank=True)
+    percentile_natrep_rw = models.PositiveIntegerField(null=True, blank=True)
+    percentile_natrep_math = models.PositiveIntegerField(null=True, blank=True)
+    percentile_natuser_total = models.PositiveIntegerField(null=True, blank=True)
+    percentile_natuser_rw = models.PositiveIntegerField(null=True, blank=True)
+    percentile_natuser_math = models.PositiveIntegerField(null=True, blank=True)
+
+    match_method = models.CharField(max_length=40, blank=True)
+    match_confidence = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-test_date', 'last_name', 'first_name']
+        indexes = [
+            models.Index(fields=['ssid', 'school_year']),
+            models.Index(fields=['school_year', 'test_date']),
+        ]
+        verbose_name = 'SAT Result'
+        verbose_name_plural = 'SAT Results'
+
+    def __str__(self):
+        return f"{self.last_name}, {self.first_name} ({self.test_date}) = {self.total_score}"
+
+
+class SATSettings(models.Model):
+    """Global (singleton) settings controlling what SAT data is published to the Data Explorer."""
+    percentile_regions = models.JSONField(
+        default=list,
+        help_text="Percentile regions to publish: state, country, natrep, natuser",
+    )
+    percentile_metrics = models.JSONField(
+        default=list,
+        help_text="Percentile metrics to publish: total, rw, math",
+    )
+    result_mode = models.CharField(
+        max_length=10,
+        choices=(('latest', 'Latest'), ('highest', 'Highest')),
+        default='latest',
+        help_text="Which administration to publish when a student has multiple results",
+    )
+    highest_metric = models.CharField(
+        max_length=10,
+        choices=(('total', 'Total'), ('rw', 'Reading & Writing'), ('math', 'Math')),
+        default='total',
+        help_text="Score used to rank results when result_mode is 'highest'",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='updated_sat_settings',
+    )
+
+    class Meta:
+        verbose_name = 'SAT Settings'
+        verbose_name_plural = 'SAT Settings'
+
+    def __str__(self):
+        return "SAT Publish Settings"
+
+    @classmethod
+    def get_solo(cls):
+        obj = cls.objects.first()
+        if obj is None:
+            obj = cls.objects.create(
+                percentile_regions=[r for r, _ in SAT_PERCENTILE_REGIONS],
+                percentile_metrics=[m for m, _ in SAT_PERCENTILE_METRICS],
+            )
+        return obj

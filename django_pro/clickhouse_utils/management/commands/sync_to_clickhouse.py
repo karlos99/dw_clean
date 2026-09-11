@@ -80,6 +80,7 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_student_marks': {'student_marks_list', 'current_student'},
     'analytics_ap_results': set(),
     'analytics_ap_awards': set(),
+    'analytics_sat_results': set(),
     'analytics_survey_responses': set(),
 }
 
@@ -467,6 +468,79 @@ class Command(BaseCommand):
                 INNER JOIN {t} AS t ON a.award_type_id = t.code
                 INNER JOIN {il} AS il ON a.import_log_id = il.id
                 WHERE il.is_published
+            """
+        if table == 'analytics_sat_results':
+            from dataLoader.models import SATSettings
+            sat_settings = SATSettings.get_solo()
+            regions = set(sat_settings.percentile_regions or [])
+            metrics = set(sat_settings.percentile_metrics or [])
+            result_mode = sat_settings.result_mode
+            highest_metric = sat_settings.highest_metric
+
+            def _pct(region, metric, inner_col):
+                if region in regions and metric in metrics:
+                    return inner_col
+                return "CAST(NULL AS Nullable(Int32))"
+
+            metric_cols = {
+                'total': 'r.total_score',
+                'rw': 'r.ebrw_score',
+                'math': 'r.math_score',
+            }
+            if result_mode == 'highest':
+                order_metric = metric_cols.get(highest_metric, 'r.total_score')
+                order_expr = f"{order_metric} DESC, r.test_date DESC"
+            else:
+                order_expr = "r.test_date DESC"
+
+            r = _pg_table_fn(table='dataLoader_satresult', **pg)
+            il = _pg_table_fn(table='dataLoader_satimportlog', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    t.ssid, t.school_year, t.test_date, t.school_name,
+                    t.total_score, t.ebrw_score, t.math_score,
+                    {_pct('state', 'total', 't.percentile_state_total')},
+                    {_pct('state', 'rw', 't.percentile_state_rw')},
+                    {_pct('state', 'math', 't.percentile_state_math')},
+                    {_pct('country', 'total', 't.percentile_country_total')},
+                    {_pct('country', 'rw', 't.percentile_country_rw')},
+                    {_pct('country', 'math', 't.percentile_country_math')},
+                    {_pct('natrep', 'total', 't.percentile_natrep_total')},
+                    {_pct('natrep', 'rw', 't.percentile_natrep_rw')},
+                    {_pct('natrep', 'math', 't.percentile_natrep_math')},
+                    {_pct('natuser', 'total', 't.percentile_natuser_total')},
+                    {_pct('natuser', 'rw', 't.percentile_natuser_rw')},
+                    {_pct('natuser', 'math', 't.percentile_natuser_math')}
+                FROM (
+                    SELECT
+                        r.ssid AS ssid,
+                        r.school_year AS school_year,
+                        ifNull(toString(r.test_date), '') AS test_date,
+                        ifNull(r.school_name, '') AS school_name,
+                        r.total_score AS total_score,
+                        r.ebrw_score AS ebrw_score,
+                        r.math_score AS math_score,
+                        r.percentile_state_total AS percentile_state_total,
+                        r.percentile_state_rw AS percentile_state_rw,
+                        r.percentile_state_math AS percentile_state_math,
+                        r.percentile_country_total AS percentile_country_total,
+                        r.percentile_country_rw AS percentile_country_rw,
+                        r.percentile_country_math AS percentile_country_math,
+                        r.percentile_natrep_total AS percentile_natrep_total,
+                        r.percentile_natrep_rw AS percentile_natrep_rw,
+                        r.percentile_natrep_math AS percentile_natrep_math,
+                        r.percentile_natuser_total AS percentile_natuser_total,
+                        r.percentile_natuser_rw AS percentile_natuser_rw,
+                        r.percentile_natuser_math AS percentile_natuser_math,
+                        row_number() OVER (
+                            PARTITION BY r.ssid, r.school_year ORDER BY {order_expr}
+                        ) AS _rn
+                    FROM {r} AS r
+                    INNER JOIN {il} AS il ON r.import_log_id = il.id
+                    WHERE il.is_published AND r.ssid != ''
+                ) AS t
+                WHERE t._rn = 1
             """
         if table == 'analytics_survey_responses':
             sr = _pg_table_fn(table='dataLoader_surveyresponse', **pg)

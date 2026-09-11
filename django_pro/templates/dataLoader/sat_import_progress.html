@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}SAT Import Progress - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">SAT Import Progress</li>
+            </ol>
+        </nav>
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-900">{{ import_log.name }}</h1>
+        <p class="mt-1 text-slate-500">{{ import_log.school_year }} — {{ import_log.filename }}</p>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8"
+         x-data="{
+            status: '{{ import_log.status }}',
+            progress: 0,
+            records_processed: {{ import_log.records_processed }},
+            total_students: {{ import_log.total_students }},
+            records_detected: {{ import_log.records_detected }},
+            records_created: {{ import_log.records_created }},
+            records_skipped: {{ import_log.records_skipped }},
+            students_matched: {{ import_log.students_matched }},
+            students_unmatched: {{ import_log.students_unmatched }},
+            error_count: {{ import_log.error_count }},
+            isComplete: {% if import_log.status == 'COMPLETED' or import_log.status == 'FAILED' or import_log.status == 'PARTIAL' %}true{% else %}false{% endif %},
+            init() {
+                if (!this.isComplete) { this.poll() }
+            },
+            poll() {
+                fetch('{% url 'dataLoader:sat_import_status' import_log.pk %}')
+                    .then(r => r.json())
+                    .then(data => {
+                        this.status = data.status
+                        this.progress = data.progress
+                        this.records_processed = data.records_processed
+                        this.total_students = data.total_students
+                        this.records_detected = data.records_detected
+                        this.records_created = data.records_created
+                        this.records_skipped = data.records_skipped
+                        this.students_matched = data.students_matched
+                        this.students_unmatched = data.students_unmatched
+                        this.error_count = data.error_count
+                        this.isComplete = data.is_complete
+                        if (!this.isComplete) { setTimeout(() => this.poll(), 1000) }
+                    })
+            }
+         }">
+
+        <div class="flex items-center mb-6">
+            <div x-show="status === 'PENDING' || status === 'PROCESSING'" class="flex items-center">
+                <svg class="animate-spin h-5 w-5 text-blue-600 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="text-blue-700 font-medium" x-text="status === 'PENDING' ? 'Pending...' : 'Processing...'"></span>
+            </div>
+            <div x-show="status === 'COMPLETED'" class="flex items-center">
+                <svg class="h-5 w-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span class="text-green-700 font-medium">Complete</span>
+            </div>
+            <div x-show="status === 'PARTIAL'" class="flex items-center">
+                <span class="text-amber-700 font-medium">Partially Completed</span>
+            </div>
+            <div x-show="status === 'FAILED'" class="flex items-center">
+                <span class="text-red-700 font-medium">Failed</span>
+            </div>
+        </div>
+
+        <div class="mb-8">
+            <div class="flex justify-between text-sm text-slate-600 mb-1">
+                <span x-text="records_processed + ' of ' + total_students + ' students'"></span>
+                <span x-text="progress + '%'"></span>
+            </div>
+            <div class="w-full bg-slate-200 rounded-full h-3">
+                <div class="h-3 rounded-full transition-all duration-500"
+                     :class="status === 'FAILED' ? 'bg-red-500' : (status === 'COMPLETED' ? 'bg-green-500' : 'bg-emerald-500')"
+                     :style="'width: ' + progress + '%'"></div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-slate-50 rounded-lg p-3">
+                <p class="text-xs text-slate-500">Students Matched</p>
+                <p class="text-lg font-bold text-green-600" x-text="students_matched"></p>
+            </div>
+            <div class="bg-slate-50 rounded-lg p-3">
+                <p class="text-xs text-slate-500">Students Unmatched</p>
+                <p class="text-lg font-bold text-red-600" x-text="students_unmatched"></p>
+            </div>
+            <div class="bg-slate-50 rounded-lg p-3">
+                <p class="text-xs text-slate-500">Records Created</p>
+                <p class="text-lg font-bold text-emerald-600">
+                    <span x-text="records_created"></span>
+                    <span x-show="records_skipped > 0" class="text-xs text-slate-400"> / <span x-text="records_detected"></span> total</span>
+                </p>
+            </div>
+            <div class="bg-slate-50 rounded-lg p-3">
+                <p class="text-xs text-slate-500">Errors</p>
+                <p class="text-lg font-bold text-red-600" x-text="error_count"></p>
+            </div>
+        </div>
+
+        <div class="flex justify-end space-x-3 pt-4 border-t border-slate-200">
+            <a href="{% url 'dataLoader:dashboard' %}"
+               class="px-4 py-2 border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50 transition duration-200">
+                Dashboard
+            </a>
+            <a x-show="isComplete" href="{% url 'dataLoader:sat_import_detail' import_log.pk %}"
+               class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition duration-200">
+                View Details
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
