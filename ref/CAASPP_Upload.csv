@@ -1,0 +1,2002 @@
+Column,Display Name,Value,Value Definition,Content Area,Program,Setting Definition,Type
+A,"Student SSID
+(Example: 1234567890)",10 digits,NA,• all,•  all,This is a state-assigned student identifier that is unique within California. Every student should have a unique SSID.,NA
+B,"Abacus (NON-EMBEDDED)
+(Computer – M, S, CM, CS)
+(Paper – M, S)",Blank (default),Abacus is not selected.,"• math
+• science","• Smarter math
+• CAA math
+• CAA science
+• CAST",This resource may be used in place of scratch paper for a student who typically uses an abacus.,non-embedded accommodation
+B,"Abacus (NON-EMBEDDED)
+(Computer – M, S, CM, CS)
+(Paper – M, S)",NEA_Abacus,Abacus is selected.,"• math
+• science","• Smarter math
+• CAA math
+• CAA science
+• CAST",This resource may be used in place of scratch paper for a student who typically uses an abacus.,non-embedded accommodation
+C,"*Alternate Response Options (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",Blank (default),Alternate Response is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","Alternate response options include, but are not limited to: adapted keyboards, large keyboards, StickyKeys, MouseKeys, FilterKeys, adapted mouse, touch screen, head wand, and switches.",non-embedded accommodation
+C,"*Alternate Response Options (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",NEA_AR,Alternate Response is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","Alternate response options include, but are not limited to: adapted keyboards, large keyboards, StickyKeys, MouseKeys, FilterKeys, adapted mouse, touch screen, head wand, and switches.",non-embedded accommodation
+D,"American Sign Language (EMBEDDED)
+(Computer – E – Listening, M, S)",Blank (default),Do not show ASL videos.,"• ELA (listening)
+• math
+• science
+• PT","• Smarter ELA
+• Smarter math
+• CAST","• Test content is translated into an ASL video. 
+• A human ASL signer and the signed test content are viewed on the same screen.",embedded accommodation
+D,"American Sign Language (EMBEDDED)
+(Computer – E – Listening, M, S)",TDS_ASL1,Show ASL videos.,"• ELA (listening)
+• math
+• science
+• PT","• Smarter ELA
+• Smarter math
+• CAST","• Test content is translated into an ASL video. 
+• A human ASL signer and the signed test content are viewed on the same screen.",embedded accommodation
+E,"Bilingual Dictionary (ET) (NON-EMBEDDED)
+(Computer – E ‒ PT Full Write)
+(Paper – E)",Blank (default),Bilingual Dictionary is not selected.,"• ELA—PT
+","• Smarter ELA
+",A bilingual or dual-language word-to-word dictionary is a language resource.,non-embedded designated support
+E,"Bilingual Dictionary (ET) (NON-EMBEDDED)
+(Computer – E ‒ PT Full Write)
+(Paper – E)",NEDS_BD,Bilingual Dictionary is selected.,• ELA—PT,"• Smarter ELA
+",A bilingual or dual-language word-to-word dictionary is a language resource.,non-embedded designated support
+F,"Braille (ET) (EMBEDDED)
+(Computer – E, M)",Blank (default),Braille is not selected.,"• ELA
+• math
+• PT","• Smarter ELA
+• Smarter math
+",Braille is a presentation resource.,embedded accommodation
+F,"Braille (ET) (EMBEDDED)
+(Computer – E, M)",ENU-Braille,Braille is selected.,"• ELA
+• math
+• PT","• Smarter ELA
+• Smarter math
+",Braille is a presentation resource.,embedded accommodation
+G,"Specialized Calculator (Grades 6–8 and Grade 11) (NON-EMBEDDED)
+(Computer – M)
+(Paper – M)",Blank (default),Calculator is not selected.,• math,• Smarter math,"• A calculator can be accessed for calculator-allowed items.
+• The student may use the calculator offered with assistive technology devices (such as a talking calculator or a braille calculator).
+• Calculator is allowed in grades 6–8 and grade 11 for mathematics.",non-embedded accommodation
+G,"Specialized Calculator (Grades 6–8 and Grade 11) (NON-EMBEDDED)
+(Computer – M)
+(Paper – M)",NEA_Calc,Calculator is selected.,• math,• Smarter math,"• A calculator can be accessed for calculator-allowed items.
+• The student may use the calculator offered with assistive technology devices (such as a talking calculator or a braille calculator).
+• Calculator is allowed in grades 6–8 and grade 11 for mathematics.",non-embedded accommodation
+H,"Closed Captioning (EMBEDDED)
+(Computer – E ‒ Listening, RO)
+",Blank (default),Closed Captioning is not selected.,"• ELA (listening)
+• RLA","• Smarter ELA
+• CSA","• Printed text appears on the device screen as audio materials are presented.
+• This resource is for listening items only.",embedded accommodation
+H,"Closed Captioning (EMBEDDED)
+(Computer – E ‒ Listening, RO)
+",TDS_ClosedCap1,Closed Captioning is selected.,"• ELA (listening)
+• RLA","• Smarter ELA
+• CSA","• Printed text appears on the device screen as audio materials are presented.
+• This resource is for listening items only.",embedded accommodation
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Color Contrast is not selected; the default is Black on White.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCInvert,Reverse Contrast,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCMagenta,Black on Rose,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCMedGrayLtGray,Medium Gray on Light Gray,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCYellowB,Yellow on Blue,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCBlue, Blue,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCBlue2, Light Blue,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCCream, Black on Cream,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCGray, Gray,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCGray2, Light Gray,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCGreen, Green,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCGreen2, Light Green,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCMagenta2, Light Magenta,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCWhiteN, White on Navy,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCYellow, Yellow,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCYellow2, Light Yellow,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCRedW,Red on White,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCWhiteR,White on Red,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+I,"Color Contrast (EMBEDDED) 
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_CCYellowBlk,Yellow on Black,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, tests are presented with black text on a white background. 
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+J,"*Color Contrast (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Color Contrast is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math 
+• CAA science
+• CAST
+• CSA",Test content of online items may be printed with different colors.,non-embedded designated support
+J,"*Color Contrast (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",NEDS_CC,Color Contrast is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math 
+• CAA science
+• CAST
+• CSA",Test content of online items may be printed with different colors.,non-embedded designated support
+J,"Color Overlay (NON-EMBEDDED)
+(Paper – E, M, S)",Blank (default),Color Overlay is not selected.,"• ELA
+• math
+• science
+• PT","• Smarter ELA
+• Smarter math
+• CAST
+",Color transparencies are placed over an assessment that was printed on demand.,non-embedded designated support
+J,"Color Overlay (NON-EMBEDDED)
+(Paper – E, M, S)",NEDS_CO,Color Overlay is selected.,"• ELA
+• math
+• science
+• PT","• Smarter ELA
+• Smarter math
+• CAST
+",Color transparencies are placed over an assessment that was printed on demand.,non-embedded designated support
+K,"*Magnification (ET) (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+",Blank (default),Magnification is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math 
+• CAA science
+• CAST
+• CSA","The size of specific areas of the screen (e.g., text, formulas, tables, graphics, and navigation buttons) may be adjusted by the student with an assistive technology device.",non-embedded designated support
+K,"*Magnification (ET) (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+",NEDS_Mag,Magnification is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math 
+• CAA science
+• CAST
+• CSA","The size of specific areas of the screen (e.g., text, formulas, tables, graphics, and navigation buttons) may be adjusted by the student with an assistive technology device.",non-embedded designated support
+L,"Masking (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Masking is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science 
+• CAST
+• CSA",Masking involves blocking off content that is not of immediate need or that may be distracting to the student. The student is able to focus attention on a specific part of a test item by masking.,embedded designated support
+L,"Masking (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_Masking1,Masking is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science 
+• CAST
+• CSA",Masking involves blocking off content that is not of immediate need or that may be distracting to the student. The student is able to focus attention on a specific part of a test item by masking.,embedded designated support
+M,"Multiplication Table (NON-EMBEDDED)
+(Computer – M, CM)
+(Paper – M)",Blank (default),Multiplication Table is not selected.,• math,"• Smarter math
+• CAA math","A student uses a provided paper-based, 1–12 multiplication table.",non-embedded accommodation
+M,"Multiplication Table (NON-EMBEDDED)
+(Computer – M, CM)
+(Paper – M)",NEA_MT,Multiplication Table is selected.,• math,"• Smarter math
+• CAA math","A student uses a provided paper-based, 1–12 multiplication table.",non-embedded accommodation
+N,"*Noise Buffers (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",Blank (default),Noise Buffers is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math 
+• CAA Science
+• CAST
+• CSA","Noise buffers are, for example, ear mufflers, white noise, or other equipment used to block external sounds.",non-embedded designated support
+N,"*Noise Buffers (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",NEDS_NoiseBuf,Noise Buffers is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math 
+• CAA Science
+• CAST
+• CSA","Noise buffers are, for example, ear mufflers, white noise, or other equipment used to block external sounds.",non-embedded designated support
+O,"*Print on Demand
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Print on Demand is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science 
+• CAST
+• CSA",• Paper copies of passages/stimuli and/or items are printed for students.,non-embedded accommodation
+O,"*Print on Demand (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_PoD_Item,Print on Demand items is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science 
+• CAST
+• CSA",• Paper copies of passages/stimuli and/or items are printed for students.,non-embedded accommodation
+O,"*Print on Demand (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_PoD_Stim,Print on Demand passages is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science 
+• CAST
+• CSA",• Paper copies of passages/stimuli and/or items are printed for students.,non-embedded accommodation
+O,"*Print on Demand (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_PoD_Stim&TDS_PoD_Item,Print on Demand  items and passages is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science 
+• CAST
+• CSA",• Paper copies of passages/stimuli and/or items are printed for students.,non-embedded accommodation
+P,"*Read-Aloud Passages (NON-EMBEDDED)
+(Computer – E, CE, RO)
+(Paper – E)",Blank (default),Read-Aloud Passages is not selected.,"• ELA
+• PT
+• RLA","• Smarter ELA
+• CAA ELA
+• CSA","• Text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided on the CAASPP & ELPAC Website. 
+• All or portions of the content may be read aloud.",non-embedded accommodation
+P,"*Read-Aloud Passages (NON-EMBEDDED)
+(Computer – E, CE, RO)
+(Paper – E)",NEA_RA_Stimuli,Read-Aloud Passages is selected.,"• ELA
+• PT
+• RLA","• Smarter ELA
+• CAA ELA
+• CSA","• Text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines providedon the CAASPP & ELPAC Website. 
+• All or portions of the content may be read aloud.",non-embedded accommodation
+Q,"*Read-Aloud Passages (NON-EMBEDDED)
+(Computer – E, CE, RO)
+(Paper – E)",Blank (default),Read-Aloud Items is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science 
+• CAST
+• CSA
+","• Text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided on the CAASPP & ELPAC Website.
+• All or portions of the items may be read aloud.
+• Does not apply to ELA passages.
+• Read-Aloud in Spanish for mathematics is set in field AG.",non-embedded designated support
+Q,"*Read-Aloud Passages (NON-EMBEDDED)
+(Computer – E, CE, RO)
+(Paper – E)",NEDS_RA_Items,Read-Aloud Items is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science 
+• CAST
+• CSA
+","• Text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided on the CAASPP & ELPAC Website.
+• All or portions of the items may be read aloud.
+• Does not apply to ELA passages.
+• Read-Aloud in Spanish for mathematics is set in field AG.",non-embedded designated support
+R,"*Scribe (Writing) (NON-EMBEDDED)
+(Computer – E, CE, RO)
+(Paper – E)
+",Blank (default),Scribe is not selected.,• ELA PT,"• Smarter ELA
+• CAA ELA
+","• The student dictates the responses to a human who records, verbatim, what the student dictates. 
+• The scribe must be trained and qualified, and must follow the administration guidelines provided on the CAASPP & ELPAC Website.",non-embedded accommodation
+R,"*Scribe (Writing) (NON-EMBEDDED)
+(Computer – E, CE, RO)
+(Paper – E)
+",NEA_SC_WritItems,Scribe is selected.,• ELA PT,"• Smarter ELA
+• CAA ELA
+","• The student dictates the responses to a human who records, verbatim, what the student dictates. 
+• The scribe must be trained and qualified, and must follow the administration guidelines provided on the CAASPP & ELPAC Website.",non-embedded accommodation
+S,"*Scribe Items (NON-EMBEDDED)
+(Computer – E and CE – Non-Writing, M, S, CM, CS, RO)
+(Paper – E, M, S)",Blank (default),Scribe for items is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA (nonwriting)
+• Smarter math
+• CAA ELA (nonwriting)
+• CAA math
+• CAA science
+• CAST
+• CSA (nonwriting)","• The student dictates responses to a human who records, verbatim, what the student dictates. 
+• The scribe must be trained and qualified, and must follow the administration guidelines provided on the CAASPP & ELPAC Website.",non-embedded designated support
+S,"*Scribe Items (NON-EMBEDDED)
+(Computer – E and CE – Non-Writing, M, S, CM, CS, RO)
+(Paper – E, M, S)",NEDS_SC_Items,Scribe for items is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA (nonwriting)
+• Smarter math
+• CAA ELA (nonwriting)
+• CAA math
+• CAA science
+• CAST
+• CSA (nonwriting)","• The student dictates responses to a human who records, verbatim, what the student dictates. 
+• The scribe must be trained and qualified, and must follow the administration guidelines provided on the CAASPP & ELPAC Website.",non-embedded designated support
+T,"Separate Setting (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S) ",Blank (default),Separate Setting is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• The test location is altered so that the student is tested in a setting different from that made available for most students.
+• The test is administered at the most beneficial time of day for the student.
+• Special lighting, acoustics, adaptive furniture, or any or all of these are to be used.",non-embedded designated support
+T,"Separate Setting (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S) ",NEDS_SS,Separate Setting is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• The test location is altered so that the student is tested in a setting different from that made available for most students.
+• The test is administered at the most beneficial time of day for the student.
+• Special lighting, acoustics, adaptive furniture, or any or all of these are to be used.",non-embedded designated support
+U,"*Speech-to-Text (NON-EMBEDDED)
+(Computer – E, M, S, RO)
+(Paper – E, M, S)",Blank (default),Speech-to-Text is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CSA","• Voice recognition allows the student to use a voice as an input device to the computer, to dictate responses or give commands (e.g., opening application programs, pulling down menus, and saving work). 
+• Voice recognition software generally can recognize speech up to 160 words per minute. 
+• The student may use the student's assistive technology device.",non-embedded accommodation
+U,"*Speech-to-Text (NON-EMBEDDED)
+(Computer – E, M, S, RO)
+(Paper – E, M, S)",NEA_STT,Speech-to-Text is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CSA","• Voice recognition allows the student to use a voice as an input device to the computer, to dictate responses or give commands (e.g., opening application programs, pulling down menus, and saving work). 
+• Voice recognition software generally can recognize speech up to 160 words per minute. 
+• The student may use the student's assistive technology device.",non-embedded accommodation
+V,"*Text-to-Speech Passages (EMBEDDED) 
+(Computer – E)",Blank (default),Text-to-Speech Passages is not selected.,"• ELA
+• PT",• Smarter ELA,"• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• This accommodation is available for all grades.
+• This is an accommodation for passages.",embedded accommodation
+V,"*Text-to-Speech Passages (EMBEDDED) 
+(Computer – E)",TDS_TTS_Stim,Text-to-Speech Passages is selected.,"• ELA
+• PT",• Smarter ELA,"• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• This accommodation is available for all grades.
+• This is an accommodation for passages.",embedded accommodation
+W,"*Text-to-Speech (EMBEDDED)
+(Computer – E, M)",Blank (default),Text-to-Speech items is not selected.,"• ELA
+• math
+• PT","• Smarter ELA
+• Smarter math","• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• When both Text-to-Speech and Dual-Language Translations and Translated Test Directions in Spanish (column AD) are selected, Text-to-Speech will be enabled in English and Spanish for mathematics items.",embedded designated support
+W,"*Text-to-Speech (EMBEDDED)
+(Computer – E, M)",TDS_TTS_Item,Text-to-Speech items (ELA) is selected.,"• ELA
+• math
+• PT","• Smarter ELA
+• Smarter math","• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• When both Text-to-Speech and Dual-Language Translations and Translated Test Directions in Spanish (column AD) are selected, Text-to-Speech will be enabled in English and Spanish for mathematics items.",embedded designated support
+W,"*Text-to-Speech (EMBEDDED)
+(Computer – E, M)",TDS_TTS_Stim&TDS_TTS_Item,Text-to-Speech stimuli and items (math) is selected.,"• ELA
+• math
+• PT","• Smarter ELA
+• Smarter math","• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• When both Text-to-Speech and Dual-Language Translations and Translated Test Directions in Spanish (column AD) are selected, Text-to-Speech will be enabled in English and Spanish for mathematics items.",embedded designated support
+W,"*Text-to-Speech (EMBEDDED)
+(Computer – E, M)",TDS_TTS_ALL,Text-to-Speech items (ELA) and stimuli and items (math) are selected.,"• ELA
+• math
+• PT","• Smarter ELA
+• Smarter math","• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• When both Text-to-Speech and Dual-Language Translations and Translated Test Directions in Spanish (column AD) are selected, Text-to-Speech will be enabled in English and Spanish for mathematics items.",embedded designated support
+X,"Translated Test Directions (ET) (PDF on the CAASPP & ELPAC Website) (NON-EMBEDDED)
+(Computer – E, M, S)
+(Paper – E, M, S)",Blank (default),Translated Test Directions is not selected.,"• ELA
+• math
+• science
+• PT","• Smarter ELA
+• Smarter math
+• CAST","• A PDF of directions is translated in each of the languages currently supported. 
+• A bilingual adult can read to the student.",non-embedded designated support
+X,"Translated Test Directions (ET) (PDF on the CAASPP & ELPAC Website) (NON-EMBEDDED)
+(Computer – E, M, S)
+(Paper – E, M, S)",NEDS_TransDirs,Translated Test Directions is selected.,"• ELA
+• math
+• science
+• PT","• Smarter ELA
+• Smarter math
+• CAST","• A PDF of directions is translated in each of the languages currently supported. 
+• A bilingual adult can read to the student.",non-embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",Blank (default),Translation Glossaries for math is not selected.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_Glossary,Translation Glossaries is selected in English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_ArabicGloss,Translation Glossaries is selected in Arabic.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_CantoneseGloss,Translation Glossaries is selected in Cantonese.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_ESNGlossary,Translation Glossaries is selected in Spanish.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_KoreanGloss,Translation Glossaries is selected in Korean.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_MandarinGloss,Translation Glossaries is selected in Mandarin.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_PunjabiGloss,Translation Glossaries is selected in Punjabi.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_RussianGloss,Translation Glossaries is selected in Russian.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_TagalGloss,Translation Glossaries is selected in Tagalog.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_UkrainianGloss,Translation Glossaries is selected in Ukrainian.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_VietnameseGloss,Translation Glossaries is selected in Vietnamese.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_BurmeseGloss,Translation Glossaries is selected in Burmese.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_HmongGloss,Translation Glossaries is selected in Hmong.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_Illustration,Translation Glossaries is selected in Illustration Glossary.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_SomaliGloss,Translation Glossaries is selected in Somali.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_ArabicGloss&TDS_WL_Glossary,Translation Glossaries is selected in Arabic and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_CantoneseGloss&TDS_WL_Glossary,Translation Glossaries is selected in Cantonese and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_ESNGlossary&TDS_WL_Glossary,Translation Glossaries is selected in Spanish and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_KoreanGloss&TDS_WL_Glossary,Translation Glossaries is selected in Korean and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_MandarinGloss&TDS_WL_Glossary,Translation Glossaries is selected in Mandarin and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_PunjabiGloss&TDS_WL_Glossary,Translation Glossaries is selected in Punjabi and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_RussianGloss&TDS_WL_Glossary,Translation Glossaries is selected in Russian and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_TagalGloss&TDS_WL_Glossary,Translation Glossaries is selected in Tagalog and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_UkrainianGloss&TDS_WL_Glossary,Translation Glossaries is selected in Ukrainian and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_VietnameseGloss&TDS_WL_Glossary,Translation Glossaries is selected in Vietnamese and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_BurmeseGloss&TDS_WL_Glossary,Translation Glossaries is selected in Burmese and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_HmongGloss&TDS_WL_Glossary,Translation Glossaries is selected in Hmong and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_SomaliGloss&TDS_WL_Glossary,Translation Glossaries is selected in Somali and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Y,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – M)",TDS_WL_Illustration&TDS_WL_Glossary,Translation Glossaries is selected in illustrations and English.,"• math
+• PT",• Smarter math,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, a student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+Z,"*Text-to-Speech – Item and Stimuli (EMBEDDED)
+(Computer – S)",Blank (default),Text-to-Speech Item and Stimuli for science is not selected.,• science,• CAST,"• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• When both Text-to-Speech and Dual-Language Translations and Translated Test Directions in Spanish (column AS) are selected, Text-to-Speech will be enabled in English and Spanish for science.",embedded designated support
+Z,"*Text-to-Speech – Item and Stimuli (EMBEDDED)
+(Computer – S)",TDS_TTS_Stim&TDS_TTS_Item,Text-to-Speech Item and Stimuli for science is selected.,• science,• CAST,"• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• When both Text-to-Speech and Dual-Language Translations and Translated Test Directions in Spanish (column AS) are selected, Text-to-Speech will be enabled in English and Spanish for science.",embedded designated support
+AA,"Permissive Mode (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Permissive Mode is disabled.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• Permissive mode should be enabled for a student who requires access to approved accessibility software, devices, or both to interact with the test (e.g., screen readers, magnifiers, speech-to-text, braille screen readers and refreshable braille displays, etc.). 
+• When permissive mode is disabled, the only application that can be opened on the device is the secure browser.",embedded designated support
+AA,"Permissive Mode (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_PM1,Permissive Mode is enabled.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• Permissive mode should be enabled for a student who requires access to approved accessibility software, devices, or both to interact with the test (e.g., screen readers, magnifiers, speech-to-text, braille screen readers and refreshable braille displays, etc.). 
+• When permissive mode is disabled, the only application that can be opened on the device is the secure browser.",embedded designated support
+AB,"Print Size (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),No default zoom is applied.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• This accommodation sets the student’s print (font) size.
+• This is the print size the student should have when starting a test.
+• The selected print size becomes the default for all items in that student’s test.
+• The default print size for all tests is 14 point.",embedded designated support
+AB,"Print Size (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_PS_L1,1.5X,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• This accommodation sets the student’s print (font) size.
+• This is the print size the student should have when starting a test.
+• The selected print size becomes the default for all items in that student’s test.
+• The default print size for all tests is 14 point.",embedded designated support
+AB,"Print Size (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_PS_L2,1.75X,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• This accommodation sets the student’s print (font) size.
+• This is the print size the student should have when starting a test.
+• The selected print size becomes the default for all items in that student’s test.
+• The default print size for all tests is 14 pt.
+• The default font for ELA tests is Times New Roman.
+• The default font for mathematics tests is Verdana.",embedded designated support
+AB,"Print Size (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_PS_L3,2.5X,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• This accommodation sets the student’s print (font) size.
+• This is the print size the student should have when starting a test.
+• The selected print size becomes the default for all items in that student’s test.
+• The default print size for all tests is 14 point.",embedded designated support
+AB,"Print Size (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_PS_L4,3X,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• This accommodation sets the student’s print (font) size.
+• This is the print size the student should have when starting a test.
+• The selected print size becomes the default for all items in that student’s test.
+• The default print size for all tests is 14 point.",embedded designated support
+AC,"Streamline (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Standard,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, all tests use the standard interface. This interface is compatible with all supported desktops and tablets. The streamlined interface presents the test in an alternate, simplified format in which the items are displayed below the stimuli. All tool and navigation buttons are on the bottom of the screen. 
+• This designated support includes zoom levels greater than 3X in the student interface.
+
+Important: The streamlined interface is not intended to be tablet compatible.",embedded designated support
+AC,"Streamline (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_SLM1,Streamlined,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• By default, all tests use the standard interface. This interface is compatible with all supported desktops and tablets. The streamlined interface presents the test in an alternate, simplified format in which the items are displayed below the stimuli. All tool and navigation buttons are on the bottom of the screen. 
+• This designated support includes zoom levels greater than 3X in the student interface.
+
+Important: The streamlined interface is not intended to be tablet compatible.",embedded designated support
+AD,"Dual-Language Translations and Translated Test Directions in Spanish (EMBEDDED)
+(Computer – M)",Blank (default),Dual-Language Translations and Translated Test Directions in Spanish is not selected.,"• math
+• PT",• Smarter math,"• Embedded Spanish translations of mathematics test items and directions are provided.
+• When Dual-Language Translations and Translated Test Directions in Spanish and Text-to-Speech (column W) is selected, Text-to-Speech will be enabled in English and Spanish for mathematics items.",embedded designated support
+AD,"Dual-Language Translations and Translated Test Directions in Spanish (EMBEDDED)
+(Computer – M)",ESN,Dual-Language Translations and Translated Test Directions in Spanish is selected.,"• math
+• PT",• Smarter math,"• Embedded Spanish translations of mathematics test items and directions are provided.
+• When Dual-Language Translations and Translated Test Directions in Spanish and Text-to-Speech (column W) is selected, Text-to-Speech will be enabled in English and Spanish for mathematics items.",embedded designated support
+AE,"Turn Off Any Universal Tool(s) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Reminder is not selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",The test administrator or test examiner receives a reminder to disable any universal tools that might be distracting or the student does not need to use or is unable to use.,embedded designated support
+AE,"Turn Off Any Universal Tool(s) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_REM,Reminder is selected.,"• ELA
+• math
+• science
+• PT
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",The test administrator or test examiner receives a reminder to disable any universal tools that might be distracting or the student does not need to use or is unable to use.,embedded designated support
+AF,"*Read-Aloud in Spanish (NON-EMBEDDED)
+(Computer – M)
+(Paper – M)",Blank (default),Read-Aloud in Spanish is not selected.,• math,• Smarter math,"• Spanish text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided in the read-aloud guidelines on the CAASPP & ELPAC Website. 
+• All or portions of the content may be read aloud.",non-embedded designated support
+AF,"*Read-Aloud in Spanish (NON-EMBEDDED)
+(Computer – M)
+(Paper – M)",NEDS_RA_Items_ESN,Read-Aloud in Spanish for items is selected.,• math,• Smarter math,"• Spanish text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided in the read-aloud guidelines on the CAASPP & ELPAC Website. 
+• All or portions of the content may be read aloud.",non-embedded designated support
+AF,"*Read-Aloud in Spanish (NON-EMBEDDED)
+(Computer – M)
+(Paper – M)",NEDS_RA_Stimuli_ESN,Read-Aloud in Spanish for stimuli is selected.,• math,• Smarter math,"• Spanish text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided in the read-aloud guidelines on the CAASPP & ELPAC Website. 
+• All or portions of the content may be read aloud.",non-embedded designated support
+AF,"*Read-Aloud in Spanish (NON-EMBEDDED)
+(Computer – M)
+(Paper – M)",NEDS_RA_Items_Stimuli_ESN,Read-Aloud in Spanish for items and stimuli is selected.,• math,• Smarter math,"• Spanish text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided in the read-aloud guidelines on the CAASPP & ELPAC Website. 
+• All or portions of the content may be read aloud.",non-embedded designated support
+AG,"Additional Instructional Supports for Alternate Assessments (NON-EMBEDDED)
+(Computer – CE, CM, CS)",Blank (default),Additional Instructional Supports is not selected.,"• ELA
+• math
+• science","• CAA ELA
+• CAA math
+• CAA science",This accommodation provides additional CAA instructional supports.,non-embedded accommodation
+AG,"Additional Instructional Supports for Alternate Assessments (NON-EMBEDDED)
+(Computer – CE, CM, CS)",NEA_AddAltRSC,Additional Instructional Supports is selected.,"• ELA
+• math
+• science","• CAA ELA
+• CAA math
+• CAA science",This accommodation provides additional CAA instructional supports.,non-embedded accommodation
+AH,"100s Number Table (NON-EMBEDDED)
+(Computer – M, CM)
+(Paper – M)",Blank (default),100s Number Table is not selected.,"• math
+","• Smarter math
+• CAA math",A student uses a provided paper-based table listing numbers from 1–100.,non-embedded accommodation
+AH,"100s Number Table (NON-EMBEDDED)
+(Computer – M, CM)
+(Paper – M)",NEA_NumTbl,100s Number Table is selected.,"• math
+","• Smarter math
+• CAA math",A student uses a provided paper-based table listing numbers from 1–100.,non-embedded accommodation
+AI,"*Simplified Test Directions (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",Blank (default),Simplified Test Directions is not selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",The test administrator or test examiner simplifies or paraphrases test directions according to published guidelines.,non-embedded designated support
+AI,"*Simplified Test Directions (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",NEDS_SimpDirs,Simplified Test Directions is selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",The test administrator or test examiner simplifies or paraphrases test directions according to published guidelines.,non-embedded designated support
+AJ,"100s Number Table (NON-EMBEDDED)
+(Computer – S, CS)
+(Paper – S)",Blank (default),100s Number Table is not selected.,• science,"• CAST
+• CAA science",A student uses a provided paper-based table listing numbers from 1–100.,non-embedded designated support
+AJ,"100s Number Table (NON-EMBEDDED)
+(Computer – S, CS)
+(Paper – S)",NEDS_NumTbl,100s Number Table is selected.,• science,"• CAST
+• CAA science",A student uses a provided paper-based table listing numbers from 1–100.,non-embedded designated support
+AK,"Amplification (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Amplification is not selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",The student may adjust the volume control beyond the testing device’s built-in settings using headphones or another non-embedded device.,non-embedded designated support
+AK,"Amplification (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",NEDS_Amplify,Amplification is selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",The student may adjust the volume control beyond the testing device’s built-in settings using headphones or another non-embedded device.,non-embedded designated support
+AL,"Audio Transcript (EMBEDDED)
+(Computer – E, RO – Listening)",Blank (default),Audio transcript is not selected.,"• ELA
+• RLA","• Smarter ELA
+• CSA",Content that is accessed through listening during the course of the assessment with the option of closed-captioning is made available in braille or onscreen as a single text presentation (rather than one line at a time as provided by closed-captioning).,embedded accommodation
+AL,"Audio Transcript (EMBEDDED)
+(Computer – E, RO – Listening)",TDS_AudioScript1,Audio transcript is selected.,"• ELA
+• RLA","• Smarter ELA
+• CSA",Content that is accessed through listening during the course of the assessment with the option of closed-captioning is made available in braille or onscreen as a single text presentation (rather than one line at a time as provided by closed-captioning).,embedded accommodation
+AM,"Braille (ET) (EMBEDDED)
+(Computer – S)",Blank (default),Braille is not selected.,"• science
+• PT",• CAST,Braille is a presentation resource.,embedded accommodation
+AM,"Braille (ET) (EMBEDDED)
+(Computer – S)",ENU-Braille,Braille is selected.,"• science
+• PT",• CAST,Braille is a presentation resource.,embedded accommodation
+AN,"Calculator (Four Function for Grade 5 and Scientific for Grades 8, 10, 11, and 12) (NON-EMBEDDED)
+(Computer – S)
+(Paper – S)",Blank (default),Calculator is not selected.,• science,• CAST,"• A calculator can be accessed for calculator-allowed items.
+• The student may use the calculator offered with assistive technology devices (such as a talking calculator or a braille calculator).
+• The calculator is allowed in grades 5, 8, 10, 11, and 12 for science.",non-embedded designated support
+AN,"Calculator (Four Function for Grade 5 and Scientific for Grades 8, 10, 11, and 12) (NON-EMBEDDED)
+(Computer – S)
+(Paper – S)",NEDS_Calc,Calculator is selected.,• science,• CAST,"• A calculator can be accessed for calculator-allowed items.
+• The student may use the calculator offered with assistive technology devices (such as a talking calculator or a braille calculator).
+• The calculator is allowed in grades 5, 8, 10, 11, and 12 for science.",non-embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",Blank (default),Mouse Pointer is not selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_Black_L,"Mouse Pointer is selected as Large, Black.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_Black_XL,"Mouse Pointer is selected as Extra Large, Black.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_Green_L,"Mouse Pointer is selected as Large, Green.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_Green_XL,"Mouse Pointer is selected as Extra Large, Green.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_Red_L,"Mouse Pointer is selected as Large, Red.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_Red_XL,"Mouse Pointer is selected as Extra Large, Red.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_White_L,"Mouse Pointer is selected as Large, White.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_White_XL,"Mouse Pointer is selected as Extra Large, White.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_Yellow_L,"Mouse Pointer is selected as Large, Yellow.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AO,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)",TDS_MP_Yellow_XL,"Mouse Pointer is selected as Extra Large, Yellow.","• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA",Mouse pointer is a test setting for a student with visual impairment who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AP,"Multiplication Table (NON-EMBEDDED)
+(Computer – S, CS)
+(Paper – S)",Blank (default),Multiplication Table is not selected.,• science,"• CAST
+• CAA science","• A student uses a provided paper-based, 1–12 multiplication table.
+• The calculator is allowed in grades 5, 8, 10, 11, and 12 for science.",non-embedded designated support
+AP,"Multiplication Table (NON-EMBEDDED)
+(Computer – S, CS)
+(Paper – S)",NEDS_MT,Multiplication Table is selected.,• science,"• CAST
+• CAA science","• A student uses a provided paper-based, 1–12 multiplication table.
+• The calculator is allowed in grades 5, 8, 10, 11, and 12 for science.",non-embedded designated support
+AQ,"*Read-Aloud in Spanish (NON-EMBEDDED)
+(Computer – S)
+(Paper – S)",Blank (default),Read-Aloud in Spanish is not selected.,• science,• CAST,"• Spanish text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided in the read-aloud guidelines on the CAASPP & ELPAC Website. 
+• All or portions of the content may be read aloud.",non-embedded designated support
+AQ,"*Read-Aloud in Spanish (NON-EMBEDDED)
+(Computer – S)
+(Paper – S)",NEDS_RA_SPA,Read-Aloud in Spanish is selected.,• science,• CAST,"• Spanish text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided in the read-aloud guidelines on the CAASPP & ELPAC Website. 
+• All or portions of the content may be read aloud.",non-embedded designated support
+AR,"Science Charts [State-approved] (i.e., Periodic Table of the Elements, reference sheets) (NON-EMBEDDED)
+(Computer – S)
+(Paper – S)",Blank (default),Science Charts is not selected.,• science,• CAST,"A student may, as dictated by the needs of the assessment, reference state-approved science charts.",non-embedded designated support
+AR,"Science Charts [State-approved] (i.e., Periodic Table of the Elements, reference sheets) (NON-EMBEDDED)
+(Computer – S)
+(Paper – S)",NEDS_SciChart,Science Charts is selected.,• science,• CAST,"A student may, as dictated by the needs of the assessment, reference state-approved science charts.",non-embedded designated support
+AS,"Dual-Language Translations and Translated Test Directions in Spanish (EMBEDDED)
+(Computer – S)",Blank (default),Dual-Language Translations and Translated Test Directions in Spanish for science is not selected.,"• science
+• PT",• CAST,"• Embedded Spanish translations of science test items and directions are provided.
+• When Dual-Language Translations and Translated Test Directions in Spanish and Text-to-Speech (column Z) is selected, Text-to-Speech will be enabled in English and Spanish for science items.",embedded designated support
+AS,"Dual-Language Translations and Translated Test Directions in Spanish (EMBEDDED)
+(Computer – S)",ESN,Dual-Language Translations and Translated Test Directions in Spanish for science is selected.,"• science
+• PT",• CAST,"• Embedded Spanish translations of science test items and directions are provided.
+• When Dual-Language Translations and Translated Test Directions in Spanish and Text-to-Speech (column Z) is selected, Text-to-Speech will be enabled in English and Spanish for science items.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",Blank (default),Translation Glossaries for science is not selected.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_Glossary,Translation Glossaries is selected in English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_ESNGlossary,Translation Glossaries is selected in Spanish.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_VietnameseGloss,Translation Glossaries is selected in Vietnamese.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_MandarinGloss,Translation Glossaries is selected in Mandarin.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_CantoneseGloss,Translation Glossaries is selected in Cantonese.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_TagalGloss,Translation Glossaries is selected in Tagalog.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_ArabicGloss,Translation Glossaries is selected in Arabic.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_KoreanGloss,Translation Glossaries is selected in Korean.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_PunjabiGloss,Translation Glossaries is selected in Punjabi.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_RussianGloss,Translation Glossaries is selected in Russian.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_HmongGloss,Translation Glossaries is selected in Hmong.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_ESNGlossary&TDS_WL_Glossary,Translation Glossaries is selected in Spanish and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_VietnameseGloss&TDS_WL_Glossary,Translation Glossaries is selected in Vietnamese and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_MandarinGloss&TDS_WL_Glossary,Translation Glossaries is selected in Mandarin and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_CantoneseGloss&TDS_WL_Glossary,Translation Glossaries is selected in Cantonese and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_TagalGloss&TDS_WL_Glossary,Translation Glossaries is selected in Tagalog and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_ArabicGloss&TDS_WL_Glossary,Translation Glossaries is selected in Arabic and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_KoreanGloss&TDS_WL_Glossary,Translation Glossaries is selected in Korean and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_PunjabiGloss&TDS_WL_Glossary,Translation Glossaries is selected in Punjabi and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_RussianGloss&TDS_WL_Glossary,Translation Glossaries is selected in Russian and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AT,"*Translation Glossaries (ET) (EMBEDDED)
+(Computer – S)",TDS_WL_HmongGloss&TDS_WL_Glossary,Translation Glossaries is selected in Hmong and English.,• science,• CAST,"• Translated glossaries are a language support. The translated glossaries are provided for selected construct-irrelevant terms.
+• By design, student can access the English glossary word list as a universal tool, unless this is disabled (“None”) or overridden by another language.
+• If a combination glossary is selected (e.g., English and Arabic or English and Russian), then the student will have access to both.
+• If a single glossary is selected (e.g., Mandarin), then the student only will have access to that glossary. The English glossary will not be available.
+
+Note: The English glossary is available for both ELA and mathematics tests. Translated glossaries are available for mathematics and science tests only.",embedded designated support
+AU,"Word Completion (NON-EMBEDDED)
+(Computer – E, M, S, RO)",Blank (default),Word Completion is not selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CSA",Student uses non-embedded software that will offer an option for the next word based on word frequency and syntax rules. ,non-embedded accommodation
+AU,"Word Completion (NON-EMBEDDED)
+(Computer – E, M, S, RO)",NEA_WordPred,Word Completion is selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CSA",Student uses non-embedded software that will offer an option for the next word based on word frequency and syntax rules. ,non-embedded accommodation
+AV,"Braille (EMBEDDED)
+(Computer – RO)",Blank (default),Braille is not selected.,• RLA,• CSA,Braille is a presentation resource.,embedded accommodation
+AV,"Braille (EMBEDDED)
+(Computer – RO)",ESN-Braille,Braille is selected.,• RLA,• CSA,Braille is a presentation resource.,embedded accommodation
+AW,"Medical Supports (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",Blank (default),Medical Supports is not selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• The student may have access to medical supports for medical purposes (e.g., glucose monitor). The medical support may include a cell phone and should only support the student during testing for medical reasons.
+• Educators should follow local policies regarding medical supports and ensure the student's health is the highest priority.
+• Electronic medical support settings must restrict access to other applications or the test administrator or test examiner must closely monitor the use of the medical support to maintain test security. 
+• Use of medical supports may require a separate setting to avoid distractions to other test takers and to ensure test security.",non-embedded designated support
+AW,"Medical Supports (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",NEDS_MedDev,Medical Supports is selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAA ELA
+• CAA math
+• CAA science
+• CAST
+• CSA","• The student may have access to medical supports for medical purposes (e.g., glucose monitor). The medical support may include a cell phone and should only support the student during testing for medical reasons.
+• Educators should follow local policies regarding medical supports and ensure the student's health is the highest priority.
+• Electronic medical support settings must restrict access to other applications or the test administrator or test examiner must closely monitor the use of the medical support to maintain test security. 
+• Use of medical supports may require a separate setting to avoid distractions to other test takers and to ensure test security.",non-embedded designated support
+AX,"*Text-to-Speech Passages (EMBEDDED)
+(Computer – RO)",Blank (default),Text-to-Speech Passages is not selected.,• RLA,• CSA,"• Text is read aloud to the student, in Spanish, via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• This accommodation is available for all grades.
+• This is an accommodation for passages.",embedded accommodation
+AX,"*Text-to-Speech Passages (EMBEDDED)
+(Computer – RO)",TDS_TTS_Stim,Text-to-Speech Passages is selected.,• RLA,• CSA,"• Text is read aloud to the student, in Spanish, via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• This accommodation is available for all grades.
+• This is an accommodation for passages.",embedded accommodation
+AY,"*Text-to-Speech Items (EMBEDDED)
+(Computer – RO)",Blank (default),Text-to-Speech is not selected.,• RLA,• CSA,"• Text is read aloud to the student, in Spanish, via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.",embedded designated support
+AY,"*Text-to-Speech Items (EMBEDDED)
+(Computer – RO)",TDS_TTS_ Item,Text-to-Speech Item and Stimuli is selected.,• RLA,• CSA,"• Text is read aloud to the student, in Spanish, via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.",embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",Blank (default),Translation Glossaries for math is not selected.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_ESNGlossary,Translation Glossaries for math is selected in Spanish.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_ArabicGloss,Translation Glossaries for math is selected in Arabic.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_BurmeseGloss,Translation Glossaries for math is selected in Burmese.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_CantoneseGloss,Translation Glossaries for math is selected in Cantonese.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_HmongGloss,Translation Glossaries for math is selected in Hmong.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_Illustration,Translation Glossaries for math is selected in Illustration Glossary.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_KoreanGloss,Translation Glossaries for math is selected in Korean.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_MandarinGloss,Translation Glossaries for math is selected in Mandarin.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_PunjabiGloss,Translation Glossaries for math is selected in Punjabi.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_RussianGloss,Translation Glossaries for math is selected in Russian.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_SomaliGloss,Translation Glossaries for math is selected in Somali.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_TagalGloss,Translation Glossaries for math is selected in Tagalog.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_UkrainianGloss,Translation Glossaries for math is selected in Ukrainian.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_VietnameseGloss,Translation Glossaries for math is selected in Vietnamese.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_ESNGlossary&TDS_WL_Glossary,Translation Glossaries for math is selected in Spanish and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_ArabicGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Arabic and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_BurmeseGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Burmese and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_CantoneseGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Cantonese and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_HmongGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Hmong and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_Illustration&TDS_WL_Glossary,Translation Glossaries for math is selected in Illustration Glossary and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_KoreanGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Korean and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_MandarinGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Mandarin and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_PunjabiGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Punjabi and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_RussianGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Russian and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_SomaliGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Somali and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_TagalGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Tagalog and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_UkrainianGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Ukrainian and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+AZ,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – M)",NEDS_WL_VietnameseGloss&TDS_WL_Glossary,Translation Glossaries for math is selected in Vietnamese and English.,"• math
+• PT",• Smarter math,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for mathematics only through Consortium-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",Blank (default),Translation Glossaries for science is not selected.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_ESNGlossary,Translation Glossaries for science is selected in Spanish.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_ArabicGloss,Translation Glossaries for science is selected in Arabic.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_CantoneseGloss,Translation Glossaries for science is selected in Cantonese.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_HmongGloss,Translation Glossaries for science is selected in Hmong.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_KoreanGloss,Translation Glossaries for science is selected in Korean.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_MandarinGloss,Translation Glossaries for science is selected in Mandarin.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_PunjabiGloss,Translation Glossaries for science is selected in Punjabi.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_RussianGloss,Translation Glossaries for science is selected Russian.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_TagalGloss,Translation Glossaries for science is selected in Tagalog.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_VietnameseGloss,Translation Glossaries for science is selected in Vietnamese.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_ESNGlossary&TDS_WL_Glossary,Translation Glossaries for science is selected in Spanish and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_ArabicGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Arabic and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_CantoneseGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Cantonese and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_HmongGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Hmong and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_KoreanGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Korean and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_MandarinGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Mandarin and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_PunjabiGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Punjabi and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_RussianGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Russian and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_TagalGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Tagalog and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BA,"*Translation Glossaries (ET) (NON-EMBEDDED)
+(Paper – S)",NEDS_WL_VietnameseGloss&TDS_WL_Glossary,Translation Glossaries for science is selected in Vietnamese and English.,• science,• CAST,"• This sets the student’s glossary designated support. The student can use a glossary to view terms presented on the test that may be unfamiliar.
+• Non-embedded translation glossaries are available for CAST only through ETS-provided PDFs, in which the glossary terms are listed by item and include the English term and its translated equivalent. 
+• Because the CAAs are administered in a one-on-one setting, this resource is not applicable to the CAAs.",non-embedded designated support
+BB,"Braille (NON-EMBEDDED)
+(Paper – E, M, S)",Blank (default),Braille is not selected.,"• ELA
+• math
+• science","• Smarter ELA
+• Smarter math
+• CAST
+","• This accommodation is for a student with visual impairment and whose IEP or Section 504 plan requires the use of paper versions. 
+• If the student cannot access the needed assistive technology for refreshable braille presentation and embossers to print test content on-demand for the administration of the computer-based CAASPP, paper–pencil tests are available.",non-embedded accommodation
+BB,"Braille (NON-EMBEDDED)
+(Paper – E, M, S)",NEA_Braille,Braille is selected.,"• ELA
+• math
+• science","• Smarter ELA
+• Smarter math
+• CAST
+","• This accommodation is for a student with visual impairment and whose IEP or Section 504 plan requires the use of paper versions. 
+• If the student cannot access the needed assistive technology for refreshable braille presentation and embossers to print test content on-demand for the administration of the computer-based CAASPP, paper–pencil tests are available.",non-embedded accommodation
+BC,"Large-print Special Form (NON-EMBEDDED)
+(Paper – E, M, S)",Blank (default),Large-print Special Form is not selected.,"• ELA
+• math
+• science","• Smarter ELA
+• Smarter math
+• CAST
+",Large-print special forms are available for the CAASPP. LEAs will need to request approval for these printed materials.,non-embedded accommodation
+BC,"Large-print Special Form (NON-EMBEDDED)
+(Paper – E, M, S)",NEA_LP,Large-print Special Form is selected.,"• ELA
+• math
+• science","• Smarter ELA
+• Smarter math
+• CAST
+",Large-print special forms are available for the CAASPP. LEAs will need to request approval for these printed materials.,non-embedded accommodation
+BD,"Speech-to-Text (EMBEDDED)
+(Computer – E, M, S, RO)",Blank (default),Speech-to-Text is not selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CSA","• Voice recognition uses the student’s voice as a means of input to the testing device, to dictate responses or give commands (e.g., opening applications, pulling down menus, and saving work).
+• Voice recognition software generally can recognize speech up to 160 words per minute. 
+• The student may use the voice recognition software embedded in the TDS.",embedded accommodation
+BD,"Speech-to-Text (EMBEDDED)
+(Computer – E, M, S, RO)",TDS_Dictation_1,Speech-to-Text is selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CSA","• Voice recognition uses the student’s voice as a means of input to the testing device, to dictate responses or give commands (e.g., opening applications, pulling down menus, and saving work).
+• Voice recognition software generally can recognize speech up to 160 words per minute. 
+• The student may use the voice recognition software embedded in the TDS.",embedded accommodation
+BE,"Word Completion (EMBEDDED)
+(Computer – E, M, S, RO)",Blank (default),Word Completion is not selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CSA","• Word completion allows students to begin writing a word and choose from a list of single words that have been predicted from word frequency and syntax rules.
+• Word completion is delivered via an embedded software program. The program must use only single word completion. Functionality such as phrase prediction, predict ahead, or next word will be unavailable. The program must have settings that allow only a basic dictionary. Expanded dictionaries, such as topic dictionaries and word banks, must be deactivated. 
+• Phonetic spelling functionality may be used, as well as speech output built into the program, which reads back the information the student has written. If further supports are needed for speech output, see text-to-speech or read aloud policies. Students who use word completion in conjunction with speech output will need headphones unless tested individually in a separate setting.",embedded accommodation
+BE,"Word Completion (EMBEDDED)
+(Computer – E, M, S, RO)",TDS_CoWriter1,Word Completion is selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CSA","• Word completion allows students to begin writing a word and choose from a list of single words that have been predicted from word frequency and syntax rules.
+• Word completion is delivered via an embedded software program. The program must use only single word completion. Functionality such as phrase prediction, predict ahead, or next word will be unavailable. The program must have settings that allow only a basic dictionary. Expanded dictionaries, such as topic dictionaries and word banks, must be deactivated. 
+• Phonetic spelling functionality may be used, as well as speech output built into the program, which reads back the information the student has written. If further supports are needed for speech output, see text-to-speech or read aloud policies. Students who use word completion in conjunction with speech output will need headphones unless tested individually in a separate setting.",embedded accommodation
+BF,"Printed Test Directions in English (NON-EMBEDDED)
+(Computer & Paper – E, M)",Blank (default),Printed Test Directions in English is not selected.,"• ELA
+• math","• Smarter ELA
+• Smarter math","Available as a supplement to the test administration scripts, a printed copy of oral test directions in English may be provided to the student.",non-embedded designated support
+BF,"Printed Test Directions in English (NON-EMBEDDED)
+(Computer & Paper – E, M)",NEDS_PrintDirs,Printed Test Directions in English is selected.,"• ELA
+• math","• Smarter ELA
+• Smarter math","Available as a supplement to the test administration scripts, a printed copy of oral test directions in English may be provided to the student.",non-embedded designated support
+BG,"Translated Test Directions in ASL (NON-EMBEDDED)
+(Computer & Paper – E, M)",Blank (default),Translated Test Directions in ASL is not selected.,"• ELA
+• math","• Smarter ELA
+• Smarter math",Test directions that include test administration scripts are translated into ASL video. The ASL human signer and the signed test content are viewed at the same time. Students may view portions of the ASL video as often as needed.,non-embedded designated support
+BG,"Translated Test Directions in ASL (NON-EMBEDDED)
+(Computer & Paper – E, M)",NEDS_TransDirs_ASL,Translated Test Directions in ASL is selected.,"• ELA
+• math","• Smarter ELA
+• Smarter math",Test directions that include test administration scripts are translated into ASL video. The ASL human signer and the signed test content are viewed at the same time. The student may view portions of the ASL video as often as needed.,non-embedded designated support
+BH,"Multiplication Table (EMBEDDED)
+(Computer – M, CM)",Blank (default),Multiplication Table is not selected.,• math,"• Smarter math
+• CAA math",A student can access a 1–12 multiplication table.,embedded accommodation
+BH,"Multiplication Table (EMBEDDED)
+(Computer – M, CM)",TDS_MP2,Multiplication Table is selected.,• math,"• Smarter math
+• CAA math",A student can access a 1–12 multiplication table.,embedded accommodation
+BI,"100s Number Table (EMBEDDED)
+(Computer – M, CM)",Blank (default),100s Number Table is not selected.,"• math
+","• Smarter math
+• CAA math",A student can access a table listing numbers from 1–100.,embedded accommodation
+BI,"100s Number Table (EMBEDDED)
+(Computer – M, CM)",TDS_NB1,100s Number Table is selected.,"• math
+","• Smarter math
+• CAA math",A student can access a table listing numbers from 1–100.,embedded accommodation
+BJ,"Multiplication Table (EMBEDDED)
+(Computer – S, CS)",Blank (default),Multiplication Table is not selected.,• science,"• CAST
+• CAA science",A student can access a 1–12 multiplication table.,embedded designated support
+BJ,"Multiplication Table (EMBEDDED)
+(Computer – S, CS)",TDS_MP2,Multiplication Table is selected.,• science,"• CAST
+• CAA science",A student can access a 1–12 multiplication table.,embedded designated support
+BK,"100s Number Table (EMBEDDED)
+(Computer – S, CS)",Blank (default),100s Number Table is not selected.,• science,"• CAST
+• CAA science",A student can access a table listing numbers from 1–100.,embedded designated support
+BK,"100s Number Table (EMBEDDED)
+(Computer – S, CS)",TDS_NB1,100s Number Table is selected.,• science,"• CAST
+• CAA science",A student can access a table listing numbers from 1–100.,embedded designated support
+BL,"Sensory Items (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",Blank (default),Sensory Items is not selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CAA ELA
+• CAA math
+• CAA science
+• CSA","A student may use sensory items (for example, fidgets, textured seat cushion, foot rocker) to help them focus on the test.",non-embedded designated support
+BL,"Sensory Items (NON-EMBEDDED)
+(Computer – E, M, S, CE, CM, CS, RO)
+(Paper – E, M, S)",NEDS_SensoryItems,Sensory Items is selected.,"• ELA
+• math
+• science
+• RLA","• Smarter ELA
+• Smarter math
+• CAST
+• CAA ELA
+• CAA math
+• CAA science
+• CSA","A student may use sensory items (for example, fidgets, textured seat cushion, foot rocker) to help them focus on the test.",non-embedded designated support
+BM,"Patty Paper (NON-EMBEDDED)
+(Computer – M)
+(Paper – M)",Blank (default),Patty Paper is not selected.,"• math
+","• Smarter math
+",This resource may be used for a student who typically uses patty paper to explore and visualize geometric concepts.,non-embedded designated support
+BM,"Patty Paper (NON-EMBEDDED)
+(Computer – M)
+(Paper – M)",NEDS_PattyPaper,Patty Paper is selected.,"• math
+","• Smarter math
+",This resource may be used for a student who typically uses patty paper to explore and visualize geometric concepts.,non-embedded designated support

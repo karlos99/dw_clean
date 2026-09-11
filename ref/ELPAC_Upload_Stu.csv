@@ -1,0 +1,622 @@
+Column,Display Name,Value,Value Definition,Assessment ,Setting Definition,Type
+B,"*Alternate Response Options (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Alternate Response is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","Alternate response options include, but are not limited to: adapted keyboards, large keyboards, StickyKeys, MouseKeys, FilterKeys, adapted mouse, touch screen, head wand, and switches.",non-embedded accommodation
+B,"*Alternate Response Options (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEA_AR,Alternate Response is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","Alternate response options include, but are not limited to: adapted keyboards, large keyboards, StickyKeys, MouseKeys, FilterKeys, adapted mouse, touch screen, head wand, and switches.",non-embedded accommodation
+C,"*American Sign Language (EMBEDDED) 
+(Computer – IO, SO)",Blank (default),Do not show ASL videos.,"• Initial ELPAC
+• Summative ELPAC","• Test content is translated into an ASL video. 
+• A human ASL signer and the signed test content are viewed on the same screen.",embedded accommodation
+C,"*American Sign Language (EMBEDDED) 
+(Computer – IO, SO)",TDS_ASL1,Show ASL videos.,"• Initial ELPAC
+• Summative ELPAC","• Test content is translated into an ASL video. 
+• A human ASL signer and the signed test content are viewed on the same screen.",embedded accommodation
+D,"*Braille (EMBEDDED)
+(Computer – IO, SO)",Blank (default),Braille is not selected.,"• Initial ELPAC
+• Summative ELPAC",Braille is a presentation resource.,embedded accommodation
+D,"*Braille (EMBEDDED)
+(Computer – IO, SO)",ENU-Braille,Braille is selected.,"• Initial ELPAC
+• Summative ELPAC",Braille is a presentation resource.,embedded accommodation
+E,"Closed Captioning (EMBEDDED)
+(Computer – IO, SO)",Blank (default),Closed Captioning is not selected.,"• Initial ELPAC
+• Summative ELPAC","• Printed text appears on the device screen as audio materials are presented.
+• This resource is for Listening items only.",embedded accommodation
+E,"Closed Captioning (EMBEDDED)
+(Computer – IO, SO)",TDS_ClosedCap1,Closed Captioning is selected.,"• Initial ELPAC
+• Summative ELPAC","• Printed text appears on the device screen as audio materials are presented.
+• This resource is for Listening items only.",embedded accommodation
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",Blank (default),Color Contrast is not selected; the default is Black on White.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCInvert,Reverse Contrast,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCMagenta,Black on Rose,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCMedGrayLtGray,Medium Gray on Light Gray,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCYellowB,Yellow on Blue,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCBlue, Blue,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCBlue2, Light Blue,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCCream, Black on Cream,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCGray, Gray,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCGray2, Light Gray,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCGreen, Green,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCGreen2, Light Green,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCMagenta2, Light Magenta,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCWhiteN, White on Navy,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCYellow, Yellow,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCYellow2, Light Yellow,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCRedW,Red on White,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCWhiteR,White on Red,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+F,"*Color Contrast (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_CCYellowBlk,Yellow on Black,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, assessments are presented with black text on a white background.
+• A student who requires a different combination of text and background should be assigned the appropriate setting.",embedded designated support
+G,"Color Overlay (NON-EMBEDDED) 
+(Paper – IO, SO)",Blank (default),Color Overlay is not selected.,"• Initial ELPAC
+• Summative ELPAC",Color transparencies are placed over a paper-based assessment or one that was printed on demand.,non-embedded designated support
+G,"Color Overlay (NON-EMBEDDED) 
+(Paper – IO, SO)",NEDS_CO,Color Overlay is selected.,"• Initial ELPAC
+• Summative ELPAC",Color transparencies are placed over a paper-based assessment or one that was printed on demand.,non-embedded designated support
+H,"Designated Interface Assistant (DIA) 
+(NON-EMBEDDED) 
+(Computer – IO, CIO, SO, CSO)",Blank (default),DIA is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• The DIA is available to a student who is a technology novice and has limited keyboarding skills that prevent the student from responding. 
+• The DIA is available to help the student interact with, or type, their hand-written responses on the test platform. 
+• The DIA resource should be used only during one-on-one administration.",non-embedded designated support
+H,"Designated Interface Assistant (DIA) 
+(NON-EMBEDDED) 
+(Computer – IO, CIO, SO, CSO)",NEDS_DIA,DIA is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• The DIA is available to a student who is a technology novice and has limited keyboarding skills that prevent the student from responding. 
+• The DIA is available to help the student interact with, or type, their hand-written responses on the test platform. 
+• The DIA resource should be used only during one-on-one administration.",non-embedded designated support
+I,"*Magnification (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Magnification is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","The size of specific areas of the screen (for example, text, formulas, tables, graphics, and navigation buttons) may be adjusted by the student with an assistive technology device.",non-embedded designated support
+I,"*Magnification (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_Mag,Magnification is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","The size of specific areas of the screen (for example, text, formulas, tables, graphics, and navigation buttons) may be adjusted by the student with an assistive technology device.",non-embedded designated support
+J,"Masking (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",Blank (default),Masking is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• Masking involves blocking off content that is not of immediate need or that may be distracting to the student.
+•  The student is able to focus attention on a specific part of a test item by masking.",embedded designated support
+J,"Masking (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_Masking1,Masking is available.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• Masking involves blocking off content that is not of immediate need or that may be distracting to the student.
+•  The student is able to focus attention on a specific part of a test item by masking.",embedded designated support
+K,"*Noise Buffers (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Noise Buffers is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","Noise buffers are, for example, ear mufflers, white noise, or other equipment used to block external sounds.",non-embedded designated support
+K,"*Noise Buffers (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_NoiseBuf,Noise Buffers is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","Noise buffers are, for example, ear mufflers, white noise, or other equipment used to block external sounds.",non-embedded designated support
+L,"Pause or Replay Audio—Listening (EMBEDDED)
+(Computer – IO, SO) ",Blank (default),Pause or Replay Audio is not selected.,"• Initial ELPAC
+• Summative ELPAC",A student who may need the audio to slow down or stop momentarily may have the stimulus of the audio presentation in the Listening domain paused or replayed.,embedded designated support
+L,"Pause or Replay Audio—Listening (EMBEDDED)
+(Computer – IO, SO) ",TDS_UAV_1,Pause or Replay Audio is selected.,"• Initial ELPAC
+• Summative ELPAC",A student who may need the audio to slow down or stop momentarily may have the stimulus of the audio presentation in the Listening domain paused or replayed.,embedded designated support
+M,"Pause or Replay Audio—Speaking (Grades 3–12) (EMBEDDED)
+(Computer – IO, SO) ",Blank (default),Pause or Replay Audio is not selected.,"• Initial ELPAC
+• Summative ELPAC",A student in grades three through twelve who may need the audio to slow down or stop momentarily may have the stimulus of the audio presentation in the Speaking domain paused or replayed.,embedded designated support
+M,"Pause or Replay Audio—Speaking (Grades 3–12) (EMBEDDED)
+(Computer – IO, SO) ",TDS_UAV_1,Pause or Replay Audio is selected.,"• Initial ELPAC
+• Summative ELPAC",A student in grades three through twelve who may need the audio to slow down or stop momentarily may have the stimulus of the audio presentation in the Speaking domain paused or replayed.,embedded designated support
+N,"*Print on Demand (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",Blank (default),Print on Demand is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","Paper copies of passages (stimuli), items, or both are printed for the student.",non-embedded designated support
+N,"*Print on Demand (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_PoD_Item,Print on Demand items is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Paper copies of items are printed for the student.,non-embedded designated support
+N,"*Print on Demand (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_PoD_Stim,Print on Demand passages is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Paper copies of passages (stimuli) are printed for the student.,non-embedded designated support
+N,"*Print on Demand (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_PoD_Stim&TDS_PoD_Item,Print on Demand items and passages is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","Paper copies of passages (stimuli), items, or both are printed for the student.",non-embedded designated support
+O,"*Read-Aloud Items (Writing) (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Read-Aloud for items is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• Text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided on the CAASPP & ELPAC Website.
+• All or portions of the items may be read aloud.",non-embedded designated support
+O,"*Read-Aloud Items (Writing) (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_RA_Items,Read-Aloud for items is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• Text is read aloud to the student by a trained and qualified human reader who follows the administration guidelines provided on the CAASPP & ELPAC Website.
+• All or portions of the items may be read aloud.",non-embedded designated support
+P,"*Scribe items (Writing) (NON-EMBEDDED)
+(Computer – IO, SO)
+(Paper – IO, SO)",Blank (default),Scribe is not selected.,"• Initial ELPAC
+• Summative ELPAC
+","• The student dictates responses to a human who records verbatim what the student dictates. 
+• The scribe must be trained and qualified, and must follow the administration guidelines provided on the CAASPP & ELPAC Website.",non-embedded accommodation
+P,"*Scribe items (Writing) (NON-EMBEDDED)
+(Computer – IO, SO)
+(Paper – IO, SO)",NEA_SC_WritItems,Scribe is selected.,"• Initial ELPAC
+• Summative ELPAC
+","• The student dictates responses to a human who records verbatim what the student dictates. 
+• The scribe must be trained and qualified, and must follow the administration guidelines provided on the CAASPP & ELPAC Website.",non-embedded accommodation
+Q,"Separate Setting (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Separate Setting is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• The test location is altered so that the student is tested in a setting different from that made available for most students.
+• The assessment is administered at the most beneficial time of day for the student.
+• Special lighting, acoustics, adaptive furniture, or any or all of these are to be used.",non-embedded designated support
+Q,"Separate Setting (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_SS,Separate Setting is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• The test location is altered so that the student is tested in a setting different from that made available for most students.
+• The assessment is administered at the most beneficial time of day for the student.
+• Special lighting, acoustics, adaptive furniture, or any or all of these are to be used.",non-embedded designated support
+R,"*Speech-to-Text (NON-EMBEDDED)
+(Computer – IO, SO)",Blank (default),Speech-to-text is not selected.,"• Initial ELPAC
+• Summative ELPAC","• Voice recognition uses the student’s voice as a means of input to the testing device, to dictate responses or give commands (for example, opening applications, pulling down menus, and saving work).
+• Voice recognition software generally can recognize speech up to 160 words per minute.
+• The student may use their assistive technology device.",non-embedded accommodation
+R,"*Speech-to-Text (NON-EMBEDDED)
+(Computer – IO, SO)",NEA_STT,Speech-to-text is selected.,"• Initial ELPAC
+• Summative ELPAC","• Voice recognition uses the student’s voice as a means of input to the testing device, to dictate responses or give commands (for example, opening applications, pulling down menus, and saving work).
+• Voice recognition software generally can recognize speech up to 160 words per minute. 
+• The student may use their assistive technology device.",non-embedded accommodation
+S,"*Text-to-Speech (Speaking, Writing) (EMBEDDED) 
+(Computer – IO, SO)",Blank (default),Text-to-Speech for items and text-to-speech for passages are not selected.,"• Initial ELPAC
+• Summative ELPAC","• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• This accommodation is available for all grade levels and grade spans.
+• This is an accommodation for items, passages, or items and passages.",embedded accommodation
+S,"*Text-to-Speech (Speaking, Writing) (EMBEDDED) 
+(Computer – IO, SO)",TDS_TTS_Item,Text-to-Speech items is selected.,"• Initial ELPAC
+• Summative ELPAC","• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• This accommodation is available for all grade levels and grade spans.
+• This is an accommodation for items.",embedded accommodation
+S,"*Text-to-Speech (Speaking, Writing) (EMBEDDED) 
+(Computer – IO, SO)",TDS_TTS_Stim,Text-to-Speech passages is selected.,"• Initial ELPAC
+• Summative ELPAC","• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• This accommodation is available for all grade levels and grade spans.
+• This is an accommodation for passages.",embedded accommodation
+S,"*Text-to-Speech (Speaking, Writing) (EMBEDDED) 
+(Computer – IO, SO)",TDS_TTS_Stim&TDS_TTS_Item,Text-to-Speech items and passages is selected.,"• Initial ELPAC
+• Summative ELPAC","• Text is read aloud to the student via embedded text-to-speech technology. 
+• The student is able to control the speed as well as raise or lower the volume of the voice via a volume control.
+• This accommodation is available for all grade levels and grade spans.
+• This is an accommodation for items and passages.",embedded accommodation
+T,"*Translated Test Directions (including ASL or Manually Coded English) (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Translated Test Directions is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• A PDF of directions is translated in each of the languages currently supported and is provided on the CAASPP & ELPAC Website. 
+• A bilingual adult can read to the student.",non-embedded designated support
+T,"*Translated Test Directions (including ASL or Manually Coded English) (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_TransDirs,Translated Test Directions is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• A PDF of directions is translated in each of the languages currently supported and is provided on the CAASPP & ELPAC Website. 
+• A bilingual adult can read to the student.",non-embedded designated support
+U,"Streamline (EMBEDDED) 
+(Computer – IO, CIO, SO, CSO)",Blank (default),Streamline is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, all assessments use the standard interface. This interface is compatible with all supported desktops and tablets. The streamlined interface presents the assessment in an alternate, simplified format in which the items are displayed below the stimuli. All tool and navigation buttons are on the bottom of the screen. 
+• This designated support includes zoom levels greater than 3X in the student interface.
+
+Important: The streamlined interface is not intended to be tablet compatible.",embedded designated support
+U,"Streamline (EMBEDDED) 
+(Computer – IO, CIO, SO, CSO)",TDS_SLM1,Streamline is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• By default, all assessments use the standard interface. This interface is compatible with all supported desktops and tablets. The streamlined interface presents the assessment in an alternate, simplified format in which the items are displayed below the stimuli. All tool and navigation buttons are on the bottom of the screen. 
+• This designated support includes zoom levels greater than 3X in the student interface.
+
+Important: The streamlined interface is not intended to be tablet compatible.",embedded designated support
+V,"Turn Off Any Universal Tool(s) (EMBEDDED) 
+(Computer – IO, CIO, SO, CSO)",Blank (default),Reminder is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",The test examiner receives a reminder to disable any universal tools that might be distracting or the student does not need to use or is unable to use.,embedded designated support
+V,"Turn Off Any Universal Tool(s) (EMBEDDED) 
+(Computer – IO, CIO, SO, CSO)",TDS_REM,Reminder is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",The test examiner receives a reminder to disable any universal tools that might be distracting or the student does not need to use or is unable to use.,embedded designated support
+W,"Simplified Test Directions (NON-EMBEDDED) 
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Simplified Test Directions is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",The test examiner simplifies or paraphrases test directions according to published guidelines provided on the CAASPP & ELPAC Website.,non-embedded designated support
+W,"Simplified Test Directions (NON-EMBEDDED) 
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_SimpDirs,Simplified Test Directions is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",The test examiner simplifies or paraphrases test directions according to published guidelines provided on the CAASPP & ELPAC Website.,non-embedded designated support
+X,"Amplification (NON-EMBEDDED)
+(Computer – IO, SO)
+(Paper – IO, SO)",Blank (default),Amplification is not selected.,"• Initial ELPAC
+• Summative ELPAC",The student may adjust the volume control beyond the testing device’s built-in settings using headphones or another non-embedded device.,non-embedded designated support
+X,"Amplification (NON-EMBEDDED)
+(Computer – IO, SO)
+(Paper – IO, SO)",NEDS_Amplify,Amplification is selected.,"• Initial ELPAC
+• Summative ELPAC",The student may adjust the volume control beyond the testing device’s built-in settings using headphones or another non-embedded device.,non-embedded designated support
+Y,"*Audio Transcript (includes braille transcript) (EMBEDDED) 
+(Computer – IO, SO)",Blank (default),Audio transcript is not selected.,"• Initial ELPAC
+• Summative ELPAC",Content that is accessed through listening during the course of the assessment with the option of closed-captioning is made available in braille or onscreen as a single text presentation (rather than one line at a time as provided by closed-captioning).,embedded accommodation
+Y,"*Audio Transcript (includes braille transcript) (EMBEDDED) 
+(Computer – IO, SO)",TDS_AudioScript1,Audio transcript is selected.,"• Initial ELPAC
+• Summative ELPAC",Content that is accessed through listening during the course of the assessment with the option of closed-captioning is made available in braille or onscreen as a single text presentation (rather than one line at a time as provided by closed-captioning).,embedded accommodation
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",Blank (default),Mouse Pointer is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_Black_L,"Large, Black Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_Black_XL,"Extra Large, Black Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_Green_L,"Large, Green Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_Green_XL,"Extra Large, Green Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_Red_L,"Large, Red Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_Red_XL,"Extra Large, Red Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_White_L,"Large, White Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_White_XL,"Extra Large, White Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_Yellow_L,"Large, Yellow Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+Z,"Mouse Pointer (Size and Color) (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_MP_Yellow_XL,"Extra Large, Yellow Mouse Pointer","• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Mouse pointer is a test setting for a student with visual impairments who needs for the mouse pointer to be larger or of a different color to more readily find the mouse pointer on the screen. ,embedded designated support
+AA,"Medical Supports (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Medical Supports is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• The student may have access to medical supports for medical purposes (for example, glucose monitor or Bluetooth hearing aids). The medical support may include a cell phone and should only support the student during testing for medical reasons.
+• Educators should follow local policies regarding medical supports and ensure the student's health is the highest priority.
+• Electronic medical support settings must restrict access to other applications or the test examiner must closely monitor the use of the medical support to maintain test security. 
+• Use of medical supports may require a separate setting to avoid distractions to other test takers and to ensure test security.",non-embedded designated support
+AA,"Medical Supports (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_MedDev,Medical Supports is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• The student may have access to medical supports for medical purposes (for example, glucose monitor or Bluetooth hearing aids). The medical support may include a cell phone and should only support the student during testing for medical reasons.
+• Educators should follow local policies regarding medical supports and ensure the student's health is the highest priority.
+• Electronic medical support settings must restrict access to other applications or the test examiner must closely monitor the use of the medical support to maintain test security. 
+• Use of medical supports may require a separate setting to avoid distractions to other test takers and to ensure test security.",non-embedded designated support
+AB,"Permissive Mode (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",Blank (default),Permissive Mode is disabled.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• Permissive mode should be enabled for a student who requires access to approved accessibility software, devices, or both to interact with the test (for example, screen readers, magnifiers, speech-to-text, braille screen readers and refreshable braille displays, etc.). 
+• When permissive mode is disabled, the only application that can be opened on the device is the secure browser.",embedded designated support
+AB,"Permissive Mode (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_PM1,Permissive Mode is enabled.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• Permissive mode should be enabled for a student who requires access to approved accessibility software, devices, or both to interact with the test (for example, screen readers, magnifiers, speech-to-text, braille screen readers and refreshable braille displays, etc.). 
+• When permissive mode is disabled, the only application that can be opened on the device is the secure browser.",embedded designated support
+AC,"Print Size (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",Blank (default),No default Print Size is applied.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• This designated support sets the student’s print (font) size.
+• This is the print size the student should have when starting an assessment
+• The selected print size becomes the default for all items in that student’s assessment.
+• The default print size for all tests is 14 point.",embedded designated support
+AC,"Print Size (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_PS_L1,1.5X,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• This designated support sets the student’s print (font) size.
+• This is the print size the student should have when starting an assessment
+• The selected print size becomes the default for all items in that student’s assessment.
+• The default print size for all assessments is 14 point.",embedded designated support
+AC,"Print Size (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_PS_L2,1.75X,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• This designated support sets the student’s print (font) size.
+• This is the print size the student should have when starting an assessment
+• The selected print size becomes the default for all items in that student’s assessment.
+• The default print size for all assessments is 14 point.",embedded designated support
+AC,"Print Size (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_PS_L3,2.5X,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• This designated support sets the student’s print (font) size.
+• This is the print size the student should have when starting an assessment
+• The selected print size becomes the default for all items in that student’s assessment.
+• The default print size for all assessments is 14 point.",embedded designated support
+AC,"Print Size (EMBEDDED)
+(Computer – IO, CIO, SO, CSO)",TDS_PS_L4,3X,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• This designated support sets the student’s print (font) size.
+• This is the print size the student should have when starting an assessment
+• The selected print size becomes the default for all items in that student’s assessment.
+• The default print size for all assessments is 14 point.",embedded designated support
+AD,"*ASL or Manually Coded English (Speaking and Listening) (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),ASL or Manually Coded English is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• A student who is deaf or hard of hearing and who typically uses ASL or Manually Coded English may need this accommodation when accessing text-based content in the assessment.
+• Test content is translated into ASL or Manually Coded English by a human signer.",non-embedded accommodation
+AD,"*ASL or Manually Coded English (Speaking and Listening) (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEA_ManuallyCodedEnglish,ASL or Manually Coded English is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• A student who is deaf or hard of hearing and who typically uses ASL or Manually Coded English may need this accommodation when accessing text-based content in the assessment.
+• Test content is translated into ASL or Manually Coded English by a human signer.",non-embedded accommodation
+AE,"Masking (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Masking is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• Masking involves blocking off content that is not of immediate need or that may be distracting to the student.
+• The student is able to focus attention on a specific part of a test item by masking.",non-embedded designated support
+AE,"Masking (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_Masking,Masking is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","• Masking involves blocking off content that is not of immediate need or that may be distracting to the student.
+• The student is able to focus attention on a specific part of a test item by masking.",non-embedded designated support
+AF,"Pause or Replay Audio—Listening (NON-EMBEDDED)
+(Paper – IO, SO)",Blank (default),Pause or Replay Audio—Listening is not selected.,"• Initial ELPAC
+• Summative ELPAC","A student who may need the audio to slow down or stop momentarily may have the audio presentation in the Listening domain paused, replayed, or reread during the administration of the test questions.",non-embedded designated support
+AF,"Pause or Replay Audio—Listening (NON-EMBEDDED)
+(Paper – IO, SO)",NEDS_UAVP,Pause or Replay Audio—Listening is selected.,"• Initial ELPAC
+• Summative ELPAC","A student who may need the audio to slow down or stop momentarily may have the audio presentation in the Listening domain paused, replayed, or reread during the administration of the test questions.",non-embedded designated support
+AG,"Pause or Replay Audio—Speaking (NON-EMBEDDED)
+(Paper – IO, SO)",Blank (default),Pause or Replay Audio—Speaking is not selected.,"• Initial ELPAC
+• Summative ELPAC","A student who may need the audio to slow down or stop momentarily may have the audio presentation in the Speaking domain paused, replayed, or reread during the administration of the test questions.",non-embedded designated support
+AG,"Pause or Replay Audio—Speaking (NON-EMBEDDED)
+(Paper – IO, SO)",NEDS_UAVP,Pause or Replay Audio—Speaking is selected.,"• Initial ELPAC
+• Summative ELPAC","A student who may need the audio to slow down or stop momentarily may have the audio presentation in the Speaking domain paused, replayed, or reread during the administration of the test questions.",non-embedded designated support
+AH,"Additional Instructional Supports and Resources for Alternate Assessments 
+(NON-EMBEDDED)
+(Computer – CIO, CSO)",Blank (default),Additional Instructional Supports and Resources for Alternate Assessments is not selected.,"• Initial Alternate ELPAC
+• Summative Alternate ELPAC","A student who is taking an alternate assessment may also need additional instructional supports, physical supports, and other resources documented in an IEP or Section 504 plan.",non-embedded accommodation
+AH,"Additional Instructional Supports and Resources for Alternate Assessments 
+(NON-EMBEDDED)
+(Computer – CIO, CSO)",NEA_AddAltRSC,Additional Instructional Supports and Resources for Alternate Assessments is selected.,"• Initial Alternate ELPAC
+• Summative Alternate ELPAC","A student who is taking an alternate assessment may also need additional instructional supports, physical supports, and other resources documented in an IEP or Section 504 plan.",non-embedded accommodation
+AI,"Audio Transcript (includes braille transcript) (NON-EMBEDDED) 
+(Paper – IO, SO)",Blank (default),Audio Transcript is not selected.,"• Initial ELPAC
+• Summative ELPAC","•This accommodation includes the use of written scripts by a test examiner for a student for whom streamed audio is not available. 
+• The use of this accommodation may result in the student needing additional overall time to complete the assessment.",non-embedded accommodation
+AI,"Audio Transcript (includes braille transcript) (NON-EMBEDDED) 
+(Paper – IO, SO)",NEA_AudioScriptP,Audio Transcript is selected.,"• Initial ELPAC
+• Summative ELPAC","•This accommodation includes the use of written scripts by a test examiner for a student for whom streamed audio is not available. 
+• The use of this accommodation may result in the student needing additional overall time to complete the assessment.",non-embedded accommodation
+AJ,"Braille (NON-EMBEDDED)
+(Computer – IO, SO) 
+(Paper – IO, SO)",Blank (default),Braille is not selected.,"• Initial ELPAC
+• Summative ELPAC","• This accommodation is for a student with visual impairments and whose IEP or Section 504 plan requires the use of paper versions. 
+• If the student cannot access the needed assistive technology for refreshable braille presentation and embossers to print test content on-demand for the administration of the computer-based ELPAC, paper–pencil tests are available.",non-embedded accommodation
+AJ,"Braille (NON-EMBEDDED)
+(Computer – IO, SO)
+(Paper – IO, SO)",NEA_Braille,Braille is selected.,"• Initial ELPAC
+• Summative ELPAC","• This accommodation is for a student with visual impairments and whose IEP or Section 504 plan requires the use of paper versions. 
+• If the student cannot access the needed assistive technology for refreshable braille presentation and embossers to print test content on-demand for the administration of the computer-based ELPAC, paper–pencil tests are available.",non-embedded accommodation
+AK,"Breaks (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Breaks is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Extended breaks in the middle of a domain-level test administration are allowed as an accommodation for a student with a disability who has a documented need.,non-embedded accommodation
+AK,"Breaks (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEA_Breaks,Breaks is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC",Extended breaks in the middle of a domain-level test administration are allowed as an accommodation for a student with a disability who has a documented need.,non-embedded accommodation
+AL,"Large-print Special Form (NON-EMBEDDED)
+(Paper – IO, SO)",Blank (default),Large-print Special Form is not selected.,"• Initial ELPAC
+• Summative ELPAC",Large-print special forms are available for ELPAC. LEAs will need to request approval for these printed materials.,non-embedded accommodation
+AL,"Large-print Special Form (NON-EMBEDDED)
+(Paper – IO, SO)",NEA_LP,Large-print Special Form is selected.,"• Initial ELPAC
+• Summative ELPAC",Large-print special forms are available for ELPAC. LEAs will need to request approval for these printed materials.,non-embedded accommodation
+AM,"Word Processor (Writing) (NON-EMBEDDED)
+(Paper – IO, SO)",Blank (default),Word Processor is not selected.,"• Initial ELPAC
+• Summative ELPAC","• The student may use word processing software for responses on the Writing domain in grades three through twelve.
+• The spelling and grammar check must be turned off.
+• Student responses must be transcribed in the Answer Book.",non-embedded accommodation
+AM,"Word Processor (Writing) (NON-EMBEDDED)
+(Paper – IO, SO)",NEA_WP,Word Processor is selected.,"• Initial ELPAC
+• Summative ELPAC","• The student may use word processing software for responses on the Writing domain in grades three through twelve.
+• The spelling and grammar check must be turned off.
+• Student responses must be transcribed in the Answer Book.",non-embedded accommodation
+AN,"*Speech-to-Text (EMBEDDED)
+(Computer – IO, SO)",Blank (default),Speech-to-text is not selected.,"• Initial ELPAC
+• Summative ELPAC","• Voice recognition uses the student’s voice as a means of input to the testing device, to dictate responses or give commands (for example, opening applications, pulling down menus, and saving work).
+• Voice recognition software generally can recognize speech up to 160 words per minute. 
+• The student may use the voice recognition software embedded in the TDS.",embedded accommodation
+AN,"*Speech-to-Text (EMBEDDED)
+(Computer – IO, SO)",TDS_Dictation_1,Speech-to-text is selected.,"• Initial ELPAC
+• Summative ELPAC","• Voice recognition uses the student’s voice as a means of input to the testing device, to dictate responses or give commands (for example, opening applications, pulling down menus, and saving work).
+• Voice recognition software generally can recognize speech up to 160 words per minute. 
+• The student may use the voice recognition software embedded in the TDS.",embedded accommodation
+AO,"Sensory Items (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",Blank (default),Sensory Items is not selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","The student may use sensory items (for example, a fidget toy, textured seat cushion, foot rocker, or other similar object) to help them focus on the assessment.",non-embedded designated support
+AO,"Sensory Items (NON-EMBEDDED)
+(Computer – IO, CIO, SO, CSO)
+(Paper – IO, SO)",NEDS_SensoryItems,Sensory Items is selected.,"• Initial ELPAC
+• Initial Alternate ELPAC
+• Summative ELPAC
+• Summative Alternate ELPAC","The student may use sensory items (for example, a fidget toy, textured seat cushion, foot rocker, or other similar object) to help them focus on the assessment.",non-embedded designated support
