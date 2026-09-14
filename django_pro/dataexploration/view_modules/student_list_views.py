@@ -1097,14 +1097,14 @@ def load_students(request):
                         f"""
                         SELECT COALESCE(MAX(cnt), 0)
                         FROM (
-                            SELECT sm.stu_annual_key, COUNT(DISTINCT sm.course_name) AS cnt
+                            SELECT sm.ssid, COUNT(DISTINCT sm.course_name) AS cnt
                             FROM student_marks_list sm
-                            INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                            INNER JOIN current_student cs ON sm.ssid = cs.ssid
                             {join_sql}
                             WHERE {where_sql}
                               AND sm.school_year = %s AND sm.subject = %s
                               {course_filter_sql}
-                            GROUP BY sm.stu_annual_key
+                            GROUP BY sm.ssid
                         ) t
                         """,
                         params + [year, subject] + course_extra_params,
@@ -1229,14 +1229,14 @@ def load_students(request):
                     period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
                 sort_join_sql = (
                     " LEFT JOIN ("
-                    " SELECT sm.stu_annual_key AS _k, any(sm.mark) AS _v"
+                    " SELECT sm.ssid AS _k, any(sm.mark) AS _v"
                     " FROM analytics_student_marks sm"
                     " WHERE sm.school_year = %s"
                     " AND sm.subject ILIKE %s"
                     " AND sm.course_name ILIKE %s"
                     f" {period_clause}"
-                    " GROUP BY sm.stu_annual_key"
-                    " ) _sort ON _sort._k = cs.stu_annual_key"
+                    " GROUP BY sm.ssid"
+                    " ) _sort ON _sort._k = cs.ssid"
                 )
                 order_by_expr = "_sort._v"
                 params.extend([
@@ -1571,31 +1571,31 @@ def load_students(request):
         # Fetch Marks "All Marks" wide-pair data (markall_<year>_<subject>_<i>_COURSE / _MARKS)
         if markall_years and students:
             try:
-                student_keys_all = [str(s.get('stu_annual_key') or '').strip() for s in students if str(s.get('stu_annual_key') or '').strip()]
-                if student_keys_all:
+                student_ssids_all = [str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()]
+                if student_ssids_all:
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
                         course_filter_sql, course_extra_params = _markall_course_sql_parts(
                             subject, _markall_course_excludes(year, subject)
                         )
                         markall_sql = f"""
-                            SELECT stu_annual_key, course_name, mark_period, mark
+                            SELECT ssid, course_name, mark_period, mark
                             FROM analytics_student_marks sm
-                            WHERE stu_annual_key = ANY(%s) AND school_year = %s AND subject = %s
+                            WHERE ssid = ANY(%s) AND school_year = %s AND subject = %s
                               {course_filter_sql}
-                            ORDER BY stu_annual_key, course_name, mark_period
+                            ORDER BY ssid, course_name, mark_period
                         """
                         markall_rows = _fetchall_ch_or_pg(
                             markall_sql,
-                            [student_keys_all, year, subject] + course_extra_params,
+                            [student_ssids_all, year, subject] + course_extra_params,
                             markall_sql.replace('analytics_student_marks', 'student_marks_list'),
                         )
                         by_key = {}
-                        for stu_key, course, period, mark in markall_rows:
-                            by_key.setdefault(str(stu_key).strip(), {}).setdefault(course, []).append((period, mark))
+                        for ssid_key, course, period, mark in markall_rows:
+                            by_key.setdefault(str(ssid_key).strip(), {}).setdefault(course, []).append((period, mark))
                         for student in students:
-                            stu_key = str(student.get('stu_annual_key') or '').strip()
-                            courses = by_key.get(stu_key, {})
+                            ssid_key = str(student.get('ssid') or '').strip()
+                            courses = by_key.get(ssid_key, {})
                             for i in range(1, n + 1):
                                 course_key = f"{umbrella}_{i}_COURSE"
                                 marks_key = f"{umbrella}_{i}_MARKS"
@@ -2043,7 +2043,7 @@ def load_students(request):
                 options_query = f"""
                     SELECT sm.mark AS v
                     FROM student_marks_list sm
-                    INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                    INNER JOIN current_student cs ON sm.ssid = cs.ssid
                     {join_sql}
                     WHERE {option_where_sql}
                       AND sm.school_year = %s
@@ -2107,7 +2107,7 @@ def load_students(request):
                             period_query = f"""
                                 SELECT DISTINCT CONCAT('period:', sm.mark_period) AS v
                                 FROM student_marks_list sm
-                                INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                INNER JOIN current_student cs ON sm.ssid = cs.ssid
                                 {join_sql}
                                 WHERE {option_where_sql}
                                   AND sm.school_year = %s AND sm.subject = %s
@@ -2128,7 +2128,7 @@ def load_students(request):
                             mark_query = f"""
                                 SELECT DISTINCT CONCAT('mark:', sm.mark) AS v
                                 FROM student_marks_list sm
-                                INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                INNER JOIN current_student cs ON sm.ssid = cs.ssid
                                 {join_sql}
                                 WHERE {option_where_sql}
                                   AND sm.school_year = %s AND sm.subject = %s
@@ -2154,7 +2154,7 @@ def load_students(request):
                             options_query = f"""
                                 SELECT DISTINCT sm.course_name AS v
                                 FROM student_marks_list sm
-                                INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                INNER JOIN current_student cs ON sm.ssid = cs.ssid
                                 {join_sql}
                                 WHERE {option_where_sql}
                                   AND sm.school_year = %s AND sm.subject = %s

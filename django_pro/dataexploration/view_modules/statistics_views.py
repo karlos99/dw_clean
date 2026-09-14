@@ -260,7 +260,7 @@ def get_column_statistics(request):
                 if real_values:
                     mark_clause = (
                         "SELECT 1 FROM student_marks_list sm "
-                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                        "WHERE sm.ssid = cs.ssid "
                         "AND sm.school_year = %s "
                         "AND sm.subject ILIKE %s "
                         "AND sm.course_name ILIKE %s "
@@ -286,7 +286,7 @@ def get_column_statistics(request):
                 if has_blank:
                     blank_clause = (
                         "SELECT 1 FROM student_marks_list sm "
-                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                        "WHERE sm.ssid = cs.ssid "
                         "AND sm.school_year = %s "
                         "AND sm.subject ILIKE %s "
                         "AND sm.course_name ILIKE %s "
@@ -820,8 +820,8 @@ def get_column_statistics(request):
                 query = f"""
                     SELECT sm.mark as val, COUNT(*) as cnt
                     FROM student_marks_list sm
-                    WHERE sm.stu_annual_key IN (
-                        SELECT cs.stu_annual_key FROM current_student cs {join_sql} WHERE {where_sql}
+                    WHERE sm.ssid IN (
+                        SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
                     )
                     AND sm.school_year = %s
                     AND sm.subject ILIKE %s

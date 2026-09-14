@@ -257,7 +257,7 @@ class ResultsStudentMatchTests(SimpleTestCase):
 			'error': None,
 			'rows': [
 				{
-					'stu_annual_key': 'k2', 'school_year': '2025-2026',
+					'ssid': 'B', 'school_year': '2025-2026',
 					'subject': 'Mathematics', 'course_name': 'Math 8 HP',
 					'mark_period': 'Q1', 'mark': 'A',
 				},
@@ -359,7 +359,7 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		self.assertIn('cs.grade', where_clauses[0])
 		self.assertEqual(params, [['03']])
 
-	def test_mark_column_filter_uses_stu_annual_key_subquery(self):
+	def test_mark_column_filter_uses_ssid_subquery(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
 
 		where_clauses = []
@@ -380,7 +380,8 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		)
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('student_marks_list', where_clauses[0])
-		self.assertIn('stu_annual_key', where_clauses[0])
+		self.assertIn('cs.ssid IN', where_clauses[0])
+		self.assertIn('sm.ssid', where_clauses[0])
 
 
 class SATColumnKeyTests(SimpleTestCase):

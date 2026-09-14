@@ -751,14 +751,14 @@ def export_students_csv(request):
                                 f"""
                                 SELECT COALESCE(MAX(cnt), 0)
                                 FROM (
-                                    SELECT sm.stu_annual_key, COUNT(DISTINCT sm.course_name) AS cnt
+                                    SELECT sm.ssid, COUNT(DISTINCT sm.course_name) AS cnt
                                     FROM student_marks_list sm
-                                    INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                    INNER JOIN current_student cs ON sm.ssid = cs.ssid
                                     {join_sql}
                                     WHERE {where_sql}
                                       AND sm.school_year = %s AND sm.subject = %s
                                       {course_filter_sql}
-                                    GROUP BY sm.stu_annual_key
+                                    GROUP BY sm.ssid
                                 ) t
                                 """,
                                 params + [year, subject] + course_extra_params,
@@ -984,31 +984,31 @@ def export_students_csv(request):
                     # Fetch Marks "All Marks" wide-pair data for this chunk
                     if markall_years:
                         try:
-                            chunk_keys = [str(s.get('stu_annual_key') or '').strip() for s in chunk_students if str(s.get('stu_annual_key') or '').strip()]
-                            if chunk_keys:
+                            chunk_ssids = [str(s.get('ssid') or '').strip() for s in chunk_students if str(s.get('ssid') or '').strip()]
+                            if chunk_ssids:
                                 for (year, subject), umbrella in markall_years.items():
                                     n = markall_max.get((year, subject), 0)
                                     course_filter_sql, course_extra_params = markall_course_filter_parts(
                                         subject, markall_excludes.get(umbrella, set())
                                     )
                                     markall_sql = f"""
-                                        SELECT stu_annual_key, course_name, mark_period, mark
+                                        SELECT ssid, course_name, mark_period, mark
                                         FROM analytics_student_marks sm
-                                        WHERE stu_annual_key = ANY(%s) AND school_year = %s AND subject = %s
+                                        WHERE ssid = ANY(%s) AND school_year = %s AND subject = %s
                                           {course_filter_sql}
-                                        ORDER BY stu_annual_key, course_name, mark_period
+                                        ORDER BY ssid, course_name, mark_period
                                     """
                                     markall_rows = _fetchall_ch_or_pg(
                                         markall_sql,
-                                        [chunk_keys, year, subject] + course_extra_params,
+                                        [chunk_ssids, year, subject] + course_extra_params,
                                         markall_sql.replace('analytics_student_marks', 'student_marks_list'),
                                     )
                                     by_key = {}
-                                    for stu_key, course, period, mark in markall_rows:
-                                        by_key.setdefault(str(stu_key).strip(), {}).setdefault(course, []).append((period, mark))
+                                    for ssid_key, course, period, mark in markall_rows:
+                                        by_key.setdefault(str(ssid_key).strip(), {}).setdefault(course, []).append((period, mark))
                                     for student in chunk_students:
-                                        stu_key = str(student.get('stu_annual_key') or '').strip()
-                                        courses = by_key.get(stu_key, {})
+                                        ssid_key = str(student.get('ssid') or '').strip()
+                                        courses = by_key.get(ssid_key, {})
                                         for i in range(1, n + 1):
                                             course_key = f"{umbrella}_{i}_COURSE"
                                             marks_key = f"{umbrella}_{i}_MARKS"

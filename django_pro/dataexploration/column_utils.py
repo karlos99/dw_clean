@@ -271,19 +271,21 @@ def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=No
                 )
 
     if mark_cols_info:
-        student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
+        # Match marks by SSID (like assessments), so prior-year mark columns populate
+        # while the student list row reflects the filtered enrollment year.
+        student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
         years = list({info['year'] for info in mark_cols_info if info.get('year')})
         result = exec_.execute(
-            "SELECT sm.stu_annual_key, sm.school_year, sm.subject, sm.course_name, "
+            "SELECT sm.ssid, sm.school_year, sm.subject, sm.course_name, "
             "sm.mark_period, sm.mark FROM analytics_student_marks sm "
-            "WHERE sm.stu_annual_key = ANY(%s) AND sm.school_year = ANY(%s)",
-            [student_keys, years],
+            "WHERE sm.ssid = ANY(%s) AND sm.school_year = ANY(%s)",
+            [student_ssids, years],
         )
         rows = []
         if not result.get('error'):
             for row in result.get('rows') or []:
                 rows.append((
-                    row.get('stu_annual_key'), row.get('school_year'), row.get('subject'),
+                    row.get('ssid'), row.get('school_year'), row.get('subject'),
                     row.get('course_name'), row.get('mark_period'), row.get('mark'),
                 ))
         for mark_info in mark_cols_info:
@@ -292,7 +294,7 @@ def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=No
             course_needle = _fold(mark_info.get('course_name'))
             want_period = _fold(mark_info['mark_period']) if mark_info.get('mark_period') else None
             mark_data = {}
-            for sak, year, subject, course, period, mark in rows:
+            for ssid, year, subject, course, period, mark in rows:
                 if _fold(year) != want_year:
                     continue
                 if subj_needle not in _fold(subject) or course_needle not in _fold(course):
@@ -302,11 +304,12 @@ def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=No
                         continue
                 elif _fold(period) != want_period:
                     continue
-                mark_data[sak] = mark
+                ssid_s = str(ssid).strip() if ssid is not None else ''
+                if ssid_s:
+                    mark_data[ssid_s] = mark
             for student in students:
-                student[mark_info['col_name']] = mark_data.get(
-                    student.get('stu_annual_key'), blank,
-                )
+                ssid_s = str(student.get('ssid') or '').strip()
+                student[mark_info['col_name']] = mark_data.get(ssid_s, blank)
 
 
 def _generate_cache_key(prefix, filters, extra_hash_str=""):
@@ -997,7 +1000,7 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
         }
     """
     extra_hash_str = f"{extra_join_sql}_{json.dumps(extra_where_clauses)}_{json.dumps(extra_params)}" if extra_join_sql or extra_where_clauses else ""
-    cache_key = _generate_cache_key("mark_columns", column_filters, extra_hash_str)
+    cache_key = _generate_cache_key("mark_columns_v2", column_filters, extra_hash_str)
     cached_data = cache.get(cache_key)
 
     if cached_data:
@@ -1029,7 +1032,7 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
                 sm.course_name,
                 sm.mark_period
             FROM student_marks_list sm
-            INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+            INNER JOIN current_student cs ON sm.ssid = cs.ssid
             {extra_join_sql}
             WHERE {where_sql}
             ORDER BY sm.school_year DESC, sm.subject, sm.course_name, sm.mark_period

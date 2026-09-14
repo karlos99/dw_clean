@@ -271,7 +271,7 @@ def apply_column_filters(
 
             conditions = []
             mark_subquery_base = (
-                "SELECT sm.stu_annual_key FROM student_marks_list sm "
+                "SELECT sm.ssid FROM student_marks_list sm "
                 "WHERE sm.school_year = %s "
                 "AND sm.subject ILIKE %s "
                 "AND sm.course_name ILIKE %s "
@@ -291,14 +291,14 @@ def apply_column_filters(
             if real_values:
                 val_clause = mark_subquery_base + "AND sm.mark = ANY(%s)"
                 val_params = list(mark_base_params) + [real_values]
-                conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                conditions.append(f"cs.ssid IN ({val_clause})")
                 params.extend(val_params)
 
             if has_blank:
                 blank_clause = mark_subquery_base + "AND (sm.mark IS NULL OR sm.mark = '')"
                 blank_params = list(mark_base_params)
                 conditions.append(
-                    f"(cs.stu_annual_key NOT IN ({mark_subquery_base}) OR cs.stu_annual_key IN ({blank_clause}))"
+                    f"(cs.ssid NOT IN ({mark_subquery_base}) OR cs.ssid IN ({blank_clause}))"
                 )
                 params.extend(mark_base_params + blank_params)
 
@@ -455,7 +455,7 @@ def apply_column_filters(
             if subject == 'Elementary':
                 course_filter_sql = " AND " + markall_excluded_course_sql()
             sub_base = (
-                "SELECT sm.stu_annual_key FROM student_marks_list sm "
+                "SELECT sm.ssid FROM student_marks_list sm "
                 "WHERE sm.school_year = %s AND sm.subject = %s "
                 f"{course_filter_sql}"
             )
@@ -467,22 +467,22 @@ def apply_column_filters(
                     marks = [str(v).split(':', 1)[1] for v in real_values if str(v).startswith('mark:')]
                     if periods and marks:
                         val_clause = sub_base + "AND sm.mark_period = ANY(%s) AND sm.mark = ANY(%s)"
-                        conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                        conditions.append(f"cs.ssid IN ({val_clause})")
                         params.extend(sub_params + [periods, marks])
                     elif periods:
                         val_clause = sub_base + "AND sm.mark_period = ANY(%s)"
-                        conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                        conditions.append(f"cs.ssid IN ({val_clause})")
                         params.extend(sub_params + [periods])
                     elif marks:
                         val_clause = sub_base + "AND sm.mark = ANY(%s)"
-                        conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                        conditions.append(f"cs.ssid IN ({val_clause})")
                         params.extend(sub_params + [marks])
                 else:
                     val_clause = sub_base + "AND sm.course_name = ANY(%s)"
-                    conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                    conditions.append(f"cs.ssid IN ({val_clause})")
                     params.extend(sub_params + [real_values])
             if has_blank:
-                conditions.append(f"cs.stu_annual_key NOT IN ({sub_base})")
+                conditions.append(f"cs.ssid NOT IN ({sub_base})")
                 params.extend(sub_params + sub_params)
             if conditions:
                 where_clauses.append(f"({' OR '.join(conditions)})")
