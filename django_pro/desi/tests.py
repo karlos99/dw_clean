@@ -1013,10 +1013,11 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertIsNone(self.user.get_accessible_student_keys())
 
     def test_can_edit_matrix(self):
-        # Coordinator holding only Testing Coordinator is read-only.
         coord = User.objects.create_user(username="coord@test.com", email="coord@test.com", password="password123")
         coord.roles.add(self.coordinator_role)
-        self.assertFalse(can_edit_desi(coord, student=self.student))
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.assertTrue(can_edit_desi(coord, student=self.student))
 
         # Teacher default = edit.
         self.assertTrue(can_edit_desi(self.user, student=self.student))
@@ -1133,6 +1134,8 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertIn(self.student, report["pending_by_assessment"][assessment.id])
 
     def test_entered_supports_report(self):
+        from unittest.mock import patch
+
         from desi.report_utils import build_entered_supports_report
 
         accommodation = Accommodation.objects.create(name="Calculator", code="CALC")
@@ -1145,10 +1148,58 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         record.updated_by = updater
         record.save()
 
-        report = build_entered_supports_report("SCH-A", "2025-2026")
+        with patch(
+            "desi.report_utils.seis_support_detail_for_student",
+            return_value={
+                "labels": ["Text-to-Speech: Read aloud"],
+                "option_ids": {999},
+                "accommodation_ids": {888},
+            },
+        ):
+            report = build_entered_supports_report("SCH-A", "2025-2026")
         rows = {row["ssid"]: row for row in report["rows"]}
         self.assertIn("Calculator: Scientific", rows["coordssid"]["supports"])
+        self.assertIn("Text-to-Speech: Read aloud (SEIS)", rows["coordssid"]["supports"])
+        self.assertTrue(rows["coordssid"]["has_seis_supports"])
+        self.assertEqual(rows["coordssid"]["from_seis"], "Yes")
         self.assertEqual(rows["coordssid"]["updated_by"], "up@test.com")
+
+    def test_entered_supports_report_support_filter(self):
+        from desi.report_utils import build_entered_supports_report
+
+        accommodation = Accommodation.objects.create(name="Masking", code="MASK")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Covers", code="COV")
+        record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=self.student.stu_annual_key,
+        )
+        record.options.add(option)
+
+        other = CurrentStudent.objects.create(
+            stu_annual_key="other_support_student",
+            ssid="otherssid",
+            student_id="other",
+            student_name="Other Student",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        StudentAccommodation.objects.get_or_create(student_annual_key=other.stu_annual_key)
+
+        report = build_entered_supports_report(
+            "SCH-A",
+            "2025-2026",
+            support_filter=f"o{option.id}",
+        )
+        ssids = {row["ssid"] for row in report["rows"]}
+        self.assertEqual(ssids, {"coordssid"})
+
+    def test_view_only_school_blocks_coordinator_save(self):
+        DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
+        coord = User.objects.create_user(username="coord2@test.com", email="coord2@test.com", password="password123")
+        coord.roles.add(self.coordinator_role)
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.assertFalse(can_edit_desi(coord, student=self.student))
 
     def test_coordinator_dashboard_access_tab_renders(self):
         coord = User.objects.create_user(username="cd@test.com", email="cd@test.com", password="password123")

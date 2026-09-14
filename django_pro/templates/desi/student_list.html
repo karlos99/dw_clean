@@ -116,7 +116,7 @@
     </aside>
 
     <!-- RIGHT PANEL: Workspace View (Scrollable) -->
-    <main id="workspace-container" class="flex-1 overflow-y-auto p-6 md:p-8">
+    <main id="workspace-container" class="flex-1 overflow-auto p-6 md:p-8 desi-workspace-scroll">
         {% if student %}
             {% include "desi/partials/workspace_form.html" %}
         {% else %}
@@ -131,7 +131,20 @@
 
     <!-- CLIENT-SIDE OPTION SYNCHRONIZATION AND SIDEBAR INTERACTION -->
     <script>
+        function desiSyncMatrixSticky() {
+            const profile = document.getElementById('desi-student-profile-sticky');
+            const workspace = document.getElementById('workspace-container');
+            const wrap = document.getElementById('desi-matrix-wrap');
+            if (!profile || !workspace) return;
+            const height = Math.ceil(profile.getBoundingClientRect().height);
+            workspace.style.setProperty('--desi-profile-offset', `${height}px`);
+            if (wrap) wrap.style.setProperty('--desi-profile-offset', `${height}px`);
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
+            desiSyncMatrixSticky();
+            window.addEventListener('resize', desiSyncMatrixSticky);
+
             const schoolSelect = document.getElementById('school');
             const gradeSelect = document.getElementById('grade');
             const filterForm = document.getElementById('desi-student-filter-form');
@@ -348,6 +361,8 @@
                 if (e.target && e.target.id === 'workspace-container') {
                     hideSupportPopover();
                     applyDependencies();
+                    desiSyncMatrixSticky();
+                    requestAnimationFrame(desiSyncMatrixSticky);
                 }
             });
 

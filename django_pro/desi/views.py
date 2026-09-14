@@ -128,7 +128,23 @@ def can_edit_desi(user, student=None, school_state_id=None):
                 pass
         return True
 
-    if any(r in {'School View', 'School Gr View', 'Testing Coordinator'} for r in role_names):
+    if _has_role(user, 'Testing Coordinator'):
+        if school_state_id is None and student is not None:
+            school_state_id = getattr(student, 'school_state_id', None)
+        allowed_schools = _coordinator_school_ids(user)
+        if allowed_schools is not None:
+            if not school_state_id or school_state_id not in allowed_schools:
+                return False
+        if school_state_id:
+            try:
+                access = DesiSchoolAccess.objects.get(school_state_id=school_state_id)
+                if not access.teachers_can_edit:
+                    return False
+            except DesiSchoolAccess.DoesNotExist:
+                pass
+        return True
+
+    if any(r in {'School View', 'School Gr View'} for r in role_names):
         return False
 
     return False
@@ -803,22 +819,64 @@ def coordinator_dashboard(request):
     completion = None
     entered = None
     teacher_options = []
+    teacher_options_by_school_json = '{}'
     selected_teacher = ''
     scope = request.GET.get('scope', 'school')
+    report_requested = request.GET.get('run') == '1'
 
-    if tab in ('completion', 'report') and selected_school and selected_year:
+    if tab in ('completion', 'report') and report_requested and selected_school and selected_year:
         from .report_utils import build_school_report
         completion = build_school_report(selected_school.state_id, selected_year)
 
+    support_filter_groups = []
+    selected_support_filter = ''
+    coordinator_can_edit_students = False
+
     if tab == 'entered' and selected_school and selected_year:
-        from .report_utils import build_entered_supports_report, list_school_teachers
+        from .report_utils import (
+            build_entered_supports_report,
+            build_support_filter_groups,
+            list_school_teachers,
+            parse_support_filter_value,
+            teacher_options_by_school,
+        )
+        school_ids = [s.state_id for s in schools]
+        teachers_by_school = teacher_options_by_school(school_ids, selected_year)
+        teacher_options_by_school_json = json.dumps(teachers_by_school)
         teacher_options = list_school_teachers(selected_school.state_id, selected_year)
         selected_teacher = request.GET.get('teacher', '').strip()
-        if scope == 'teacher' and selected_teacher in teacher_options:
-            entered = build_entered_supports_report(selected_school.state_id, selected_year, teacher=selected_teacher)
-        else:
-            scope = 'school'
-            entered = build_entered_supports_report(selected_school.state_id, selected_year)
+        if selected_teacher and selected_teacher not in teacher_options:
+            selected_teacher = ''
+        support_filter_groups = build_support_filter_groups()
+        selected_support_filter = request.GET.get('support', '').strip()
+        if parse_support_filter_value(selected_support_filter) == (None, None):
+            selected_support_filter = ''
+        coordinator_can_edit_students = (
+            can_edit_desi(request.user, school_state_id=selected_school.state_id)
+            and (
+                request.user.is_superuser
+                or _is_project_admin(request.user)
+                or _is_testing_coordinator(request.user)
+            )
+        )
+        if report_requested:
+            report_kwargs = {
+                'support_filter': selected_support_filter,
+            }
+            if scope == 'teacher' and selected_teacher:
+                entered = build_entered_supports_report(
+                    selected_school.state_id,
+                    selected_year,
+                    teacher=selected_teacher,
+                    **report_kwargs,
+                )
+            elif scope != 'teacher':
+                scope = 'school'
+                entered = build_entered_supports_report(
+                    selected_school.state_id,
+                    selected_year,
+                    **report_kwargs,
+                )
 
     context = {
         'tab': tab,
@@ -828,8 +886,13 @@ def coordinator_dashboard(request):
         'report': completion,
         'entered': entered,
         'teacher_options': teacher_options,
+        'teacher_options_by_school_json': teacher_options_by_school_json,
         'selected_teacher': selected_teacher,
         'scope': scope,
+        'report_requested': report_requested,
+        'support_filter_groups': support_filter_groups,
+        'selected_support_filter': selected_support_filter,
+        'coordinator_can_edit_students': coordinator_can_edit_students,
     }
     return render(request, 'desi/coordinator_dashboard.html', context)
 
@@ -905,20 +968,41 @@ def coordinator_entered_csv(request):
     else:
         teacher = ''
 
-    from .report_utils import build_entered_supports_report
-    report = build_entered_supports_report(school_state_id, report_year, teacher=teacher)
+    from .report_utils import build_entered_supports_report, parse_support_filter_value
+    support_filter = request.GET.get('support', '').strip()
+    if parse_support_filter_value(support_filter) == (None, None):
+        support_filter = ''
+
+    report = build_entered_supports_report(
+        school_state_id,
+        report_year,
+        teacher=teacher,
+        support_filter=support_filter,
+    )
 
     response = HttpResponse(content_type='text/csv')
     suffix = teacher.replace(' ', '_') if teacher else 'entire_school'
     response['Content-Disposition'] = f'attachment; filename="desi_entered_supports_{school_state_id}_{report_year}_{suffix}.csv"'
     writer = csv.writer(response)
-    writer.writerow(['SSID', 'Student Name', 'Grade', 'Supports Entered', 'Completed Assessments', 'Updated By', 'Updated At'])
+    writer.writerow([
+        'SSID',
+        'Student Name',
+        'Grade',
+        'Teachers',
+        'Supports Entered',
+        'From SEIS',
+        'Completed Assessments',
+        'Updated By',
+        'Updated At',
+    ])
     for row in report['rows']:
         writer.writerow([
             row['ssid'],
             row['student_name'],
             row['grade'],
+            row['teachers'],
             row['supports'],
+            row['from_seis'],
             row['completions'],
             row['updated_by'],
             row['updated_at'],
