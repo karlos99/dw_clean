@@ -1481,7 +1481,24 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAbort = new AbortController();
         inFlightUrl = urlStr;
         const requestSeq = ++loadDataSeq;
-        showLoading('Loading student data...');
+
+        // Check SWR client cache for instant table render
+        const deCacheKey = `de_data_${urlStr}`;
+        let hasSWRHit = false;
+        try {
+            const cachedStr = sessionStorage.getItem(deCacheKey);
+            if (cachedStr) {
+                const cachedPayload = JSON.parse(cachedStr);
+                if (cachedPayload && Array.isArray(cachedPayload.students)) {
+                    renderTable(cachedPayload);
+                    hasSWRHit = true;
+                }
+            }
+        } catch (e) {}
+
+        if (!hasSWRHit) {
+            showLoading('Loading student data...');
+        }
         clearStatsCache();
 
         fetch(urlStr, { credentials: 'same-origin', signal: loadAbort.signal })
@@ -1496,6 +1513,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (requestSeq !== loadDataSeq) return;
                 nextCursor = payload.next_cursor || '';
                 pendingCursor = '';
+                try {
+                    sessionStorage.setItem(deCacheKey, JSON.stringify(payload));
+                } catch (e) {}
                 renderTable(payload);
                 saveViewState();
                 hideLoading();
@@ -1505,7 +1525,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error('Error loading data:', error);
                 hideLoading();
                 const targetEl = document.querySelector('#student-table');
-                if (targetEl) {
+                if (targetEl && !hasSWRHit) {
                     targetEl.innerHTML = '<div class="text-center py-8 text-red-600">Failed to load data.</div>';
                 }
             })

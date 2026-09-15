@@ -971,9 +971,11 @@ def _wait_chart_flight(done_key):
     return None
 
 
-def warm_published_page_charts(limit=32):
-    """Fill Redis for charts on active DataViz pages after a ClickHouse sync."""
-    from dataviz.models import DataVizPage, DataVizPageSection
+def warm_published_page_charts(limit=200, warm_schools=True):
+    """Fill Redis for charts on active DataViz pages and dashboards after a ClickHouse sync."""
+    from dataviz.models import DataVizPage, DataVizPageSection, DashboardChart
+    from clickhouse_utils.thread_pool import get_io_pool
+
     ids = []
     seen = set()
     qs = (
@@ -991,15 +993,71 @@ def warm_published_page_charts(limit=32):
             continue
         seen.add(cid)
         ids.append(cid)
-        if len(ids) >= limit:
+        if limit and len(ids) >= limit:
             break
-    warmed = 0
-    for cid in ids:
+
+    # Also include charts from home dashboards if limit allows
+    if limit is None or len(ids) < limit:
+        dash_qs = (
+            DashboardChart.objects
+            .filter(
+                chart_id__isnull=False,
+                dashboard__is_home=True,
+            )
+            .values_list('chart_id', flat=True)
+        )
+        for cid in dash_qs.iterator():
+            if cid in seen:
+                continue
+            seen.add(cid)
+            ids.append(cid)
+            if limit and len(ids) >= limit:
+                break
+
+    school_ids = ['']
+    if warm_schools:
         try:
-            _render_saved_chart(cid, {}, is_embed=True)
-            warmed += 1
+            from studata.models import School
+            active_schools = list(
+                School.objects.filter(is_active=True)
+                .exclude(state_id__isnull=True)
+                .exclude(state_id='')
+                .values_list('state_id', flat=True)[:10]
+            )
+            school_ids.extend(active_schools)
         except Exception:
-            _timing_log.exception('op=warm_published_page_charts chart_id=%s', cid)
+            pass
+
+    pool = get_io_pool()
+    tasks = []
+    for cid in ids:
+        tasks.append((cid, ''))
+        if warm_schools and len(school_ids) > 1:
+            for s_id in school_ids[1:]:
+                tasks.append((cid, s_id))
+
+    def _warm_one(item):
+        c_id, sch_id = item
+        try:
+            _render_saved_chart(c_id, {}, is_embed=True, school_id=sch_id)
+            return True
+        except Exception:
+            _timing_log.exception('op=warm_published_page_charts chart_id=%s school_id=%s', c_id, sch_id)
+            return False
+        finally:
+            try:
+                from django.db import connections
+                connections['default'].close()
+            except Exception:
+                pass
+
+    if len(tasks) <= 1:
+        warmed = sum(1 for t in tasks if _warm_one(t))
+        return warmed
+
+    pool = get_io_pool()
+    futures = [pool.submit(_warm_one, t) for t in tasks]
+    warmed = sum(1 for f in futures if f.result())
     return warmed
 
 
@@ -1374,6 +1432,7 @@ def chart_batch_render_api(request):
     is_embed = source in ('page', 'dashboard')
     pf_filters = body.get('filters') or {}
     school_id = body.get('school_id') or ''
+    etags = body.get('etags') or {}
 
     # Non-admins may only batch-render their own home-dashboard charts
     permitted = set(chart_ids)
@@ -1399,16 +1458,20 @@ def chart_batch_render_api(request):
         if cid not in permitted:
             return cid, {'html': '', 'error': 'Not permitted'}
         try:
+            if_none_match = etags.get(str(cid)) or (etags.get(int(cid)) if str(cid).isdigit() else None)
             res = _render_saved_chart(
                 cid, pf_filters,
                 drill_source=source, drill_source_id=source_id, drill_source_name=source_name,
                 is_embed=is_embed, request=request,
+                if_none_match=if_none_match,
                 school_id=school_id,
             )
             return cid, {
                 'html': res.get('html', ''),
                 'error': res.get('error'),
                 'cache_status': res.get('cache_status'),
+                'etag': res.get('etag'),
+                'not_modified': bool(res.get('not_modified')),
             }
         except Exception as exc:
             return cid, {'html': '', 'error': str(exc)}

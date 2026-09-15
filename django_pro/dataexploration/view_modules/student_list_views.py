@@ -1219,44 +1219,46 @@ def _load_students(request):
         # *filtered* students actually have in that subject. If no filtered
         # student has a second course, only one pair is produced.
         if markall_years:
-            with connections['default'].cursor() as markall_cursor:
-                for (year, subject), umbrella in markall_years.items():
-                    course_filter_sql, course_extra_params = _markall_course_sql_parts(
-                        subject, _markall_course_excludes(year, subject)
+            for (year, subject), umbrella in markall_years.items():
+                course_filter_sql, course_extra_params = _markall_course_sql_parts(
+                    subject, _markall_course_excludes(year, subject)
+                )
+                markall_cache_key = (
+                    f"dataexp:markall_max:{_sync_v}:"
+                    + hashlib.md5(json.dumps({
+                        'where': where_sql,
+                        'params': [str(p) for p in params],
+                        'join': join_sql,
+                        'year': year,
+                        'subject': subject,
+                        'cf': course_filter_sql,
+                        'cep': [str(p) for p in course_extra_params],
+                    }, sort_keys=True).encode()).hexdigest()
+                )
+                max_val = cache.get(markall_cache_key)
+                if max_val is None:
+                    ch_query = f"""
+                    SELECT COALESCE(MAX(cnt), 0)
+                    FROM (
+                        SELECT sm.ssid, COUNT(DISTINCT sm.course_name) AS cnt
+                        FROM analytics_student_marks sm
+                        INNER JOIN current_student cs ON sm.ssid = cs.ssid
+                        {join_sql}
+                        WHERE {where_sql}
+                          AND sm.school_year = %s AND sm.subject = %s
+                          {course_filter_sql}
+                        GROUP BY sm.ssid
+                    ) t
+                    """
+                    pg_query = ch_query.replace('analytics_student_marks', 'student_marks_list')
+                    res = _fetchall_ch_or_pg(
+                        ch_query,
+                        params + [year, subject] + course_extra_params,
+                        pg_sql=pg_query,
                     )
-                    markall_cache_key = (
-                        f"dataexp:markall_max:{_sync_v}:"
-                        + hashlib.md5(json.dumps({
-                            'where': where_sql,
-                            'params': [str(p) for p in params],
-                            'join': join_sql,
-                            'year': year,
-                            'subject': subject,
-                            'cf': course_filter_sql,
-                            'cep': [str(p) for p in course_extra_params],
-                        }, sort_keys=True).encode()).hexdigest()
-                    )
-                    max_val = cache.get(markall_cache_key)
-                    if max_val is None:
-                        markall_cursor.execute(
-                            f"""
-                            SELECT COALESCE(MAX(cnt), 0)
-                            FROM (
-                                SELECT sm.ssid, COUNT(DISTINCT sm.course_name) AS cnt
-                                FROM student_marks_list sm
-                                INNER JOIN current_student cs ON sm.ssid = cs.ssid
-                                {join_sql}
-                                WHERE {where_sql}
-                                  AND sm.school_year = %s AND sm.subject = %s
-                                  {course_filter_sql}
-                                GROUP BY sm.ssid
-                            ) t
-                            """,
-                            params + [year, subject] + course_extra_params,
-                        )
-                        max_val = min(int(markall_cursor.fetchone()[0] or 0), 10)
-                        cache.set(markall_cache_key, max_val, 300)
-                    markall_max[(year, subject)] = max_val
+                    max_val = min(int(res[0][0] or 0), 10) if res else 0
+                    cache.set(markall_cache_key, max_val, 300)
+                markall_max[(year, subject)] = max_val
 
             new_selected = []
             for c in selected_columns:
@@ -1277,49 +1279,66 @@ def _load_students(request):
         # the *filtered* students actually have for the year (subjects the
         # user unchecked in the picker are skipped).
         if apall_years:
-            with connections['default'].cursor() as apall_cursor:
-                for year in apall_years:
-                    excludes = _apall_subject_excludes(year)
-                    exclude_clause = ""
-                    exclude_params = []
-                    if excludes:
-                        placeholders = ", ".join(["%s"] * len(excludes))
-                        exclude_clause = f" AND e.name NOT IN ({placeholders})"
-                        exclude_params = sorted(excludes)
-                    apall_cache_key = (
-                        f"dataexp:apall_max:{_sync_v}:"
-                        + hashlib.md5(json.dumps({
-                            'where': where_sql,
-                            'params': [str(p) for p in params],
-                            'join': join_sql,
-                            'year': year,
-                            'excl': exclude_clause,
-                            'exp': [str(p) for p in exclude_params],
-                        }, sort_keys=True).encode()).hexdigest()
+            for year in apall_years:
+                excludes = _apall_subject_excludes(year)
+                exclude_clause = ""
+                exclude_params = []
+                if excludes:
+                    placeholders = ", ".join(["%s"] * len(excludes))
+                    exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                    exclude_params = sorted(excludes)
+                apall_cache_key = (
+                    f"dataexp:apall_max:{_sync_v}:"
+                    + hashlib.md5(json.dumps({
+                        'where': where_sql,
+                        'params': [str(p) for p in params],
+                        'join': join_sql,
+                        'year': year,
+                        'excl': exclude_clause,
+                        'exp': [str(p) for p in exclude_params],
+                    }, sort_keys=True).encode()).hexdigest()
+                )
+                max_val = cache.get(apall_cache_key)
+                if max_val is None:
+                    ch_exclude_clause = (
+                        f" AND r.exam_name NOT IN ({', '.join(['%s'] * len(excludes))})" if excludes else ""
                     )
-                    max_val = cache.get(apall_cache_key)
-                    if max_val is None:
-                        apall_cursor.execute(
-                            f"""
-                            SELECT COALESCE(MAX(cnt), 0)
-                            FROM (
-                                SELECT r.ssid, COUNT(*) AS cnt
-                                FROM "dataLoader_apexamresult" r
-                                INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
-                                INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
-                                INNER JOIN current_student cs ON r.ssid = cs.ssid
-                                {join_sql}
-                                WHERE {where_sql}
-                                  AND r.admin_year = %s AND il.is_published = true
-                                  {exclude_clause}
-                                GROUP BY r.ssid
-                            ) t
-                            """,
-                            params + [year] + exclude_params,
-                        )
-                        max_val = min(int(apall_cursor.fetchone()[0] or 0), 10)
-                        cache.set(apall_cache_key, max_val, 300)
-                    apall_max[year] = max_val
+                    ch_query = f"""
+                    SELECT COALESCE(MAX(cnt), 0)
+                    FROM (
+                        SELECT r.ssid, COUNT(*) AS cnt
+                        FROM analytics_ap_results r
+                        INNER JOIN current_student cs ON r.ssid = cs.ssid
+                        {join_sql}
+                        WHERE {where_sql}
+                          AND r.admin_year = %s
+                          {ch_exclude_clause}
+                        GROUP BY r.ssid
+                    ) t
+                    """
+                    pg_query = f"""
+                    SELECT COALESCE(MAX(cnt), 0)
+                    FROM (
+                        SELECT r.ssid, COUNT(*) AS cnt
+                        FROM "dataLoader_apexamresult" r
+                        INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                        INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                        INNER JOIN current_student cs ON r.ssid = cs.ssid
+                        {join_sql}
+                        WHERE {where_sql}
+                          AND r.admin_year = %s AND il.is_published = true
+                          {exclude_clause}
+                        GROUP BY r.ssid
+                    ) t
+                    """
+                    res = _fetchall_ch_or_pg(
+                        ch_query,
+                        params + [year] + exclude_params,
+                        pg_sql=pg_query,
+                    )
+                    max_val = min(int(res[0][0] or 0), 10) if res else 0
+                    cache.set(apall_cache_key, max_val, 300)
+                apall_max[year] = max_val
 
             new_selected = []
             for c in selected_columns:
@@ -2592,3 +2611,28 @@ def _load_students(request):
     }
 
     return render(request, 'dataexploration/partials/student_table.html', context)
+
+
+def warm_data_explorer_default_cache():
+    """Fill Redis for default Data Explorer queries and filter options after ClickHouse sync."""
+    warmed = 0
+    try:
+        from django.test import RequestFactory
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        admin_user = User.objects.filter(is_superuser=True).first()
+        if not admin_user:
+            admin_user = User.objects.first()
+        if not admin_user:
+            return 0
+
+        factory = RequestFactory()
+        req = factory.get('/dataexploration/api/students/', {'format': 'json', 'page': '1'})
+        req.user = admin_user
+        resp = _load_students(req)
+        if resp.status_code == 200:
+            warmed += 1
+    except Exception:
+        logger.exception("warm_data_explorer_default_cache failed")
+    return warmed
+

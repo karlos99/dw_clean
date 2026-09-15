@@ -246,10 +246,16 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f'Sync complete (version {sync_version}).'))
             try:
                 from dataviz.views.api.chart_api import warm_published_page_charts
-                n = warm_published_page_charts()
+                n = warm_published_page_charts(limit=200, warm_schools=True)
                 self.stdout.write(f'Warmed {n} published page charts.')
             except Exception as exc:
                 self.stderr.write(self.style.WARNING(f'Chart cache warm skipped: {exc}'))
+            try:
+                from dataexploration.view_modules.student_list_views import warm_data_explorer_default_cache
+                de_warmed = warm_data_explorer_default_cache()
+                self.stdout.write(f'Warmed Data Explorer default cache ({de_warmed} views).')
+            except Exception as exc:
+                self.stderr.write(self.style.WARNING(f'Data Explorer cache warm skipped: {exc}'))
         else:
             self.stderr.write(self.style.WARNING(
                 'Sync completed with failures; cache version was not advanced.'
