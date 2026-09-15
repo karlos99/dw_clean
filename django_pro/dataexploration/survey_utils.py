@@ -229,21 +229,33 @@ def get_survey_columns(column_filters=None):
     return result
 
 
-def get_survey_data_for_students(student_ids, school_year=None):
+def get_survey_data_for_students(student_ids=None, school_year=None, ssids=None):
     """
     Fetch survey response data for a list of students.
     
     Args:
-        student_ids: List of student_id values to fetch data for
-        school_year: Optional school year filter
+        student_ids: Optional list of student_id values to fetch data for
+        school_year: Optional school year filter (if None, all attached survey responses are fetched)
+        ssids: Optional list of ssid values to match
     
     Returns:
-        Dict mapping student_id -> {column_key: value}
+        Dict mapping student_id / ssid -> {column_key: value}
     """
-    if not student_ids:
+    clean_ids = [str(s).strip() for s in (student_ids or []) if str(s).strip()]
+    clean_ssids = [str(s).strip() for s in (ssids or []) if str(s).strip()]
+    if not clean_ids and not clean_ssids:
         return {}
 
-    params = [list(student_ids)]
+    where_parts = []
+    params = []
+    if clean_ids:
+        where_parts.append("student_id = ANY(%s)")
+        params.append(clean_ids)
+    if clean_ssids:
+        where_parts.append("(ssid != '' AND ssid = ANY(%s))")
+        params.append(clean_ssids)
+
+    ch_where = " OR ".join(where_parts)
     year_sql = ""
     if school_year:
         year_sql = " AND school_year = %s"
@@ -251,24 +263,33 @@ def get_survey_data_for_students(student_ids, school_year=None):
 
     from dataviz.utils.data_loader import _analytics_rows
     rows = _analytics_rows(
-        "SELECT student_id, survey_type, school_year, testing_window, grade_range, "
+        "SELECT student_id, ssid, survey_type, school_year, testing_window, grade_range, "
         "question_order, value FROM analytics_survey_responses "
-        f"WHERE student_id = ANY(%s){year_sql}",
+        f"WHERE ({ch_where}){year_sql}",
         params,
     )
     if rows is None:
         with connections['default'].cursor() as cursor:
-            where_clauses = ["sr.student_id = ANY(%s)"]
-            pg_params = [list(student_ids)]
+            pg_where_parts = []
+            pg_params = []
+            if clean_ids:
+                pg_where_parts.append("sr.student_id = ANY(%s)")
+                pg_params.append(clean_ids)
+            if clean_ssids:
+                pg_where_parts.append("(sr.ssid IS NOT NULL AND sr.ssid != '' AND sr.ssid = ANY(%s))")
+                pg_params.append(clean_ssids)
+
+            where_clauses = [f"({' OR '.join(pg_where_parts)})"]
             if school_year:
                 where_clauses.append("sd.school_year = %s")
                 pg_params.append(school_year)
-            where_clauses.append("il.ready_for_exploration = true")
+            where_clauses.append("(il.ready_for_exploration = true OR sd.ready_for_exploration = true)")
             where_clauses.append("il.status = 'COMPLETED'")
             where_clauses.append("sd.is_active = true")
             cursor.execute(f"""
                 SELECT
                     sr.student_id,
+                    sr.ssid,
                     sd.survey_type,
                     sd.school_year,
                     sd.testing_window,
@@ -284,24 +305,26 @@ def get_survey_data_for_students(student_ids, school_year=None):
             """, pg_params)
             rows = [
                 {
-                    'student_id': r[0], 'survey_type': r[1], 'school_year': r[2],
-                    'testing_window': r[3], 'grade_range': r[4],
-                    'question_order': r[5], 'value': r[6],
+                    'student_id': r[0], 'ssid': r[1], 'survey_type': r[2], 'school_year': r[3],
+                    'testing_window': r[4], 'grade_range': r[5],
+                    'question_order': r[6], 'value': r[7],
                 }
                 for r in cursor.fetchall()
             ]
 
     results = {}
     for row in rows:
-        student_id = row.get('student_id')
-        bucket = results.setdefault(student_id, {})
-        if str(student_id) != student_id:
-            results[str(student_id)] = bucket
         col_key = _generate_survey_column_key(
             row.get('survey_type'), row.get('school_year'), row.get('testing_window'),
             row.get('question_order'), row.get('grade_range') or '',
         )
-        bucket[col_key] = row.get('value')
+        val = row.get('value')
+        stu_id = str(row.get('student_id') or '').strip()
+        ssid_val = str(row.get('ssid') or '').strip()
+        if stu_id:
+            results.setdefault(stu_id, {})[col_key] = val
+        if ssid_val:
+            results.setdefault(ssid_val, {})[col_key] = val
     return results
 
 

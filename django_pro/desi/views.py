@@ -709,6 +709,22 @@ def support_organization(request):
 
 
 @login_required
+def delete_section_category(request, id):
+    """Delete a section category; any supports in it are moved to non-section (Uncategorized)."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    category = get_object_or_404(AccommodationCategory, id=id)
+    name = category.name
+    # Explicitly clear section_category from all associated accommodations so they are moved to non-section
+    Accommodation.objects.filter(section_category=category).update(section_category=None)
+    category.delete()
+    messages.success(request, f"Section '{name}' removed. Any supports in that section were moved to Uncategorized.")
+    return redirect('desi:support_organization')
+
+
+@login_required
 def save_desi_order(request):
     """Persist the admin drag-and-drop order of section categories and supports."""
     if not _is_project_admin(request.user):

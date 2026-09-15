@@ -1893,19 +1893,23 @@ def _load_students(request):
         survey_colors = {}  # Map column_key -> {'colors': {...}, 'scale_max': int}
         if selected_survey_cols and students:
             student_ids = [s.get('student_id') for s in students if s.get('student_id')]
-            if student_ids:
-                # Use the school_year filter if set, otherwise None for all years
-                survey_year = school_year[0] if isinstance(school_year, list) and school_year else school_year
-                survey_data = get_survey_data_for_students(student_ids, survey_year)
+            student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
+            if student_ids or student_ssids:
+                survey_data = get_survey_data_for_students(student_ids=student_ids, ssids=student_ssids)
                 
                 # Get survey colors from survey_utils
                 survey_info = get_survey_columns()
                 survey_colors = survey_info.get('colors', {})
                 
-                # survey_data is {student_id: {col_key: value}}
+                # survey_data is {student_id / ssid: {col_key: value}}
                 for student in students:
-                    student_id = student.get('student_id')
-                    student_survey_data = survey_data.get(student_id, {})
+                    student_id = str(student.get('student_id') or '').strip()
+                    ssid = str(student.get('ssid') or '').strip()
+                    student_survey_data = (
+                        survey_data.get(student_id)
+                        or survey_data.get(ssid)
+                        or {}
+                    )
                     for col_key in selected_survey_cols:
                         student[col_key] = student_survey_data.get(col_key, '—')
 

@@ -1621,3 +1621,33 @@ class DesiSectionCategoryTests(TestCase):
         self.assertIn(f'data-section-key="{cat.id}"', html)
         self.assertIn('data-section-key="none"', html)
         self.assertIn("syncSupportInputNames", html)
+
+    def test_delete_section_category_moves_supports_to_uncategorized(self):
+        cat = AccommodationCategory.objects.create(name="To Delete", order=1)
+        acc1 = Accommodation.objects.create(name="Support 1", section_category=cat, order=1)
+        acc2 = Accommodation.objects.create(name="Support 2", section_category=cat, order=2)
+
+        response = self.client.post(reverse("desi:delete_section_category", args=[cat.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(response, reverse("desi:support_organization"))
+
+        # Verify category is deleted
+        self.assertFalse(AccommodationCategory.objects.filter(id=cat.id).exists())
+
+        # Verify accommodations are moved to non-section (section_category is None)
+        acc1.refresh_from_db()
+        acc2.refresh_from_db()
+        self.assertIsNone(acc1.section_category)
+        self.assertIsNone(acc2.section_category)
+
+    def test_delete_section_category_requires_admin(self):
+        cat = AccommodationCategory.objects.create(name="Protected Section", order=1)
+        self.client.logout()
+        User = get_user_model()
+        user = User.objects.create_user(username='regular_desi_user', password='password')
+        self.client.force_login(user)
+
+        response = self.client.post(reverse("desi:delete_section_category", args=[cat.id]))
+        self.assertRedirects(response, reverse("landing:index"))
+        self.assertTrue(AccommodationCategory.objects.filter(id=cat.id).exists())
+

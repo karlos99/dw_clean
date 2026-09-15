@@ -65,7 +65,18 @@
                     <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-white rounded-t-lg">
                         <span class="category-drag-handle cursor-move text-slate-400" title="Drag to reorder">⠿</span>
                         <span class="text-sm font-bold text-slate-800">{{ cat.name }}</span>
-                        <span class="ml-auto text-[10px] text-slate-400">{{ cat.accommodations.all|length }} question{{ cat.accommodations.all|length|pluralize }}</span>
+                        <div class="ml-auto flex items-center gap-3">
+                            <span class="text-[10px] text-slate-400">{{ cat.accommodations.all|length }} question{{ cat.accommodations.all|length|pluralize }}</span>
+                            <button type="button"
+                                    onclick="confirmDeleteSection('{{ cat.id }}', '{{ cat.name|escapejs }}')"
+                                    class="text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded px-1.5 py-0.5 transition text-xs flex items-center gap-1 border border-transparent hover:border-rose-200"
+                                    title="Remove Section">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                                <span class="text-[11px] font-semibold">Remove</span>
+                            </button>
+                        </div>
                     </div>
                     <div class="support-order-list p-2 space-y-1 min-h-[2.5rem]" data-section-key="{{ cat.id }}">
                         {% for acc in cat.accommodations.all %}
@@ -111,12 +122,25 @@
         </form>
     </div>
 
+    <!-- Hidden Delete Section Form -->
+    <form id="delete-section-form" method="post" action="" style="display:none;">
+        {% csrf_token %}
+    </form>
+
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
+    function confirmDeleteSection(categoryId, categoryName) {
+        if (confirm(`Are you sure you want to remove the section "${categoryName}"?\n\nAny supports in this section will be moved to Uncategorized (non-section).`)) {
+            const form = document.getElementById('delete-section-form');
+            form.action = "{% url 'desi:delete_section_category' 0 %}".replace('/0/', `/${categoryId}/`);
+            form.submit();
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         // A support's hidden input name encodes the section it belongs to. When
         // a support is dragged into another section its name must be rewritten,

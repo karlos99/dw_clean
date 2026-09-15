@@ -28,6 +28,7 @@ from .column_management import (
     get_saved_default_columns,
     get_column_expression,
 )
+from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from dataexploration.school_year_utils import resolve_relative_column_key
 from clickhouse_utils.timing import timed_fn
 
@@ -303,6 +304,9 @@ def export_students_csv(request):
         [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
         [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
     ))
+    selected_survey_cols = [
+        c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')
+    ]
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
@@ -842,6 +846,10 @@ def export_students_csv(request):
                         dynamic_labels[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix} {year}"
                         dynamic_labels[f"apall_{yk}_{i}_PL"] = f"AP Results{suffix} {year}"
 
+                # Definitions for survey columns
+                if selected_survey_cols:
+                    dynamic_labels.update(get_survey_columns().get('definitions', {}))
+
                 # Yield Header
                 header_labels = [dynamic_labels.get(col, col) for col in export_cols]
                 yield writer.writerow(header_labels)
@@ -854,7 +862,7 @@ def export_students_csv(request):
                 # Ensure we fetch minimal required columns plus sorting
                 query_base_cols = list(base_cols)
                 if 'ssid' not in query_base_cols: query_base_cols.insert(0, 'ssid')
-                if (test_cols_info or selected_mark_cols or markall_years) and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
+                if (test_cols_info or selected_mark_cols or markall_years or selected_survey_cols) and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
                 if (selected_mark_cols or markall_years) and 'stu_annual_key' not in query_base_cols: query_base_cols.insert(0, 'stu_annual_key')
                 
                 base_col_selects = []
@@ -899,6 +907,29 @@ def export_students_csv(request):
                     enrich_students_tests_marks(
                         chunk_students, test_cols_info, mark_cols_info, blank='',
                     )
+
+                    if selected_survey_cols:
+                        try:
+                            chunk_stu_ids = [s.get('student_id') for s in chunk_students if s.get('student_id')]
+                            chunk_ssids = [s.get('ssid') for s in chunk_students if s.get('ssid')]
+                            if chunk_stu_ids or chunk_ssids:
+                                chunk_survey_data = get_survey_data_for_students(student_ids=chunk_stu_ids, ssids=chunk_ssids)
+                                for student in chunk_students:
+                                    student_id = str(student.get('student_id') or '').strip()
+                                    ssid = str(student.get('ssid') or '').strip()
+                                    student_survey_data = (
+                                        chunk_survey_data.get(student_id)
+                                        or chunk_survey_data.get(ssid)
+                                        or {}
+                                    )
+                                    for col_key in selected_survey_cols:
+                                        student[col_key] = student_survey_data.get(col_key, '')
+                            else:
+                                for student in chunk_students:
+                                    for col_key in selected_survey_cols:
+                                        student[col_key] = ''
+                        except Exception:
+                            pass
 
                     if sat_infos:
                         try:

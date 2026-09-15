@@ -470,3 +470,61 @@ class SATColumnKeyTests(SimpleTestCase):
 		self.assertIsNone(parse_sat_column_key('ap_2025_2026_Math_PL'))
 		self.assertIsNone(parse_sat_column_key('sat_bogus'))
 		self.assertIsNone(parse_sat_column_key('sat_2025_2026_PCT_BOGUS_RW'))
+
+
+class SurveyDataResolutionTests(SimpleTestCase):
+	def test_get_survey_data_for_students_cross_year_and_ssid(self):
+		from dataexploration.survey_utils import get_survey_data_for_students, _generate_survey_column_key
+
+		col_key_24 = _generate_survey_column_key('Skills and Competencies', '2024-2025', 'SPRING', 0, 'Grades 6-8')
+		col_key_25 = _generate_survey_column_key('Skills and Competencies', '2025-2026', 'FALL', 0, 'Grades 6-8')
+
+		fake_rows = [
+			{
+				'student_id': '1001',
+				'ssid': '9000000001',
+				'survey_type': 'Skills and Competencies',
+				'school_year': '2024-2025',
+				'testing_window': 'SPRING',
+				'grade_range': 'Grades 6-8',
+				'question_order': 0,
+				'value': '4',
+			},
+			{
+				'student_id': '1001',
+				'ssid': '9000000001',
+				'survey_type': 'Skills and Competencies',
+				'school_year': '2025-2026',
+				'testing_window': 'FALL',
+				'grade_range': 'Grades 6-8',
+				'question_order': 0,
+				'value': '5',
+			},
+			{
+				'student_id': '1002',
+				'ssid': '9000000002',
+				'survey_type': 'Skills and Competencies',
+				'school_year': '2024-2025',
+				'testing_window': 'SPRING',
+				'grade_range': 'Grades 6-8',
+				'question_order': 0,
+				'value': '3',
+			},
+		]
+
+		with patch('dataviz.utils.data_loader._analytics_rows', return_value=fake_rows):
+			data = get_survey_data_for_students(student_ids=['1001'], ssids=['9000000002'])
+
+		# Student 1001 has responses across both 2024-2025 and 2025-2026
+		self.assertIn('1001', data)
+		self.assertEqual(data['1001'][col_key_24], '4')
+		self.assertEqual(data['1001'][col_key_25], '5')
+
+		# SSID 9000000001 also resolves
+		self.assertIn('9000000001', data)
+		self.assertEqual(data['9000000001'][col_key_24], '4')
+
+		# Student 1002 resolves via SSID
+		self.assertIn('9000000002', data)
+		self.assertEqual(data['9000000002'][col_key_24], '3')
+
