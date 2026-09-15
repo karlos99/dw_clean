@@ -33,6 +33,7 @@
 <div id="dataviz-app-data"
      data-load-students-url="{% url 'dataexploration:load_students' %}"
      data-render-chart-url="{% url 'dataviz:render_chart' %}"
+     data-chart-render-url-template="{% url 'dataviz:chart_render' 0 %}"
      data-sql-url="{% url 'dataviz:sql_lab' %}"
      data-schema-url="{% url 'dataviz:sql_schema' %}"
      data-charts-url="{% url 'dataviz:chart_list' %}"

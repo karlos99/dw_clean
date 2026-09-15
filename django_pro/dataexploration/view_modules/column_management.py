@@ -1,8 +1,13 @@
 """Column management utilities and views."""
 
+import hashlib
+import json
 import re
 
+from django.core.cache import cache
 from django.shortcuts import render
+from django.http import HttpResponse
+from django.template.loader import render_to_string
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseForbidden
 from django.views.decorators.http import require_POST
@@ -361,6 +366,24 @@ def load_column_structures(request):
     
     _apply_de_school_filter(where_clauses, params, user)
 
+    # Cache the fully rendered selector HTML — the underlying column structure
+    # queries are fast, but rendering ~12k mark columns to HTML takes ~1s and
+    # produces a multi-MB response. The result is deterministic per (filter,
+    # school scope, sync version), so reuse it across identical requests.
+    _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+    _html_cache_key = (
+        "dataexp:column_structures_html:"
+        + hashlib.md5(json.dumps({
+            'column_filters': column_filters,
+            'where': where_clauses,
+            'params': [str(p) for p in params],
+            'sync': _sync_v,
+        }, sort_keys=True, default=str).encode()).hexdigest()
+    )
+    cached_html = cache.get(_html_cache_key)
+    if cached_html is not None:
+        return HttpResponse(cached_html)
+
     test_structure = get_test_columns(
         column_filters=column_filters,
         extra_where_clauses=where_clauses,
@@ -389,4 +412,6 @@ def load_column_structures(request):
         'year_to_alias': get_year_alias_map(),
     }
     
-    return render(request, 'dataexploration/partials/column_structures.html', context)
+    html = render_to_string('dataexploration/partials/column_structures.html', context)
+    cache.set(_html_cache_key, html, 3600)
+    return HttpResponse(html)

@@ -103,7 +103,7 @@ services:
         cd /app/django_pro &&
         python manage.py migrate &&
         python create_superuser.py &&
-        gunicorn --bind 0.0.0.0:8000 --workers 8 --threads 4 --timeout 120 --access-logfile - --error-logfile - config.wsgi:application
+        gunicorn --bind 0.0.0.0:8000 --workers 8 --threads 4 --timeout 120 --keep-alive 5 --max-requests 2000 --max-requests-jitter 200 --worker-tmp-dir /dev/shm --access-logfile - --error-logfile - config.wsgi:application
       "
 
 volumes:

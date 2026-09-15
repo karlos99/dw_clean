@@ -161,6 +161,8 @@
         }
 
         let chartRequestNonce = 0;
+        let chartRequestController = null;
+        let datasetRequestController = null;
 
         const chartCatalog = [
             { value: 'bar', label: 'Bar', group: 'Bars', minAny: 1 },
@@ -753,4 +755,3 @@
             filterBarEl.classList.remove('hidden');
             updateFilterStatus();
         }
-

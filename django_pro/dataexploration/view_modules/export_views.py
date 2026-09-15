@@ -29,6 +29,7 @@ from .column_management import (
     get_column_expression,
 )
 from dataexploration.school_year_utils import resolve_relative_column_key
+from clickhouse_utils.timing import timed_fn
 
 
 def _parse_multi(param_val, fallback):
@@ -49,6 +50,7 @@ def _parse_multi(param_val, fallback):
     return val_str if val_str else fallback
 
 @login_required
+@timed_fn('export_students_csv')
 def export_students_csv(request):
     """Export filtered student data as CSV."""
     
@@ -846,13 +848,13 @@ def export_students_csv(request):
                 logger.info(f"CSV Export: Header yielded, starting data export with {len(export_cols)} columns")
 
                 # Fetch Loop
-                chunk_size = 500
+                chunk_size = 2000
                 offset = 0
                 
                 # Ensure we fetch minimal required columns plus sorting
                 query_base_cols = list(base_cols)
                 if 'ssid' not in query_base_cols: query_base_cols.insert(0, 'ssid')
-                if test_cols_info and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
+                if (test_cols_info or selected_mark_cols or markall_years) and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
                 if (selected_mark_cols or markall_years) and 'stu_annual_key' not in query_base_cols: query_base_cols.insert(0, 'stu_annual_key')
                 
                 base_col_selects = []
@@ -881,7 +883,7 @@ def export_students_csv(request):
                         FROM current_student cs
                         {join_sql}
                         WHERE {where_sql}
-                        ORDER BY {order_by_expr} {dir_sql}
+                        ORDER BY {order_by_expr} {dir_sql}, cs.stu_annual_key {dir_sql}
                         LIMIT %s OFFSET %s
                     """
                     cursor.execute(query, params + [chunk_size, offset])

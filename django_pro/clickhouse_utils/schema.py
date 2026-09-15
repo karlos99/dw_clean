@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS results (
     test_group_key String
 )
 ENGINE = MergeTree
-ORDER BY (ssid, school_year, test_group_key)
+ORDER BY (school_year, ssid, test_group_key)
 SETTINGS index_granularity = 8192
 """
 
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS student_marks_list (
     updated_at Nullable(DateTime64)
 )
 ENGINE = MergeTree
-ORDER BY (stu_annual_key, mark_period)
+ORDER BY (school_year, subject, ssid, stu_annual_key, mark_period)
 SETTINGS index_granularity = 8192
 """
 

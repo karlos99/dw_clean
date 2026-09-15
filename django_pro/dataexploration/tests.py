@@ -193,6 +193,38 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertEqual(lookup_result_value({'student_id': 'loc2', 'ssid': ''}, by_id, by_ssid), '—')
 		self.assertEqual(lookup_result_value({'ssid': '555'}, by_id, by_ssid), '2')
 
+	def test_stale_ssid_falls_back_to_local_id(self):
+		from dataexploration.column_utils import assign_result_value_maps, lookup_result_value
+
+		# A result whose SSID was corrected keeps the OLD ssid but the local id
+		# still identifies the current student, so it must not be orphaned.
+		rows = [('20250161', '3122440885', '1')]
+		valid_ssids = {'8442970229'}
+		by_id, by_ssid = assign_result_value_maps(rows, valid_ssids=valid_ssids)
+		self.assertEqual(by_id['20250161'], '1')
+		self.assertNotIn('3122440885', by_ssid)
+		student = {'student_id': '20250161', 'ssid': '8442970229'}
+		self.assertEqual(lookup_result_value(student, by_id, by_ssid), '1')
+
+	def test_valid_ssid_still_wins_over_local_id(self):
+		from dataexploration.column_utils import assign_result_value_maps, lookup_result_value
+
+		rows = [('20250161', '3122440885', '1')]
+		valid_ssids = {'3122440885', '8442970229'}
+		by_id, by_ssid = assign_result_value_maps(rows, valid_ssids=valid_ssids)
+		self.assertIn('3122440885', by_ssid)
+		self.assertNotIn('20250161', by_id)  # valid ssid must not leak via local id
+		self.assertEqual(lookup_result_value({'student_id': '20250161', 'ssid': '8442970229'}, by_id, by_ssid), '—')
+		self.assertEqual(lookup_result_value({'ssid': '3122440885'}, by_id, by_ssid), '1')
+
+	def test_nan_ssid_treated_as_blank(self):
+		from dataexploration.column_utils import assign_result_value_maps
+
+		rows = [('20250161', 'NaN', '3')]
+		by_id, by_ssid = assign_result_value_maps(rows, valid_ssids={'8442970229'})
+		self.assertEqual(by_id['20250161'], '3')
+		self.assertNotIn('NaN', by_ssid)
+
 	def test_export_cell_uses_blank_marker_consistently(self):
 		from dataexploration.column_utils import export_cell
 		self.assertEqual(export_cell(None), '—')
@@ -271,6 +303,34 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertEqual(students[0]['test_2025_2026_CAASPP_Math_SS'], '2400')
 		self.assertEqual(students[1]['mark_x'], 'A')
 		self.assertEqual(students[1]['test_2025_2026_CAASPP_Math_SS'], '—')
+
+	def test_enrich_marks_falls_back_to_student_id_on_stale_ssid(self):
+		from dataexploration.column_utils import enrich_students_tests_marks
+		from unittest.mock import patch, MagicMock
+
+		students = [
+			{'ssid': '8442970229', 'student_id': '20250161', 'stu_annual_key': 'k1'},
+		]
+		mark_info = {
+			'col_name': 'mark_x', 'year': '2024-2025',
+			'subject': 'Math', 'course_name': 'Math 6', 'mark_period': 'Q2',
+		}
+		# The mark row carries a stale SSID but a correct local student id.
+		mark_result = {
+			'error': None,
+			'rows': [
+				{
+					'ssid': '3122440885', 'student_id': '20250161',
+					'school_year': '2024-2025', 'subject': 'Math',
+					'course_name': 'Math 6', 'mark_period': 'Q2', 'mark': 'B-',
+				},
+			],
+		}
+		exec_mock = MagicMock()
+		exec_mock.execute.return_value = mark_result
+		with patch('clickhouse_utils.executor.QueryExecutor', return_value=exec_mock):
+			enrich_students_tests_marks(students, [], [mark_info])
+		self.assertEqual(students[0]['mark_x'], 'B-')
 
 	def test_enrich_other_info_uses_postgres_not_clickhouse(self):
 		from dataexploration.column_utils import enrich_students_tests_marks

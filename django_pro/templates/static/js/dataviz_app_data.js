@@ -177,6 +177,9 @@
             }
 
             const reqId = ++chartRequestNonce;
+            if (chartRequestController) chartRequestController.abort();
+            const requestController = new AbortController();
+            chartRequestController = requestController;
             renderBtn.disabled = true;
             loadStatus.textContent = 'Rendering chart...';
 
@@ -191,6 +194,7 @@
                         'Content-Type': 'application/json',
                         'X-CSRFToken': csrfToken,
                     },
+                    signal: requestController.signal,
                     body: JSON.stringify({
                         rows: chartRows,
                         column_definitions: chartDataset.columnDefinitions,
@@ -213,12 +217,15 @@
 
                 loadStatus.textContent = `Rendered ${activeRows.length.toLocaleString()} rows`;
             } catch (error) {
+                if (error.name === 'AbortError') return;
                 loadStatus.textContent = 'Could not render chart';
                 if (chartRenderer) {
                     chartRenderer.showMessage(String(error.message || error), true);
                 }
             } finally {
-                renderBtn.disabled = false;
+                if (reqId === chartRequestNonce) {
+                    renderBtn.disabled = false;
+                }
             }
         }
 
@@ -244,6 +251,9 @@
         }
 
         async function loadDataset() {
+            if (datasetRequestController) datasetRequestController.abort();
+            const requestController = new AbortController();
+            datasetRequestController = requestController;
             loadBtn.disabled = true;
             resetLoadUI();
             if (loadBtnIcon) loadBtnIcon.innerHTML = '<svg class="animate-spin" style="width:12px;height:12px;display:inline" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-dasharray="31.4" stroke-dashoffset="10"/></svg>';
@@ -293,7 +303,9 @@
 
             try {
                 setLoadProgress(20, 'Fetching page 1...');
-                const firstResponse = await fetch(`${loadStudentsUrl}?${params.toString()}`);
+                const firstResponse = await fetch(`${loadStudentsUrl}?${params.toString()}`, {
+                    signal: requestController.signal,
+                });
                 const firstPayload = await readJsonResponse(firstResponse, 'Students API (page 1)');
 
                 if (!firstResponse.ok || !firstPayload.students) {
@@ -316,7 +328,9 @@
                     const payloads = await Promise.all(batch.map(async (pageNum) => {
                         const pageParams = new URLSearchParams(params.toString());
                         pageParams.set('page', String(pageNum));
-                        const pageResponse = await fetch(`${loadStudentsUrl}?${pageParams.toString()}`);
+                        const pageResponse = await fetch(`${loadStudentsUrl}?${pageParams.toString()}`, {
+                            signal: requestController.signal,
+                        });
                         const pagePayload = await readJsonResponse(pageResponse, `Students API (page ${pageNum})`);
                         if (!pageResponse.ok || !Array.isArray(pagePayload.students)) {
                             throw new Error(`Failed to load page ${pageNum}`);
@@ -459,6 +473,7 @@
                 }, 800);
 
             } catch (err) {
+                if (err.name === 'AbortError') return;
                 setLoadProgress(0, '');
                 if (loadProgressWrap) loadProgressWrap.classList.add('hidden');
                 if (loadStatus)   loadStatus.textContent = '\u26A0 ' + (err.message || 'Could not load dataset');
@@ -466,7 +481,9 @@
                 if (loadBtnText)  loadBtnText.textContent = 'Retry';
                 if (loadSummaryEl) loadSummaryEl.classList.add('hidden');
             } finally {
-                loadBtn.disabled = false;
+                if (datasetRequestController === requestController) {
+                    loadBtn.disabled = false;
+                }
             }
         }
 

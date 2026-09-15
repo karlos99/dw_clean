@@ -72,7 +72,10 @@ def _sql_uses_pg_add_data_key(sql: str) -> bool:
 def _sql_requires_postgres(sql: str) -> bool:
     """PostgreSQL-only idioms that must not go through the CH translator."""
     text = (sql or '').lower()
-    if 'jsonb_object_keys' in text:
+    # CROSS JOIN LATERAL jsonb_object_keys(...) has a ClickHouse translation
+    # (ARRAY JOIN JSONExtractKeys). Bare jsonb_object_keys(...) (set-returning
+    # subquery form) does not, so keep that on PostgreSQL.
+    if 'jsonb_object_keys' in text and 'cross join lateral' not in text:
         return True
     # Any reference to a table that is only kept in Postgres routes the whole
     # statement there (mirrored tables never appear in this list).
@@ -231,6 +234,8 @@ class QueryExecutor:
             logger.debug("SQL translation not possible, will fall back to PG")
             raise
 
+        from .timing import count_query
+        count_query('clickhouse')
         result = self.ch_client.query(ch_sql, parameters=ch_params, settings=_CH_QUERY_SETTINGS)
         columns = result.column_names if result.column_names else []
         raw = result.result_set if result.result_set else []
@@ -252,6 +257,8 @@ class QueryExecutor:
 
     def _execute_postgres(self, sql, params):
         from django.db import connection
+        from .timing import count_query
+        count_query('postgres')
 
         try:
             with connection.cursor() as cursor:
@@ -284,6 +291,8 @@ class QueryExecutor:
 
     def _execute_postgres_fetchall(self, sql, params):
         from django.db import connection
+        from .timing import count_query
+        count_query('postgres')
 
         try:
             with connection.cursor() as cursor:

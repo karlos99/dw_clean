@@ -59,4 +59,4 @@ RUN python manage.py collectstatic --noinput --clear || true
 EXPOSE 8000
 
 # Run gunicorn
-CMD ["gunicorn", "--bind", "localhost:8000", "--workers", "8", "--threads", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "config.wsgi:application"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "8", "--threads", "4", "--timeout", "120", "--keep-alive", "5", "--max-requests", "2000", "--max-requests-jitter", "200", "--worker-tmp-dir", "/dev/shm", "--access-logfile", "-", "--error-logfile", "-", "config.wsgi:application"]
