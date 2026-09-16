@@ -1,0 +1,219 @@
+"""
+Read-only SEIS (student assessment settings) data integration.
+
+The ``desi_seis`` table is populated outside of Django and stores, per student
+(``ssid``) and per test program (``test_group``: caaspp / elpac), the set of
+assessment settings already configured in the SEIS system. Each row carries:
+
+* ``assessments``: JSON array of DESI assessment names the settings apply to
+  (``"No_Test"`` placeholders and empty arrays mean "no specific DESI test").
+* ``settings``: JSON object mapping a setting label to an option code (or
+  ``None`` when the setting is not enabled).
+
+Settings are matched to the DESI configuration by *option code* inside the
+program's tag: a setting value such as ``"TDS_TTS_ALL"`` maps to an
+``AccommodationOption`` whose ``code`` equals that value and whose
+``Accommodation.tag`` matches the SEIS test program.  SEIS selections are
+display-only - they are never written to ``StudentAccommodation``.
+"""
+
+from django.db import transaction
+from django.db import utils as db_utils
+
+from .models import DesiSeis, DesiSeisDisplaySettings
+
+TAG_BY_TEST_GROUP = {
+    'caaspp': 'CAASPP',
+    'elpac': 'ELPAC',
+}
+
+NO_TEST_MARKERS = {'no_test', '', 'none'}
+
+
+def selected_seis_display_assessment_ids():
+    """
+    Return the set of Assessment ids the admin selected for SEIS display.
+
+    ``None`` means no explicit selection has been saved yet - the default is to
+    show SEIS settings wherever the source data references an assessment.  An
+    empty set means the admin deliberately selected no assessments (SEIS
+    settings are hidden).  Returns ``None`` if the settings table is not
+    available (e.g. tests / early migrations).
+    """
+    try:
+        with transaction.atomic():
+            settings = DesiSeisDisplaySettings.objects.first()
+            if settings is None:
+                return None
+            return set(settings.assessments.values_list('id', flat=True))
+    except (db_utils.ProgrammingError, db_utils.OperationalError, db_utils.DatabaseError):
+        return None
+
+
+def fetch_seis_rows(ssid):
+    """
+    Return the raw SEIS rows for a student ssid.
+
+    Each row is ``{"test_group", "assessments", "settings"}``. Returns an
+    empty list when the ``desi_seis`` table is not available (e.g. tests or
+    deployments where the table has not been loaded yet).
+    """
+    rows = []
+    try:
+        with transaction.atomic():
+            qs = DesiSeis.objects.filter(ssid=ssid)
+            rows = [
+                {
+                    'test_group': row.test_group,
+                    'assessments': list(row.assessments or []),
+                    'settings': dict(row.settings or {}),
+                }
+                for row in qs
+            ]
+    except (db_utils.ProgrammingError, db_utils.OperationalError, db_utils.DatabaseError):
+        rows = []
+    return rows
+
+
+def _tag_for(row):
+    group = (row.get('test_group') or '').strip().lower()
+    return TAG_BY_TEST_GROUP.get(group)
+
+
+def _row_assessment_names(row):
+    """Lower-cased DESI assessment names this SEIS row applies to (empty = all)."""
+    names = set()
+    for name in row.get('assessments') or []:
+        clean = str(name).strip().lower()
+        if clean not in NO_TEST_MARKERS:
+            names.add(clean)
+    return names
+
+
+def build_seis_option_map(ssid, assessments):
+    """
+    Map SEIS settings onto the DESI configuration for one student.
+
+    ``assessments`` is the list of ``Assessment`` objects that will actually be
+    rendered on the workspace (active + eligible).  Returns a dict keyed by
+    ``(assessment_id, accommodation_id)`` whose values are the
+    ``AccommodationOption`` the SEIS system has selected for that
+    assessment/support, and a set of locked accommodation ids.
+
+    Matching is by option code within the program tag.  An option only locks a
+    given assessment when that assessment both (a) appears in the SEIS row's
+    ``assessments`` list (or the list is empty) and (b) supports the option.
+    """
+    rows = fetch_seis_rows(ssid)
+    if not rows or not assessments:
+        return {}, set()
+
+    from .models import AccommodationOption
+
+    result = {}
+    seen_cache = {}
+
+    for row in rows:
+        tag = _tag_for(row)
+        if not tag:
+            continue
+        row_names = _row_assessment_names(row)
+        candidate_asts = [
+            ast for ast in assessments
+            if (not row_names or ast.name.strip().lower() in row_names)
+        ]
+        candidate_ids = {ast.id for ast in candidate_asts}
+        if not candidate_ids:
+            continue
+
+        for code in row.get('settings', {}).values():
+            if not code:
+                continue
+            cache_key = (tag, code)
+            if cache_key not in seen_cache:
+                seen_cache[cache_key] = list(
+                    AccommodationOption.objects
+                    .filter(code=code, accommodation__tag=tag)
+                    .prefetch_related('assessments', 'accommodation')
+                )
+            for opt in seen_cache[cache_key]:
+                allowed_ast_ids = {
+                    a.id for a in opt.assessments.all()
+                }.intersection(candidate_ids)
+                for ast_id in allowed_ast_ids:
+                    result[(ast_id, opt.accommodation_id)] = opt
+
+    locked_accommodation_ids = {acc_id for _ast_id, acc_id in result}
+    return result, locked_accommodation_ids
+
+
+def _filtered_seis_option_map(student):
+    """SEIS options for a student after display-settings and grade-only gating."""
+    ssid = getattr(student, 'ssid', None)
+    if not ssid:
+        return {}
+
+    from .models import Assessment
+    from .views import check_criteria
+
+    selected_ids = selected_seis_display_assessment_ids()
+    if selected_ids is not None and not selected_ids:
+        return {}
+
+    all_assessments = list(Assessment.objects.prefetch_related('criteria'))
+    if not all_assessments:
+        return {}
+
+    assessment_by_id = {ast.id: ast for ast in all_assessments}
+
+    def grade_eligible(ast):
+        grade_criteria = [c for c in ast.criteria.all() if c.field_name == 'grade']
+        if not grade_criteria:
+            return True
+        ok, _failed = check_criteria(grade_criteria, student)
+        return ok
+
+    raw_map, _locked = build_seis_option_map(ssid, all_assessments)
+    filtered = {}
+    for key, opt in raw_map.items():
+        ast_id, _acc_id = key
+        if selected_ids is not None and ast_id not in selected_ids:
+            continue
+        ast = assessment_by_id.get(ast_id)
+        if not ast or not grade_eligible(ast):
+            continue
+        filtered[key] = opt
+    return filtered
+
+
+def seis_support_detail_for_student(student):
+    """
+    SEIS supports for one student: labels plus option/accommodation ids for
+    filtering (same rules as the student workspace).
+    """
+    filtered = _filtered_seis_option_map(student)
+    labels = []
+    option_ids = set()
+    accommodation_ids = set()
+    seen = set()
+    for (_ast_id, acc_id), opt in filtered.items():
+        option_ids.add(opt.id)
+        accommodation_ids.add(acc_id)
+        accommodation = opt.accommodation
+        prefix = f"{accommodation.name}: " if accommodation else ''
+        label = f"{prefix}{opt.name}"
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        labels.append(label)
+    return {
+        'labels': sorted(labels, key=str.casefold),
+        'option_ids': option_ids,
+        'accommodation_ids': accommodation_ids,
+    }
+
+
+def seis_support_labels_for_student(student):
+    """Human-readable SEIS supports for one student."""
+    return seis_support_detail_for_student(student)['labels']

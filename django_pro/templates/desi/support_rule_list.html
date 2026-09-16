@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Support Rules - DESI - DS Data{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-6 flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900">Support Visibility Rules</h1>
+            <p class="mt-2 text-sm text-slate-600">Create a demographic criteria rule, then pick the designated supports it affects. When a student doesn't meet a rule, those supports are hidden for them.</p>
+        </div>
+        <a href="{% url 'desi:support_rule_create' %}" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 transition">
+            ➕ New Rule
+        </a>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Rule</th>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Criteria</th>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Affected Supports</th>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                    <th class="px-6 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {% for rule in rules %}
+                <tr class="hover:bg-slate-50">
+                    <td class="px-6 py-4">
+                        <p class="font-semibold text-slate-900">{{ rule.name }}</p>
+                        {% if rule.description %}<p class="text-xs text-slate-500">{{ rule.description }}</p>{% endif %}
+                    </td>
+                    <td class="px-6 py-4 text-xs text-slate-600">
+                        {{ rule.criteria_count }} condition{{ rule.criteria_count|pluralize }}
+                    </td>
+                    <td class="px-6 py-4 text-xs text-slate-600">
+                        {{ rule.support_count }} support{{ rule.support_count|pluralize }}
+                    </td>
+                    <td class="px-6 py-4">
+                        {% if rule.is_active %}
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+                        {% else %}
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right">
+                        <div class="flex justify-end gap-2">
+                            <a href="{% url 'desi:support_rule_edit' rule.pk %}" class="inline-flex items-center px-2.5 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50">Edit</a>
+                            <a href="{% url 'desi:support_rule_delete' rule.pk %}" onclick="return confirm('Delete this rule? It will stop hiding the attached supports.');"
+                               class="inline-flex items-center px-2.5 py-1 border border-red-200 rounded text-xs font-semibold uppercase tracking-wider text-red-700 bg-red-50 hover:bg-red-100">Delete</a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="px-6 py-12 text-center text-sm text-slate-500 italic">
+                        No support rules yet. Click "New Rule" to create one.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

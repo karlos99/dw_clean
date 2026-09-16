@@ -433,6 +433,90 @@ document.addEventListener('DOMContentLoaded', () => {
         triggerLoadData();
     };
 
+    // ─── "All Results" AP subject picker ──────────────────────────────────
+    // Selecting "All Results" adds one assessment/result wide pair per AP exam
+    // a student has. The subject picker below the umbrella lets the user
+    // uncheck subjects; deselected subjects are stored on the umbrella key as
+    // 'exclude:<subject>' values in the filters map.
+    const apallUmbrellaKey = (year) => `apall_${String(year || '').replace(/-/g, '_')}`;
+    // From an umbrella OR an already-expanded pair key, return the umbrella key
+    // (e.g. "apall_2025_2026"), or '' when unparseable.
+    const apallUmbrellaKeyFromColumn = (colKey) => {
+        const rest = String(colKey || '').slice('apall_'.length);
+        const parts = rest.split('_');
+        if (parts.length < 2 || !/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) return '';
+        return `apall_${parts[0]}_${parts[1]}`;
+    };
+    const isApallPairKey = (col) => /^apall_.*_(SUBJECT|PL)$/.test(String(col || ''));
+    const apallUmbrellaActive = (year) => {
+        const umbrella = apallUmbrellaKey(year);
+        const prefix = `${umbrella}_`;
+        return selectedColumns.some((sc) => {
+            const n = normaliseKey(sc);
+            return n === umbrella || n.startsWith(prefix);
+        });
+    };
+    const apallExcludeSet = (umbrellaKey) => {
+        const set = new Set();
+        const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        vals.forEach((v) => {
+            const s = String(v);
+            if (s.startsWith('exclude:')) set.add(s.slice('exclude:'.length));
+        });
+        return set;
+    };
+    const apallSubjectBoxForYear = (year) => {
+        const target = String(year || '');
+        return Array.from(document.querySelectorAll('[data-apall-subject-box]'))
+            .find((box) => String(box.dataset.apallYear || '') === target) || null;
+    };
+    const syncApallSubjectControls = () => {
+        document.querySelectorAll('input[data-apall="1"]').forEach((cb) => {
+            const year = cb.dataset.apallYear || '';
+            const box = apallSubjectBoxForYear(year);
+            if (!box) return;
+            const active = apallUmbrellaActive(year);
+            box.classList.toggle('hidden', !active);
+            const hint = box.querySelector('[data-apall-subject-hint]');
+            if (!active) {
+                if (hint) hint.textContent = '';
+                return;
+            }
+            const umbrellaKey = apallUmbrellaKey(year);
+            const excluded = apallExcludeSet(umbrellaKey);
+            const inputs = Array.from(box.querySelectorAll('input[data-apall-subject]'));
+            inputs.forEach((ci) => {
+                ci.checked = !excluded.has(String(ci.dataset.apallSubjectName || '').trim());
+            });
+            const checked = inputs.filter((ci) => ci.checked).length;
+            if (hint) hint.textContent = inputs.length ? `${checked}/${inputs.length} selected` : '';
+        });
+    };
+    const handleApallSubjectToggle = (subjectCb) => {
+        const year = subjectCb.dataset.apallYear || '';
+        const name = String(subjectCb.dataset.apallSubjectName || '').trim();
+        if (!apallUmbrellaActive(year)) {
+            syncApallSubjectControls();
+            return;
+        }
+        const umbrellaKey = apallUmbrellaKey(year);
+        if (!name) return;
+        const excluded = apallExcludeSet(umbrellaKey);
+        if (subjectCb.checked) {
+            excluded.delete(name);
+        } else {
+            excluded.add(name);
+        }
+        if (excluded.size) {
+            filters[umbrellaKey] = Array.from(excluded).map((n) => `exclude:${n}`);
+        } else {
+            delete filters[umbrellaKey];
+        }
+        resetPage();
+        syncApallSubjectControls();
+        triggerLoadData();
+    };
+
     // Wire toggle buttons (may not be in DOM yet when column sidebar loads via HTMX)
     document.addEventListener('click', e => {
         const btn = e.target.closest('[data-year-mode-btn]');
@@ -702,13 +786,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             // "All Results" AP umbrella: checked if the umbrella OR any expanded pair is selected
             if (checkbox.dataset.apall === '1') {
-                const yr = (checkbox.dataset.apallYear || '').replace('-', '_');
-                const prefix = `apall_${yr}_`;
-                checkbox.checked = selectedColumns.some(sc =>
-                    normaliseKey(sc) === normaliseKey(col)
-                    || normaliseKey(sc).startsWith(prefix)
-                    || toRelativeKey(normaliseKey(col)) === toRelativeKey(normaliseKey(sc))
-                );
+                checkbox.checked = apallUmbrellaActive(checkbox.dataset.apallYear || '');
                 return;
             }
             // Match regardless of whether stored as specific or relative key
@@ -729,6 +807,7 @@ document.addEventListener('DOMContentLoaded', () => {
             topicCb.indeterminate = selectedCount > 0 && selectedCount < cols.length;
         });
         syncMarkallCourseControls();
+        syncApallSubjectControls();
     };
 
     const renderSelectedColumns = () => {
@@ -1021,9 +1100,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             Object.keys(filters).forEach(col => {
                 const vals = filters[col];
-                // Umbrella-level course exclusions are represented by the course
+                // Umbrella-level course/subject exclusions are represented by the
                 // picker, not as an active-filter chip.
                 if (String(col || '').startsWith('markall_') && !isMarkallPairKey(col)) return;
+                if (String(col || '').startsWith('apall_') && !isApallPairKey(col)) return;
                 if (Array.isArray(vals) && vals.length > 0) {
                     hasActiveFilters = true;
                     let colLabel = getColumnLabel(col);
@@ -1152,7 +1232,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     // separate individual selections; render them as two groups.
                     const isMarkallMarks = /^markall_.*_MARKS$/.test(col);
                     if (isMarkallMarks && optionsForCol.some(v => String(v).startsWith('period:') || String(v).startsWith('mark:'))) {
-                        const periodOpts = optionsForCol.filter(v => String(v).startsWith('period:'));
+                        const periodOpts = optionsForCol.filter(v => String(v).startsWith('period:')).sort((a, b) => {
+                            const aIsLive = String(a).toLowerCase() === 'period:live';
+                            const bIsLive = String(b).toLowerCase() === 'period:live';
+                            if (aIsLive && !bIsLive) return 1;
+                            if (!aIsLive && bIsLive) return -1;
+                            return String(a).localeCompare(String(b));
+                        });
                         const markOpts = optionsForCol.filter(v => String(v).startsWith('mark:'));
 
                         if (periodOpts.length) {
@@ -1160,9 +1246,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             periodOpts.forEach((value) => {
                                 const checked = filters[col]?.includes(value) ? 'checked' : '';
                                 const labelValue = String(value).replace(/^period:/, '');
+                                const isLivePeriod = labelValue.toLowerCase() === 'live';
                                 html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
                                 html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">`;
-                                html += `<span>${escapeHtml(labelValue)}</span>`;
+                                html += `<span class="${isLivePeriod ? 'font-bold text-slate-900' : ''}">${escapeHtml(labelValue)}</span>`;
                                 html += `</label>`;
                             });
                         }
@@ -1186,9 +1273,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             } else if (DATE_COLUMNS.has(col)) {
                                 labelValue = formatDateForDisplay(labelValue);
                             }
+                            const isLiveVal = String(labelValue).toLowerCase() === 'live';
                             html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
                             html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
-                            html += `<span>${escapeHtml(labelValue)}</span>`;
+                            html += `<span class="${isLiveVal ? 'font-bold text-slate-900' : ''}">${escapeHtml(labelValue)}</span>`;
                             html += `</label>`;
                         });
                     }
@@ -1247,7 +1335,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         const _scStyle = _scBg ? ` style="background-color:${escapeHtml(_scBg)};"` : '';
                         html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap text-center font-medium"${_scStyle}>${escapeHtml(value)}</td>`;
                     } else {
-                        html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${escapeHtml(value)}</td>`;
+                        let cellValHtml = escapeHtml(value);
+                        if (typeof value === 'string' && (col.startsWith('markall_') || col.startsWith('mark_'))) {
+                            cellValHtml = cellValHtml.replace(/(^|[\s,;])(Live)(:|\b)/g, '$1<span class="font-bold text-slate-900">$2</span>$3');
+                        }
+                        html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${cellValHtml}</td>`;
                     }
                 });
                 html += '</tr>';
@@ -1401,7 +1493,24 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAbort = new AbortController();
         inFlightUrl = urlStr;
         const requestSeq = ++loadDataSeq;
-        showLoading('Loading student data...');
+
+        // Check SWR client cache for instant table render
+        const deCacheKey = `de_data_${urlStr}`;
+        let hasSWRHit = false;
+        try {
+            const cachedStr = sessionStorage.getItem(deCacheKey);
+            if (cachedStr) {
+                const cachedPayload = JSON.parse(cachedStr);
+                if (cachedPayload && Array.isArray(cachedPayload.students)) {
+                    renderTable(cachedPayload);
+                    hasSWRHit = true;
+                }
+            }
+        } catch (e) {}
+
+        if (!hasSWRHit) {
+            showLoading('Loading student data...');
+        }
         clearStatsCache();
 
         fetch(urlStr, { credentials: 'same-origin', signal: loadAbort.signal })
@@ -1416,6 +1525,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (requestSeq !== loadDataSeq) return;
                 nextCursor = payload.next_cursor || '';
                 pendingCursor = '';
+                try {
+                    sessionStorage.setItem(deCacheKey, JSON.stringify(payload));
+                } catch (e) {}
                 renderTable(payload);
                 saveViewState();
                 hideLoading();
@@ -1425,7 +1537,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error('Error loading data:', error);
                 hideLoading();
                 const targetEl = document.querySelector('#student-table');
-                if (targetEl) {
+                if (targetEl && !hasSWRHit) {
                     targetEl.innerHTML = '<div class="text-center py-8 text-red-600">Failed to load data.</div>';
                 }
             })
@@ -1505,21 +1617,42 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // "All Results" AP umbrella handling
+        // "All Results" AP umbrella handling (mirrors "All Marks"). Selecting it
+        // expands (server-side) into assessment/result wide pairs; unchecking
+        // removes them. The subject picker stores 'exclude:<subject>' values on
+        // the umbrella key rather than toggling individual columns.
         if (normKey.startsWith('apall_')) {
-            const yr = normKey.slice('apall_'.length, 'apall_'.length + 9).replace('_', '-');
-            const yrKey = yr.replace('-', '_');
-            const isSelected = selectedColumns.some(sc => normaliseKey(sc) === normKey
-                || normaliseKey(sc).startsWith(`apall_${yrKey}_`));
+            const umbrella = apallUmbrellaKeyFromColumn(normKey);
+            if (!umbrella) {
+                // Malformed key — fall back to plain toggle behavior
+                const isSelectedPlain = selectedColumns.some(c => normaliseKey(c) === normKey);
+                if (isSelectedPlain) {
+                    if (selectedColumns.length <= 1) return;
+                    selectedColumns = selectedColumns.filter(c => normaliseKey(c) !== normKey);
+                    if (filters[key]) delete filters[key];
+                } else {
+                    selectedColumns.push(key);
+                }
+                resetPage();
+                renderSelectedColumns();
+                triggerLoadData();
+                return;
+            }
+            const year = umbrella.slice('apall_'.length).replace('_', '-');
+            const prefix = `${umbrella}_`;
+            const isSelected = selectedColumns.some((sc) => {
+                const n = normaliseKey(sc);
+                return n === umbrella || n.startsWith(prefix);
+            });
             if (isSelected) {
                 // Uncheck: remove umbrella + expanded pairs
-                selectedColumns = selectedColumns.filter(sc => {
+                selectedColumns = selectedColumns.filter((sc) => {
                     const n = normaliseKey(sc);
-                    return n !== normKey && !n.startsWith(`apall_${yrKey}_`);
+                    return n !== umbrella && !n.startsWith(prefix);
                 });
             } else {
                 // Check: unselect individual AP subject PLs for this year, then add umbrella
-                selectedColumns = selectedColumns.filter(sc => {
+                selectedColumns = selectedColumns.filter((sc) => {
                     const n = normaliseKey(sc);
                     if (!n.startsWith('ap_') || n.startsWith('apaward_') || n.startsWith('apawards_all_') || n.startsWith('apall_')) {
                         return true;
@@ -1527,12 +1660,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     const tail = n.slice('ap_'.length);
                     const parts = tail.split('_');
                     if (parts.length >= 2 && /^\d{4}$/.test(parts[0]) && /^\d{4}$/.test(parts[1])) {
-                        return `${parts[0]}-${parts[1]}` !== yr;
+                        return `${parts[0]}-${parts[1]}` !== year;
                     }
                     return true;
                 });
                 selectedColumns.push(key);
             }
+            // Starting fresh with "All Results" (or removing it) clears subject excludes.
+            delete filters[umbrella];
             resetPage();
             renderSelectedColumns();
             triggerLoadData();
@@ -1584,6 +1719,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const courseCheckbox = event.target.closest('input[data-markall-course]');
         if (courseCheckbox) {
             handleMarkallCourseToggle(courseCheckbox);
+            return;
+        }
+
+        const apallSubjectCheckbox = event.target.closest('input[data-apall-subject]');
+        if (apallSubjectCheckbox) {
+            handleApallSubjectToggle(apallSubjectCheckbox);
             return;
         }
 

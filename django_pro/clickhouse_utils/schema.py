@@ -26,6 +26,7 @@ def get_all_ddl():
         CREATE_ANALYTICS_STUDENT_MARKS,
         CREATE_ANALYTICS_AP_RESULTS,
         CREATE_ANALYTICS_AP_AWARDS,
+        CREATE_ANALYTICS_SAT_RESULTS,
         CREATE_ANALYTICS_SURVEY_RESPONSES,
         CREATE_ANALYTICS_SYNC_META,
     ]
@@ -37,6 +38,7 @@ ANALYTICS_TABLE_NAMES = (
     'analytics_student_marks',
     'analytics_ap_results',
     'analytics_ap_awards',
+    'analytics_sat_results',
     'analytics_survey_responses',
 )
 
@@ -119,7 +121,7 @@ CREATE TABLE IF NOT EXISTS results (
     test_group_key String
 )
 ENGINE = MergeTree
-ORDER BY (ssid, school_year, test_group_key)
+ORDER BY (school_year, ssid, test_group_key)
 SETTINGS index_granularity = 8192
 """
 
@@ -177,7 +179,7 @@ CREATE TABLE IF NOT EXISTS student_marks_list (
     updated_at Nullable(DateTime64)
 )
 ENGINE = MergeTree
-ORDER BY (stu_annual_key, mark_period)
+ORDER BY (school_year, subject, ssid, stu_annual_key, mark_period)
 SETTINGS index_granularity = 8192
 """
 
@@ -436,6 +438,33 @@ CREATE TABLE IF NOT EXISTS analytics_ap_awards (
 )
 ENGINE = MergeTree
 ORDER BY (award_year, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_SAT_RESULTS = """
+CREATE TABLE IF NOT EXISTS analytics_sat_results (
+    ssid String,
+    school_year String,
+    test_date String,
+    school_name String,
+    total_score Nullable(Int32),
+    ebrw_score Nullable(Int32),
+    math_score Nullable(Int32),
+    percentile_state_total Nullable(Int32),
+    percentile_state_rw Nullable(Int32),
+    percentile_state_math Nullable(Int32),
+    percentile_country_total Nullable(Int32),
+    percentile_country_rw Nullable(Int32),
+    percentile_country_math Nullable(Int32),
+    percentile_natrep_total Nullable(Int32),
+    percentile_natrep_rw Nullable(Int32),
+    percentile_natrep_math Nullable(Int32),
+    percentile_natuser_total Nullable(Int32),
+    percentile_natuser_rw Nullable(Int32),
+    percentile_natuser_math Nullable(Int32)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, test_date)
 SETTINGS index_granularity = 8192
 """
 

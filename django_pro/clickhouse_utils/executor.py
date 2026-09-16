@@ -39,6 +39,7 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'student_attendance', 'student_incidents',
     'analytics_student_profile', 'analytics_student_results',
     'analytics_student_marks', 'analytics_ap_results', 'analytics_ap_awards',
+    'analytics_sat_results',
     'analytics_survey_responses',
 })
 
@@ -46,6 +47,21 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
 # mirror. JSONExtract on stale CH returns empty strings without error, so we
 # keep those extracts on Postgres until CH is re-synced.
 _PG_ADD_DATA_KEYS = ('dsusd_fep', 'DSUSD_FEP')
+
+# Application tables that are NOT part of the ClickHouse read model (they are
+# intentionally absent from CLICKHOUSE_SYNCED_TABLES). Queries that reference
+# them must run on PostgreSQL — the CH mirror does not have them and would
+# raise "Unknown table expression identifier".
+_PG_ONLY_TABLE_MARKERS = (
+    'elementary_homeroom_teacher',
+    'students',
+    'dataexploration_studentlistitem',
+    # Data Loader tables (AP/SAT/survey imports, import logs, lookups) are not
+    # part of the ClickHouse read model. Filter-option and metadata queries that
+    # reference them must run on PostgreSQL or ClickHouse raises "Unknown table
+    # expression identifier".
+    'dataloader_',
+)
 
 
 def _sql_uses_pg_add_data_key(sql: str) -> bool:
@@ -55,7 +71,15 @@ def _sql_uses_pg_add_data_key(sql: str) -> bool:
 
 def _sql_requires_postgres(sql: str) -> bool:
     """PostgreSQL-only idioms that must not go through the CH translator."""
-    return 'jsonb_object_keys' in (sql or '').lower()
+    text = (sql or '').lower()
+    # CROSS JOIN LATERAL jsonb_object_keys(...) has a ClickHouse translation
+    # (ARRAY JOIN JSONExtractKeys). Bare jsonb_object_keys(...) (set-returning
+    # subquery form) does not, so keep that on PostgreSQL.
+    if 'jsonb_object_keys' in text and 'cross join lateral' not in text:
+        return True
+    # Any reference to a table that is only kept in Postgres routes the whole
+    # statement there (mirrored tables never appear in this list).
+    return any(m in text for m in _PG_ONLY_TABLE_MARKERS)
 
 
 class QueryExecutor:
@@ -210,6 +234,8 @@ class QueryExecutor:
             logger.debug("SQL translation not possible, will fall back to PG")
             raise
 
+        from .timing import count_query
+        count_query('clickhouse')
         result = self.ch_client.query(ch_sql, parameters=ch_params, settings=_CH_QUERY_SETTINGS)
         columns = result.column_names if result.column_names else []
         raw = result.result_set if result.result_set else []
@@ -231,6 +257,8 @@ class QueryExecutor:
 
     def _execute_postgres(self, sql, params):
         from django.db import connection
+        from .timing import count_query
+        count_query('postgres')
 
         try:
             with connection.cursor() as cursor:
@@ -263,6 +291,8 @@ class QueryExecutor:
 
     def _execute_postgres_fetchall(self, sql, params):
         from django.db import connection
+        from .timing import count_query
+        count_query('postgres')
 
         try:
             with connection.cursor() as cursor:

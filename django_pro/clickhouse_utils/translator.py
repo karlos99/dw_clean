@@ -212,7 +212,25 @@ def translate_pg_to_clickhouse(sql, params):
     sql = re.sub(r'string_agg\s*\(\s*([^,]+)\s*,\s*([^)]+)\s*\)', _string_agg, sql, flags=re.IGNORECASE)
 
     # ── JSONB object keys → ClickHouse JSON functions ──────────────────
-    # jsonb_object_keys(col) → arrayJoin(JSONExtractKeys(col))
+    # CROSS JOIN LATERAL jsonb_object_keys(col) AS k(key) → ARRAY JOIN
+    # JSONExtractKeys(assumeNotNull(col)) AS k, then k.key → k.
+    _oj_aliases = []
+
+    def _oj_repl(m):
+        expr = m.group(1)
+        alias = m.group(2)
+        col = m.group(3)
+        _oj_aliases.append((alias, col))
+        return f"ARRAY JOIN JSONExtractKeys(assumeNotNull({expr})) AS {alias}"
+
+    sql = re.sub(
+        r'\bCROSS\s+JOIN\s+LATERAL\s+jsonb_object_keys\s*\(\s*([^)]+?)\s*\)\s+AS\s+(\w+)\s*\(\s*(\w+)\s*\)',
+        _oj_repl, sql, flags=re.IGNORECASE,
+    )
+    for _alias, _col in _oj_aliases:
+        sql = re.sub(rf'\b{_alias}\.{_col}\b', _alias, sql)
+
+    # Bare jsonb_object_keys(col) → arrayJoin(JSONExtractKeys(col))
     sql = re.sub(
         r'\bjsonb_object_keys\s*\(\s*(\w+(?:\.\w+)?)\s*\)',
         r'arrayJoin(JSONExtractKeys(\1))',

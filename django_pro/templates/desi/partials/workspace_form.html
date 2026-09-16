@@ -1,7 +1,10 @@
-<div x-data="{ videoOpen: false, embedUrl: '' }">
+<div x-data="{ videoOpen: false, embedUrl: '', modalLabel: '', openEmbed(label, url) { this.videoOpen = true; this.embedUrl = url || ''; this.modalLabel = label || 'Resource'; } }"
+     @desi-open-resource.window="openEmbed($event.detail.label, $event.detail.url)">
+
+    {{ support_info|json_script:"desi-support-info" }}
 
     <!-- Student Detail Header Profile Card (pinned) -->
-    <div class="sticky top-0 z-10 bg-white/95 backdrop-blur-md border-b border-slate-200 px-6 py-4 mb-6 shadow-sm -mx-6 -mt-6 md:-mx-8 md:-mt-8">
+    <div id="desi-student-profile-sticky" class="sticky top-0 z-30 bg-white border-b border-slate-200 px-6 py-4 mb-6 shadow-md -mx-6 -mt-6 md:-mx-8 md:-mt-8">
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 mb-2">
@@ -31,7 +34,7 @@
     </div>
 
     <!-- MAIN WORKSPACE FORM -->
-    <form method="POST" action="{% url 'desi:assign_accommodations' student.stu_annual_key %}?{{ request.GET.urlencode }}" 
+    <form method="POST" action="{% url 'desi:assign_accommodations' student.stu_annual_key %}?{{ request.GET.urlencode }}"
           hx-post="{% url 'desi:assign_accommodations' student.stu_annual_key %}?{{ request.GET.urlencode }}"
           hx-target="#workspace-container"
           hx-swap="innerHTML"
@@ -39,223 +42,247 @@
         {% csrf_token %}
         <input type="hidden" name="action" value="save_accommodations">
 
-        <!-- SHARED / GROUPED QUESTIONS (ANSWER ONCE) -->
-        {% if shared_accommodations %}
-        <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-            <div class="bg-blue-900 text-white px-6 py-4">
-                <h2 class="text-sm font-bold">Shared Designated Supports</h2>
-                <p class="text-[11px] text-blue-200 mt-1">These questions apply to multiple assessments with the same configuration. Answer them once to propagate across all tests.</p>
-            </div>
-            
-            <div class="p-6">
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {% for acc_item in shared_accommodations %}
-                    {% with acc=acc_item.accommodation opts=acc_item.options selected_opt=acc_item.selected_option %}
-                    <div class="support-card bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col justify-between"
-                         data-accommodation-id="{{ acc.id }}"
-                         data-depends-on-option-id="{{ acc_item.dependency_option_id|default:'' }}">
-                        
-                        <div>
-                            <!-- Title & Video Guide -->
-                            <div class="flex justify-between items-start gap-2 mb-2">
-                                <div class="font-bold text-sm text-slate-900">
-                                    {{ acc.name }} {% if acc.code %}<span class="text-xs text-slate-400 font-normal">({{ acc.code }})</span>{% endif %}
-                                </div>
-                                {% if acc.get_youtube_embed_url %}
-                                <button type="button" @click="videoOpen = true; embedUrl = '{{ acc.get_youtube_embed_url }}'" 
-                                        class="text-[9px] font-bold text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1 shrink-0 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                                    🎥 Video Guide
-                                </button>
-                                {% endif %}
-                            </div>
-
-                            <!-- Applies to Badges -->
-                            <div class="flex flex-wrap gap-1 mb-3">
-                                <span class="text-[9px] font-bold text-slate-400 uppercase tracking-wide mr-1 self-center">Applies to:</span>
-                                {% for ast in acc_item.applies_to %}
-                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-50 text-blue-800 border border-blue-100">
-                                    {{ ast.name }}{% if ast.subject %} — {{ ast.subject }}{% endif %}
-                                </span>
-                                {% endfor %}
-                            </div>
-
-                            {% if acc.description %}
-                            <p class="text-[11px] text-slate-500 mb-3">{{ acc.description }}</p>
-                            {% endif %}
-                        </div>
-
-                        <!-- Inputs -->
-                        <div class="border-t border-slate-200/60 pt-3 mt-auto">
-                            <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Select Option</label>
-                            {% if opts %}<select name="student_options"
-                                    class="block w-full rounded border-slate-300 text-xs py-1.5 px-3 focus:border-blue-500 focus:ring-blue-500 bg-white acc-option-select"
-                                    data-accommodation-id="{{ acc.id }}">
-                                <option value="">-- None --</option>
-                                {% for opt in opts %}
-                                <option value="{{ opt.id }}" {% if opt.id in student_option_ids %}selected{% endif %}>
-                                    {{ opt.name }} {% if opt.code %}({{ opt.code }}){% endif %}
-                                </option>
-                                {% endfor %}
-                            </select>{% else %}
-                            <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                                <input type="checkbox" name="student_supports" value="{{ acc.id }}" {% if acc_item.selected_direct %}checked{% endif %}
-                                       class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                                <span>Student needs this support</span>
-                            </label>
-                            {% endif %}
-                        </div>
-
-                    </div>
-                    {% endwith %}
-                    {% endfor %}
-                </div>
+        {% if has_seis %}
+        <div class="bg-violet-50 border border-violet-200 rounded-xl px-4 py-3 flex items-start gap-3 text-xs text-violet-800">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 shrink-0 mt-0.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
+            <div>
+                <p class="font-bold">This student has {{ seis_count }} designated support{{ seis_count|pluralize }} imported from SEIS.</p>
+                <p class="text-[10px] text-violet-600 mt-0.5">SEIS supports are read-only and locked from the SEIS source. Their test columns cannot be edited here.</p>
             </div>
         </div>
         {% endif %}
 
-        <!-- ASSESSMENT SPECIFIC CARDS -->
-        <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-            <div class="bg-slate-900 text-white px-6 py-4">
-                <h2 class="text-sm font-bold">Test-Specific Designated Supports & Completion</h2>
-                <p class="text-[11px] text-slate-400 mt-1">Review specific designated supports allowed on each assessment and check the completion box for each test once reviewed.</p>
-            </div>
-            
-            <div class="p-3 space-y-3">
-                {% for card in assessment_cards %}
-                    {% cycle 'bg-blue-700' 'bg-emerald-700' 'bg-violet-700' 'bg-amber-700' 'bg-rose-700' 'bg-cyan-700' as assessment_color silent %}
-                    <div class="border border-slate-200 rounded-lg overflow-hidden bg-white">
-                        <div class="flex items-stretch">
-                            <div class="{{ assessment_color }} w-10 flex items-center justify-center px-1">
-                                <span class="[writing-mode:vertical-rl] rotate-180 text-xs font-bold tracking-wider text-white text-center">
-                                    {{ card.assessment.name }}{% if card.assessment.subject %} — {{ card.assessment.subject }}{% endif %}
-                                </span>
-                            </div>
-                            <div class="flex-1 p-4">
-                                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-3">
-                                    <div>
-                                        {% if card.assessment.subject %}
-                                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800">
-                                            Subject: {{ card.assessment.subject }}
-                                        </span>
-                                        {% endif %}
-                                    </div>
-                                    
-                                    <div>
-                                        {% if card.is_eligible %}
-                                        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                                            Eligible
-                                        </span>
-                                        {% else %}
-                                        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
-                                            <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
-                                            Criteria Warning
-                                        </span>
-                                        {% endif %}
-                                    </div>
-                                </div>
-
-                                <div class="space-y-3">
-                                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Unique / Test-Specific Questions & Supports</h4>
-                                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                                        {% for acc_item in card.accommodations %}
-                                        {% with acc=acc_item.accommodation opts=acc_item.options selected_opt=acc_item.selected_option %}
-                                        
-                                        <div class="support-card bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col justify-between"
-                                             data-accommodation-id="{{ acc.id }}"
-                                             data-depends-on-option-id="{{ acc_item.dependency_option_id|default:'' }}">
-                                            
-                                            <div>
-                                                <div class="flex justify-between items-start gap-2 mb-2">
-                                                    <div class="font-bold text-sm text-slate-900">
-                                                        {{ acc.name }} {% if acc.code %}<span class="text-xs text-slate-400 font-normal">({{ acc.code }})</span>{% endif %}
-                                                    </div>
-                                                    
-                                                    {% if acc.get_youtube_embed_url %}
-                                                    <button type="button" @click="videoOpen = true; embedUrl = '{{ acc.get_youtube_embed_url }}'" 
-                                                            class="text-[10px] font-bold text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1 shrink-0 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                                                        🎥 Video
-                                                    </button>
-                                                    {% endif %}
-                                                </div>
-
-                                                {% if acc.description %}
-                                                <p class="text-xs text-slate-600 mb-2">{{ acc.description }}</p>
-                                                {% endif %}
-                                            </div>
-
-                                            <div class="border-t border-slate-200/60 pt-2 mt-auto">
-                                                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Select Option</label>
-                                                {% if opts %}<select name="student_options"
-                                                        class="block w-full rounded border-slate-300 text-xs py-1.5 px-3 focus:border-blue-500 focus:ring-blue-500 bg-white acc-option-select"
-                                                        data-accommodation-id="{{ acc.id }}">
-                                                    <option value="">-- None --</option>
-                                                    {% for opt in opts %}
-                                                    <option value="{{ opt.id }}" {% if opt.id in student_option_ids %}selected{% endif %}>
-                                                        {{ opt.name }} {% if opt.code %}({{ opt.code }}){% endif %}
-                                                    </option>
-                                                    {% endfor %}
-                                                </select>{% else %}
-                                                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                                                    <input type="checkbox" name="student_supports" value="{{ acc.id }}" {% if acc_item.selected_direct %}checked{% endif %}
-                                                           class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                                                    <span>Student needs this support</span>
-                                                </label>
-                                                {% endif %}
-                                            </div>
-
-                                        </div>
-                                        {% endwith %}
-                                        {% empty %}
-                                        <div class="col-span-full text-center py-4 text-sm text-slate-500 italic">
-                                            No unique supports configured for this assessment (all are shared).
-                                        </div>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-
-                                <div class="mt-3 border-t border-slate-200/80 pt-3 flex items-center bg-slate-50/60 p-2.5 rounded border border-slate-100">
-                                    <input type="checkbox" name="completed_assessments" id="comp_{{ card.assessment.id }}" value="{{ card.assessment.id }}"
-                                           {% if card.is_completed %}checked{% endif %}
-                                           class="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
-                                    <label for="comp_{{ card.assessment.id }}" class="ml-2 block text-xs font-bold text-slate-700 uppercase tracking-wider cursor-pointer">
-                                        Mark configuration as Completed
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
+        <!-- DESIGNATED SUPPORTS MATRIX -->
+        {% if matrix_columns %}
+        <div id="desi-matrix-wrap" class="desi-matrix bg-white rounded-xl shadow-sm border border-slate-200">
+            <style>
+                .desi-workspace-scroll,
+                .desi-matrix {
+                    --desi-profile-offset: 7.5rem;
+                }
+                .desi-matrix-scroll {
+                    overflow: visible;
+                }
+                .desi-matrix-thead {
+                    position: sticky;
+                    top: var(--desi-profile-offset);
+                    z-index: 30;
+                }
+                .desi-matrix-corner-cell {
+                    position: sticky;
+                    left: 0;
+                    top: var(--desi-profile-offset);
+                    z-index: 45;
+                    vertical-align: bottom;
+                }
+                .desi-matrix-col-head {
+                    position: sticky;
+                    top: var(--desi-profile-offset);
+                    z-index: 35;
+                    vertical-align: bottom;
+                    background-color: rgb(255 255 255);
+                    box-shadow: inset 0 -1px 0 rgb(226 232 240), 0 2px 4px -2px rgb(15 23 42 / 0.1);
+                }
+                .desi-matrix-test-name {
+                    display: block;
+                    font-size: 0.8125rem;
+                    line-height: 1.25;
+                    font-weight: 700;
+                    color: rgb(15 23 42);
+                }
+                .desi-matrix-name-cell {
+                    position: sticky;
+                    left: 0;
+                    z-index: 20;
+                    box-shadow: 2px 0 8px -3px rgb(15 23 42 / 0.14);
+                }
+                .desi-matrix thead tr {
+                    box-shadow: 0 2px 8px -2px rgb(15 23 42 / 0.15);
+                }
+                tr.support-row td.desi-matrix-name-cell,
+                tr.support-row td.desi-matrix-body-cell {
+                    background-color: rgb(255 255 255);
+                }
+                tr.support-row td.desi-matrix-filler-cell {
+                    background-color: rgb(248 250 252);
+                }
+                tr.support-row td {
+                    transition: background-color 0.12s ease, box-shadow 0.12s ease;
+                }
+                tr.support-row:hover td,
+                tr.support-row:focus-within td {
+                    background-color: rgb(147 197 253) !important;
+                }
+                tr.support-row:hover .desi-matrix-name-cell,
+                tr.support-row:focus-within .desi-matrix-name-cell {
+                    box-shadow: inset 4px 0 0 rgb(29 78 216), 2px 0 8px -3px rgb(15 23 42 / 0.14);
+                }
+            </style>
+            <div class="bg-slate-900 text-white px-5 py-3 flex items-center justify-between gap-3 rounded-t-xl">
+                <div class="flex items-center gap-3">
+                    <span class="h-2.5 w-2.5 rounded-full bg-fuchsia-500 shrink-0"></span>
+                    <div>
+                        <h2 class="text-sm font-bold">Designated Supports by Section</h2>
+                        <p class="text-[11px] text-slate-300 mt-0.5">Each test is a column. Rows are grouped by section category, and identical rows across tests are merged into one selection.</p>
                     </div>
-                {% empty %}
-                <div class="p-12 text-center text-slate-500 italic text-sm">
-                    No active assessments found for school year {{ student.school_year }}.
                 </div>
-                {% endfor %}
+                {% if can_edit %}
+                <span class="shrink-0 text-[10px] text-slate-400 italic hidden md:inline">Click a selected option to see support details.</span>
+                {% endif %}
+            </div>
+
+            <div class="desi-matrix-scroll rounded-b-xl">
+                <table class="min-w-full border-separate border-spacing-0 text-xs">
+                    <thead class="desi-matrix-thead">
+                        <tr class="desi-matrix-test-header-row">
+                            <th class="desi-matrix-corner-cell bg-slate-800 text-white text-left px-4 py-3 min-w-[15rem] border-b border-slate-700">
+                                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-300">Designated support</span>
+                            </th>
+                            {% for col in matrix_columns %}
+                            <th class="desi-matrix-col-head border-b border-l border-slate-200 px-3 py-2.5 min-w-[12rem] text-left border-t-4 border-t-{{ col.card_color }}-500">
+                                <span class="desi-matrix-test-name">{{ col.assessment.name }}</span>
+                                {% if col.assessment.subject %}
+                                <span class="block text-[10px] text-slate-500 mt-0.5">{{ col.assessment.subject }}</span>
+                                {% endif %}
+                                <div class="mt-2">
+                                    {% if col.is_seis %}
+                                    <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-violet-100 text-violet-700 border border-violet-200">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-2.5 w-2.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
+                                        SEIS · read only
+                                    </span>
+                                    {% else %}
+                                    <label class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-white border border-{{ col.card_color }}-200 text-{{ col.card_color }}-700 cursor-pointer {% if not can_edit %}opacity-60{% endif %}">
+                                        <input type="checkbox" name="completed_assessments" value="{{ col.assessment_id }}"
+                                               {% if col.is_completed %}checked{% endif %}
+                                               {% if not can_edit %}disabled{% endif %}
+                                               class="h-3 w-3 rounded border-{{ col.card_color }}-300 text-{{ col.card_color }}-600 focus:ring-{{ col.card_color }}-500">
+                                        Completed
+                                    </label>
+                                    {% endif %}
+                                </div>
+                            </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in category_groups %}
+                        <tr>
+                            <td colspan="{{ matrix_columns|length|add:1 }}" class="bg-slate-100 border-b border-slate-200 px-4 py-1.5">
+                                <span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                                    {{ group.category.name|default:"Uncategorized" }}
+                                </span>
+                            </td>
+                        </tr>
+                        {% for row in group.rows %}
+                        <tr class="support-row"
+                            data-accommodation-id="{{ row.accommodation.id }}"
+                            data-depends-on-option-id="{{ row.dependency_option_id|default:'' }}">
+                            <td class="desi-matrix-name-cell border-b border-slate-100 px-4 py-2.5 align-top">
+                                <div class="flex items-start gap-2">
+                                    <button type="button" data-support-info="{{ row.accommodation.id }}"
+                                            title="Support details"
+                                            class="mt-0.5 shrink-0 h-5 w-5 inline-flex items-center justify-center rounded-full border border-slate-300 text-slate-400 hover:text-blue-600 hover:border-blue-300 transition text-[11px] font-bold">i</button>
+                                    <div class="min-w-0">
+                                        <div class="font-semibold text-sm text-slate-900">{{ row.accommodation.name }}</div>
+                                        <div class="flex flex-wrap items-center gap-1.5 mt-0.5">
+                                            {% if row.accommodation.code %}
+                                            <span class="font-mono text-[10px] text-slate-400 uppercase">{{ row.accommodation.code }}</span>
+                                            {% endif %}
+                                            {% if row.accommodation.category %}
+                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-100">
+                                                {{ row.accommodation.category }}
+                                            </span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                            {% for seg in row.segments %}
+                                {% if seg.kind == "filler" %}
+                                <td colspan="{{ seg.colspan }}" class="desi-matrix-filler-cell border-b border-l border-slate-100 px-2 py-2.5"></td>
+                                {% else %}
+                                {% with cell=seg.cell %}
+                                <td colspan="{{ seg.colspan }}" class="desi-matrix-body-cell border-b border-l border-slate-100 px-2 py-2.5 align-top">
+                                    {% if cell.is_seis %}
+                                    <div class="mb-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-violet-50 text-violet-700 border border-violet-200">
+                                        Locked from SEIS
+                                    </div>
+                                    {% endif %}
+
+                                    {% if cell.options %}
+                                    <select name="student_options"
+                                            data-accommodation-id="{{ cell.accommodation.id }}"
+                                            class="acc-option-select block w-full rounded border text-xs py-1.5 px-2 {% if cell.readonly %}border-slate-200 bg-slate-100 text-slate-400{% else %}border-slate-300 bg-white focus:border-blue-500 focus:ring-blue-500{% endif %}"
+                                            {% if cell.readonly %}disabled{% endif %}>
+                                        <option value="">-- Not selected --</option>
+                                        {% for opt in cell.options %}
+                                        <option value="{{ opt.id }}" {% if cell.selected_option and opt.id == cell.selected_option.id %}selected{% endif %}>{{ opt.name }}{% if opt.code %} ({{ opt.code }}){% endif %}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% else %}
+                                    <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer {% if cell.readonly %}opacity-60{% endif %}">
+                                        <input type="checkbox" name="student_supports" value="{{ cell.accommodation.id }}"
+                                               {% if cell.selected_direct %}checked{% endif %}
+                                               {% if cell.readonly %}disabled{% endif %}
+                                               class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                        <span>Student needs this support</span>
+                                    </label>
+                                    {% endif %}
+
+                                    {% if seg.colspan > 1 %}
+                                    <p class="mt-1 text-[9px] text-slate-400">Same selection applies to {{ seg.colspan }} tests.</p>
+                                    {% endif %}
+                                    {% if cell.readonly and not cell.is_seis %}
+                                    <p class="mt-1 text-[9px] text-amber-600 font-semibold">View only.</p>
+                                    {% endif %}
+                                </td>
+                                {% endwith %}
+                                {% endif %}
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         </div>
+        {% else %}
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center text-slate-500 italic text-sm">
+            No active assessments available for this student.
+        </div>
+        {% endif %}
 
         <!-- SUBMIT ACTIONS -->
-        <div class="flex justify-end gap-3 pt-4 border-t border-slate-200">
+        {% if can_edit %}
+        <div class="flex justify-end gap-3 pt-4 border-t border-slate-200 sticky bottom-0 bg-slate-100/95 backdrop-blur-md py-3">
             <button type="submit" class="inline-flex justify-center items-center px-8 py-2.5 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
                 Save Designated Supports
             </button>
         </div>
+        {% else %}
+        <div class="sticky bottom-0 bg-slate-100/95 backdrop-blur-md py-3 pt-4 border-t border-slate-200">
+            <div class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-700">
+                View only — supports for this school cannot be edited or saved.
+            </div>
+        </div>
+        {% endif %}
     </form>
 
     <!-- ALPINE MODAL FOR YOUTUBE VIDEOS -->
-    <div x-show="videoOpen" class="fixed inset-0 z-50 overflow-y-auto" style="display: none;" @keydown.escape.window="videoOpen = false">
+    <div x-show="videoOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="videoOpen = false">
         <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"></div>
-        
+
         <div class="flex min-h-full items-center justify-center p-4 text-center">
-            <div class="relative transform overflow-hidden rounded-lg bg-white p-6 text-left shadow-2xl transition-all w-full max-w-2xl border border-slate-200" 
+            <div class="relative transform overflow-hidden rounded-lg bg-white p-6 text-left shadow-2xl transition-all w-full max-w-2xl border border-slate-200"
                  @click.away="videoOpen = false" x-transition>
                  <div class="flex justify-between items-center mb-4">
-                     <h3 class="text-base font-bold text-slate-900">Support Explanation Video</h3>
+                     <h3 class="text-base font-bold text-slate-900" x-text="modalLabel || 'Support Resource'">Support Resource</h3>
                      <button @click="videoOpen = false" class="text-slate-400 hover:text-slate-600 text-2xl font-bold focus:outline-none">&times;</button>
                  </div>
                  <div class="relative aspect-video w-full bg-slate-100 rounded overflow-hidden">
                      <template x-if="videoOpen">
-                         <iframe :src="embedUrl" class="absolute inset-0 w-full h-full" frameborder="0" 
-                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                         <iframe :src="embedUrl" class="absolute inset-0 w-full h-full" frameborder="0"
+                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                                  referrerpolicy="strict-origin-when-cross-origin"
                                  allowfullscreen></iframe>
                      </template>
@@ -267,5 +294,18 @@
                  </div>
             </div>
         </div>
+    </div>
+
+    <!-- SUPPORT INFO POPOVER (positioned by script) -->
+    <div id="desi-support-popover" class="hidden fixed z-50 w-80 max-w-[90vw] rounded-xl border border-slate-200 bg-white shadow-2xl p-4 text-left">
+        <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+                <h3 id="desi-popover-name" class="text-sm font-bold text-slate-900"></h3>
+                <p id="desi-popover-meta" class="text-[10px] text-slate-400 uppercase tracking-wider"></p>
+            </div>
+            <button type="button" data-popover-close class="text-slate-400 hover:text-slate-600 text-lg font-bold leading-none">&times;</button>
+        </div>
+        <p id="desi-popover-description" class="mt-2 text-xs text-slate-600 leading-relaxed whitespace-pre-line"></p>
+        <div id="desi-popover-resources" class="mt-3 flex flex-wrap gap-1.5"></div>
     </div>
 </div>

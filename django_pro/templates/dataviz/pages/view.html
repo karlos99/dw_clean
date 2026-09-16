@@ -476,6 +476,10 @@
 
   const chartIds = [];
   const slotByChartId = {};
+  const etags = {};
+  const filterKey = JSON.stringify({ filters, school_id: schoolId });
+  let hasClientCacheHit = false;
+
   eager.forEach(el => {
     const m = el.dataset.chartBaseUrl.match(/\/charts\/(\d+)\/render\//);
     if (!m) return;
@@ -483,8 +487,27 @@
     chartIds.push(cid);
     slotByChartId[cid] = el;
     el.setAttribute('hx-trigger', 'reload');
+
+    // SWR Instant Client Cache: Check sessionStorage for instant rendering
+    try {
+      const cacheKey = `dv_chart_${cid}_${filterKey}`;
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) {
+        const item = JSON.parse(cached);
+        if (item && item.html) {
+          el.innerHTML = item.html;
+          if (item.etag) etags[cid] = item.etag;
+          hasClientCacheHit = true;
+        }
+      }
+    } catch (e) {}
   });
   if (!chartIds.length) return;
+
+  // Immediately initialize charts if restored from client cache (0ms perceived render)
+  if (hasClientCacheHit && window.initAllCharts) {
+    try { window.initAllCharts(); } catch (e) {}
+  }
 
   function restore(el) {
     // Batch call didn't fill this slot — fall back to the normal lazy-load
@@ -498,21 +521,31 @@
   fetch('/dataviz/api/charts/batch-render/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: JSON.stringify({ chart_ids: chartIds, source, source_id: sourceId, source_name: sourceName, filters, school_id: schoolId }),
+    body: JSON.stringify({ chart_ids: chartIds, source, source_id: sourceId, source_name: sourceName, filters, school_id: schoolId, etags }),
   })
     .then(r => r.json())
     .then(data => {
       const charts = data.charts || {};
+      let needsInit = false;
       chartIds.forEach(cid => {
         const slot = slotByChartId[cid];
         const payload = charts[cid];
+        if (payload && payload.not_modified) {
+          // Content unchanged, keep existing instance
+          return;
+        }
         if (payload && payload.html) {
           slot.innerHTML = payload.html;
+          needsInit = true;
+          try {
+            const cacheKey = `dv_chart_${cid}_${filterKey}`;
+            sessionStorage.setItem(cacheKey, JSON.stringify({ html: payload.html, etag: payload.etag }));
+          } catch (e) {}
         } else {
           restore(slot);
         }
       });
-      if (window.initAllCharts) window.initAllCharts();
+      if (needsInit && window.initAllCharts) window.initAllCharts();
     })
     .catch(e => {
       console.error('Batch chart render failed, falling back to individual lazy loads:', e);

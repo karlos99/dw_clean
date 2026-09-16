@@ -209,6 +209,7 @@ TABLE_WHITELIST = {
     'analytics_student_marks': 'analytics_student_marks',
     'analytics_ap_results': 'analytics_ap_results',
     'analytics_ap_awards': 'analytics_ap_awards',
+    'analytics_sat_results': 'analytics_sat_results',
     'analytics_survey_responses': 'analytics_survey_responses',
 }
 
@@ -411,6 +412,14 @@ COLUMN_WHITELIST = {
     },
     'analytics_ap_awards': {
         'ssid', 'award_year', 'award_description',
+    },
+    'analytics_sat_results': {
+        'ssid', 'school_year', 'test_date', 'school_name',
+        'total_score', 'ebrw_score', 'math_score',
+        'percentile_state_total', 'percentile_state_rw', 'percentile_state_math',
+        'percentile_country_total', 'percentile_country_rw', 'percentile_country_math',
+        'percentile_natrep_total', 'percentile_natrep_rw', 'percentile_natrep_math',
+        'percentile_natuser_total', 'percentile_natuser_rw', 'percentile_natuser_math',
     },
     'analytics_survey_responses': {
         'student_id', 'ssid', 'survey_type', 'school_year', 'testing_window',

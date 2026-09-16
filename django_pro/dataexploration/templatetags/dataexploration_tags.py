@@ -38,6 +38,21 @@ def markall_key_filter(year, subject):
     return f"markall_{_norm(year)}_{_norm(subject)}"
 
 
+@register.filter(name='format_marks_cell')
+def format_marks_cell(value, col=''):
+    """Format mark cells in data exploration table, bolding 'Live'."""
+    import re
+    from django.utils.html import escape
+    from django.utils.safestring import mark_safe
+    if value is None or value == '' or value == '—':
+        return '—'
+    s = escape(str(value))
+    if isinstance(col, str) and (col.startswith('markall_') or col.startswith('mark_')):
+        s = re.sub(r'(^|[\s,;])(Live)(:|\b)', r'\1<span class="font-bold text-slate-900">\2</span>\3', s)
+        return mark_safe(s)
+    return s
+
+
 @register.filter(name='filter_visible_folders')
 def filter_visible_folders(folders, user):
     """Filter a list of folders to only those visible to the user."""

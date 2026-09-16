@@ -38,4 +38,14 @@ urlpatterns = [
     path('ap/import/<int:pk>/progress/', views.APImportProgressView.as_view(), name='ap_import_progress'),
     path('ap/import/<int:pk>/delete/', views.ap_delete_import, name='ap_delete_import'),
     path('ap/import/<int:pk>/publish/', views.ap_toggle_publish, name='ap_toggle_publish'),
+
+    path('sat/upload/', views.SATUploadView.as_view(), name='sat_upload'),
+    path('sat/settings/', views.SATSettingsView.as_view(), name='sat_settings'),
+    path('sat/preview/', views.SATPreviewView.as_view(), name='sat_preview'),
+    path('sat/search-student/', views.sat_student_search, name='sat_student_search'),
+    path('sat/import/<int:pk>/', views.SATImportDetailView.as_view(), name='sat_import_detail'),
+    path('sat/import/<int:pk>/status/', views.sat_import_status, name='sat_import_status'),
+    path('sat/import/<int:pk>/progress/', views.SATImportProgressView.as_view(), name='sat_import_progress'),
+    path('sat/import/<int:pk>/delete/', views.sat_delete_import, name='sat_delete_import'),
+    path('sat/import/<int:pk>/publish/', views.sat_toggle_publish, name='sat_toggle_publish'),
 ]

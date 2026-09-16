@@ -10,11 +10,12 @@ from django.db import connections
 from django.core.cache import cache
 import json
 import hashlib
+import math
 import statistics
 
 from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
-from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL
+from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL, normalize_score_value, parse_sat_column_key, sat_column_db_field, parse_apall_sort_key
 from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from ..survey_utils import get_survey_columns
 from .student_data_utils import (
@@ -259,7 +260,7 @@ def get_column_statistics(request):
                 if real_values:
                     mark_clause = (
                         "SELECT 1 FROM student_marks_list sm "
-                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                        "WHERE sm.ssid = cs.ssid "
                         "AND sm.school_year = %s "
                         "AND sm.subject ILIKE %s "
                         "AND sm.course_name ILIKE %s "
@@ -285,7 +286,7 @@ def get_column_statistics(request):
                 if has_blank:
                     blank_clause = (
                         "SELECT 1 FROM student_marks_list sm "
-                        "WHERE sm.stu_annual_key = cs.stu_annual_key "
+                        "WHERE sm.ssid = cs.ssid "
                         "AND sm.school_year = %s "
                         "AND sm.subject ILIKE %s "
                         "AND sm.course_name ILIKE %s "
@@ -307,6 +308,48 @@ def get_column_statistics(request):
 
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")
+                continue
+
+            # AP "All Results" wide-pair columns (apall_<year>_<i>_SUBJECT|PL)
+            if col.startswith('apall_'):
+                apall_parsed = parse_apall_sort_key(col)
+                if not apall_parsed:
+                    continue
+                _apall_year = apall_parsed['year']
+                _apall_field = "exam_name" if apall_parsed['field'] == 'SUBJECT' else "exam_grade"
+                _apall_excludes = set()
+                _excl_vals = filters_to_apply.get(f"apall_{_apall_year.replace('-', '_')}")
+                if isinstance(_excl_vals, list):
+                    _apall_excludes = {
+                        str(v)[len('exclude:'):] for v in _excl_vals if str(v).startswith('exclude:')
+                    }
+                _excl_clause = ""
+                _excl_params = []
+                if _apall_excludes:
+                    _placeholders = ", ".join(["%s"] * len(_apall_excludes))
+                    _excl_clause = f" AND e.name NOT IN ({_placeholders})"
+                    _excl_params = sorted(_apall_excludes)
+                _rank_sql = (
+                    "SELECT ssid FROM ("
+                    " SELECT a.ssid, e.name AS exam_name, a.exam_grade,"
+                    " row_number() OVER (PARTITION BY a.ssid ORDER BY e.name) AS rn"
+                    " FROM \"dataLoader_apexamresult\" a"
+                    " INNER JOIN \"dataLoader_apexamcode\" e ON a.exam_id = e.code"
+                    " INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id"
+                    " WHERE a.admin_year = %s AND il.is_published = true"
+                    f"{_excl_clause}"
+                    ") t WHERE rn = %s"
+                )
+                _rank_params = [_apall_year] + _excl_params + [apall_parsed['index']]
+                _conditions = []
+                if real_values:
+                    _conditions.append(f"cs.ssid IN ({_rank_sql} AND t.{_apall_field} = ANY(%s))")
+                    params.extend(_rank_params + [real_values])
+                if has_blank:
+                    _conditions.append(f"cs.ssid NOT IN ({_rank_sql} AND t.{_apall_field} IS NOT NULL AND t.{_apall_field} <> '')")
+                    params.extend(_rank_params)
+                if _conditions:
+                    where_clauses.append(f"({' OR '.join(_conditions)})")
                 continue
 
             # AP exam performance-level columns (ap_<year>_<subject>_PL)
@@ -490,15 +533,20 @@ def get_column_statistics(request):
                      sub_norm = _norm_part(subject)
                      win_norm = _norm_part(test_window).strip('_')
                      key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
-                     
-                     for metric in ['SS', 'PL']:
+
+                     for metric in ['SS', 'PL', 'DFP']:
                          norm_key = f"test_{key_base}_{metric.upper()}"
                          original_key = normalized_to_original.get(norm_key)
                          if original_key:
-                             test_col_map[original_key] = {
+                             info = {
                                  'year': yr, 'test_name': test_name, 'subject': subject, 'test_window': (test_window or '').strip() or None,
                                  'metric': metric.lower(), 'col_name': original_key
                              }
+                             if metric == 'DFP':
+                                 # DFP is promoted out of other_info (see get_test_columns),
+                                 # backed by the "dfp" key in results.other_info.
+                                 info['other_info_key'] = 'dfp'
+                             test_col_map[original_key] = info
                              test_col_map[original_key.replace('-', '_')] = test_col_map[original_key]
 
                  # Other Info logic implementation
@@ -635,6 +683,23 @@ def get_column_statistics(request):
             except Exception:
                 ap_exam_infos = ap_award_infos = []
 
+        selected_sat_cols = list(set(
+            [c for c in filter_keys if isinstance(c, str) and c.startswith('sat_')] +
+            [c for c in target_columns if isinstance(c, str) and c.startswith('sat_')]
+        ))
+        sat_infos = []
+        for _col in selected_sat_cols:
+            _parsed = parse_sat_column_key(_col)
+            if _parsed:
+                sat_infos.append({
+                    'col_name': _col,
+                    'year': _parsed['year'],
+                    'kind': _parsed['kind'],
+                    'field': _parsed.get('field'),
+                    'region': _parsed.get('region'),
+                    'metric': _parsed.get('metric'),
+                })
+
         # Build Base Where
         base_where_clauses = ["1=1"]
         base_params = []
@@ -719,21 +784,24 @@ def get_column_statistics(request):
                 
                 # Fetch raw values (no SQL cast, handle determining numeric in Python)
                 val_expr = col_expr
-                
+
+                # Restrict to the filtered cohort by joining current_student.
+                # A correlated EXISTS reading outer r.* columns is rejected by the
+                # ClickHouse analytics read model ("Resolve identifier 'r.ssid' from
+                # parent scope..."), so join instead (current_student is unique per
+                # student/year, so this does not multiply counts).
                 query = f"""
                     SELECT {val_expr} as val, COUNT(*) as cnt
                     FROM results r
                     INNER JOIN tests t ON r.test_group_key = t.test_group_key
-                    WHERE EXISTS (
-                        SELECT 1 FROM current_student cs {join_sql}
-                        WHERE {where_sql}
-                          AND {RESULTS_STUDENT_MATCH_SQL}
-                    )
-                    AND r.school_year = %s
-                    AND t.test_name ILIKE %s
-                    AND t.subject ILIKE %s
-                    {window_clause}
-                    AND {col_expr} IS NOT NULL
+                    INNER JOIN current_student cs ON {RESULTS_STUDENT_MATCH_SQL}
+                    {join_sql}
+                    WHERE {where_sql}
+                      AND r.school_year = %s
+                      AND t.test_name ILIKE %s
+                      AND t.subject ILIKE %s
+                      {window_clause}
+                      AND {col_expr} IS NOT NULL
                     GROUP BY val
                     ORDER BY val
                 """
@@ -752,8 +820,8 @@ def get_column_statistics(request):
                 query = f"""
                     SELECT sm.mark as val, COUNT(*) as cnt
                     FROM student_marks_list sm
-                    WHERE sm.stu_annual_key IN (
-                        SELECT cs.stu_annual_key FROM current_student cs {join_sql} WHERE {where_sql}
+                    WHERE sm.ssid IN (
+                        SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
                     )
                     AND sm.school_year = %s
                     AND sm.subject ILIKE %s
@@ -797,6 +865,47 @@ def get_column_statistics(request):
                     _survey_meta['window'], _survey_meta.get('grade_range', ''),
                     _survey_meta['question_order'],
                 ]
+
+            # --- AP "All Results" wide-pair columns (apall_<year>_<i>_SUBJECT|PL) ---
+            elif col.startswith('apall_'):
+                apall_parsed = parse_apall_sort_key(col)
+                if not apall_parsed:
+                    continue
+                is_string_stats_column = True
+                _apall_year = apall_parsed['year']
+                _apall_excludes = set()
+                _excl_vals = filters.get(f"apall_{_apall_year.replace('-', '_')}") if isinstance(filters, dict) else None
+                if isinstance(_excl_vals, list):
+                    _apall_excludes = {
+                        str(v)[len('exclude:'):] for v in _excl_vals if str(v).startswith('exclude:')
+                    }
+                _excl_clause = ""
+                _excl_params = []
+                if _apall_excludes:
+                    _placeholders = ", ".join(["%s"] * len(_apall_excludes))
+                    _excl_clause = f" AND e.name NOT IN ({_placeholders})"
+                    _excl_params = sorted(_apall_excludes)
+                _val_expr = "e.name" if apall_parsed['field'] == 'SUBJECT' else "a.exam_grade"
+                query = f"""
+                    SELECT val, COUNT(*) as cnt
+                    FROM (
+                        SELECT {_val_expr} AS val,
+                               row_number() OVER (PARTITION BY a.ssid ORDER BY e.name) AS rn
+                        FROM "dataLoader_apexamresult" a
+                        INNER JOIN "dataLoader_apexamcode" e ON a.exam_id = e.code
+                        INNER JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                        WHERE a.ssid IN (
+                            SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
+                        )
+                        AND a.admin_year = %s
+                        AND il.is_published = true
+                        {_excl_clause}
+                    ) t
+                    WHERE rn = %s AND val IS NOT NULL AND val <> ''
+                    GROUP BY val
+                    ORDER BY val
+                """
+                q_params = base_params + [_apall_year] + _excl_params + [apall_parsed['index']]
 
             # --- AP Exam PL Columns ---
             elif col.startswith('ap_') and not col.startswith('apaward_') and not col.startswith('apawards_all_'):
@@ -859,6 +968,30 @@ def get_column_statistics(request):
                     """
                     q_params = base_params + [ap_info['year'], ap_info['award']]
 
+            # --- SAT Score / Percentile Columns ---
+            elif col.startswith('sat_'):
+                sat_info = next((i for i in sat_infos if i['col_name'] == col), None)
+                if not sat_info:
+                    continue
+                sat_db_field = sat_column_db_field(col)
+                if not sat_db_field:
+                    continue
+                is_string_stats_column = True
+                query = f"""
+                    SELECT r.{sat_db_field}::text as val, COUNT(*) as cnt
+                    FROM "dataLoader_satresult" r
+                    INNER JOIN "dataLoader_satimportlog" il ON r.import_log_id = il.id
+                    WHERE r.ssid IN (
+                        SELECT cs.ssid FROM current_student cs {join_sql} WHERE {where_sql}
+                    )
+                    AND r.school_year = %s
+                    AND il.is_published = true
+                    AND r.{sat_db_field} IS NOT NULL
+                    GROUP BY val
+                    ORDER BY val
+                """
+                q_params = base_params + [sat_info['year']]
+
             # --- Standard Columns ---
             else:
                 expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
@@ -889,31 +1022,30 @@ def get_column_statistics(request):
             numeric_count = 0
             
             for val, cnt in rows:
+                # Placeholder score values (NaN/NS/N/A/None/...) are treated as
+                # blank everywhere else in the data explorer (load_students,
+                # export_cell) — never surface them on the summary chart.
+                norm_val = normalize_score_value(val)
+                if norm_val is None:
+                    continue
                 total_count += cnt
-                if is_string_stats_column and val is not None:
-                    val = str(val)
                 is_num_val = False
-                if val is not None and not is_string_stats_column:
+                fval = None
+                if not is_string_stats_column:
                     # Try to parse as float
                     try:
-                        fval = float(val)
-                        # Ensure string isn't something like "123 Main St" which float() might handle oddly or allow
-                        # Actually float() is strict enough for our needs (excludes "123 Main St", but allows "123").
-                        # Also check if it looks numeric if it's a string
-                        if isinstance(val, str) and not val.strip().replace('.','',1).isdigit():
-                             # E.g. "12.3.4" or "12-4" might fail or pass depending.
-                             # Simple float cast is usually okay but let's be safe.
-                             # Keep it simple: if float(val) worked, we use it for stats
-                             pass
-                        
-                        numeric_values.extend([fval] * cnt) 
+                        fval = float(norm_val)
+                    except (ValueError, TypeError):
+                        fval = None
+                    # Skip non-finite values (e.g. an "NaN" sentinel that
+                    # slipped through) so averages never render as NaN.
+                    if fval is not None and math.isfinite(fval):
+                        numeric_values.extend([fval] * cnt)
                         numeric_count += cnt
                         is_num_val = True
-                    except (ValueError, TypeError):
-                        pass
-                
+
                 # Check for sorting purposes later
-                values.append({'value': val, 'count': cnt, 'numeric_val': fval if is_num_val else None})
+                values.append({'value': norm_val, 'count': cnt, 'numeric_val': fval if is_num_val else None})
 
             # If > 90% of values are numeric, treat as numeric type
             if is_string_stats_column:

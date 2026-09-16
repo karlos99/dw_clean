@@ -12,16 +12,20 @@ from datetime import date, datetime, timezone
 import hashlib
 import json
 import logging
+import time
 
 from clickhouse_utils.executor import QueryExecutor
 from clickhouse_utils.pagination import decode_cursor, cursor_from_row, keyset_clause
+from clickhouse_utils.thread_pool import get_io_pool
+from clickhouse_utils.timing import current_request_id, timed, timed_fn
 from ..models import SavedQuery, StudentList
 from studata.models import CurrentStudent
 from ..column_utils import (
-    get_test_columns, get_mark_columns, get_ap_columns, _get_display_name,
+    get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns, _get_display_name,
     RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
     enrich_students_tests_marks,
     PL_SORT_SQL, SS_SORT_SQL, parse_apall_sort_key,
+    parse_sat_column_key, sat_column_db_field,
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
@@ -84,6 +88,126 @@ def _serialize_context_filter(val):
     return val or ''
 
 
+def _run_option_query(sql, params, use_pg=False):
+    """Execute one filter-option query on its own cursor/connection.
+
+    Safe to call from worker threads: ClickHouse clients are thread-local
+    (see clickhouse_utils.client) and Django connections are thread-local.
+    The thread's PostgreSQL connection is closed afterwards so pooled worker
+    threads do not hold it open past the request (which would leak connections
+    and block test-database teardown).
+    """
+    try:
+        if use_pg:
+            with connections['default'].cursor() as cur:
+                cur.execute(sql, params)
+                return list(cur.fetchall())
+        cur = QueryExecutor(analytics=True).cursor()
+        cur.execute(sql, params)
+        return list(cur.fetchall())
+    finally:
+        try:
+            connections['default'].close()
+        except Exception:
+            pass
+
+
+def _option_values(rows):
+    """First column of *rows* as a de-duplicated list, None -> ''."""
+    values = []
+    for row in rows:
+        val = row[0]
+        if val is None:
+            val = ""
+        if val not in values:
+            values.append(val)
+    return values
+
+
+def _run_option_tasks(tasks):
+    """Run (col_key, cache_key, fn) filter-option tasks concurrently.
+
+    ``fn`` returns the option values for its column (or None to skip). The
+    shared bounded ClickHouse I/O pool caps total concurrency per worker
+    process. Results are returned in submission order; a failing column is
+    logged and skipped so one bad option query cannot fail the whole page.
+    """
+    if not tasks:
+        return []
+    pool = get_io_pool()
+    futures = [pool.submit(task[2]) for task in tasks]
+    results = []
+    for (col_key, cache_key, _fn), future in zip(tasks, futures):
+        try:
+            values = future.result()
+        except Exception:
+            logger.exception("filter option query failed for column %s", col_key)
+            values = None
+        results.append((col_key, cache_key, values))
+    return results
+
+
+def _make_json_option_task(sql, params):
+    def _fn():
+        rows = _run_option_query(sql, params)
+        values = [row[0] for row in rows if row[0] is not None and str(row[0]).strip()]
+        return values or None
+    return _fn
+
+
+def _make_base_option_task(sql, params, col, always_include):
+    def _fn():
+        rows = _run_option_query(sql, params)
+        num_rows = len(rows)
+        if num_rows <= 1 or (num_rows > 30 and col not in always_include):
+            return None
+        values = [("" if row[0] is None else row[0]) for row in rows]
+        if col not in always_include:
+            values = values[:30]
+        return values or None
+    return _fn
+
+
+def _make_options_task(sql, params, use_pg=False):
+    def _fn():
+        return _option_values(_run_option_query(sql, params, use_pg=use_pg)) or None
+    return _fn
+
+
+def _make_options_with_blank_task(options_sql, options_params,
+                                  check_sql, check_params, use_pg=False):
+    def _fn():
+        try:
+            values = _option_values(
+                _run_option_query(options_sql, options_params, use_pg=use_pg))
+        except Exception:
+            return None
+        try:
+            if _run_option_query(check_sql, check_params, use_pg=use_pg):
+                if "" not in values:
+                    values.insert(0, "")
+        except Exception:
+            pass
+        return values or None
+    return _fn
+
+
+def _make_markall_marks_task(period_sql, mark_sql, params):
+    def _fn():
+        period_values = []
+        for row in _run_option_query(period_sql, params, use_pg=True):
+            v = row[0]
+            if v is not None and v not in period_values:
+                period_values.append(v)
+        mark_values = []
+        for row in _run_option_query(mark_sql, params, use_pg=True):
+            v = row[0]
+            if v is not None and v not in mark_values:
+                mark_values.append(v)
+        return (period_values + mark_values) or None
+    return _fn
+
+
 class StudentWithTestsListView(LoginRequiredMixin, ListView):
     """Display list of students with their test results (one row per student)."""
     model = CurrentStudent
@@ -100,6 +224,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         marks_structure = get_mark_columns()
         survey_structure = get_survey_columns()
         ap_structure = get_ap_columns()
+        sat_structure = get_sat_columns()
         
         # Get unique values for filters using cache
         school_years_key = "dataexp:school_years"
@@ -171,7 +296,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         
         context['school_years'] = school_years
         context['school_year_choices'] = get_school_year_choices(school_years)
-        all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys())
+        all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys())
         context['year_labels'] = get_year_labels_map(all_years)
         year_to_alias = get_year_alias_map()
         context['year_to_alias'] = year_to_alias
@@ -182,6 +307,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['marks_structure'] = marks_structure
         context['survey_structure'] = survey_structure.get('structure', {})
         context['ap_structure'] = ap_structure
+        context['sat_structure'] = sat_structure
         enabled_defs, enabled_cats = get_enabled_columns()
         context['column_categories'] = enabled_cats
         context['column_definitions'] = enabled_defs
@@ -247,6 +373,11 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
 
 def load_students(request):
     """Load student data with dynamic test columns via HTMX."""
+    with timed('load_students'):
+        return _load_students(request)
+
+
+def _load_students(request):
     page = int(request.GET.get('page', 1))
     limit = int(request.GET.get('limit', 50))
     
@@ -281,9 +412,12 @@ def load_students(request):
     selected_columns = [resolve_relative_column_key(c) for c in selected_columns]
 
     # ── AP "All Results" expansion ──────────────────────────────────────────
-    # The `apall_<year>` umbrella key expands into wide subject/PL pairs
-    # (apall_<year>_1_SUBJECT, apall_<year>_1_PL, ...) one pair per result.
-    # Selecting it also unselects the individual ap_<year>_*_PL columns.
+    # The `apall_<year>` umbrella expands into wide assessment/result pairs
+    # (apall_<year>_1_SUBJECT, apall_<year>_1_PL, ...) — one pair per AP exam a
+    # student has, ranked by exam name. Selecting it also unselects the
+    # individual ap_<year>_*_PL columns. Subjects the user unchecked in the
+    # picker are stored under the umbrella key as 'exclude:<subject>' values
+    # and skipped during expansion.
     def _apall_year_key(col):
         if not isinstance(col, str) or not col.startswith('apall_'):
             return None
@@ -293,49 +427,32 @@ def load_students(request):
         return None
 
     apall_years = []
+    apall_max = {}
     for c in selected_columns:
         yk = _apall_year_key(c)
         if yk and yk.replace('_', '-') not in apall_years:
             apall_years.append(yk.replace('_', '-'))
 
-    apall_max = {}
+    # Collapse any already-expanded apall keys (saved/previous selection) back
+    # to their umbrella, and unselect the individual ap_<year>_*_PL columns.
+    # Expansion into wide pairs happens later once the filtered population is
+    # known, so we only emit pairs students actually have.
     if apall_years:
-        with connections['default'].cursor() as apall_cursor:
-            for year in apall_years:
-                apall_cursor.execute(
-                    """
-                    SELECT COALESCE(MAX(cnt), 0)
-                    FROM (
-                        SELECT r.ssid, COUNT(*) AS cnt
-                        FROM "dataLoader_apexamresult" r
-                        JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
-                        WHERE r.admin_year = %s AND il.is_published = true
-                        GROUP BY r.ssid
-                    ) t
-                    """,
-                    [year],
-                )
-                apall_max[year] = min(int(apall_cursor.fetchone()[0] or 0), 10)
-
         new_selected = []
         for c in selected_columns:
-            # Unselect individual AP subject PL columns for expanded years
-            if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_') and not c.startswith('apall_'):
-                tail = c[3:]
+            if isinstance(c, str) and c.startswith('apall_'):
+                yk = _apall_year_key(c)
+                if yk:
+                    umbrella = f"apall_{yk}"
+                    if umbrella not in new_selected:
+                        new_selected.append(umbrella)
+                    continue
+            if isinstance(c, str) and c.startswith('ap_') and not c.startswith(('apaward_', 'apawards_all_')):
+                tail = c[len('ap_'):]
                 parts = tail.split('_')
                 if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-                    yr = f"{parts[0]}-{parts[1]}"
-                    if yr in apall_years:
+                    if f"{parts[0]}-{parts[1]}" in apall_years:
                         continue
-            # Expand umbrella / already-expanded keys into wide pairs
-            yk = _apall_year_key(c)
-            if yk:
-                year = yk.replace('_', '-')
-                n = apall_max.get(year, 0)
-                for i in range(1, n + 1):
-                    new_selected.append(f"apall_{yk}_{i}_SUBJECT")
-                    new_selected.append(f"apall_{yk}_{i}_PL")
-                continue
             new_selected.append(c)
         selected_columns = new_selected
 
@@ -559,6 +676,21 @@ def load_students(request):
             return markall_excludes.get(umbrella, set())
         return set()
 
+    # Subjects the user unchecked from an "All Results" umbrella. Stored under
+    # the umbrella key as 'exclude:<subject>' values; like the marks course
+    # excludes these only shape the wide-pair columns, never the row population.
+    def _apall_subject_excludes(year):
+        if not isinstance(filters, dict):
+            return set()
+        vals = filters.get(f"apall_{year.replace('-', '_')}")
+        names = set()
+        if isinstance(vals, list):
+            for v in vals:
+                s = str(v)
+                if s.startswith('exclude:'):
+                    names.add(s[len('exclude:'):])
+        return names
+
     with QueryExecutor(analytics=True).cursor() as cursor:
         db_columns = get_current_student_columns()
         enroll_columns = get_student_enroll_columns()
@@ -588,8 +720,9 @@ def load_students(request):
             if not selected_test_cols:
                 return [], {}
 
-            # Try cache first
-            test_cols_cache_key = f"test_cols:{hashlib.md5(json.dumps(sorted(selected_test_cols)).encode()).hexdigest()}"
+            # Try cache first (sync-versioned so a ClickHouse re-sync invalidates)
+            _sync_v_meta = cache.get('analytics:clickhouse_sync_version', 'legacy')
+            test_cols_cache_key = f"test_cols:{_sync_v_meta}:{hashlib.md5(json.dumps(sorted(selected_test_cols)).encode()).hexdigest()}"
             cached_result = cache.get(test_cols_cache_key)
             if cached_result is not None:
                 return cached_result
@@ -756,7 +889,8 @@ def load_students(request):
             if not selected_mark_cols:
                 return [], {}
 
-            mark_cols_cache_key = f"mark_cols:{hashlib.md5(json.dumps(sorted(selected_mark_cols)).encode()).hexdigest()}"
+            _sync_v_meta = cache.get('analytics:clickhouse_sync_version', 'legacy')
+            mark_cols_cache_key = f"mark_cols:{_sync_v_meta}:{hashlib.md5(json.dumps(sorted(selected_mark_cols)).encode()).hexdigest()}"
             cached = cache.get(mark_cols_cache_key)
             if cached:
                 return cached
@@ -934,10 +1068,26 @@ def load_students(request):
             [c for c in selected_columns if isinstance(c, str) and (c.startswith('apaward_') or c.startswith('apawards_all_'))] +
             [k for k in filter_keys if isinstance(k, str) and (k.startswith('apaward_') or k.startswith('apawards_all_'))]
         ))
+        selected_sat_cols = list(set(
+            [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
+            [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
+        ))
+        sat_infos = []
+        for _col in selected_sat_cols:
+            _parsed = parse_sat_column_key(_col)
+            if _parsed:
+                sat_infos.append({
+                    'col_name': _col,
+                    'year': _parsed['year'],
+                    'kind': _parsed['kind'],
+                    'field': _parsed.get('field'),
+                    'region': _parsed.get('region'),
+                    'metric': _parsed.get('metric'),
+                })
         base_cols = [
             c for c in selected_columns
             if isinstance(c, str)
-            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_')))
+            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
             and c in COLUMN_DEFINITIONS
         ]
 
@@ -1053,43 +1203,62 @@ def load_students(request):
         count_cache_key = f"dataexp:count:{_sync_v}:{hashlib.md5(json.dumps({'where': where_clauses, 'params': [str(p) for p in params], 'join': join_sql}, sort_keys=True).encode()).hexdigest()}"
         total = cache.get(count_cache_key)
         if total is None:
-            count_query = f"""
-                SELECT COUNT(DISTINCT cs.ssid)
-                FROM current_student cs
-                {join_sql}
-                WHERE {where_sql}
-            """
-            cursor.execute(count_query, params)
-            total = cursor.fetchone()[0]
-            cache.set(count_cache_key, total, 300)  # Cache for 5 minutes
+            with timed('dataexp_count'):
+                count_query = f"""
+                    SELECT COUNT(DISTINCT cs.ssid)
+                    FROM current_student cs
+                    {join_sql}
+                    WHERE {where_sql}
+                """
+                cursor.execute(count_query, params)
+                total = cursor.fetchone()[0]
+                cache.set(count_cache_key, total, 300)  # Cache for 5 minutes
 
         # ── Marks "All Marks" expansion (filtered population) ──────────────
         # Only emit course/marks wide pairs up to the max number of courses the
         # *filtered* students actually have in that subject. If no filtered
         # student has a second course, only one pair is produced.
         if markall_years:
-            with connections['default'].cursor() as markall_cursor:
-                for (year, subject), umbrella in markall_years.items():
-                    course_filter_sql, course_extra_params = _markall_course_sql_parts(
-                        subject, _markall_course_excludes(year, subject)
-                    )
-                    markall_cursor.execute(
-                        f"""
-                        SELECT COALESCE(MAX(cnt), 0)
-                        FROM (
-                            SELECT sm.stu_annual_key, COUNT(DISTINCT sm.course_name) AS cnt
-                            FROM student_marks_list sm
-                            INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
-                            {join_sql}
-                            WHERE {where_sql}
-                              AND sm.school_year = %s AND sm.subject = %s
-                              {course_filter_sql}
-                            GROUP BY sm.stu_annual_key
-                        ) t
-                        """,
+            for (year, subject), umbrella in markall_years.items():
+                course_filter_sql, course_extra_params = _markall_course_sql_parts(
+                    subject, _markall_course_excludes(year, subject)
+                )
+                markall_cache_key = (
+                    f"dataexp:markall_max:{_sync_v}:"
+                    + hashlib.md5(json.dumps({
+                        'where': where_sql,
+                        'params': [str(p) for p in params],
+                        'join': join_sql,
+                        'year': year,
+                        'subject': subject,
+                        'cf': course_filter_sql,
+                        'cep': [str(p) for p in course_extra_params],
+                    }, sort_keys=True).encode()).hexdigest()
+                )
+                max_val = cache.get(markall_cache_key)
+                if max_val is None:
+                    ch_query = f"""
+                    SELECT COALESCE(MAX(cnt), 0)
+                    FROM (
+                        SELECT sm.ssid, COUNT(DISTINCT sm.course_name) AS cnt
+                        FROM analytics_student_marks sm
+                        INNER JOIN current_student cs ON sm.ssid = cs.ssid
+                        {join_sql}
+                        WHERE {where_sql}
+                          AND sm.school_year = %s AND sm.subject = %s
+                          {course_filter_sql}
+                        GROUP BY sm.ssid
+                    ) t
+                    """
+                    pg_query = ch_query.replace('analytics_student_marks', 'student_marks_list')
+                    res = _fetchall_ch_or_pg(
+                        ch_query,
                         params + [year, subject] + course_extra_params,
+                        pg_sql=pg_query,
                     )
-                    markall_max[(year, subject)] = min(int(markall_cursor.fetchone()[0] or 0), 10)
+                    max_val = min(int(res[0][0] or 0), 10) if res else 0
+                    cache.set(markall_cache_key, max_val, 300)
+                markall_max[(year, subject)] = max_val
 
             new_selected = []
             for c in selected_columns:
@@ -1105,6 +1274,85 @@ def load_students(request):
                 new_selected.append(c)
             selected_columns = new_selected
 
+        # ── AP "All Results" expansion (filtered population) ───────────────
+        # Emit assessment/result wide pairs up to the max number of AP exams
+        # the *filtered* students actually have for the year (subjects the
+        # user unchecked in the picker are skipped).
+        if apall_years:
+            for year in apall_years:
+                excludes = _apall_subject_excludes(year)
+                exclude_clause = ""
+                exclude_params = []
+                if excludes:
+                    placeholders = ", ".join(["%s"] * len(excludes))
+                    exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                    exclude_params = sorted(excludes)
+                apall_cache_key = (
+                    f"dataexp:apall_max:{_sync_v}:"
+                    + hashlib.md5(json.dumps({
+                        'where': where_sql,
+                        'params': [str(p) for p in params],
+                        'join': join_sql,
+                        'year': year,
+                        'excl': exclude_clause,
+                        'exp': [str(p) for p in exclude_params],
+                    }, sort_keys=True).encode()).hexdigest()
+                )
+                max_val = cache.get(apall_cache_key)
+                if max_val is None:
+                    ch_exclude_clause = (
+                        f" AND r.exam_name NOT IN ({', '.join(['%s'] * len(excludes))})" if excludes else ""
+                    )
+                    ch_query = f"""
+                    SELECT COALESCE(MAX(cnt), 0)
+                    FROM (
+                        SELECT r.ssid, COUNT(*) AS cnt
+                        FROM analytics_ap_results r
+                        INNER JOIN current_student cs ON r.ssid = cs.ssid
+                        {join_sql}
+                        WHERE {where_sql}
+                          AND r.admin_year = %s
+                          {ch_exclude_clause}
+                        GROUP BY r.ssid
+                    ) t
+                    """
+                    pg_query = f"""
+                    SELECT COALESCE(MAX(cnt), 0)
+                    FROM (
+                        SELECT r.ssid, COUNT(*) AS cnt
+                        FROM "dataLoader_apexamresult" r
+                        INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                        INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                        INNER JOIN current_student cs ON r.ssid = cs.ssid
+                        {join_sql}
+                        WHERE {where_sql}
+                          AND r.admin_year = %s AND il.is_published = true
+                          {exclude_clause}
+                        GROUP BY r.ssid
+                    ) t
+                    """
+                    res = _fetchall_ch_or_pg(
+                        ch_query,
+                        params + [year] + exclude_params,
+                        pg_sql=pg_query,
+                    )
+                    max_val = min(int(res[0][0] or 0), 10) if res else 0
+                    cache.set(apall_cache_key, max_val, 300)
+                apall_max[year] = max_val
+
+            new_selected = []
+            for c in selected_columns:
+                yk = _apall_year_key(c)
+                if yk:
+                    year = yk.replace('_', '-')
+                    n = apall_max.get(year, 0)
+                    for i in range(1, n + 1):
+                        new_selected.append(f"apall_{yk}_{i}_SUBJECT")
+                        new_selected.append(f"apall_{yk}_{i}_PL")
+                    continue
+                new_selected.append(c)
+            selected_columns = new_selected
+
         # Copy params for later reuse
         filter_params = list(params)
         
@@ -1115,7 +1363,7 @@ def load_students(request):
         if 'ssid' not in base_cols:
             base_cols.insert(0, 'ssid')
 
-        if (test_cols_info or selected_survey_cols) and 'student_id' not in base_cols:
+        if (test_cols_info or selected_survey_cols or mark_cols_info) and 'student_id' not in base_cols:
             base_cols.insert(0, 'student_id')
 
         if (mark_cols_info or 'elem_teacher_name' in base_cols) and 'stu_annual_key' not in base_cols:
@@ -1162,14 +1410,14 @@ def load_students(request):
                     period_clause = "AND (sm.mark_period IS NULL OR sm.mark_period = '')"
                 sort_join_sql = (
                     " LEFT JOIN ("
-                    " SELECT sm.stu_annual_key AS _k, any(sm.mark) AS _v"
+                    " SELECT sm.ssid AS _k, any(sm.mark) AS _v"
                     " FROM analytics_student_marks sm"
                     " WHERE sm.school_year = %s"
                     " AND sm.subject ILIKE %s"
                     " AND sm.course_name ILIKE %s"
                     f" {period_clause}"
-                    " GROUP BY sm.stu_annual_key"
-                    " ) _sort ON _sort._k = cs.stu_annual_key"
+                    " GROUP BY sm.ssid"
+                    " ) _sort ON _sort._k = cs.ssid"
                 )
                 order_by_expr = "_sort._v"
                 params.extend([
@@ -1253,13 +1501,29 @@ def load_students(request):
                 apall_parsed = parse_apall_sort_key(sort_by)
                 if apall_parsed and apall_parsed['index'] >= 1:
                     _rn = int(apall_parsed['index'])
+                    _apall_year = apall_parsed['year']
+                    # Rank only over the subjects still included in the "All
+                    # Results" view, otherwise the sort slot (i-th exam) does not
+                    # line up with the displayed pair.
+                    _apall_excludes = _apall_subject_excludes(_apall_year)
+                    _apall_exclude_clause = ""
+                    _apall_exclude_params = []
+                    if _apall_excludes:
+                        _ph = ", ".join(["%s"] * len(_apall_excludes))
+                        _apall_exclude_clause = f" AND exam_name NOT IN ({_ph})"
+                        _apall_exclude_params = sorted(_apall_excludes)
                     if apall_parsed['field'] == 'SUBJECT':
                         _apall_select = "exam_name"
+                        # ClickHouse LEFT JOIN fills non-matching rows with ''
+                        # (not NULL), which would sort blanks first. Map the
+                        # sentinel to NULL so NULLS LAST actually applies.
+                        _apall_order = "nullIf(_sort._v, '')"
                     else:
                         _apall_select = (
                             "CAST(NULLIF(regexp_replace("
                             "NULLIF(btrim(exam_grade), ''), '[^0-9.]', '', 'g'), '') AS NUMERIC)"
                         )
+                        _apall_order = "nullIf(_sort._v, 0)"
                     sort_join_sql = (
                         " LEFT JOIN ("
                         f" SELECT ssid AS _k, {_apall_select} AS _v"
@@ -1267,12 +1531,12 @@ def load_students(request):
                         " SELECT ssid, exam_name, exam_grade,"
                         " row_number() OVER (PARTITION BY ssid ORDER BY exam_name) AS _rn"
                         " FROM analytics_ap_results"
-                        " WHERE admin_year = %s"
+                        f" WHERE admin_year = %s{_apall_exclude_clause}"
                         " ) t WHERE _rn = %s"
                         " ) _sort ON _sort._k = cs.ssid"
                     )
-                    order_by_expr = "_sort._v"
-                    params.extend([apall_parsed['year'], _rn])
+                    order_by_expr = _apall_order
+                    params.extend([_apall_year] + _apall_exclude_params + [_rn])
             elif sort_by.startswith('apawards_all_'):
                 _yr = sort_by[len('apawards_all_'):].replace('_', '-')
                 sort_join_sql = (
@@ -1283,7 +1547,7 @@ def load_students(request):
                     " GROUP BY ssid"
                     " ) _sort ON _sort._k = cs.ssid"
                 )
-                order_by_expr = "_sort._v"
+                order_by_expr = "nullIf(_sort._v, '')"
                 params.append(_yr)
             elif sort_by.startswith('ap_') and not sort_by.startswith('apaward_'):
                 ap_info = next((i for i in ap_exam_infos if i['col_name'] == sort_by), None)
@@ -1297,7 +1561,8 @@ def load_students(request):
                         " GROUP BY ssid"
                         " ) _sort ON _sort._k = cs.ssid"
                     )
-                    order_by_expr = "_sort._v"
+                    # ClickHouse LEFT JOIN defaults numeric misses to 0, not NULL.
+                    order_by_expr = "nullIf(_sort._v, 0)"
                     params.extend([ap_info['year'], ap_info['subject']])
             elif sort_by.startswith('apaward_'):
                 ap_info = next((i for i in ap_award_infos if i['col_name'] == sort_by), None)
@@ -1310,8 +1575,22 @@ def load_students(request):
                         " GROUP BY ssid"
                         " ) _sort ON _sort._k = cs.ssid"
                     )
-                    order_by_expr = "_sort._v"
+                    order_by_expr = "nullIf(_sort._v, '')"
                     params.extend([ap_info['year'], ap_info['award']])
+            elif sort_by.startswith('sat_'):
+                sat_info = next((i for i in sat_infos if i['col_name'] == sort_by), None)
+                if sat_info:
+                    sat_db_field = sat_column_db_field(sort_by)
+                    if sat_db_field:
+                        sort_join_sql = (
+                            " LEFT JOIN ("
+                            f" SELECT ssid AS _k, {sat_db_field} AS _v"
+                            " FROM analytics_sat_results"
+                            " WHERE school_year = %s"
+                            " ) _sort ON _sort._k = cs.ssid"
+                        )
+                        order_by_expr = "_sort._v"
+                        params.append(sat_info['year'])
 
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
         # Put blank/missing assessment values at the end for both directions.
@@ -1320,7 +1599,7 @@ def load_students(request):
         is_dynamic_sort = bool(sort_by) and (
             sort_by in test_col_map
             or sort_by in mark_col_map
-            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_'))
+            or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_'))
         )
         order_nulls_sql = ' NULLS LAST' if is_dynamic_sort else ''
         # sort_join placeholders come before WHERE in the SQL, so they must
@@ -1348,6 +1627,7 @@ def load_students(request):
             'params': [str(p) for p in list(filter_params) + list(sort_params)],
             'sync': cache.get('analytics:clickhouse_sync_version', 'legacy'),
             'sort': f"{sort_by}:{sort_dir}:nulls_last" if is_dynamic_sort else f"{sort_by}:{sort_dir}",
+            'order': order_by_expr,
             'limit': limit,
             'offset': offset 
             , 'cursor': cursor_raw if cursor_value else ''
@@ -1472,37 +1752,40 @@ def load_students(request):
         # Fetch Marks "All Marks" wide-pair data (markall_<year>_<subject>_<i>_COURSE / _MARKS)
         if markall_years and students:
             try:
-                student_keys_all = [str(s.get('stu_annual_key') or '').strip() for s in students if str(s.get('stu_annual_key') or '').strip()]
-                if student_keys_all:
+                student_ssids_all = [str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()]
+                if student_ssids_all:
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
                         course_filter_sql, course_extra_params = _markall_course_sql_parts(
                             subject, _markall_course_excludes(year, subject)
                         )
                         markall_sql = f"""
-                            SELECT stu_annual_key, course_name, mark_period, mark
+                            SELECT ssid, course_name, mark_period, mark
                             FROM analytics_student_marks sm
-                            WHERE stu_annual_key = ANY(%s) AND school_year = %s AND subject = %s
+                            WHERE ssid = ANY(%s) AND school_year = %s AND subject = %s
                               {course_filter_sql}
-                            ORDER BY stu_annual_key, course_name, mark_period
+                            ORDER BY ssid, course_name, mark_period
                         """
                         markall_rows = _fetchall_ch_or_pg(
                             markall_sql,
-                            [student_keys_all, year, subject] + course_extra_params,
+                            [student_ssids_all, year, subject] + course_extra_params,
                             markall_sql.replace('analytics_student_marks', 'student_marks_list'),
                         )
                         by_key = {}
-                        for stu_key, course, period, mark in markall_rows:
-                            by_key.setdefault(str(stu_key).strip(), {}).setdefault(course, []).append((period, mark))
+                        for ssid_key, course, period, mark in markall_rows:
+                            by_key.setdefault(str(ssid_key).strip(), {}).setdefault(course, []).append((period, mark))
                         for student in students:
-                            stu_key = str(student.get('stu_annual_key') or '').strip()
-                            courses = by_key.get(stu_key, {})
+                            ssid_key = str(student.get('ssid') or '').strip()
+                            courses = by_key.get(ssid_key, {})
                             for i in range(1, n + 1):
                                 course_key = f"{umbrella}_{i}_COURSE"
                                 marks_key = f"{umbrella}_{i}_MARKS"
                                 if i <= len(courses):
                                     course_name = list(courses.keys())[i - 1]
-                                    periods = courses[course_name]
+                                    periods = sorted(
+                                        courses[course_name],
+                                        key=lambda x: (1, str(x[0])) if str(x[0] or '').lower() == 'live' else (0, str(x[0]))
+                                    )
                                     marks_str = ', '.join(
                                         f"{p}: {m}" for p, m in periods if p and m
                                     )
@@ -1545,6 +1828,14 @@ def load_students(request):
             except Exception:
                 pass
 
+        # Fetch SAT (College Board) score/percentile data in bulk
+        if sat_infos and students:
+            try:
+                from dataviz.utils.data_loader import _fetch_sat_data
+                _fetch_sat_data(students, sat_infos)
+            except Exception:
+                pass
+
         # Fetch AP "All Results" wide-pair data (apall_<year>_<i>_SUBJECT / _PL)
         if apall_years and students:
             try:
@@ -1554,6 +1845,7 @@ def load_students(request):
                     for year in apall_years:
                         yk = year.replace('-', '_')
                         n = apall_max.get(year, 0)
+                        excludes = _apall_subject_excludes(year)
                         ap_rows = _analytics_rows(
                             "SELECT ssid, exam_name, exam_grade FROM analytics_ap_results "
                             "WHERE ssid = ANY(%s) AND admin_year = %s "
@@ -1579,8 +1871,11 @@ def load_students(request):
                                 ]
                         by_ssid = {}
                         for row in ap_rows:
+                            exam_name = row.get('exam_name')
+                            if exam_name in excludes:
+                                continue
                             by_ssid.setdefault(str(row.get('ssid') or '').strip(), []).append(
-                                (row.get('exam_name'), row.get('exam_grade'))
+                                (exam_name, row.get('exam_grade'))
                             )
                         for student in students:
                             sid = str(student.get('ssid') or '').strip()
@@ -1601,19 +1896,23 @@ def load_students(request):
         survey_colors = {}  # Map column_key -> {'colors': {...}, 'scale_max': int}
         if selected_survey_cols and students:
             student_ids = [s.get('student_id') for s in students if s.get('student_id')]
-            if student_ids:
-                # Use the school_year filter if set, otherwise None for all years
-                survey_year = school_year[0] if isinstance(school_year, list) and school_year else school_year
-                survey_data = get_survey_data_for_students(student_ids, survey_year)
+            student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
+            if student_ids or student_ssids:
+                survey_data = get_survey_data_for_students(student_ids=student_ids, ssids=student_ssids)
                 
                 # Get survey colors from survey_utils
                 survey_info = get_survey_columns()
                 survey_colors = survey_info.get('colors', {})
                 
-                # survey_data is {student_id: {col_key: value}}
+                # survey_data is {student_id / ssid: {col_key: value}}
                 for student in students:
-                    student_id = student.get('student_id')
-                    student_survey_data = survey_data.get(student_id, {})
+                    student_id = str(student.get('student_id') or '').strip()
+                    ssid = str(student.get('ssid') or '').strip()
+                    student_survey_data = (
+                        survey_data.get(student_id)
+                        or survey_data.get(ssid)
+                        or {}
+                    )
                     for col_key in selected_survey_cols:
                         student[col_key] = student_survey_data.get(col_key, '—')
 
@@ -1645,7 +1944,9 @@ def load_students(request):
                     student[key] = value.isoformat()
 
         # Build filter options for repeatable columns (with Redis caching)
+        _filter_opts_t0 = time.perf_counter()
         filter_options = {}
+        option_tasks = []
 
         # Add filter options for survey columns based on their response scale
         if selected_survey_cols:
@@ -1704,7 +2005,7 @@ def load_students(request):
                     filter_options[col] = cached_values
                     continue
                 
-                # Cache miss - query database
+                # Cache miss - queue the query (executed concurrently below)
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
                 apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, False, ap_exam_infos, ap_award_infos)
@@ -1712,27 +2013,19 @@ def load_students(request):
 
                 json_key = json_list_key_for_column(col)
                 if json_key:
-                    try:
-                        unnest_expr = json_list_unnest_select_expr(json_key, 'cs')
-                        options_query = f"""
-                            SELECT DISTINCT v FROM (
-                                SELECT {unnest_expr} AS v
-                                FROM current_student cs
-                                {join_sql}
-                                WHERE {option_where_sql}
-                            ) _json_list_opts
-                            WHERE v IS NOT NULL AND BTRIM(v) != ''
-                            ORDER BY v ASC
-                            LIMIT 100
-                        """
-                        cursor.execute(options_query, option_params)
-                        rows = cursor.fetchall()
-                        values = [row[0] for row in rows if row[0] is not None and str(row[0]).strip()]
-                        if values:
-                            filter_options[col] = values
-                            cache.set(cache_key, values, 300)
-                    except Exception:
-                        pass
+                    unnest_expr = json_list_unnest_select_expr(json_key, 'cs')
+                    options_query = f"""
+                        SELECT DISTINCT v FROM (
+                            SELECT {unnest_expr} AS v
+                            FROM current_student cs
+                            {join_sql}
+                            WHERE {option_where_sql}
+                        ) _json_list_opts
+                        WHERE v IS NOT NULL AND BTRIM(v) != ''
+                        ORDER BY v ASC
+                        LIMIT 100
+                    """
+                    option_tasks.append((col, cache_key, _make_json_option_task(options_query, option_params)))
                     continue
 
                 expr = base_col_expressions.get(col)
@@ -1750,21 +2043,10 @@ def load_students(request):
                     ORDER BY {expr} ASC NULLS FIRST
                     {limit_clause}
                 """
-                cursor.execute(options_query, option_params)
-                rows = cursor.fetchall()
-                num_rows = len(rows)
-
-                if num_rows <= 1 or (num_rows > 30 and col not in always_include):
-                    continue
-
-                values = [("" if row[0] is None else row[0]) for row in rows]
-                if col not in always_include:
-                    values = values[:30]
-
-                if values:
-                    filter_options[col] = values
-                    # Cache for 5 minutes
-                    cache.set(cache_key, values, 300)
+                option_tasks.append((
+                    col, cache_key,
+                    _make_base_option_task(options_query, option_params, col, always_include),
+                ))
 
             # Add filter options for test PL columns, dfp, and other_info columns (with caching)
             for test_info in test_cols_info:
@@ -1812,15 +2094,12 @@ def load_students(request):
                     ORDER BY v ASC NULLS FIRST
                     LIMIT 30
                 """
-                    try:
-                        cursor.execute(options_query, option_params + [
-                            test_info['year'],
-                            test_info['test_name'],
-                            test_info['subject'],
-                            *window_params,
-                        ])
-                    except Exception:
-                        continue
+                    options_params = option_params + [
+                        test_info['year'],
+                        test_info['test_name'],
+                        test_info['subject'],
+                        *window_params,
+                    ]
                 else:
                     options_query = f"""
                     SELECT (r.other_info ->> %s) AS v
@@ -1838,25 +2117,14 @@ def load_students(request):
                     LIMIT 30
                     """
                     other_key = test_info.get('other_info_key', '')
-                    try:
-                        cursor.execute(options_query, [
-                            other_key,
-                            *option_params,
-                            test_info['year'],
-                            test_info['test_name'],
-                            test_info['subject'],
-                            *window_params,
-                        ])
-                    except Exception:
-                        continue
-                
-                values = []
-                for row in cursor.fetchall():
-                    val = row[0]
-                    if val is None:
-                        val = ""
-                    if val not in values:
-                        values.append(val)
+                    options_params = [
+                        other_key,
+                        *option_params,
+                        test_info['year'],
+                        test_info['test_name'],
+                        test_info['subject'],
+                        *window_params,
+                    ]
 
                 # Check if there are any students with NO result record (Blank).
                 # Anti-join: ClickHouse rejects correlated EXISTS that read outer cs.ssid.
@@ -1882,24 +2150,17 @@ def load_students(request):
                       AND _r.ssid IS NULL AND _r.local_student_id IS NULL
                     LIMIT 1
                 """
-                check_params = option_params + [
+                check_params = [
                     test_info['year'],
                     test_info['test_name'],
                     test_info['subject'],
                     *window_params,
-                ]
-                try:
-                    cursor.execute(check_blank_query, check_params)
-                    if cursor.fetchone():
-                        if "" not in values:
-                            values.insert(0, "")
-                except Exception:
-                    pass
-
-                if values:
-                    filter_options[col_key] = values
-                    # Cache for 5 minutes
-                    cache.set(cache_key, values, 300)
+                ] + option_params
+                option_tasks.append((
+                    col_key, cache_key,
+                    _make_options_with_blank_task(
+                        options_query, options_params, check_blank_query, check_params),
+                ))
 
             # Add filter options for mark columns
             for mark_info in mark_cols_info:
@@ -1932,7 +2193,7 @@ def load_students(request):
                 options_query = f"""
                     SELECT sm.mark AS v
                     FROM student_marks_list sm
-                    INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                    INNER JOIN current_student cs ON sm.ssid = cs.ssid
                     {join_sql}
                     WHERE {option_where_sql}
                       AND sm.school_year = %s
@@ -1944,24 +2205,15 @@ def load_students(request):
                     LIMIT 30
                 """
 
-                cursor.execute(options_query, option_params + [
-                    mark_info['year'],
-                    f"%{mark_info['subject']}%",
-                    f"%{mark_info['course_name']}%",
-                    *period_params,
-                ])
-
-                values = []
-                for row in cursor.fetchall():
-                    val = row[0]
-                    if val is None:
-                        val = ""
-                    if val not in values:
-                        values.append(val)
-
-                if values:
-                    filter_options[col_key] = values
-                    cache.set(cache_key, values, 300)
+                option_tasks.append((
+                    col_key, cache_key,
+                    _make_options_task(options_query, option_params + [
+                        mark_info['year'],
+                        f"%{mark_info['subject']}%",
+                        f"%{mark_info['course_name']}%",
+                        *period_params,
+                    ]),
+                ))
 
             # Add filter options for Marks "All Marks" wide-pair columns
             for (year, subject), umbrella in markall_years.items():
@@ -1991,12 +2243,11 @@ def load_students(request):
                         option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                         if is_marks:
-                            # Distinct "period: mark" pairs
-                            # Distinct marking periods (prefixed) — individual selections
+                            # Distinct marking periods + marks (prefixed).
                             period_query = f"""
                                 SELECT DISTINCT CONCAT('period:', sm.mark_period) AS v
                                 FROM student_marks_list sm
-                                INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                INNER JOIN current_student cs ON sm.ssid = cs.ssid
                                 {join_sql}
                                 WHERE {option_where_sql}
                                   AND sm.school_year = %s AND sm.subject = %s
@@ -2005,19 +2256,10 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            period_values = []
-                            with connections['default'].cursor() as pg_cursor:
-                                pg_cursor.execute(period_query, option_params + [year, subject] + course_extra_params)
-                                for row in pg_cursor.fetchall():
-                                    v = row[0]
-                                    if v is not None and v not in period_values:
-                                        period_values.append(v)
-
-                            # Distinct marks (prefixed) — individual selections
                             mark_query = f"""
                                 SELECT DISTINCT CONCAT('mark:', sm.mark) AS v
                                 FROM student_marks_list sm
-                                INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                INNER JOIN current_student cs ON sm.ssid = cs.ssid
                                 {join_sql}
                                 WHERE {option_where_sql}
                                   AND sm.school_year = %s AND sm.subject = %s
@@ -2026,24 +2268,18 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            mark_values = []
-                            with connections['default'].cursor() as pg_cursor:
-                                pg_cursor.execute(mark_query, option_params + [year, subject] + course_extra_params)
-                                for row in pg_cursor.fetchall():
-                                    v = row[0]
-                                    if v is not None and v not in mark_values:
-                                        mark_values.append(v)
-
-                            values = period_values + mark_values
-                            if values:
-                                filter_options[col_key] = values
-                                cache.set(cache_key, values, 300)
+                            option_tasks.append((
+                                col_key, cache_key,
+                                _make_markall_marks_task(
+                                    period_query, mark_query,
+                                    option_params + [year, subject] + course_extra_params),
+                            ))
                         else:
                             # Distinct course names
                             options_query = f"""
                                 SELECT DISTINCT sm.course_name AS v
                                 FROM student_marks_list sm
-                                INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                INNER JOIN current_student cs ON sm.ssid = cs.ssid
                                 {join_sql}
                                 WHERE {option_where_sql}
                                   AND sm.school_year = %s AND sm.subject = %s
@@ -2052,18 +2288,89 @@ def load_students(request):
                                 ORDER BY v ASC NULLS FIRST
                                 LIMIT 50
                             """
-                            values = []
-                            with connections['default'].cursor() as pg_cursor:
-                                pg_cursor.execute(options_query, option_params + [year, subject] + course_extra_params)
-                                for row in pg_cursor.fetchall():
-                                    val = row[0]
-                                    if val is None:
-                                        val = ""
-                                    if val not in values:
-                                        values.append(val)
-                            if values:
-                                filter_options[col_key] = values
-                                cache.set(cache_key, values, 300)
+                            option_tasks.append((
+                                col_key, cache_key,
+                                _make_options_task(
+                                    options_query,
+                                    option_params + [year, subject] + course_extra_params,
+                                    use_pg=True),
+                            ))
+
+            # Add filter options for AP "All Results" wide-pair columns
+            for year in apall_years:
+                yk = year.replace('-', '_')
+                n = apall_max.get(year, 0)
+                excludes = _apall_subject_excludes(year)
+                exclude_clause = ""
+                exclude_params = []
+                if excludes:
+                    placeholders = ", ".join(["%s"] * len(excludes))
+                    exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                    exclude_params = sorted(excludes)
+                for i in range(1, n + 1):
+                    for col_key, field in (
+                        (f"apall_{yk}_{i}_SUBJECT", "exam_name"),
+                        (f"apall_{yk}_{i}_PL", "exam_grade"),
+                    ):
+                        if isinstance(filters, dict) and col_key in filters:
+                            other_filters = {k: v for k, v in filters.items() if k != col_key}
+                        else:
+                            other_filters = filters
+
+                        cache_key = _get_filter_cache_key(col_key, other_filters)
+                        cached_values = cache.get(cache_key)
+                        if cached_values is not None:
+                            filter_options[col_key] = cached_values
+                            continue
+
+                        option_where = list(base_where_clauses)
+                        option_params = list(base_params)
+                        apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
+                        option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+
+                        rank_subquery = f"""
+                            SELECT a.ssid, e.name AS exam_name, a.exam_grade,
+                                   row_number() OVER (PARTITION BY a.ssid ORDER BY e.name) AS rn
+                            FROM "dataLoader_apexamresult" a
+                            INNER JOIN "dataLoader_apexamcode" e ON a.exam_id = e.code
+                            INNER JOIN "dataLoader_apimportlog" il ON a.import_log_id = il.id
+                            WHERE a.admin_year = %s AND il.is_published = true
+                              {exclude_clause}
+                        """
+
+                        options_query = f"""
+                            SELECT DISTINCT t.{field} AS v
+                            FROM ({rank_subquery}) t
+                            INNER JOIN current_student cs ON t.ssid = cs.ssid
+                            {join_sql}
+                            WHERE t.rn = %s
+                              AND {option_where_sql}
+                              AND t.{field} IS NOT NULL AND t.{field} <> ''
+                            ORDER BY v ASC NULLS FIRST
+                            LIMIT 50
+                        """
+                        options_params = [year] + exclude_params + [i] + option_params
+
+                        # Blank when a filtered student has no i-th exam (or a blank field)
+                        check_blank_query = f"""
+                            SELECT 1
+                            FROM current_student cs
+                            {join_sql}
+                            WHERE {option_where_sql}
+                            AND NOT EXISTS (
+                                SELECT 1 FROM ({rank_subquery}) t
+                                WHERE t.ssid = cs.ssid AND t.rn = %s
+                                  AND t.{field} IS NOT NULL AND t.{field} <> ''
+                            )
+                            LIMIT 1
+                        """
+                        check_params = option_params + [year] + exclude_params + [i]
+                        option_tasks.append((
+                            col_key, cache_key,
+                            _make_options_with_blank_task(
+                                options_query, options_params,
+                                check_blank_query, check_params, use_pg=True),
+                        ))
 
             # Add filter options for AP exam grades (PL columns)
             for ap_info in ap_exam_infos:
@@ -2100,18 +2407,10 @@ def load_students(request):
                     ORDER BY v ASC NULLS FIRST
                     LIMIT 30
                 """
-                cursor.execute(options_query, option_params + [
+                options_params = option_params + [
                     ap_info['year'],
                     ap_info['subject'],
-                ])
-
-                values = []
-                for row in cursor.fetchall():
-                    val = row[0]
-                    if val is None:
-                        val = ""
-                    if val not in values:
-                        values.append(val)
+                ]
 
                 # Check if there are students with NO AP result for this subject/year (Blank)
                 check_blank_query = f"""
@@ -2130,20 +2429,12 @@ def load_students(request):
                     )
                     LIMIT 1
                 """
-                try:
-                    cursor.execute(check_blank_query, option_params + [
-                        ap_info['year'],
-                        ap_info['subject'],
-                    ])
-                    if cursor.fetchone():
-                        if "" not in values:
-                            values.insert(0, "")
-                except Exception:
-                    pass
-
-                if values:
-                    filter_options[col_key] = values
-                    cache.set(cache_key, values, 300)
+                option_tasks.append((
+                    col_key, cache_key,
+                    _make_options_with_blank_task(
+                        options_query, options_params,
+                        check_blank_query, options_params),
+                ))
 
             # Add filter options for AP award columns
             for ap_info in ap_award_infos:
@@ -2180,7 +2471,10 @@ def load_students(request):
                         ORDER BY v ASC NULLS FIRST
                         LIMIT 30
                     """
-                    cursor.execute(options_query, option_params + [ap_info['year']])
+                    option_tasks.append((
+                        col_key, cache_key,
+                        _make_options_task(options_query, option_params + [ap_info['year']]),
+                    ))
                 else:
                     # Individual award column: single award description
                     options_query = f"""
@@ -2197,17 +2491,8 @@ def load_students(request):
                         ORDER BY v ASC NULLS FIRST
                         LIMIT 30
                     """
-                    cursor.execute(options_query, option_params + [ap_info['year'], ap_info['award']])
+                    options_params = option_params + [ap_info['year'], ap_info['award']]
 
-                values = []
-                for row in cursor.fetchall():
-                    val = row[0]
-                    if val is None:
-                        val = ""
-                    if val not in values:
-                        values.append(val)
-
-                if ap_info['award'] != '__ALL__':
                     # Check for students with NO award record for this year (Blank)
                     check_blank_query = f"""
                         SELECT 1
@@ -2223,18 +2508,25 @@ def load_students(request):
                         )
                         LIMIT 1
                     """
-                    try:
-                        cursor.execute(check_blank_query, option_params + [ap_info['year']])
-                        if cursor.fetchone():
-                            if "" not in values:
-                                values.insert(0, "")
-                    except Exception:
-                        pass
+                    option_tasks.append((
+                        col_key, cache_key,
+                        _make_options_with_blank_task(
+                            options_query, options_params,
+                            check_blank_query, option_params + [ap_info['year']]),
+                    ))
 
+            # Execute all queued columns concurrently and merge the results.
+            for col_key, cache_key, values in _run_option_tasks(option_tasks):
                 if values:
                     filter_options[col_key] = values
                     cache.set(cache_key, values, 300)
-    
+
+    logger.info(
+        'request_id=%s op=dataexp_filter_options columns=%s elapsed_ms=%.1f',
+        current_request_id(), len(filter_options),
+        (time.perf_counter() - _filter_opts_t0) * 1000,
+    )
+
     total_pages = (total + limit - 1) // limit
 
     # Ensure JSON serialization safety for filter options (e.g. Decimal values)
@@ -2273,13 +2565,15 @@ def load_students(request):
             label = f"{info['course_name']} ({info['subject']}) {period}\n{info['year']}"
             dynamic_definitions[info['col_name']] = label
 
-    # Definitions for the AP "All Results" wide-pair columns
+    # Definitions for the AP "All Results" wide-pair columns. Only number the
+    # sets when a student can have more than one AP exam that year.
     for year in apall_years:
         yk = year.replace('-', '_')
         n = apall_max.get(year, 0)
         for i in range(1, n + 1):
-            dynamic_definitions[f"apall_{yk}_{i}_SUBJECT"] = f"AP Subject {i}\n{year}"
-            dynamic_definitions[f"apall_{yk}_{i}_PL"] = f"AP PL {i}\n{year}"
+            suffix = f" {i}" if n > 1 else ""
+            dynamic_definitions[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix}\n{year}"
+            dynamic_definitions[f"apall_{yk}_{i}_PL"] = f"AP Results{suffix}\n{year}"
 
     # Definitions for the Marks "All Marks" wide-pair columns
     for (year, subject), umbrella in markall_years.items():
@@ -2313,13 +2607,8 @@ def load_students(request):
             'survey_colors': survey_colors,
         })
 
-    # Convert students list to JSON for legacy/template rendering (non-API path)
-    # Use Django's JSON encoder indirectly via JsonResponse in the API path.
-    students_json = [json.dumps(student, default=str) for student in students]
-
     context = {
         'students': students,
-        'students_json': students_json,
         'selected_columns': selected_columns,
         'total': total,
         'page': page,
@@ -2329,3 +2618,28 @@ def load_students(request):
     }
 
     return render(request, 'dataexploration/partials/student_table.html', context)
+
+
+def warm_data_explorer_default_cache():
+    """Fill Redis for default Data Explorer queries and filter options after ClickHouse sync."""
+    warmed = 0
+    try:
+        from django.test import RequestFactory
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        admin_user = User.objects.filter(is_superuser=True).first()
+        if not admin_user:
+            admin_user = User.objects.first()
+        if not admin_user:
+            return 0
+
+        factory = RequestFactory()
+        req = factory.get('/dataexploration/api/students/', {'format': 'json', 'page': '1'})
+        req.user = admin_user
+        resp = _load_students(req)
+        if resp.status_code == 200:
+            warmed += 1
+    except Exception:
+        logger.exception("warm_data_explorer_default_cache failed")
+    return warmed
+

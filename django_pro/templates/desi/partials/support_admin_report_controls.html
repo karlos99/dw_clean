@@ -1,0 +1,154 @@
+<div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
+    <form id="support-admin-form-{{ report_kind }}" method="get" action="{% url 'desi:coordinator_dashboard' %}" class="p-5 flex flex-wrap items-end gap-4">
+        <input type="hidden" name="tab" value="{{ report_kind }}">
+        <input type="hidden" name="run" value="1">
+        <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">School</label>
+            <select name="school" id="support-admin-school-{{ report_kind }}" class="rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                {% for school in schools %}
+                <option value="{{ school.state_id }}" {% if report_school and report_school.state_id == school.state_id %}selected{% endif %}>{{ school.school_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">School Year</label>
+            <input type="text" name="year" id="support-admin-year-{{ report_kind }}" value="{{ report_year }}" class="rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+        </div>
+
+        {% if report_kind == "entered" %}
+        <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Export Scope</label>
+            <select name="scope" id="support-admin-scope-entered" class="rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                <option value="school" {% if scope != 'teacher' %}selected{% endif %}>Entire school</option>
+                <option value="teacher" {% if scope == 'teacher' %}selected{% endif %}>By teacher</option>
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Teacher</label>
+            <select name="teacher" id="support-admin-teacher-entered" class="rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
+                <option value="">— Select teacher —</option>
+                {% for teacher_name in teacher_options %}
+                <option value="{{ teacher_name }}" {% if selected_teacher == teacher_name %}selected{% endif %}>{{ teacher_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="min-w-[14rem]">
+            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Support</label>
+            <select name="support" id="support-admin-support-entered" class="rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500 max-w-xs">
+                <option value="">All supports</option>
+                {% for group in support_filter_groups %}
+                <optgroup label="{{ group.label }}">
+                    {% for opt in group.options %}
+                    <option value="{{ opt.value }}" {% if selected_support_filter == opt.value %}selected{% endif %}>{{ opt.label }}</option>
+                    {% endfor %}
+                </optgroup>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+
+        <button type="submit" class="inline-flex items-center px-5 py-2 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 transition">
+            Run Report
+        </button>
+
+        {% if report_kind == "completion" and report %}
+        <a href="{% url 'desi:coordinator_report_csv' %}?school={{ report_school.state_id }}&year={{ report_year|urlencode }}"
+           class="inline-flex items-center px-5 py-2 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+            Download CSV
+        </a>
+        {% endif %}
+
+        {% if report_kind == "entered" and entered %}
+        <a href="{% url 'desi:coordinator_entered_csv' %}?school={{ report_school.state_id }}&year={{ report_year|urlencode }}&scope={{ scope|urlencode }}{% if scope == 'teacher' and selected_teacher %}&teacher={{ selected_teacher|urlencode }}{% endif %}{% if selected_support_filter %}&support={{ selected_support_filter|urlencode }}{% endif %}"
+           class="inline-flex items-center px-5 py-2 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+            Download CSV
+        </a>
+        {% endif %}
+    </form>
+    {% if report_kind == "entered" and not teacher_options %}
+    <p class="px-5 pb-3 -mt-2 text-[11px] text-slate-400">No teacher list available for this school/year — use "Entire school".</p>
+    {% endif %}
+</div>
+
+{% if report_kind == "completion" %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('support-admin-form-completion');
+    const schoolSelect = document.getElementById('support-admin-school-completion');
+    const yearInput = document.getElementById('support-admin-year-completion');
+    if (!form) return;
+    if (schoolSelect) {
+        schoolSelect.addEventListener('change', () => form.requestSubmit());
+    }
+    if (yearInput) {
+        yearInput.addEventListener('change', () => form.requestSubmit());
+    }
+});
+</script>
+{% endif %}
+
+{% if report_kind == "entered" %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('support-admin-form-entered');
+    const schoolSelect = document.getElementById('support-admin-school-entered');
+    const yearInput = document.getElementById('support-admin-year-entered');
+    const scopeSelect = document.getElementById('support-admin-scope-entered');
+    const teacherSelect = document.getElementById('support-admin-teacher-entered');
+    const supportSelect = document.getElementById('support-admin-support-entered');
+    if (!form || !schoolSelect || !teacherSelect) return;
+
+    const teachersBySchool = {{ teacher_options_by_school_json|default:'{}'|safe }};
+    const initialTeacher = "{{ selected_teacher|escapejs }}";
+
+    function updateTeacherOptions() {
+        const schoolId = schoolSelect.value;
+        const teachers = teachersBySchool[schoolId] || [];
+        const keepTeacher = teacherSelect.value || initialTeacher;
+        teacherSelect.innerHTML = '';
+        teacherSelect.add(new Option('— Select teacher —', ''));
+        teachers.forEach(name => teacherSelect.add(new Option(name, name)));
+        if (keepTeacher && teachers.includes(keepTeacher)) {
+            teacherSelect.value = keepTeacher;
+        }
+    }
+
+    function submitReport() {
+        form.requestSubmit();
+    }
+
+    schoolSelect.addEventListener('change', () => {
+        updateTeacherOptions();
+        if (scopeSelect && scopeSelect.value === 'teacher') {
+            teacherSelect.value = '';
+        }
+        submitReport();
+    });
+
+    if (yearInput) {
+        yearInput.addEventListener('change', submitReport);
+    }
+
+    if (scopeSelect) {
+        scopeSelect.addEventListener('change', () => {
+            if (scopeSelect.value !== 'teacher') {
+                teacherSelect.value = '';
+            }
+            submitReport();
+        });
+    }
+
+    teacherSelect.addEventListener('change', () => {
+        if (scopeSelect && scopeSelect.value === 'teacher' && teacherSelect.value) {
+            submitReport();
+        }
+    });
+
+    if (supportSelect) {
+        supportSelect.addEventListener('change', submitReport);
+    }
+
+    updateTeacherOptions();
+});
+</script>
+{% endif %}

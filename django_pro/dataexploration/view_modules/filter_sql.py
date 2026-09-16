@@ -3,7 +3,7 @@
 import re
 from datetime import date, datetime, timezone
 
-from ..column_utils import RESULTS_BLANK_SSID_SQL, parse_markall_key, markall_key as _markall_key, get_mark_columns
+from ..column_utils import RESULTS_BLANK_SSID_SQL, parse_markall_key, markall_key as _markall_key, get_mark_columns, parse_sat_column_key, sat_column_db_field, parse_apall_sort_key
 from .column_management import (
     get_column_expression,
     json_list_key_for_column,
@@ -271,7 +271,7 @@ def apply_column_filters(
 
             conditions = []
             mark_subquery_base = (
-                "SELECT sm.stu_annual_key FROM student_marks_list sm "
+                "SELECT sm.ssid FROM student_marks_list sm "
                 "WHERE sm.school_year = %s "
                 "AND sm.subject ILIKE %s "
                 "AND sm.course_name ILIKE %s "
@@ -291,17 +291,60 @@ def apply_column_filters(
             if real_values:
                 val_clause = mark_subquery_base + "AND sm.mark = ANY(%s)"
                 val_params = list(mark_base_params) + [real_values]
-                conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                conditions.append(f"cs.ssid IN ({val_clause})")
                 params.extend(val_params)
 
             if has_blank:
                 blank_clause = mark_subquery_base + "AND (sm.mark IS NULL OR sm.mark = '')"
                 blank_params = list(mark_base_params)
                 conditions.append(
-                    f"(cs.stu_annual_key NOT IN ({mark_subquery_base}) OR cs.stu_annual_key IN ({blank_clause}))"
+                    f"(cs.ssid NOT IN ({mark_subquery_base}) OR cs.ssid IN ({blank_clause}))"
                 )
                 params.extend(mark_base_params + blank_params)
 
+            if conditions:
+                where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
+        if col.startswith('apall_'):
+            parsed = parse_apall_sort_key(col)
+            if not parsed:
+                # Umbrella key — carries subject excludes, not a row filter.
+                continue
+            year = parsed['year']
+            idx = parsed['index']
+            field = "exam_name" if parsed['field'] == 'SUBJECT' else "exam_grade"
+            excludes = set()
+            _excl_vals = filters_to_apply.get(f"apall_{year.replace('-', '_')}")
+            if isinstance(_excl_vals, list):
+                excludes = {
+                    str(v)[len('exclude:'):] for v in _excl_vals if str(v).startswith('exclude:')
+                }
+            exclude_clause = ""
+            exclude_params = []
+            if excludes:
+                placeholders = ", ".join(["%s"] * len(excludes))
+                exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                exclude_params = sorted(excludes)
+            rank_sql = (
+                "SELECT ssid FROM ("
+                " SELECT a.ssid, e.name AS exam_name, a.exam_grade,"
+                " row_number() OVER (PARTITION BY a.ssid ORDER BY e.name) AS rn"
+                " FROM \"dataLoader_apexamresult\" a"
+                " INNER JOIN \"dataLoader_apexamcode\" e ON a.exam_id = e.code"
+                " INNER JOIN \"dataLoader_apimportlog\" il ON a.import_log_id = il.id"
+                " WHERE a.admin_year = %s AND il.is_published = true"
+                f"{exclude_clause}"
+                ") t WHERE rn = %s"
+            )
+            rank_params = [year] + exclude_params + [idx]
+            conditions = []
+            if real_values:
+                conditions.append(f"cs.ssid IN ({rank_sql} AND t.{field} = ANY(%s))")
+                params.extend(rank_params + [real_values])
+            if has_blank:
+                conditions.append(f"cs.ssid NOT IN ({rank_sql} AND t.{field} IS NOT NULL AND t.{field} <> '')")
+                params.extend(rank_params)
             if conditions:
                 where_clauses.append(f"({' OR '.join(conditions)})")
             continue
@@ -375,6 +418,30 @@ def apply_column_filters(
                 where_clauses.append(f"({' OR '.join(conditions)})")
             continue
 
+        if col.startswith('sat_'):
+            parsed = parse_sat_column_key(col)
+            if not parsed:
+                continue
+            sat_db_field = sat_column_db_field(col)
+            if not sat_db_field:
+                continue
+            sub_base = (
+                "SELECT r.ssid FROM \"dataLoader_satresult\" r "
+                "INNER JOIN \"dataLoader_satimportlog\" il ON r.import_log_id = il.id "
+                "WHERE r.school_year = %s AND il.is_published = true "
+            )
+            sub_params = [parsed['year']]
+            conditions = []
+            if real_values:
+                conditions.append(f"cs.ssid IN ({sub_base} AND r.{sat_db_field}::text = ANY(%s))")
+                params.extend(sub_params + [[str(v) for v in real_values]])
+            if has_blank:
+                conditions.append(f"cs.ssid NOT IN ({sub_base})")
+                params.extend(sub_params)
+            if conditions:
+                where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
         if col.startswith('markall_'):
             parsed = parse_markall_key(col)
             if not parsed or parsed['kind'] is None:
@@ -388,7 +455,7 @@ def apply_column_filters(
             if subject == 'Elementary':
                 course_filter_sql = " AND " + markall_excluded_course_sql()
             sub_base = (
-                "SELECT sm.stu_annual_key FROM student_marks_list sm "
+                "SELECT sm.ssid FROM student_marks_list sm "
                 "WHERE sm.school_year = %s AND sm.subject = %s "
                 f"{course_filter_sql}"
             )
@@ -400,22 +467,22 @@ def apply_column_filters(
                     marks = [str(v).split(':', 1)[1] for v in real_values if str(v).startswith('mark:')]
                     if periods and marks:
                         val_clause = sub_base + "AND sm.mark_period = ANY(%s) AND sm.mark = ANY(%s)"
-                        conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                        conditions.append(f"cs.ssid IN ({val_clause})")
                         params.extend(sub_params + [periods, marks])
                     elif periods:
                         val_clause = sub_base + "AND sm.mark_period = ANY(%s)"
-                        conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                        conditions.append(f"cs.ssid IN ({val_clause})")
                         params.extend(sub_params + [periods])
                     elif marks:
                         val_clause = sub_base + "AND sm.mark = ANY(%s)"
-                        conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                        conditions.append(f"cs.ssid IN ({val_clause})")
                         params.extend(sub_params + [marks])
                 else:
                     val_clause = sub_base + "AND sm.course_name = ANY(%s)"
-                    conditions.append(f"cs.stu_annual_key IN ({val_clause})")
+                    conditions.append(f"cs.ssid IN ({val_clause})")
                     params.extend(sub_params + [real_values])
             if has_blank:
-                conditions.append(f"cs.stu_annual_key NOT IN ({sub_base})")
+                conditions.append(f"cs.ssid NOT IN ({sub_base})")
                 params.extend(sub_params + sub_params)
             if conditions:
                 where_clauses.append(f"({' OR '.join(conditions)})")

@@ -12,6 +12,15 @@ from .views import (
     delete_accommodation,
     export_data,
     export_data_endpoint,
+    coordinator_dashboard,
+    coordinator_report_csv,
+    coordinator_entered_csv,
+    save_desi_order,
+    support_organization,
+    delete_section_category,
+    support_rule_list,
+    support_rule_form,
+    delete_support_rule,
 )
 
 app_name = 'desi'
@@ -20,6 +29,9 @@ urlpatterns = [
     path('', student_list, name='student_list'),
     path('student/<str:stu_annual_key>/', assign_accommodations, name='assign_accommodations'),
     path('admin-dashboard/', admin_dashboard, name='admin_dashboard'),
+    path('admin-dashboard/organization/', support_organization, name='support_organization'),
+    path('admin-dashboard/organization/section/<int:id>/delete/', delete_section_category, name='delete_section_category'),
+    path('admin-dashboard/save-order/', save_desi_order, name='save_desi_order'),
     path('admin-dashboard/export/', export_data, name='export_data'),
     path('admin-dashboard/export/endpoint/', export_data_endpoint, name='export_data_endpoint'),
     path('admin-dashboard/create/', create_assessment, name='create_assessment'),
@@ -29,4 +41,11 @@ urlpatterns = [
     path('accommodations/create/', create_accommodation, name='create_accommodation'),
     path('accommodations/<int:id>/edit/', edit_accommodation, name='edit_accommodation'),
     path('accommodations/<int:id>/delete/', delete_accommodation, name='delete_accommodation'),
+    path('support-rules/', support_rule_list, name='support_rule_list'),
+    path('support-rules/create/', support_rule_form, name='support_rule_create'),
+    path('support-rules/<int:id>/edit/', support_rule_form, name='support_rule_edit'),
+    path('support-rules/<int:id>/delete/', delete_support_rule, name='support_rule_delete'),
+    path('coordinator/', coordinator_dashboard, name='coordinator_dashboard'),
+    path('coordinator/report.csv/', coordinator_report_csv, name='coordinator_report_csv'),
+    path('coordinator/entered.csv/', coordinator_entered_csv, name='coordinator_entered_csv'),
 ]

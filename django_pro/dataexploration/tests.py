@@ -193,6 +193,38 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertEqual(lookup_result_value({'student_id': 'loc2', 'ssid': ''}, by_id, by_ssid), '—')
 		self.assertEqual(lookup_result_value({'ssid': '555'}, by_id, by_ssid), '2')
 
+	def test_stale_ssid_falls_back_to_local_id(self):
+		from dataexploration.column_utils import assign_result_value_maps, lookup_result_value
+
+		# A result whose SSID was corrected keeps the OLD ssid but the local id
+		# still identifies the current student, so it must not be orphaned.
+		rows = [('20250161', '3122440885', '1')]
+		valid_ssids = {'8442970229'}
+		by_id, by_ssid = assign_result_value_maps(rows, valid_ssids=valid_ssids)
+		self.assertEqual(by_id['20250161'], '1')
+		self.assertNotIn('3122440885', by_ssid)
+		student = {'student_id': '20250161', 'ssid': '8442970229'}
+		self.assertEqual(lookup_result_value(student, by_id, by_ssid), '1')
+
+	def test_valid_ssid_still_wins_over_local_id(self):
+		from dataexploration.column_utils import assign_result_value_maps, lookup_result_value
+
+		rows = [('20250161', '3122440885', '1')]
+		valid_ssids = {'3122440885', '8442970229'}
+		by_id, by_ssid = assign_result_value_maps(rows, valid_ssids=valid_ssids)
+		self.assertIn('3122440885', by_ssid)
+		self.assertNotIn('20250161', by_id)  # valid ssid must not leak via local id
+		self.assertEqual(lookup_result_value({'student_id': '20250161', 'ssid': '8442970229'}, by_id, by_ssid), '—')
+		self.assertEqual(lookup_result_value({'ssid': '3122440885'}, by_id, by_ssid), '1')
+
+	def test_nan_ssid_treated_as_blank(self):
+		from dataexploration.column_utils import assign_result_value_maps
+
+		rows = [('20250161', 'NaN', '3')]
+		by_id, by_ssid = assign_result_value_maps(rows, valid_ssids={'8442970229'})
+		self.assertEqual(by_id['20250161'], '3')
+		self.assertNotIn('NaN', by_ssid)
+
 	def test_export_cell_uses_blank_marker_consistently(self):
 		from dataexploration.column_utils import export_cell
 		self.assertEqual(export_cell(None), '—')
@@ -257,7 +289,7 @@ class ResultsStudentMatchTests(SimpleTestCase):
 			'error': None,
 			'rows': [
 				{
-					'stu_annual_key': 'k2', 'school_year': '2025-2026',
+					'ssid': 'B', 'school_year': '2025-2026',
 					'subject': 'Mathematics', 'course_name': 'Math 8 HP',
 					'mark_period': 'Q1', 'mark': 'A',
 				},
@@ -271,6 +303,34 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertEqual(students[0]['test_2025_2026_CAASPP_Math_SS'], '2400')
 		self.assertEqual(students[1]['mark_x'], 'A')
 		self.assertEqual(students[1]['test_2025_2026_CAASPP_Math_SS'], '—')
+
+	def test_enrich_marks_falls_back_to_student_id_on_stale_ssid(self):
+		from dataexploration.column_utils import enrich_students_tests_marks
+		from unittest.mock import patch, MagicMock
+
+		students = [
+			{'ssid': '8442970229', 'student_id': '20250161', 'stu_annual_key': 'k1'},
+		]
+		mark_info = {
+			'col_name': 'mark_x', 'year': '2024-2025',
+			'subject': 'Math', 'course_name': 'Math 6', 'mark_period': 'Q2',
+		}
+		# The mark row carries a stale SSID but a correct local student id.
+		mark_result = {
+			'error': None,
+			'rows': [
+				{
+					'ssid': '3122440885', 'student_id': '20250161',
+					'school_year': '2024-2025', 'subject': 'Math',
+					'course_name': 'Math 6', 'mark_period': 'Q2', 'mark': 'B-',
+				},
+			],
+		}
+		exec_mock = MagicMock()
+		exec_mock.execute.return_value = mark_result
+		with patch('clickhouse_utils.executor.QueryExecutor', return_value=exec_mock):
+			enrich_students_tests_marks(students, [], [mark_info])
+		self.assertEqual(students[0]['mark_x'], 'B-')
 
 	def test_enrich_other_info_uses_postgres_not_clickhouse(self):
 		from dataexploration.column_utils import enrich_students_tests_marks
@@ -359,7 +419,7 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		self.assertIn('cs.grade', where_clauses[0])
 		self.assertEqual(params, [['03']])
 
-	def test_mark_column_filter_uses_stu_annual_key_subquery(self):
+	def test_mark_column_filter_uses_ssid_subquery(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
 
 		where_clauses = []
@@ -380,4 +440,128 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		)
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('student_marks_list', where_clauses[0])
-		self.assertIn('stu_annual_key', where_clauses[0])
+		self.assertIn('cs.ssid IN', where_clauses[0])
+		self.assertIn('sm.ssid', where_clauses[0])
+
+
+class SATColumnKeyTests(SimpleTestCase):
+	def test_sat_column_key_round_trip(self):
+		from dataexploration.column_utils import (
+			sat_column_key, parse_sat_column_key, sat_column_db_field,
+		)
+		score_key = sat_column_key('2025-2026', 'score', field='TOTAL')
+		self.assertEqual(score_key, 'sat_2025_2026_TOTAL')
+		self.assertEqual(
+			parse_sat_column_key(score_key),
+			{'year': '2025-2026', 'kind': 'score', 'field': 'TOTAL'},
+		)
+		self.assertEqual(sat_column_db_field(score_key), 'total_score')
+
+		pct_key = sat_column_key('2025-2026', 'percentile', region='natrep', metric='rw')
+		self.assertEqual(pct_key, 'sat_2025_2026_PCT_NATREP_RW')
+		parsed = parse_sat_column_key(pct_key)
+		self.assertEqual(parsed['kind'], 'percentile')
+		self.assertEqual(parsed['region'], 'natrep')
+		self.assertEqual(parsed['metric'], 'rw')
+		self.assertEqual(sat_column_db_field(pct_key), 'percentile_natrep_rw')
+
+	def test_parse_sat_column_key_rejects_other_keys(self):
+		from dataexploration.column_utils import parse_sat_column_key
+		self.assertIsNone(parse_sat_column_key('ap_2025_2026_Math_PL'))
+		self.assertIsNone(parse_sat_column_key('sat_bogus'))
+		self.assertIsNone(parse_sat_column_key('sat_2025_2026_PCT_BOGUS_RW'))
+
+
+class SurveyDataResolutionTests(SimpleTestCase):
+	def test_get_survey_data_for_students_cross_year_and_ssid(self):
+		from dataexploration.survey_utils import get_survey_data_for_students, _generate_survey_column_key
+
+		col_key_24 = _generate_survey_column_key('Skills and Competencies', '2024-2025', 'SPRING', 0, 'Grades 6-8')
+		col_key_25 = _generate_survey_column_key('Skills and Competencies', '2025-2026', 'FALL', 0, 'Grades 6-8')
+
+		fake_rows = [
+			{
+				'student_id': '1001',
+				'ssid': '9000000001',
+				'survey_type': 'Skills and Competencies',
+				'school_year': '2024-2025',
+				'testing_window': 'SPRING',
+				'grade_range': 'Grades 6-8',
+				'question_order': 0,
+				'value': '4',
+			},
+			{
+				'student_id': '1001',
+				'ssid': '9000000001',
+				'survey_type': 'Skills and Competencies',
+				'school_year': '2025-2026',
+				'testing_window': 'FALL',
+				'grade_range': 'Grades 6-8',
+				'question_order': 0,
+				'value': '5',
+			},
+			{
+				'student_id': '1002',
+				'ssid': '9000000002',
+				'survey_type': 'Skills and Competencies',
+				'school_year': '2024-2025',
+				'testing_window': 'SPRING',
+				'grade_range': 'Grades 6-8',
+				'question_order': 0,
+				'value': '3',
+			},
+		]
+
+		with patch('dataviz.utils.data_loader._analytics_rows', return_value=fake_rows):
+			data = get_survey_data_for_students(student_ids=['1001'], ssids=['9000000002'])
+
+		# Student 1001 has responses across both 2024-2025 and 2025-2026
+		self.assertIn('1001', data)
+		self.assertEqual(data['1001'][col_key_24], '4')
+		self.assertEqual(data['1001'][col_key_25], '5')
+
+		# SSID 9000000001 also resolves
+		self.assertIn('9000000001', data)
+		self.assertEqual(data['9000000001'][col_key_24], '4')
+
+		# Student 1002 resolves via SSID
+		self.assertIn('9000000002', data)
+		self.assertEqual(data['9000000002'][col_key_24], '3')
+
+	def test_get_mark_columns_orders_live_period_at_end(self):
+		from dataexploration.column_utils import get_mark_columns
+		from unittest.mock import patch, MagicMock
+
+		mock_rows = [
+			('2026-2027', 'English', 'English 10', 'P1'),
+			('2026-2027', 'English', 'English 10', 'Live'),
+			('2026-2027', 'English', 'English 10', 'Q1'),
+			('2026-2027', 'English', 'English 10', 'P2'),
+		]
+		mock_cursor = MagicMock()
+		mock_cursor.fetchall.return_value = mock_rows
+		mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+		mock_cursor.__exit__ = MagicMock(return_value=False)
+
+		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=mock_cursor):
+			with patch('django.core.cache.cache.get', return_value=None):
+				with patch('django.core.cache.cache.set'):
+					cols = get_mark_columns()
+
+		periods = list(cols['2026-2027']['English']['English 10'].keys())
+		self.assertEqual(periods, ['P1', 'P2', 'Q1', 'Live'])
+		self.assertEqual(periods[-1], 'Live')
+
+	def test_format_marks_cell_bolds_live(self):
+		from dataexploration.templatetags.dataexploration_tags import format_marks_cell
+
+		formatted = format_marks_cell('P1: A, Live: A+', 'markall_2026_2027_Math_1_MARKS')
+		self.assertIn('<span class="font-bold text-slate-900">Live</span>:', formatted)
+
+		formatted_single = format_marks_cell('Live', 'mark_2026_2027_Math_Algebra_Live')
+		self.assertIn('<span class="font-bold text-slate-900">Live</span>', formatted_single)
+
+		# Non-mark columns are untouched
+		self.assertEqual(format_marks_cell('Active', 'status'), 'Active')
+
+

@@ -17,6 +17,7 @@ Total: ~2,434 lines split across 6 focused modules instead of one 2,346-line fil
 from .view_modules.student_list_views import (
     StudentWithTestsListView,
     load_students,
+    warm_data_explorer_default_cache,
 )
 
 # Import from export module

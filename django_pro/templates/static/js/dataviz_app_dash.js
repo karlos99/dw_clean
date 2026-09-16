@@ -663,13 +663,69 @@
             const colDefs = chart.column_defs || {};
             const srcType = chart.source_type || 'query';
 
-            // Show placeholder
-            containerEl.style.display = 'flex';
-            containerEl.style.alignItems = 'center';
-            containerEl.style.justifyContent = 'center';
-            containerEl.innerHTML = '<span style="font-size:11px;color:#94a3b8">Loading…</span>';
+            var hadChart = !!containerEl._dashRenderer;
+            var busy = containerEl.querySelector('.dv-dash-refresh-status');
+            if (!busy) {
+                busy = document.createElement('span');
+                busy.className = 'dv-dash-refresh-status';
+                busy.style.cssText = 'position:absolute;top:6px;right:8px;z-index:2;font-size:10px;color:#64748b;background:rgba(255,255,255,.9);padding:2px 6px;border-radius:999px;';
+                containerEl.style.position = 'relative';
+                containerEl.appendChild(busy);
+            }
+            busy.textContent = 'Updating…';
+            if (!hadChart) {
+                containerEl.style.display = 'flex';
+                containerEl.style.alignItems = 'center';
+                containerEl.style.justifyContent = 'center';
+                containerEl.innerHTML = '<span style="font-size:11px;color:#94a3b8">Loading…</span>';
+                containerEl.appendChild(busy);
+            }
 
             const renderUrl = (appDataEl && appDataEl.dataset.renderChartUrl) || '';
+            const chartRenderTemplate = (appDataEl && appDataEl.dataset.chartRenderUrlTemplate) || '';
+
+            // Saved charts can use the server's cached chart pipeline directly.
+            // This avoids downloading every student page and then issuing a
+            // second request just to turn those rows into a chart option.
+            if (chartRenderTemplate && chart.id && !slotFilters.length) {
+                if (containerEl._dashRequestController) containerEl._dashRequestController.abort();
+                var directController = new AbortController();
+                containerEl._dashRequestController = directController;
+                var directUrl = chartRenderTemplate.replace('/0/render/', '/' + chart.id + '/render/');
+                var directParams = new URLSearchParams({ source: 'dashboard', source_id: String(_activeDashboard ? _activeDashboard.id : '') });
+                Object.entries(filters || {}).forEach(function ([key, value]) {
+                    if (value == null || value === '' || (Array.isArray(value) && !value.length)) return;
+                    (Array.isArray(value) ? value : [value]).forEach(function (item) {
+                        directParams.append('pf_' + key, String(item));
+                    });
+                });
+                fetch(directUrl + '?' + directParams.toString(), {
+                    credentials: 'same-origin',
+                    signal: directController.signal,
+                }).then(function (response) {
+                    if (!response.ok) throw new Error('Chart request failed');
+                    return response.text();
+                }).then(function (html) {
+                    var parsed = new DOMParser().parseFromString(html, 'text/html');
+                    var chartNode = parsed.querySelector('.chart-container');
+                    if (!chartNode) throw new Error('Chart render failed');
+                    var option = JSON.parse(chartNode.dataset.chartOption || '{}');
+                    if (!option || !Object.keys(option).length) throw new Error('Chart returned no data');
+                    containerEl.style.cssText = '';
+                    containerEl.innerHTML = '';
+                    var renderer = window.DVChartRenderer.create(containerEl);
+                    renderer.render(option, cfg);
+                    containerEl._dashRenderer = renderer;
+                    containerEl.appendChild(busy);
+                    busy.textContent = 'Updated';
+                    setTimeout(function () { if (busy.parentNode === containerEl) busy.remove(); }, 900);
+                }).catch(function (error) {
+                    if (error.name === 'AbortError') return;
+                    busy.textContent = hadChart ? 'Refresh failed' : 'Load failed';
+                    busy.style.color = '#dc2626';
+                });
+                return;
+            }
 
             // ── Determine which columns the chart actually needs ──────────
             var _reqCols = new Set();

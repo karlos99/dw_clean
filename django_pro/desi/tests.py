@@ -9,14 +9,27 @@ from studata.models import CurrentStudent
 from users.models import Role
 from desi.models import (
     Accommodation,
+    AccommodationCategory,
     AccommodationOption,
+    AccommodationResource,
     Assessment,
     AssessmentCriteria,
     DesiExportConfiguration,
+    DesiSchoolAccess,
+    DesiSeis,
+    DesiSeisDisplaySettings,
     StudentAccommodation,
     StudentAssessmentCompletion,
+    SupportRule,
+    SupportRuleCriteria,
 )
-from desi.views import check_criteria, EXPORT_ENDPOINT_SIGNING_SALT
+from desi.views import (
+    check_criteria,
+    can_edit_desi,
+    hidden_support_ids,
+    EXPORT_ENDPOINT_SIGNING_SALT,
+)
+from desi import importers
 
 User = get_user_model()
 
@@ -52,7 +65,6 @@ class DesiModelsAndEligibilityTests(TestCase):
         self.assessment = Assessment.objects.create(
             name="Smarter Balanced Math",
             subject="Math",
-            school_year="2025-2026",
             is_active=True
         )
         self.assessment.supported_options.add(self.opt_tts, self.opt_et)
@@ -146,12 +158,10 @@ class DesiWorkflowAndViewsTests(TestCase):
         # Assessment setup
         self.assessment_math = Assessment.objects.create(
             name="SBAC Math",
-            school_year="2025-2026",
             is_active=True
         )
         self.assessment_ela = Assessment.objects.create(
             name="SBAC ELA",
-            school_year="2025-2026",
             is_active=True
         )
 
@@ -248,27 +258,38 @@ class DesiWorkflowAndViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'id="student-list-item-student_key"')
         self.assertContains(response, 'hx-swap-oob="true"')
-        self.assertContains(response, 'Completed (2/2)')
+        html = response.content.decode()
+        self.assertIn('SBAC ELA', html)
+        self.assertIn('SBAC Math', html)
+        self.assertEqual(html.count('Completed</span>'), 2)
 
-    def test_shared_accommodations_grouping_on_workspace(self):
+    def test_workspace_matrix_groups_and_merges_shared_supports(self):
         self.client.force_login(self.admin_user)
         url = reverse('desi:assign_accommodations', args=[self.student.stu_annual_key])
 
-        # Since TTS has the same option 'Standard' in ELA and Math, it should be listed in shared_accommodations
+        # TTS has the same option 'Standard' on both tests, so it must appear as
+        # a single row whose cell is merged across both test columns.
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
-        
-        shared_accs = response.context['shared_accommodations']
-        self.assertEqual(len(shared_accs), 1)
-        self.assertEqual(shared_accs[0]['accommodation'], self.acc)
-        self.assertIn(self.assessment_math, shared_accs[0]['applies_to'])
-        self.assertIn(self.assessment_ela, shared_accs[0]['applies_to'])
 
-        # Since there are no unique/test-specific accommodations, assessment cards should show no unique accommodations
-        assessment_cards = response.context['assessment_cards']
-        self.assertEqual(len(assessment_cards), 2)
-        for card in assessment_cards:
-            self.assertEqual(len(card['accommodations']), 0)
+        columns = response.context['matrix_columns']
+        self.assertEqual(len(columns), 2)
+        self.assertEqual(
+            {col['assessment_id'] for col in columns},
+            {self.assessment_math.id, self.assessment_ela.id},
+        )
+
+        rows = [row for group in response.context['category_groups'] for row in group['rows']]
+        tts_rows = [row for row in rows if row['accommodation'] == self.acc]
+        self.assertEqual(len(tts_rows), 1)
+
+        cells = [seg['cell'] for seg in tts_rows[0]['segments'] if seg['kind'] == 'cell']
+        self.assertEqual(len(cells), 1)
+        self.assertEqual(cells[0]['colspan'], 2)
+        self.assertEqual(
+            set(cells[0]['test_ids']),
+            {self.assessment_math.id, self.assessment_ela.id},
+        )
 
     def test_create_accommodation_fails_when_no_assessments_exist(self):
         self.client.force_login(self.admin_user)
@@ -314,6 +335,52 @@ class DesiWorkflowAndViewsTests(TestCase):
         self.opt.refresh_from_db()
         self.assertEqual(self.opt.name, 'Read Aloud')
         self.assertEqual(self.opt.code, 'RA')
+
+    def test_edit_support_with_comma_option_names_can_save_resources(self):
+        """Regression: option names may contain commas (e.g. '...Large, Black.').
+        Editing such a support (here to add a resource) must not split the names
+        or fail the unique-name validation."""
+        self.client.force_login(self.admin_user)
+        acc = Accommodation.objects.create(name="Mouse Pointer", code="MP")
+        opts = []
+        for name, code in [
+            ("Mouse Pointer is selected as Large, Black.", "MP_L_BLK"),
+            ("Mouse Pointer is selected as Large, White.", "MP_L_WHT"),
+            ("Mouse Pointer is selected as Extra Large, Black.", "MP_XL_BLK"),
+        ]:
+            opts.append(AccommodationOption.objects.create(
+                accommodation=acc, name=name, code=code
+            ))
+        for ast in (self.assessment_math, self.assessment_ela):
+            ast.supported_options.add(*opts)
+
+        edit_url = reverse('desi:edit_accommodation', args=[acc.id])
+        response = self.client.post(edit_url, {
+            'name': acc.name,
+            'code': acc.code,
+            'category': acc.category,
+            'description': acc.description,
+            'video_url': '',
+            'order': str(acc.order),
+            'option_id[]': [str(o.id) for o in opts],
+            'option_name[]': [o.name for o in opts],
+            'option_code[]': [o.code for o in opts],
+            'supported_assessments': [str(self.assessment_math.id), str(self.assessment_ela.id)],
+            f'assessment_opts_{self.assessment_math.id}': [o.name for o in opts],
+            f'assessment_opts_{self.assessment_ela.id}': [o.name for o in opts],
+            'resource_id[]': [''],
+            'resource_label[]': ['Video guide'],
+            'resource_url[]': ['https://www.youtube.com/watch?v=abc123'],
+            'resource_kind[]': ['youtube'],
+        })
+        self.assertEqual(response.status_code, 302)
+        acc.refresh_from_db()
+        # The three options still exist intact (not split on commas).
+        self.assertEqual(acc.options.count(), 3)
+        self.assertTrue(acc.options.filter(name="Mouse Pointer is selected as Large, Black.").exists())
+        self.assertTrue(acc.options.filter(name="Mouse Pointer is selected as Extra Large, Black.").exists())
+        # Resource was saved.
+        self.assertTrue(acc.resources.filter(url="https://www.youtube.com/watch?v=abc123").exists())
 
     def test_create_designated_support_with_dependency(self):
         self.client.force_login(self.admin_user)
@@ -718,3 +785,869 @@ class DesiWorkflowAndViewsTests(TestCase):
         reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
         rows = list(reader)
         self.assertEqual(rows[0], ['Student', 'Assessment'])
+
+
+CSV_SAMPLE = """Column,Display Name,Value,Value Definition,Content Area,Program,Setting Definition,Type
+A,"Student SSID
+(Example: 1234567890)",10 digits,NA,• all,•  all,This is a state-assigned student identifier.,NA
+B,"Abacus (NON-EMBEDDED)
+(Computer - M, S)",Blank (default),Abacus is not selected.,• math,"• Smarter math
+• CAA math
+• CAA science",Abacus resource text.,non-embedded accommodation
+B,"Abacus (NON-EMBEDDED)
+(Computer - M, S)",NEA_Abacus,Abacus is selected.,• math,"• Smarter math
+• CAA math
+• CAA science",Abacus resource text.,non-embedded accommodation
+I,"*Color Contrast (EMBEDDED)
+(Computer - E)",Blank (default),Color Contrast is not selected.,• ELA,• Smarter ELA,Color contrast text.,embedded designated support
+I,"*Color Contrast (EMBEDDED)
+(Computer - E)",TDS_CCInvert,Reverse Contrast,• ELA,• Smarter ELA,Color contrast text.,embedded designated support
+I,"*Color Contrast (EMBEDDED)
+(Computer - E)",TDS_CCMagenta,Black on Rose,• ELA,• Smarter ELA,Color contrast text.,embedded designated support
+N,"*Noise Buffers (NON-EMBEDDED)
+(Computer - M)",Blank (default),Noise Buffers is not selected.,• science,"• CAA Science
+• CAST",Noise buffers text.,non-embedded designated support
+N,"*Noise Buffers (NON-EMBEDDED)
+(Computer - M)",NEDS_NoiseBuf,Noise Buffers is selected.,• science,"• CAA Science
+• CAST",Noise buffers text.,non-embedded designated support
+"""
+
+
+class DesiCsvImporterTests(TestCase):
+
+    def _parsed(self):
+        return importers.parse_rows(csv.DictReader(io.StringIO(CSV_SAMPLE)))
+
+    def test_parse_groups_supports_and_dedupes_assessments(self):
+        parsed = self._parsed()
+
+        # SSID (Type = NA) and "Blank (default)" rows are skipped.
+        # 'CAA Science' (capital) on Noise Buffers folds into the earlier
+        # 'CAA science' spelling rather than creating a new assessment.
+        assessment_names = [a["name"] for a in parsed["assessments"]]
+        self.assertEqual(
+            assessment_names,
+            ["Smarter math", "CAA math", "CAA science", "Smarter ELA", "CAST"],
+        )
+
+        self.assertEqual(len(parsed["supports"]), 3)
+        by_letter = {s["column_letter"]: s for s in parsed["supports"]}
+        self.assertEqual(by_letter["B"]["name"], "Abacus")
+        self.assertEqual(by_letter["I"]["name"], "Color Contrast")
+        self.assertEqual(by_letter["N"]["name"], "Noise Buffers")
+        self.assertEqual(by_letter["N"]["category"], "non-embedded designated support")
+
+        # "Blank (default)" rows do not become options
+        self.assertEqual(len(by_letter["B"]["options"]), 1)
+        self.assertEqual(by_letter["B"]["options"][0]["code"], "NEA_Abacus")
+        self.assertEqual(len(by_letter["I"]["options"]), 2)
+        self.assertEqual(
+            [o["code"] for o in by_letter["I"]["options"]],
+            ["TDS_CCInvert", "TDS_CCMagenta"],
+        )
+
+    def test_import_builds_assessments_supports_and_mappings(self):
+        parsed = self._parsed()
+        summary = importers.import_configuration(parsed, clear=True)
+
+        self.assertEqual(summary, {"assessments": 5, "supports": 3, "options": 4})
+        self.assertEqual(Assessment.objects.count(), 5)
+        self.assertEqual(Accommodation.objects.count(), 3)
+        self.assertEqual(AccommodationOption.objects.count(), 4)
+
+        # Assessments are imported inactive by default
+        self.assertFalse(Assessment.objects.filter(is_active=True).exists())
+
+        caa_science = Assessment.objects.get(name="CAA science")
+        cast = Assessment.objects.get(name="CAST")
+        smarter_math = Assessment.objects.get(name="Smarter math")
+
+        noise = AccommodationOption.objects.get(code="NEDS_NoiseBuf")
+        self.assertIn(noise, caa_science.supported_options.all())
+        self.assertIn(noise, cast.supported_options.all())
+        self.assertNotIn(noise, smarter_math.supported_options.all())
+
+        # The option is present on the assessments listed in its Program cell
+        abacus = AccommodationOption.objects.get(code="NEA_Abacus")
+        self.assertIn(abacus, smarter_math.supported_options.all())
+        self.assertNotIn(abacus, cast.supported_options.all())
+
+    def test_import_can_activate_assessments(self):
+        parsed = self._parsed()
+        importers.import_configuration(parsed, clear=True, active=True)
+        self.assertEqual(Assessment.objects.filter(is_active=True).count(), 5)
+
+    def test_import_is_rebuildable_without_duplicates(self):
+        parsed = self._parsed()
+        importers.import_configuration(parsed, clear=True)
+        importers.import_configuration(parsed, clear=True)
+
+        self.assertEqual(Assessment.objects.count(), 5)
+        self.assertEqual(Accommodation.objects.count(), 3)
+        self.assertEqual(AccommodationOption.objects.count(), 4)
+        self.assertEqual(Accommodation.objects.filter(name="Color Contrast").count(), 1)
+
+    def test_import_is_additive_and_stamps_tag(self):
+        # Pre-existing manual records must survive an import (no wipe by default).
+        Assessment.objects.create(name="Manual Test", subject="X", is_active=True)
+        Accommodation.objects.create(name="Manual Support", code="M")
+
+        parsed = self._parsed()
+        importers.import_configuration(parsed, tag="CAASPP")
+
+        self.assertTrue(Assessment.objects.filter(name="Manual Test").exists())
+        self.assertTrue(Accommodation.objects.filter(name="Manual Support").exists())
+
+        # Imported records carry the tag.
+        self.assertEqual(Assessment.objects.get(name="Smarter math").tag, "CAASPP")
+        self.assertEqual(Accommodation.objects.filter(tag="CAASPP").count(), 3)
+
+        # Existing assessments are reused, not duplicated.
+        self.assertEqual(Assessment.objects.count(), 6)
+
+    def test_import_same_tag_is_idempotent(self):
+        parsed = self._parsed()
+        importers.import_configuration(parsed, tag="CAASPP")
+        importers.import_configuration(parsed, tag="CAASPP")
+
+        self.assertEqual(Assessment.objects.count(), 5)
+        self.assertEqual(Accommodation.objects.count(), 3)
+        self.assertEqual(AccommodationOption.objects.count(), 4)
+        self.assertEqual(Accommodation.objects.filter(tag="CAASPP").count(), 3)
+
+    def test_import_different_tags_keep_separate_supports(self):
+        parsed = self._parsed()
+        importers.import_configuration(parsed, tag="CAASPP")
+        importers.import_configuration(parsed, tag="ELPAC")
+
+        # Same assessment names are deduped across tags, but designated
+        # supports are kept separate per source file.
+        self.assertEqual(Assessment.objects.count(), 5)
+        self.assertEqual(Accommodation.objects.count(), 6)
+        self.assertEqual(AccommodationOption.objects.count(), 8)
+        self.assertEqual(set(Accommodation.objects.values_list("tag", flat=True)), {"CAASPP", "ELPAC"})
+
+    def test_map_only_adds_missing_associations_without_other_changes(self):
+        parsed = self._parsed()
+
+        # Pre-seed the tagged support + option + assessments.
+        accommodation = Accommodation.objects.create(
+            name="Abacus", code="B", column_letter="B", tag="CAASPP"
+        )
+        option = AccommodationOption.objects.create(
+            accommodation=accommodation, name="Abacus is selected.", code="NEA_Abacus"
+        )
+        smarter = Assessment.objects.create(name="Smarter math", is_active=True)
+        caa_math = Assessment.objects.create(name="CAA math", is_active=True)
+        Assessment.objects.create(name="CAA science", is_active=True)
+        unrelated = Assessment.objects.create(name="Unrelated Test", is_active=False)
+        smarter.supported_options.add(option)  # already mapped
+
+        summary = importers.update_assessment_mappings(parsed, tag="CAASPP", apply=True)
+
+        # Added the two missing associations; existing one is untouched.
+        self.assertEqual(summary["added_mappings"], 2)
+        self.assertTrue(caa_math.supported_options.filter(id=option.id).exists())
+        self.assertTrue(Assessment.objects.get(name="CAA science").supported_options.filter(id=option.id).exists())
+        self.assertTrue(smarter.supported_options.filter(id=option.id).exists())
+        self.assertFalse(unrelated.supported_options.filter(id=option.id).exists())
+
+        # Nothing else was created or altered.
+        self.assertEqual(Assessment.objects.count(), 4)
+        self.assertEqual(Accommodation.objects.count(), 1)
+        self.assertEqual(AccommodationOption.objects.count(), 1)
+
+        # Idempotent: re-running adds nothing.
+        summary2 = importers.update_assessment_mappings(parsed, tag="CAASPP", apply=True)
+        self.assertEqual(summary2["added_mappings"], 0)
+
+    def test_map_only_falls_back_when_tag_differs(self):
+        parsed = self._parsed()
+
+        # Support imported under the DEFAULT filename tag (e.g. CAASPP_Upload).
+        accommodation = Accommodation.objects.create(
+            name="Abacus", code="B", column_letter="B", tag="CAASPP_Upload"
+        )
+        option = AccommodationOption.objects.create(
+            accommodation=accommodation, name="Abacus is selected.", code="NEA_Abacus"
+        )
+        for name in ("Smarter math", "CAA math", "CAA science"):
+            Assessment.objects.create(name=name, is_active=True)
+
+        # Running with a different --tag still adds the missing mappings.
+        summary = importers.update_assessment_mappings(parsed, tag="CAASPP", apply=True)
+        self.assertEqual(summary["added_mappings"], 3)
+        for name in ("Smarter math", "CAA math", "CAA science"):
+            self.assertTrue(Assessment.objects.get(name=name).supported_options.filter(id=option.id).exists())
+
+
+class DesiTestingCoordinatorAndRulesTests(TestCase):
+
+    def setUp(self):
+        self.teacher_role = Role.objects.create(name="Teacher")
+        self.coordinator_role = Role.objects.create(name="Testing Coordinator")
+        self.project_role = Role.objects.create(name="Project Admin")
+
+        self.user = User.objects.create_user(
+            username="coord-teacher@test.com",
+            email="coord-teacher@test.com",
+            password="password123",
+        )
+        self.user.roles.add(self.teacher_role, self.coordinator_role)
+        self.user.schools = ["SCH-A"]
+        self.user.save()
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="desi_coord_student",
+            ssid="coordssid",
+            student_id="coordlocal",
+            student_name="Coordinator Student",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+
+    def test_coordinator_addon_role_is_schoolwide_even_when_teacher_active(self):
+        # Simulate middleware attaching an active role of Teacher.
+        self.user.active_role = self.teacher_role
+        self.assertIsNone(self.user.get_accessible_student_keys())
+
+    def test_can_edit_matrix(self):
+        coord = User.objects.create_user(username="coord@test.com", email="coord@test.com", password="password123")
+        coord.roles.add(self.coordinator_role)
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.assertTrue(can_edit_desi(coord, student=self.student))
+
+        # Teacher default = edit.
+        self.assertTrue(can_edit_desi(self.user, student=self.student))
+
+        # View-only school flips teacher to read-only.
+        DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
+        self.assertFalse(can_edit_desi(self.user, student=self.student))
+
+    def test_view_only_school_blocks_teacher_save(self):
+        DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
+        assessment = Assessment.objects.create(name="Blocked Test", is_active=True)
+        self.user.active_role = self.teacher_role
+        self.client.force_login(self.user)
+
+        url = reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        response = self.client.post(url, {"completed_assessments": [str(assessment.id)]})
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            StudentAssessmentCompletion.objects.filter(
+                student_annual_key=self.student.stu_annual_key, assessment=assessment
+            ).exists()
+        )
+
+    def test_support_rule_hides_support(self):
+        accommodation = Accommodation.objects.create(name="Calculator", code="CALC")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Standard", code="STD")
+        assessment = Assessment.objects.create(name="Hidden Math", subject="Math", is_active=True)
+        assessment.supported_options.add(option)
+
+        rule = SupportRule.objects.create(name="No grade 03 calculators", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="in", value="04,05")
+
+        # Student is grade 03 -> criteria fail -> support hidden.
+        hidden = hidden_support_ids(self.student)
+        self.assertIn(accommodation.id, hidden)
+
+        # Grade 04 student keeps the support.
+        grade4 = CurrentStudent.objects.create(
+            stu_annual_key="grade4",
+            ssid="g4ssid",
+            student_id="g4",
+            student_name="Grade Four",
+            grade="04",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(grade4))
+
+    def test_support_rule_form_creates_rule(self):
+        project = User.objects.create_user(username="p@test.com", email="p@test.com", password="password123")
+        project.roles.add(self.project_role)
+        self.client.force_login(project)
+        accommodation = Accommodation.objects.create(name="Masking", code="M")
+
+        response = self.client.post(reverse("desi:support_rule_create"), {
+            "name": "Masking only grade 05",
+            "description": "",
+            "is_active": "on",
+            "supports": [str(accommodation.id)],
+            "crit_field[]": ["grade"],
+            "crit_operator[]": ["is"],
+            "crit_value[]": ["05"],
+        })
+        self.assertEqual(response.status_code, 302)
+        rule = SupportRule.objects.get(name="Masking only grade 05")
+        self.assertIn(accommodation, rule.supports.all())
+        self.assertEqual(rule.criteria.count(), 1)
+
+    def test_resource_crud_and_embed(self):
+        accommodation = Accommodation.objects.create(name="TTS", code="TTS")
+        resource = AccommodationResource.objects.create(
+            accommodation=accommodation,
+            label="Guide",
+            url="https://www.youtube.com/watch?v=abc123",
+            kind="youtube",
+        )
+        self.assertIn("youtube.com/embed/abc123", resource.get_embed_url())
+
+    def test_school_report_counts(self):
+        from desi.report_utils import build_school_report
+
+        assessment = Assessment.objects.create(name="Report Math", subject="Math", is_active=True)
+        CurrentStudent.objects.create(
+            stu_annual_key="r1",
+            ssid="r1ssid",
+            student_id="r1",
+            student_name="Report One",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        other = CurrentStudent.objects.create(
+            stu_annual_key="r2",
+            ssid="r2ssid",
+            student_id="r2",
+            student_name="Report Two",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        StudentAssessmentCompletion.objects.create(
+            student_annual_key="r1",
+            assessment=assessment,
+            is_completed=True,
+        )
+
+        report = build_school_report("SCH-A", "2025-2026")
+        summary = {row["assessment"].id: row for row in report["summary"]}
+        self.assertEqual(summary[assessment.id]["eligible"], 3)
+        self.assertEqual(summary[assessment.id]["completed"], 1)
+        self.assertEqual(summary[assessment.id]["pending"], 2)
+        self.assertIn(other, report["pending_by_assessment"][assessment.id])
+        self.assertIn(self.student, report["pending_by_assessment"][assessment.id])
+
+    def test_entered_supports_report(self):
+        from unittest.mock import patch
+
+        from desi.report_utils import build_entered_supports_report
+
+        accommodation = Accommodation.objects.create(name="Calculator", code="CALC")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Scientific", code="SCI")
+        updater = User.objects.create_user(username="up@test.com", email="up@test.com", password="password123")
+        record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=self.student.stu_annual_key,
+        )
+        record.options.add(option)
+        record.updated_by = updater
+        record.save()
+
+        with patch(
+            "desi.report_utils.seis_support_detail_for_student",
+            return_value={
+                "labels": ["Text-to-Speech: Read aloud"],
+                "option_ids": {999},
+                "accommodation_ids": {888},
+            },
+        ):
+            report = build_entered_supports_report("SCH-A", "2025-2026")
+        rows = {row["ssid"]: row for row in report["rows"]}
+        self.assertIn("Calculator: Scientific", rows["coordssid"]["supports"])
+        self.assertIn("Text-to-Speech: Read aloud (SEIS)", rows["coordssid"]["supports"])
+        self.assertTrue(rows["coordssid"]["has_seis_supports"])
+        self.assertEqual(rows["coordssid"]["from_seis"], "Yes")
+        self.assertEqual(rows["coordssid"]["updated_by"], "up@test.com")
+
+    def test_entered_supports_report_support_filter(self):
+        from desi.report_utils import build_entered_supports_report
+
+        accommodation = Accommodation.objects.create(name="Masking", code="MASK")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Covers", code="COV")
+        record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=self.student.stu_annual_key,
+        )
+        record.options.add(option)
+
+        other = CurrentStudent.objects.create(
+            stu_annual_key="other_support_student",
+            ssid="otherssid",
+            student_id="other",
+            student_name="Other Student",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        StudentAccommodation.objects.get_or_create(student_annual_key=other.stu_annual_key)
+
+        report = build_entered_supports_report(
+            "SCH-A",
+            "2025-2026",
+            support_filter=f"o{option.id}",
+        )
+        ssids = {row["ssid"] for row in report["rows"]}
+        self.assertEqual(ssids, {"coordssid"})
+
+    def test_view_only_school_blocks_coordinator_save(self):
+        DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
+        coord = User.objects.create_user(username="coord2@test.com", email="coord2@test.com", password="password123")
+        coord.roles.add(self.coordinator_role)
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.assertFalse(can_edit_desi(coord, student=self.student))
+
+    def test_coordinator_dashboard_access_tab_renders(self):
+        coord = User.objects.create_user(username="cd@test.com", email="cd@test.com", password="password123")
+        coord.roles.add(self.coordinator_role)
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.client.force_login(coord)
+
+        response = self.client.get(reverse("desi:coordinator_dashboard"), HTTP_HOST="localhost")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Support Admin")
+        self.assertContains(response, "Teacher Editing Access by School")
+
+
+class DesiMappingPreservationTests(TestCase):
+
+    def setUp(self):
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(username="map@test.com", email="map@test.com", password="password123")
+        self.user.roles.add(role)
+
+        self.acc = Accommodation.objects.create(name="Text-to-Speech Mapping", code="TTSM")
+        self.opt = AccommodationOption.objects.create(accommodation=self.acc, name="Standard", code="STD")
+
+        self.active = Assessment.objects.create(name="Active Mapping Test", is_active=True)
+        self.inactive = Assessment.objects.create(name="Inactive Mapping Test", is_active=False)
+        self.extra = Assessment.objects.create(name="Extra Mapping Test", is_active=True)
+        self.active.supported_options.add(self.opt)
+        self.inactive.supported_options.add(self.opt)
+
+    def _edit_post(self, map_action=None, supported=None):
+        data = {
+            "name": self.acc.name,
+            "code": self.acc.code,
+            "category": self.acc.category,
+            "description": "",
+            "order": "0",
+            "option_id[]": [str(self.opt.id)],
+            "option_name[]": ["Standard"],
+            "option_code[]": ["STD"],
+            "supported_assessments": supported or [],
+        }
+        if map_action:
+            data["map_action"] = map_action
+        self.client.force_login(self.user)
+        return self.client.post(reverse("desi:edit_accommodation", args=[self.acc.id]), data)
+
+    def test_replace_save_preserves_inactive_assessment_mapping(self):
+        response = self._edit_post(supported=[str(self.extra.id)])
+        self.assertEqual(response.status_code, 302)
+
+        # Active assessments not selected are removed; inactive stays mapped.
+        self.assertFalse(self.active.supported_options.filter(id=self.opt.id).exists())
+        self.assertTrue(self.inactive.supported_options.filter(id=self.opt.id).exists())
+        self.assertTrue(self.extra.supported_options.filter(id=self.opt.id).exists())
+
+    def test_merge_keeps_existing_mappings_and_adds_selected(self):
+        response = self._edit_post(map_action="merge", supported=[str(self.extra.id)])
+        self.assertEqual(response.status_code, 302)
+
+        # Existing mappings (active + inactive) are untouched; extra added.
+        self.assertTrue(self.active.supported_options.filter(id=self.opt.id).exists())
+        self.assertTrue(self.inactive.supported_options.filter(id=self.opt.id).exists())
+        self.assertTrue(self.extra.supported_options.filter(id=self.opt.id).exists())
+
+    def test_option_used_only_by_inactive_assessment_is_never_dropped(self):
+        self.client.force_login(self.user)
+
+        # An option that only serves the inactive assessment.
+        inactive_only = AccommodationOption.objects.create(
+            accommodation=self.acc, name="Inactive Only", code="INO"
+        )
+        self.inactive.supported_options.add(inactive_only)
+
+        # Edit posts ONLY the Standard option row (not Inactive Only).
+        response = self.client.post(reverse("desi:edit_accommodation", args=[self.acc.id]), {
+            "name": self.acc.name,
+            "code": self.acc.code,
+            "category": self.acc.category,
+            "description": "",
+            "order": "0",
+            "option_id[]": [str(self.opt.id)],
+            "option_name[]": ["Standard"],
+            "option_code[]": ["STD"],
+            "supported_assessments": [str(self.active.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+
+        inactive_only.refresh_from_db()
+        self.assertTrue(self.inactive.supported_options.filter(id=inactive_only.id).exists())
+        self.assertTrue(self.active.supported_options.filter(id=self.opt.id).exists())
+
+
+class DesiSeisDisplaySettingsTests(TestCase):
+    """Admin SEIS display selection + workspace gating."""
+
+    def setUp(self):
+        self.role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="seis-admin@test.com",
+            email="seis-admin@test.com",
+            password="password123",
+        )
+        self.user.roles.add(self.role)
+        self.client.force_login(self.user)
+
+        # Assessments: one active, one inactive, one unrelated.
+        self.ast_math = Assessment.objects.create(name="Smarter math", is_active=True)
+        self.ast_ela = Assessment.objects.create(name="Smarter ELA", is_active=False)
+        self.ast_other = Assessment.objects.create(name="Unrelated Test", is_active=True)
+
+        self.acc = Accommodation.objects.create(name="Text-to-Speech", code="TTS")
+        self.opt = AccommodationOption.objects.create(
+            accommodation=self.acc, name="Standard", code="TTS"
+        )
+        self.ast_math.supported_options.add(self.opt)
+        self.ast_ela.supported_options.add(self.opt)
+        self.ast_other.supported_options.add(self.opt)
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="seis_display_student",
+            ssid="seisdisplay",
+            student_id="seis-local",
+            student_name="SEIS Display Student",
+            grade="04",
+            school_year="2025-2026",
+        )
+
+    def test_admin_dashboard_saves_selection(self):
+        url = reverse("desi:admin_dashboard")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "SEIS Display Settings")
+
+        # Save a selection of two assessments (one inactive).
+        response = self.client.post(url, {
+            "seis_display_assessments": [str(self.ast_math.id), str(self.ast_ela.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+
+        settings = DesiSeisDisplaySettings.objects.first()
+        self.assertIsNotNone(settings)
+        self.assertEqual(
+            set(settings.assessments.values_list("id", flat=True)),
+            {self.ast_math.id, self.ast_ela.id},
+        )
+
+    def test_dashboard_echoes_saved_selection(self):
+        import re
+        settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
+        settings.assessments.set([self.ast_math.id])
+        response = self.client.get(reverse("desi:admin_dashboard"))
+        html = response.content.decode()
+
+        def is_checked(value):
+            # value appears before the optional whitespace-separated "checked"
+            pattern = re.compile(r'name="seis_display_assessments" value="%s"\s*(checked)?' % value)
+            m = pattern.search(html)
+            return bool(m and m.group(1))
+
+        # The selected math row is checked; ELA is not.
+        self.assertTrue(is_checked(self.ast_math.id))
+        self.assertFalse(is_checked(self.ast_ela.id))
+
+class DesiSeisDisplaySettingsViewTests(TestCase):
+    """SEIS admin display selection applied on the student workspace view."""
+
+    def setUp(self):
+        from unittest import mock
+        self._patchers = []
+        self._fake_map = {}
+
+        def _fake_build(ssid, assessments):
+            return self._fake_map, {acc_id for _a, acc_id in self._fake_map}
+
+        patcher_build = mock.patch.object(
+            __import__("desi.views", fromlist=["build_seis_option_map"]),
+            "build_seis_option_map",
+            side_effect=_fake_build,
+        )
+        self._patchers.append(patcher_build)
+        for p in self._patchers:
+            p.start()
+        self.addCleanup(self._stop_patchers)
+
+        self.role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="seis-view-admin@test.com",
+            email="seis-view-admin@test.com",
+            password="password123",
+        )
+        self.user.roles.add(self.role)
+        self.client.force_login(self.user)
+
+        self.ast_math = Assessment.objects.create(name="Smarter math", is_active=True)
+        self.ast_ela = Assessment.objects.create(name="Smarter ELA", is_active=False)
+
+        self.acc = Accommodation.objects.create(name="Text-to-Speech", code="TTS")
+        self.opt = AccommodationOption.objects.create(
+            accommodation=self.acc, name="Standard", code="TTS"
+        )
+        self.ast_math.supported_options.add(self.opt)
+        self.ast_ela.supported_options.add(self.opt)
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="seis_view_student",
+            ssid="seisview",
+            student_id="seis-view",
+            student_name="SEIS View Student",
+            grade="04",
+            school_year="2025-2026",
+        )
+        # Make the superuser/PA an admin that can see the student.
+        self.user.is_superuser = True
+        self.user.save()
+
+    def _stop_patchers(self):
+        for p in self._patchers:
+            try:
+                p.stop()
+            except Exception:
+                pass
+
+    def test_selected_assessments_show_seis_locks_and_readonly(self):
+        # Simulate the student's SEIS row referencing both math and ELA.
+        self._fake_map = {
+            (self.ast_math.id, self.acc.id): self.opt,
+            (self.ast_ela.id, self.acc.id): self.opt,
+        }
+        DesiSeisDisplaySettings.objects.create(pk=1)
+        settings = DesiSeisDisplaySettings.objects.get(pk=1)
+        settings.assessments.set([self.ast_math.id, self.ast_ela.id])
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+
+        # Both math (active) and ELA (inactive) are SEIS-managed: they render
+        # as read-only matrix columns listing only their SEIS supports.
+        self.assertIn("SEIS \u00b7 read only", html)
+        self.assertIn("Smarter math", html)
+        self.assertIn("Smarter ELA", html)
+        self.assertIn("Locked from SEIS", html)
+
+    def test_unselected_assessment_hides_its_seis(self):
+        self._fake_map = {
+            (self.ast_math.id, self.acc.id): self.opt,
+            (self.ast_ela.id, self.acc.id): self.opt,
+        }
+        # Admin only selected math -> ELA's SEIS is hidden even though the
+        # simulated SEIS source references it.
+        DesiSeisDisplaySettings.objects.create(pk=1)
+        settings = DesiSeisDisplaySettings.objects.get(pk=1)
+        settings.assessments.set([self.ast_math.id])
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+
+        # Math is SEIS-managed (read-only); ELA is not selected, so it does not
+        # appear as a SEIS column.
+        self.assertIn("SEIS \u00b7 read only", html)
+        self.assertIn("Smarter math", html)
+        self.assertIn("Locked from SEIS", html)
+        # Smarter ELA must not appear at all (not selected => not SEIS).
+        self.assertNotIn("Smarter ELA", html)
+
+
+class DesiSectionCategoryTests(TestCase):
+    """Section categories coexist with the original free-text category."""
+
+    def setUp(self):
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="section@test.com",
+            email="section@test.com",
+            password="password123",
+        )
+        self.user.roles.add(role)
+        self.client.force_login(self.user)
+
+        self.assessment = Assessment.objects.create(name="Section Test", is_active=True)
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="section_student",
+            ssid="section",
+            student_id="section-local",
+            student_name="Section Student",
+            grade="04",
+            school_year="2025-2026",
+        )
+
+    def test_create_support_keeps_category_and_creates_section(self):
+        response = self.client.post(reverse("desi:create_accommodation"), {
+            "name": "Read Aloud",
+            "code": "RA",
+            "category": "Presentation",
+            "new_section_category": "Accessibility",
+            "bulk_options": "Standard",
+        })
+        self.assertEqual(response.status_code, 302)
+
+        acc = Accommodation.objects.get(name="Read Aloud")
+        self.assertEqual(acc.category, "Presentation")
+        self.assertIsNotNone(acc.section_category_id)
+        self.assertEqual(acc.section_category.name, "Accessibility")
+
+    def test_section_picker_reuses_existing_section(self):
+        existing = AccommodationCategory.objects.create(name="Timing", order=1)
+        response = self.client.post(reverse("desi:create_accommodation"), {
+            "name": "Extra Time",
+            "code": "ET",
+            "category": "Timing",
+            "section_category_id": str(existing.id),
+            "bulk_options": "Standard",
+        })
+        self.assertEqual(response.status_code, 302)
+        acc = Accommodation.objects.get(name="Extra Time")
+        self.assertEqual(acc.section_category_id, existing.id)
+
+    def test_admin_ordering_persists_sections_and_supports(self):
+        cat_a = AccommodationCategory.objects.create(name="Alpha", order=1)
+        cat_b = AccommodationCategory.objects.create(name="Beta", order=2)
+        acc1 = Accommodation.objects.create(name="One", section_category=cat_a, order=1)
+        acc2 = Accommodation.objects.create(name="Two", section_category=cat_a, order=2)
+        acc3 = Accommodation.objects.create(name="Three", section_category=cat_b, order=1)
+
+        response = self.client.post(reverse("desi:save_desi_order"), {
+            "category_order": [str(cat_b.id), str(cat_a.id)],
+            f"support_order_{cat_a.id}": [str(acc2.id), str(acc1.id)],
+            f"support_order_{cat_b.id}": [str(acc3.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+
+        cat_a.refresh_from_db(); cat_b.refresh_from_db()
+        acc1.refresh_from_db(); acc2.refresh_from_db()
+        self.assertEqual(cat_b.order, 1)
+        self.assertEqual(cat_a.order, 2)
+        self.assertEqual(acc2.order, 1)
+        self.assertEqual(acc1.order, 2)
+
+    def test_workspace_matrix_groups_follow_section_order(self):
+        cat_a = AccommodationCategory.objects.create(name="Alpha", order=2)
+        cat_b = AccommodationCategory.objects.create(name="Beta", order=1)
+        for acc in (
+            Accommodation.objects.create(name="One", section_category=cat_a, order=1),
+            Accommodation.objects.create(name="Two", section_category=cat_b, order=1),
+        ):
+            opt = AccommodationOption.objects.create(accommodation=acc, name="Standard")
+            self.assessment.supported_options.add(opt)
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        groups = response.context["category_groups"]
+        self.assertEqual([g["category"] for g in groups], [cat_b, cat_a])
+
+    def test_save_order_moves_support_between_sections(self):
+        cat_a = AccommodationCategory.objects.create(name="Alpha", order=1)
+        cat_b = AccommodationCategory.objects.create(name="Beta", order=2)
+        acc = Accommodation.objects.create(name="Mover", section_category=cat_a, order=1)
+
+        # Posting the support under Beta's list moves it into Beta.
+        response = self.client.post(reverse("desi:save_desi_order"), {
+            "category_order": [str(cat_a.id), str(cat_b.id)],
+            f"support_order_{cat_b.id}": [str(acc.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        acc.refresh_from_db()
+        self.assertEqual(acc.section_category_id, cat_b.id)
+        self.assertEqual(acc.order, 1)
+
+        # Posting it under ``none`` clears its section.
+        response = self.client.post(reverse("desi:save_desi_order"), {
+            "category_order": [str(cat_a.id), str(cat_b.id)],
+            "support_order_none": [str(acc.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        acc.refresh_from_db()
+        self.assertIsNone(acc.section_category_id)
+
+    def test_admin_dashboard_links_to_organization_page(self):
+        response = self.client.get(reverse("desi:admin_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("desi:support_organization"))
+
+    def test_support_organization_page_renders_and_creates_section(self):
+        response = self.client.get(reverse("desi:support_organization"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Support Organization")
+        self.assertContains(response, "Create Section")
+
+        response = self.client.post(reverse("desi:support_organization"), {"name": "Accessibility"})
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(AccommodationCategory.objects.filter(name="Accessibility").exists())
+
+    def test_support_organization_reuses_existing_section_name(self):
+        AccommodationCategory.objects.create(name="Timing", order=1)
+        self.client.post(reverse("desi:support_organization"), {"name": "timing"})
+        self.assertEqual(AccommodationCategory.objects.filter(name__iexact="timing").count(), 1)
+
+    def test_support_organization_lists_carry_section_keys(self):
+        cat = AccommodationCategory.objects.create(name="Alpha", order=1)
+        Accommodation.objects.create(name="One", section_category=cat, order=1)
+        Accommodation.objects.create(name="Loose", order=1)
+
+        response = self.client.get(reverse("desi:support_organization"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        # Each support list declares the section it represents and the page
+        # rewrites hidden input names on drop so moves persist.
+        self.assertIn(f'data-section-key="{cat.id}"', html)
+        self.assertIn('data-section-key="none"', html)
+        self.assertIn("syncSupportInputNames", html)
+
+    def test_delete_section_category_moves_supports_to_uncategorized(self):
+        cat = AccommodationCategory.objects.create(name="To Delete", order=1)
+        acc1 = Accommodation.objects.create(name="Support 1", section_category=cat, order=1)
+        acc2 = Accommodation.objects.create(name="Support 2", section_category=cat, order=2)
+
+        response = self.client.post(reverse("desi:delete_section_category", args=[cat.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(response, reverse("desi:support_organization"))
+
+        # Verify category is deleted
+        self.assertFalse(AccommodationCategory.objects.filter(id=cat.id).exists())
+
+        # Verify accommodations are moved to non-section (section_category is None)
+        acc1.refresh_from_db()
+        acc2.refresh_from_db()
+        self.assertIsNone(acc1.section_category)
+        self.assertIsNone(acc2.section_category)
+
+    def test_delete_section_category_requires_admin(self):
+        cat = AccommodationCategory.objects.create(name="Protected Section", order=1)
+        self.client.logout()
+        User = get_user_model()
+        user = User.objects.create_user(username='regular_desi_user', password='password')
+        self.client.force_login(user)
+
+        response = self.client.post(reverse("desi:delete_section_category", args=[cat.id]))
+        self.assertRedirects(response, reverse("landing:index"))
+        self.assertTrue(AccommodationCategory.objects.filter(id=cat.id).exists())
+

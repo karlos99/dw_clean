@@ -116,7 +116,7 @@
     </aside>
 
     <!-- RIGHT PANEL: Workspace View (Scrollable) -->
-    <main id="workspace-container" class="flex-1 overflow-y-auto p-6 md:p-8">
+    <main id="workspace-container" class="flex-1 overflow-auto p-6 md:p-8 desi-workspace-scroll">
         {% if student %}
             {% include "desi/partials/workspace_form.html" %}
         {% else %}
@@ -131,7 +131,20 @@
 
     <!-- CLIENT-SIDE OPTION SYNCHRONIZATION AND SIDEBAR INTERACTION -->
     <script>
+        function desiSyncMatrixSticky() {
+            const profile = document.getElementById('desi-student-profile-sticky');
+            const workspace = document.getElementById('workspace-container');
+            const wrap = document.getElementById('desi-matrix-wrap');
+            if (!profile || !workspace) return;
+            const height = Math.ceil(profile.getBoundingClientRect().height);
+            workspace.style.setProperty('--desi-profile-offset', `${height}px`);
+            if (wrap) wrap.style.setProperty('--desi-profile-offset', `${height}px`);
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
+            desiSyncMatrixSticky();
+            window.addEventListener('resize', desiSyncMatrixSticky);
+
             const schoolSelect = document.getElementById('school');
             const gradeSelect = document.getElementById('grade');
             const filterForm = document.getElementById('desi-student-filter-form');
@@ -198,68 +211,162 @@
                 }
             });
 
-            // 2. Shared option synchronization across select dropdowns
-            window.isSyncing = false;
-            function sync(accommodationId, optionValue) {
-                if (window.isSyncing) return;
-                window.isSyncing = true;
+            // 2. Designated supports matrix: dependencies, synchronization, popover
+            function supportInfoMap() {
+                const el = document.getElementById('desi-support-info');
+                if (!el) return {};
+                try { return JSON.parse(el.textContent) || {}; } catch (err) { return {}; }
+            }
 
-                try {
-                    document.querySelectorAll(`select.acc-option-select[data-accommodation-id="${accommodationId}"]`).forEach(select => {
-                        const hasOption = Array.from(select.options).some(o => o.value == optionValue);
-                        if (hasOption || optionValue === '') {
-                            if (select.value != optionValue) {
-                                select.value = optionValue;
-                            }
-                        }
-                    });
-                } finally {
-                    window.isSyncing = false;
-                }
+            function matrixSelects() {
+                return Array.from(document.querySelectorAll('select.acc-option-select'));
+            }
+
+            function syncAccommodationGroup(accId, value) {
+                matrixSelects().forEach(select => {
+                    if (select.dataset.accommodationId !== String(accId)) return;
+                    if (select.disabled) return;
+                    if (value === '') { select.value = ''; return; }
+                    const option = Array.from(select.options).find(o => o.value === value);
+                    if (option) select.value = value;
+                });
+            }
+
+            function rowHasSelection(row) {
+                const select = row.querySelector('select.acc-option-select');
+                if (select && select.value !== '') return true;
+                const checkbox = row.querySelector('input[name="student_supports"]');
+                return !!(checkbox && checkbox.checked);
+            }
+
+            function clearRowSelection(row) {
+                const select = row.querySelector('select.acc-option-select');
+                if (select) select.value = '';
+                const checkbox = row.querySelector('input[name="student_supports"]');
+                if (checkbox) checkbox.checked = false;
             }
 
             function applyDependencies() {
-                const selectedOptionIds = new Set(
-                    Array.from(document.querySelectorAll('select.acc-option-select'))
-                        .map(s => s.value)
-                        .filter(v => v)
-                );
-
-                let changed = false;
-                document.querySelectorAll('.support-card').forEach((card) => {
-                    const depOptionId = card.getAttribute('data-depends-on-option-id');
-                    const isHidden = depOptionId && selectedOptionIds.has(depOptionId);
-                    card.style.display = isHidden ? 'none' : '';
-
-                    if (isHidden) {
-                        card.querySelectorAll('select.acc-option-select').forEach((select) => {
-                            if (select.value !== '') {
-                                select.value = '';
-                                changed = true;
-                            }
-                        });
-                    }
-                });
-
-                if (changed) {
-                    applyDependencies();
+                let guard = 0;
+                while (guard++ < 25) {
+                    let changed = false;
+                    const ids = new Set(matrixSelects().map(s => s.value).filter(v => v));
+                    document.querySelectorAll('tr.support-row').forEach(row => {
+                        const dep = row.dataset.dependsOnOptionId;
+                        if (!dep) return;
+                        const isHidden = ids.has(dep);
+                        row.style.display = isHidden ? 'none' : '';
+                        if (isHidden && rowHasSelection(row)) {
+                            clearRowSelection(row);
+                            changed = true;
+                        }
+                    });
+                    if (!changed) break;
                 }
             }
 
-            document.addEventListener('change', (e) => {
-                if (e.target.matches('.acc-option-select')) {
-                    const accId = e.target.getAttribute('data-accommodation-id');
-                    sync(accId, e.target.value);
-                    applyDependencies();
+            function hideSupportPopover() {
+                const pop = document.getElementById('desi-support-popover');
+                if (pop) pop.classList.add('hidden');
+            }
+
+            function showSupportPopover(anchor, accId) {
+                const info = supportInfoMap()[String(accId)];
+                const pop = document.getElementById('desi-support-popover');
+                if (!pop || !info) return;
+
+                document.getElementById('desi-popover-name').textContent = info.code ? `${info.name} (${info.code})` : info.name;
+                const metaParts = [];
+                if (info.section_category) metaParts.push(info.section_category);
+                if (info.category) metaParts.push(info.category);
+                document.getElementById('desi-popover-meta').textContent = metaParts.join(' · ');
+                const desc = document.getElementById('desi-popover-description');
+                desc.textContent = info.description || '';
+                desc.classList.toggle('hidden', !info.description);
+
+                const resWrap = document.getElementById('desi-popover-resources');
+                resWrap.innerHTML = '';
+                (info.resources || []).forEach(res => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded border border-blue-100';
+                    const icon = res.kind === 'youtube' ? '🎥' : res.kind === 'video' ? '📺' : res.kind === 'pdf' ? '📄' : '🔗';
+                    btn.textContent = `${icon} ${res.label}`;
+                    btn.addEventListener('click', () => {
+                        window.dispatchEvent(new CustomEvent('desi-open-resource', { detail: { label: res.label, url: res.url } }));
+                    });
+                    resWrap.appendChild(btn);
+                });
+
+                pop.classList.remove('hidden');
+                const rect = anchor.getBoundingClientRect();
+                const popRect = pop.getBoundingClientRect();
+                let left = Math.min(rect.left, window.innerWidth - popRect.width - 12);
+                left = Math.max(12, left);
+                let top = rect.bottom + 8;
+                if (top + popRect.height > window.innerHeight - 12) {
+                    top = Math.max(12, rect.top - popRect.height - 8);
                 }
+                pop.style.left = `${left}px`;
+                pop.style.top = `${top}px`;
+            }
+
+            document.addEventListener('change', (e) => {
+                const select = e.target.closest('select.acc-option-select');
+                if (select) {
+                    const accId = select.dataset.accommodationId;
+                    if (accId) syncAccommodationGroup(accId, select.value);
+                    applyDependencies();
+                    if (select.value) {
+                        showSupportPopover(select, accId);
+                    } else {
+                        hideSupportPopover();
+                    }
+                    return;
+                }
+                const checkbox = e.target.closest('input[name="student_supports"]');
+                if (checkbox) {
+                    applyDependencies();
+                    if (checkbox.checked) {
+                        const row = checkbox.closest('tr.support-row');
+                        if (row) showSupportPopover(checkbox, row.dataset.accommodationId);
+                    } else {
+                        hideSupportPopover();
+                    }
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                const infoBtn = e.target.closest('[data-support-info]');
+                if (infoBtn) {
+                    showSupportPopover(infoBtn, infoBtn.dataset.supportInfo);
+                    return;
+                }
+                if (e.target.closest('[data-popover-close]')) {
+                    hideSupportPopover();
+                    return;
+                }
+                const pop = document.getElementById('desi-support-popover');
+                if (pop && !pop.classList.contains('hidden') && !pop.contains(e.target)
+                    && !e.target.closest('select.acc-option-select') && !e.target.closest('input[name="student_supports"]')) {
+                    hideSupportPopover();
+                }
+            });
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') hideSupportPopover();
             });
 
             document.body.addEventListener('htmx:afterSwap', (e) => {
                 if (e.target && e.target.id === 'workspace-container') {
+                    hideSupportPopover();
                     applyDependencies();
+                    desiSyncMatrixSticky();
+                    requestAnimationFrame(desiSyncMatrixSticky);
                 }
             });
 
+            hideSupportPopover();
             applyDependencies();
         });
     </script>

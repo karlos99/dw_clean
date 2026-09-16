@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load desi_tags %}
 
 {% block title %}DESI Export Data - DS Data{% endblock %}
 
@@ -45,7 +46,7 @@
         </div>
         <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
             <h2 class="text-sm font-bold text-slate-900">Save Current Configuration</h2>
-            <p class="mt-1 text-xs text-slate-500">Store the current school year, assessments, columns, and export settings for reuse later.</p>
+            <p class="mt-1 text-xs text-slate-500">Store the current student school year, assessments, columns, and export settings for reuse later.</p>
             <div class="mt-3 space-y-3">
                 <div>
                     <label for="save_configuration_name" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Configuration Name</label>
@@ -65,7 +66,7 @@
         <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-6">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label for="school_year" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">School Year</label>
+                    <label for="school_year" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Student School Year</label>
                     <input type="text" id="school_year" name="school_year" value="{{ school_year }}" class="block w-full rounded border-slate-300 text-sm py-2 px-3 focus:border-blue-500 focus:ring-blue-500">
                 </div>
                 <div>
@@ -103,13 +104,77 @@
                         {{ ast.name }}{% if ast.subject %} ({{ ast.subject }}){% endif %}
                     </label>
                     {% empty %}
-                    <div class="text-sm text-slate-500 italic">No active assessments found for {{ school_year }}.</div>
+                    <div class="text-sm text-slate-500 italic">No active assessments found.</div>
                     {% endfor %}
                 </div>
                 <p class="mt-2 text-xs text-slate-500">If multiple assessments are selected, students can appear on multiple rows.</p>
             </div>
         </div>
 
+        <!-- STEP 2: Designated Supports selection -->
+        <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-200 bg-slate-900 text-white flex items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-sm font-bold">Designated Supports to Export</h2>
+                    <p class="text-[11px] text-slate-300 mt-1">Pick which supports become their own columns. Each support's cell exports the selected option's <strong>code</strong> (switch to Option Name under Support Column Value above).</p>
+                </div>
+                <div class="flex gap-1 text-[10px] font-bold shrink-0">
+                    <button type="button" data-support-action="select-all" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Select all</button>
+                    <button type="button" data-support-action="select-none" class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Clear all</button>
+                </div>
+            </div>
+            <div class="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[28rem] overflow-y-auto">
+                {% for support in supports %}
+                <label class="flex items-start gap-2 rounded border border-slate-200 bg-slate-50 p-3 cursor-pointer hover:border-blue-300 transition">
+                    <input type="checkbox" name="include__support__{{ support.id }}" value="on"
+                           data-support-picker {% if support.id in selected_support_ids %}checked{% endif %}
+                           class="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                    <span class="min-w-0 flex-1">
+                        <span class="flex items-center gap-1.5 flex-wrap">
+                            <span class="text-xs font-bold text-slate-800">{{ support.name }}</span>
+                            {% if support.code %}<span class="font-mono text-[10px] text-slate-400 uppercase">{{ support.code }}</span>{% endif %}
+                            {% if support.tag %}<span class="px-1 py-0.5 rounded bg-slate-800 text-slate-100 text-[9px] font-bold uppercase">{{ support.tag }}</span>{% endif %}
+                        </span>
+                        <span class="block text-[10px] text-slate-500 mt-1">{{ support.assessments|join:", " }}</span>
+                    </span>
+                </label>
+                {% empty %}
+                <div class="col-span-full text-sm text-slate-500 italic">No designated supports found for the selected assessments.</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- QUICK PREVIEW -->
+        {% if preview_active %}
+        <div class="bg-white border border-emerald-300 rounded-lg shadow-sm overflow-hidden">
+            <div class="px-6 py-3 border-b border-emerald-200 bg-emerald-50 flex items-center justify-between">
+                <h2 class="text-sm font-bold text-emerald-900">Quick Preview (first {{ preview_rows|length }} rows)</h2>
+                <span class="text-[11px] text-emerald-700">Column order and headers below are what the CSV will contain.</span>
+            </div>
+            <div class="overflow-x-auto max-h-96">
+                <table class="min-w-full divide-y divide-slate-200 text-xs">
+                    <thead class="bg-slate-50 sticky top-0">
+                        <tr>
+                            {% for col in preview_columns %}
+                            <th class="px-3 py-2 text-left font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">{{ col.header }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-slate-100">
+                        {% for row in preview_rows %}
+                        <tr>
+                            {% for col in preview_columns %}
+                            <td class="px-3 py-1.5 text-slate-700 whitespace-nowrap">{{ row|get_item:col.key|default:"" }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- STEP 3: Column Configuration -->
         <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
             <div class="px-6 py-4 border-b border-slate-200 bg-slate-900 text-white">
                 <h2 class="text-sm font-bold">Column Configuration</h2>
@@ -166,6 +231,9 @@
             <button type="submit" name="save_configuration" value="1" class="inline-flex items-center px-6 py-2.5 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
                 Save Configuration
             </button>
+            <button type="submit" name="preview" value="1" class="inline-flex items-center px-6 py-2.5 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">
+                Preview
+            </button>
             <button type="submit" class="inline-flex items-center px-6 py-2.5 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
                 Export CSV
             </button>
@@ -220,6 +288,26 @@
             });
         };
 
+        const syncSupportPickers = () => {
+            document.querySelectorAll('input[data-support-picker]').forEach((picker) => {
+                const twin = document.querySelector(`input[name="${picker.name}"][data-column-include]`);
+                if (twin) picker.checked = twin.checked;
+            });
+        };
+
+        document.querySelectorAll('[data-support-action]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const action = btn.getAttribute('data-support-action');
+                const on = action === 'select-all';
+                document.querySelectorAll('input[data-support-picker]').forEach((picker) => {
+                    picker.checked = on;
+                    const twin = document.querySelector(`input[name="${picker.name}"][data-column-include]`);
+                    if (twin) twin.checked = on;
+                });
+                updateEndpoint();
+            });
+        });
+
         document.querySelectorAll('[data-col-action]').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const action = btn.getAttribute('data-col-action');
@@ -227,11 +315,21 @@
                 if (action === 'select-none') setInclude(() => false);
                 if (action === 'select-student') setInclude((row) => row.dataset.group === 'student');
                 if (action === 'select-support') setInclude((row) => row.dataset.group === 'support');
+                syncSupportPickers();
                 updateEndpoint();
             });
         });
 
-        form.addEventListener('change', updateEndpoint);
+        form.addEventListener('change', (e) => {
+            if (e.target.matches('input[data-support-picker], input[data-column-include]') &&
+                e.target.name && e.target.name.indexOf('include__support__') === 0) {
+                const checked = e.target.checked;
+                document.querySelectorAll(`input[name="${e.target.name}"]`).forEach((box) => {
+                    box.checked = checked;
+                });
+            }
+            updateEndpoint();
+        });
         form.addEventListener('input', updateEndpoint);
         if (copyButton) {
             copyButton.addEventListener('click', async () => {

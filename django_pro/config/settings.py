@@ -4,6 +4,12 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR.parent / '.env')
+except ImportError:
+    pass
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
@@ -12,9 +18,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-6p_2k_ar+j(1kf%)z1!$8h_ct(te(qby_i@qq9v^s_r3orx0j1'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(',')
+ALLOWED_HOSTS = (os.getenv('ALLOWED_HOSTS') or 'localhost,127.0.0.1,*').split(',')
 
 
 # Application definition
@@ -49,6 +55,7 @@ MIDDLEWARE = [
     'django.middleware.gzip.GZipMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    'clickhouse_utils.middleware.AnalyticsTimingMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -64,21 +71,45 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'config.urls'
 
-TEMPLATES = [
-    {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-                'users.context_processors.navigation_pages',
-            ],
-        },
-    },
+_TEMPLATE_CONTEXT_PROCESSORS = [
+    'django.template.context_processors.request',
+    'django.contrib.auth.context_processors.auth',
+    'django.contrib.messages.context_processors.messages',
+    'users.context_processors.navigation_pages',
 ]
+
+if DEBUG:
+    TEMPLATES = [
+        {
+            'BACKEND': 'django.template.backends.django.DjangoTemplates',
+            'DIRS': [BASE_DIR / 'templates'],
+            'APP_DIRS': True,
+            'OPTIONS': {
+                'context_processors': _TEMPLATE_CONTEXT_PROCESSORS,
+            },
+        },
+    ]
+else:
+    # Production: cache compiled templates so requests do not re-read/re-compile.
+    TEMPLATES = [
+        {
+            'BACKEND': 'django.template.backends.django.DjangoTemplates',
+            'DIRS': [BASE_DIR / 'templates'],
+            'APP_DIRS': False,
+            'OPTIONS': {
+                'loaders': [
+                    (
+                        'django.template.loaders.cached.Loader',
+                        [
+                            'django.template.loaders.filesystem.Loader',
+                            'django.template.loaders.app_directories.Loader',
+                        ],
+                    ),
+                ],
+                'context_processors': _TEMPLATE_CONTEXT_PROCESSORS,
+            },
+        },
+    ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
@@ -129,6 +160,9 @@ DATABASES = {
         'PASSWORD': os.getenv('POSTGRES_PASSWORD'),
         'HOST': os.getenv('POSTGRES_HOST'),
         'PORT': os.getenv('POSTGRES_PORT'),
+        # Reuse DB connections across requests instead of reconnecting per request.
+        'CONN_MAX_AGE': int(os.getenv('CONN_MAX_AGE', '60')),
+        'CONN_HEALTH_CHECKS': True,
     },
     'clickhouse': {
         'ENGINE': 'django.db.backends.dummy',
@@ -194,8 +228,8 @@ STATIC_URL = 'static/'
 
 # Security settings
 SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'True') == 'True'
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'True') == 'True'
+CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'True') == 'True'
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'SAMEORIGIN'
@@ -243,6 +277,25 @@ CACHES = {
     }
 }
 
+# Store sessions in the cache (backed by the DB) so authenticated requests do
+# not hit PostgreSQL for every session read.
+SESSION_ENGINE = os.getenv(
+    'SESSION_ENGINE', 'django.contrib.sessions.backends.cached_db')
+SESSION_CACHE_ALIAS = 'default'
+
+# In production, pre-compress static files at collectstatic time. Compressed
+# (non-manifest) storage has no missing-manifest failure mode if collectstatic
+# did not run. Async server support is not used here.
+if not DEBUG:
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage',
+        },
+    }
+
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -259,3 +312,6 @@ if 'test' in sys.argv:
             return None
     MIGRATION_MODULES = DisableMigrations()
     SECURE_SSL_REDIRECT = False
+    # Persistent connections must be disabled during tests so the test runner
+    # can drop the test database (lingering connections would block teardown).
+    DATABASES['default']['CONN_MAX_AGE'] = 0
