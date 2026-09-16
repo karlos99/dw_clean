@@ -528,3 +528,40 @@ class SurveyDataResolutionTests(SimpleTestCase):
 		self.assertIn('9000000002', data)
 		self.assertEqual(data['9000000002'][col_key_24], '3')
 
+	def test_get_mark_columns_orders_live_period_at_end(self):
+		from dataexploration.column_utils import get_mark_columns
+		from unittest.mock import patch, MagicMock
+
+		mock_rows = [
+			('2026-2027', 'English', 'English 10', 'P1'),
+			('2026-2027', 'English', 'English 10', 'Live'),
+			('2026-2027', 'English', 'English 10', 'Q1'),
+			('2026-2027', 'English', 'English 10', 'P2'),
+		]
+		mock_cursor = MagicMock()
+		mock_cursor.fetchall.return_value = mock_rows
+		mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+		mock_cursor.__exit__ = MagicMock(return_value=False)
+
+		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=mock_cursor):
+			with patch('django.core.cache.cache.get', return_value=None):
+				with patch('django.core.cache.cache.set'):
+					cols = get_mark_columns()
+
+		periods = list(cols['2026-2027']['English']['English 10'].keys())
+		self.assertEqual(periods, ['P1', 'P2', 'Q1', 'Live'])
+		self.assertEqual(periods[-1], 'Live')
+
+	def test_format_marks_cell_bolds_live(self):
+		from dataexploration.templatetags.dataexploration_tags import format_marks_cell
+
+		formatted = format_marks_cell('P1: A, Live: A+', 'markall_2026_2027_Math_1_MARKS')
+		self.assertIn('<span class="font-bold text-slate-900">Live</span>:', formatted)
+
+		formatted_single = format_marks_cell('Live', 'mark_2026_2027_Math_Algebra_Live')
+		self.assertIn('<span class="font-bold text-slate-900">Live</span>', formatted_single)
+
+		# Non-mark columns are untouched
+		self.assertEqual(format_marks_cell('Active', 'status'), 'Active')
+
+

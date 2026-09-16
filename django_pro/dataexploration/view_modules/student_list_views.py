@@ -1782,7 +1782,10 @@ def _load_students(request):
                                 marks_key = f"{umbrella}_{i}_MARKS"
                                 if i <= len(courses):
                                     course_name = list(courses.keys())[i - 1]
-                                    periods = courses[course_name]
+                                    periods = sorted(
+                                        courses[course_name],
+                                        key=lambda x: (1, str(x[0])) if str(x[0] or '').lower() == 'live' else (0, str(x[0]))
+                                    )
                                     marks_str = ', '.join(
                                         f"{p}: {m}" for p, m in periods if p and m
                                     )

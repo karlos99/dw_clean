@@ -1047,7 +1047,10 @@ def export_students_csv(request):
                                             marks_key = f"{umbrella}_{i}_MARKS"
                                             if i <= len(courses):
                                                 course_name = list(courses.keys())[i - 1]
-                                                periods = courses[course_name]
+                                                periods = sorted(
+                                                    courses[course_name],
+                                                    key=lambda x: (1, str(x[0])) if str(x[0] or '').lower() == 'live' else (0, str(x[0]))
+                                                )
                                                 # If this pair column is filtered by marking period
                                                 # and/or mark, only those entries are shown — mirror
                                                 # what load_students renders in the table.

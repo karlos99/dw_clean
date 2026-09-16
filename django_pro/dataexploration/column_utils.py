@@ -1000,13 +1000,19 @@ def invert_marks_to_assessment_first(mark_structure: dict) -> dict:
                     result[subject][course]['years'][year] = {}
                 result[subject][course]['years'][year] = periods
 
-    # Sort years descending within each course
+    # Sort years descending within each course, and sort periods with 'Live' at the end
     for subject in result:
         for course in result[subject]:
             yr = result[subject][course].get('years', {})
-            result[subject][course]['years'] = dict(
-                sorted(yr.items(), key=lambda x: x[0], reverse=True)
-            )
+            sorted_years = {}
+            for year, periods in sorted(yr.items(), key=lambda x: x[0], reverse=True):
+                sorted_years[year] = dict(
+                    sorted(
+                        periods.items(),
+                        key=lambda x: (1, x[0]) if str(x[0]).lower() == 'live' else (0, x[0]),
+                    )
+                )
+            result[subject][course]['years'] = sorted_years
     return result
 
 
@@ -1087,6 +1093,17 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
                 columns[year_val][subject_val][course_val] = {}
 
             columns[year_val][subject_val][course_val][period_val] = mark_key
+
+        # Sort periods within each course so 'Live' is always listed at the end
+        for year_val in columns:
+            for subject_val in columns[year_val]:
+                for course_val in columns[year_val][subject_val]:
+                    columns[year_val][subject_val][course_val] = dict(
+                        sorted(
+                            columns[year_val][subject_val][course_val].items(),
+                            key=lambda x: (1, x[0]) if str(x[0]).lower() == 'live' else (0, x[0]),
+                        )
+                    )
 
         # "All Marks" umbrella per subject — expands into course/marks wide pairs.
         # Keys are deterministic (markall_<year>_<subject>) so they can be
