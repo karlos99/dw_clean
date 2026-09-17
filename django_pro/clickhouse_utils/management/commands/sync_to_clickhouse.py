@@ -17,6 +17,11 @@ from django.db import connection
 from django.utils import timezone
 
 from clickhouse_utils.client import get_clickhouse_client
+from clickhouse_utils.marks_source_sql import (
+    STUDENT_MARKS_FROM_ALT_COUNT,
+    STUDENT_MARKS_FROM_ALT_SELECT,
+    STUDENT_MARKS_LIST_COLUMN_NAMES,
+)
 from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES, PROJECTION_DDL, get_all_ddl
 
 logger = logging.getLogger(__name__)
@@ -60,7 +65,7 @@ TABLE_PKS = {
 }
 
 TABLE_TS_COLS = {
-    'student_marks_list': 'updated_at',
+    # student_marks_list is rebuilt from student_marks_table_alt (always full sync).
     'schedule_list': 'updated_at',
     'mathr_recommendation': 'updated_at',
     'student_attendance': 'updated_at',
@@ -262,6 +267,16 @@ class Command(BaseCommand):
             ))
 
     def _sync_source_table(self, ch, ch_db, table, atomic, force_full, pg_fn_kwargs):
+        if table == 'student_marks_list':
+            self._full_replace_marks_from_alt(ch, ch_db, atomic)
+            pg_count = self._pg_count(table)
+            self._record_meta(
+                ch, ch_db, table,
+                pg_count if pg_count is not None else self._ch_count(ch, ch_db, table) or 0,
+                None, 'full-alt',
+            )
+            return 'full-alt'
+
         pg_fn = _pg_table_fn(table=table, **pg_fn_kwargs)
         ts_col = TABLE_TS_COLS.get(table)
         watermark = cache.get(_watermark_key(table)) if ts_col and not force_full else None
@@ -335,6 +350,50 @@ class Command(BaseCommand):
         else:
             ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
         ch.command(f'INSERT INTO {ch_db}.{target} SELECT * FROM {pg_fn}')
+        if atomic:
+            ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
+            ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+
+    def _full_replace_marks_from_alt(self, ch, ch_db, atomic):
+        """Load ClickHouse student_marks_list from PostgreSQL student_marks_table_alt only."""
+        table = 'student_marks_list'
+        staging = f'{table}__sync'
+        target = staging if atomic else table
+        if atomic:
+            ch.command(f'CREATE TABLE IF NOT EXISTS {ch_db}.{staging} AS {ch_db}.{table}')
+            ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+        else:
+            ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
+
+        batch_size = 10_000
+        insert_table = f'{ch_db}.{target}'
+        col_names = list(STUDENT_MARKS_LIST_COLUMN_NAMES)
+        # ClickHouse MergeTree String columns are non-Nullable in our schema.
+        non_null_string_cols = {
+            'marks_id', 'stu_annual_key', 'ssid', 'school_year', 'mark_period',
+        }
+        col_indexes = {name: idx for idx, name in enumerate(col_names)}
+
+        def _sanitize_row(row):
+            row = list(row)
+            for col in non_null_string_cols:
+                idx = col_indexes[col]
+                if row[idx] is None:
+                    row[idx] = ''
+            return row
+
+        with connection.cursor() as cursor:
+            cursor.execute(STUDENT_MARKS_FROM_ALT_SELECT)
+            while True:
+                rows = cursor.fetchmany(batch_size)
+                if not rows:
+                    break
+                ch.insert(
+                    insert_table,
+                    [_sanitize_row(r) for r in rows],
+                    column_names=col_names,
+                )
+
         if atomic:
             ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
             ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
@@ -436,6 +495,7 @@ class Command(BaseCommand):
                     ON cs.ssid = r.ssid AND cs.school_year = r.school_year
             """
         if table == 'analytics_student_marks':
+            # sm comes from CH student_marks_list, itself loaded from PG student_marks_table_alt.
             return f"""
                 INSERT INTO {ch_db}.{target}
                 SELECT
@@ -445,7 +505,8 @@ class Command(BaseCommand):
                     sm.mark_period, sm.mark, sm.created_at, sm.updated_at,
                     cs.student_name, cs.grade, cs.status, cs.gender, cs.school
                 FROM {ch_db}.student_marks_list sm
-                LEFT JOIN {ch_db}.current_student cs ON cs.stu_annual_key = sm.stu_annual_key
+                LEFT JOIN {ch_db}.current_student cs
+                    ON cs.ssid = sm.ssid AND cs.school_year = sm.school_year
             """
         pg = pg_fn_kwargs or {}
         if table == 'analytics_ap_results':
@@ -582,7 +643,10 @@ class Command(BaseCommand):
     def _pg_count(self, table):
         try:
             with connection.cursor() as cursor:
-                cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
+                if table == 'student_marks_list':
+                    cursor.execute(STUDENT_MARKS_FROM_ALT_COUNT)
+                else:
+                    cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
                 return int(cursor.fetchone()[0])
         except Exception:
             return None

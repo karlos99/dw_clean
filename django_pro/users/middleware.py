@@ -50,10 +50,10 @@ class ActiveRoleMiddleware:
             if user_schools_list or unrestricted:
                 # Pre-fetch available schools for the UI
                 # We order by name for the dropdown
-                if user_schools_list:
-                    request.user.available_schools = StudataSchool.objects.filter(state_id__in=user_schools_list).order_by('school_name')
-                else:
+                if unrestricted:
                     request.user.available_schools = StudataSchool.objects.order_by('school_name')
+                else:
+                    request.user.available_schools = StudataSchool.objects.filter(state_id__in=user_schools_list).order_by('school_name')
 
                 active_school_id = request.session.get('active_school_id')
                 if active_school_id is None:

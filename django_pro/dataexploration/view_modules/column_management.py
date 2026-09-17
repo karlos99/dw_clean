@@ -91,6 +91,8 @@ def get_enabled_columns():
     for virt, related in _JSON_VIRTUAL_AUTO_INCLUDE.items():
         if virt not in allowed_set and any(r in allowed_set for r in related):
             allowed_set.add(virt)
+    if 'picture' not in allowed_set and any(c in allowed_set for c in ('ssid', 'student_id', 'student_name')):
+        allowed_set.add('picture')
 
     filtered_defs = {k: v for k, v in COLUMN_DEFINITIONS.items() if k in allowed_set}
 
@@ -239,6 +241,8 @@ def race_list_unnest_select_expr(table_alias: str = 'cs') -> str:
 
 def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False, use_students=False, use_eht=False):
     """Generate SQL expression for a column based on available tables."""
+    if col == 'picture':
+        return None, None
     if col == 'elem_teacher_name' and use_eht:
         return "eht.elem_teacher_name", "elem_teacher_name"
     if col == 'ltel' and use_students:

@@ -87,6 +87,7 @@ services:
       - ./django_pro/files/mediafiles:/app/django_pro/files/mediafiles
       - ./ref:/app/ref
       - ./logs:/app/logs
+      - ./pictures:/app/pictures:ro
     depends_on:
       postgres:
         condition: service_healthy

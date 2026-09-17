@@ -45,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const studentSummaryUrlTemplate = appDataEl.dataset.studentSummaryUrlTemplate || '';
     const studentSummaryPartialUrlTemplate = appDataEl.dataset.studentSummaryPartialUrlTemplate || '';
     const studentSummaryWarmUrl = appDataEl.dataset.studentSummaryWarmUrl || '';
+    const studentPictureUrlTemplate = appDataEl.dataset.studentPictureUrlTemplate || '';
     const buildStudentSummaryUrl = (ssid) => {
         if (!studentSummaryUrlTemplate) return '';
         if (!ssid) return '';
@@ -54,6 +55,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!studentSummaryPartialUrlTemplate) return '';
         if (!ssid) return '';
         return studentSummaryPartialUrlTemplate.replace('SSID_PLACEHOLDER', encodeURIComponent(String(ssid)));
+    };
+    const buildStudentPictureUrl = (ssid) => {
+        if (!studentPictureUrlTemplate || !ssid) return '';
+        return studentPictureUrlTemplate.replace('SSID_PLACEHOLDER', encodeURIComponent(String(ssid)));
+    };
+    const isPictureCol = (col) => String(col || '') === 'picture';
+    const pinPictureFirst = (cols) => {
+        if (!Array.isArray(cols) || cols.length < 2) return cols;
+        const i = cols.findIndex(isPictureCol);
+        if (i <= 0) return cols;
+        const next = cols.slice();
+        const [pic] = next.splice(i, 1);
+        next.unshift(pic);
+        return next;
     };
 
     const summaryOverlayEl = document.getElementById('student-summary-overlay');
@@ -811,6 +826,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const renderSelectedColumns = () => {
+        selectedColumns = pinPictureFirst(selectedColumns);
         if (selectedCountEl) selectedCountEl.textContent = selectedColumns.length;
         if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = String(selectedColumns.length);
         const selectedLabels = selectedColumns
@@ -1078,7 +1094,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (payload.grade !== undefined && gradeSelect) gradeSelect.value = payload.grade || '';
         if (payload.status !== undefined && statusInput) statusInput.value = payload.status || '';
 
-        const columns = selectedColumns || [];
+        const columns = pinPictureFirst(selectedColumns || []);
+        selectedColumns = columns;
         const students = payload.students || [];
         const total = payload.total || 0;
         const pageCount = payload.total_pages || 1;
@@ -1140,7 +1157,12 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '<col style="width:44px">';
         columns.forEach((col) => {
             const width = columnWidths[col];
-            const widthStyle = Number.isFinite(width) ? ` style="width:${Math.max(60, width)}px"` : '';
+            if (isPictureCol(col) && !Number.isFinite(width)) {
+                html += `<col data-col="${escapeHtml(col)}" style="width:44px">`;
+                return;
+            }
+            const minW = isPictureCol(col) ? 40 : 60;
+            const widthStyle = Number.isFinite(width) ? ` style="width:${Math.max(minW, width)}px"` : '';
             html += `<col data-col="${escapeHtml(col)}"${widthStyle}>`;
         });
         html += '</colgroup>';
@@ -1153,6 +1175,14 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '</th>';
 
         columns.forEach((col, index) => {
+            if (isPictureCol(col)) {
+                html += `<th data-column="${escapeHtml(col)}" class="relative group px-2 py-3 text-left text-xs font-bold text-slate-300 uppercase bg-slate-900 border-b border-slate-800 select-none">`;
+                html += `<div class="flex items-center justify-between gap-1">`;
+                html += `<span>${escapeHtml(getColumnLabel(col))}</span>`;
+                html += `<button draggable="false" type="button" data-action="remove-column" data-column="${escapeHtml(col)}" class="opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 hover:text-red-400 hover:bg-slate-800 rounded p-0.5" title="Remove column">✕</button>`;
+                html += `</div></th>`;
+                return;
+            }
             const label = getColumnLabel(col);
             const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
             const hasActiveFilter = Array.isArray(filters[col]) && filters[col].length > 0;
@@ -1318,6 +1348,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 columns.forEach((col) => {
+                    if (isPictureCol(col)) {
+                        const picSrc = ssid ? buildStudentPictureUrl(ssid) : '';
+                        html += `<td class="px-2 py-1">`;
+                        if (picSrc) {
+                            html += `<img src="${escapeHtml(picSrc)}" alt="" width="24" height="24" loading="lazy" decoding="async" class="h-6 w-6 rounded-full object-cover bg-slate-100 ring-1 ring-slate-200">`;
+                        } else {
+                            html += `—`;
+                        }
+                        html += `</td>`;
+                        return;
+                    }
                     const value = formatValueForColumn(col, student[col]);
                     if ((col === 'ssid' || col === 'student_id') && student?.ssid) {
                         const href = buildStudentSummaryUrl(student.ssid);

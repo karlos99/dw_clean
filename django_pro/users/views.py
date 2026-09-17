@@ -790,12 +790,10 @@ def switch_role(request):
                   school_name = 'All schools'
              elif school_id:
                   # Verify user has access to this school (check JSONField)
+                  from dataexploration.utils import is_unrestricted
                   user_schools_list = request.user.schools if isinstance(request.user.schools, list) else []
                   # Unrestricted roles can switch to any school
-                  unrestricted = (
-                       request.user.is_superuser
-                       or request.user.roles.filter(name__in=['Project Admin', 'District Admin']).exists()
-                  )
+                  unrestricted = is_unrestricted(request.user)
                   if school_id in user_schools_list or unrestricted:
                        request.session['active_school_id'] = school_id
                        prefs = request.user.preferences if isinstance(request.user.preferences, dict) else {}

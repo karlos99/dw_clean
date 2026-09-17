@@ -8,11 +8,14 @@ import csv
 import hashlib
 
 from ..models import SavedQuery, StudentList
-from ..constants import COLUMN_DEFINITIONS
+from ..constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
 from ..column_utils import (
     _get_display_name,
     export_cell,
     enrich_students_tests_marks,
+    _fetch_marks_live_from_alt,
+    group_marks_by_ssid_course,
+    markall_course_filter_fn,
     parse_markall_key,
     markall_key as _markall_key,
     parse_sat_column_key,
@@ -312,6 +315,7 @@ def export_students_csv(request):
         if isinstance(c, str)
         and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
         and c in COLUMN_DEFINITIONS
+        and c not in VIRTUAL_COLUMNS
     ]
 
     enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
@@ -1018,30 +1022,21 @@ def export_students_csv(request):
                     if markall_years:
                         try:
                             chunk_ssids = [str(s.get('ssid') or '').strip() for s in chunk_students if str(s.get('ssid') or '').strip()]
-                            if chunk_ssids:
+                            chunk_ids = [str(s.get('student_id') or '').strip() for s in chunk_students if str(s.get('student_id') or '').strip()]
+                            if chunk_ssids or chunk_ids:
                                 for (year, subject), umbrella in markall_years.items():
                                     n = markall_max.get((year, subject), 0)
-                                    course_filter_sql, course_extra_params = markall_course_filter_parts(
-                                        subject, markall_excludes.get(umbrella, set())
+                                    excludes = markall_excludes.get(umbrella, set())
+                                    live_rows = _fetch_marks_live_from_alt(chunk_ssids, chunk_ids, [year])
+                                    by_ssid, by_student_id = group_marks_by_ssid_course(
+                                        live_rows,
+                                        subject=subject,
+                                        course_filter_fn=markall_course_filter_fn(subject, excludes),
                                     )
-                                    markall_sql = f"""
-                                        SELECT ssid, course_name, mark_period, mark
-                                        FROM analytics_student_marks sm
-                                        WHERE ssid = ANY(%s) AND school_year = %s AND subject = %s
-                                          {course_filter_sql}
-                                        ORDER BY ssid, course_name, mark_period
-                                    """
-                                    markall_rows = _fetchall_ch_or_pg(
-                                        markall_sql,
-                                        [chunk_ssids, year, subject] + course_extra_params,
-                                        markall_sql.replace('analytics_student_marks', 'student_marks_list'),
-                                    )
-                                    by_key = {}
-                                    for ssid_key, course, period, mark in markall_rows:
-                                        by_key.setdefault(str(ssid_key).strip(), {}).setdefault(course, []).append((period, mark))
                                     for student in chunk_students:
                                         ssid_key = str(student.get('ssid') or '').strip()
-                                        courses = by_key.get(ssid_key, {})
+                                        sid_key = str(student.get('student_id') or '').strip()
+                                        courses = by_ssid.get(ssid_key) or by_student_id.get(sid_key, {})
                                         for i in range(1, n + 1):
                                             course_key = f"{umbrella}_{i}_COURSE"
                                             marks_key = f"{umbrella}_{i}_MARKS"

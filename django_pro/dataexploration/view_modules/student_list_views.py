@@ -24,11 +24,14 @@ from ..column_utils import (
     get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns, _get_display_name,
     RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL,
     enrich_students_tests_marks,
+    _fetch_marks_live_from_alt,
+    group_marks_by_ssid_course,
+    markall_course_filter_fn,
     PL_SORT_SQL, SS_SORT_SQL, parse_apall_sort_key,
     parse_sat_column_key, sat_column_db_field,
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
-from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
+from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, VIRTUAL_COLUMNS
 from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
 from .student_data_utils import (
     get_current_student_columns,
@@ -1089,6 +1092,7 @@ def _load_students(request):
             if isinstance(c, str)
             and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
             and c in COLUMN_DEFINITIONS
+            and c not in VIRTUAL_COLUMNS
         ]
 
         # Build test column metadata from DB to avoid parsing issues (e.g. multi-word subjects)
@@ -1753,30 +1757,23 @@ def _load_students(request):
         if markall_years and students:
             try:
                 student_ssids_all = [str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()]
-                if student_ssids_all:
+                student_ids_all = [str(s.get('student_id') or '').strip() for s in students if str(s.get('student_id') or '').strip()]
+                if student_ssids_all or student_ids_all:
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
-                        course_filter_sql, course_extra_params = _markall_course_sql_parts(
-                            subject, _markall_course_excludes(year, subject)
+                        excludes = _markall_course_excludes(year, subject)
+                        live_rows = _fetch_marks_live_from_alt(
+                            student_ssids_all, student_ids_all, [year],
                         )
-                        markall_sql = f"""
-                            SELECT ssid, course_name, mark_period, mark
-                            FROM analytics_student_marks sm
-                            WHERE ssid = ANY(%s) AND school_year = %s AND subject = %s
-                              {course_filter_sql}
-                            ORDER BY ssid, course_name, mark_period
-                        """
-                        markall_rows = _fetchall_ch_or_pg(
-                            markall_sql,
-                            [student_ssids_all, year, subject] + course_extra_params,
-                            markall_sql.replace('analytics_student_marks', 'student_marks_list'),
+                        by_ssid, by_student_id = group_marks_by_ssid_course(
+                            live_rows,
+                            subject=subject,
+                            course_filter_fn=markall_course_filter_fn(subject, excludes),
                         )
-                        by_key = {}
-                        for ssid_key, course, period, mark in markall_rows:
-                            by_key.setdefault(str(ssid_key).strip(), {}).setdefault(course, []).append((period, mark))
                         for student in students:
                             ssid_key = str(student.get('ssid') or '').strip()
-                            courses = by_key.get(ssid_key, {})
+                            sid_key = str(student.get('student_id') or '').strip()
+                            courses = by_ssid.get(ssid_key) or by_student_id.get(sid_key, {})
                             for i in range(1, n + 1):
                                 course_key = f"{umbrella}_{i}_COURSE"
                                 marks_key = f"{umbrella}_{i}_MARKS"
