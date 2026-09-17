@@ -9,6 +9,7 @@ from studata.models import CurrentStudent
 from users.models import Role
 from desi.models import (
     Accommodation,
+    AccommodationCategory,
     AccommodationOption,
     AccommodationResource,
     Assessment,
@@ -257,27 +258,38 @@ class DesiWorkflowAndViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'id="student-list-item-student_key"')
         self.assertContains(response, 'hx-swap-oob="true"')
-        self.assertContains(response, 'Completed (2/2)')
+        html = response.content.decode()
+        self.assertIn('SBAC ELA', html)
+        self.assertIn('SBAC Math', html)
+        self.assertEqual(html.count('Completed</span>'), 2)
 
-    def test_shared_accommodations_grouping_on_workspace(self):
+    def test_workspace_matrix_groups_and_merges_shared_supports(self):
         self.client.force_login(self.admin_user)
         url = reverse('desi:assign_accommodations', args=[self.student.stu_annual_key])
 
-        # Since TTS has the same option 'Standard' in ELA and Math, it should be listed in shared_accommodations
+        # TTS has the same option 'Standard' on both tests, so it must appear as
+        # a single row whose cell is merged across both test columns.
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
-        
-        shared_accs = response.context['shared_accommodations']
-        self.assertEqual(len(shared_accs), 1)
-        self.assertEqual(shared_accs[0]['accommodation'], self.acc)
-        self.assertIn(self.assessment_math, shared_accs[0]['applies_to'])
-        self.assertIn(self.assessment_ela, shared_accs[0]['applies_to'])
 
-        # Since there are no unique/test-specific accommodations, assessment cards should show no unique accommodations
-        assessment_cards = response.context['assessment_cards']
-        self.assertEqual(len(assessment_cards), 2)
-        for card in assessment_cards:
-            self.assertEqual(len(card['accommodations']), 0)
+        columns = response.context['matrix_columns']
+        self.assertEqual(len(columns), 2)
+        self.assertEqual(
+            {col['assessment_id'] for col in columns},
+            {self.assessment_math.id, self.assessment_ela.id},
+        )
+
+        rows = [row for group in response.context['category_groups'] for row in group['rows']]
+        tts_rows = [row for row in rows if row['accommodation'] == self.acc]
+        self.assertEqual(len(tts_rows), 1)
+
+        cells = [seg['cell'] for seg in tts_rows[0]['segments'] if seg['kind'] == 'cell']
+        self.assertEqual(len(cells), 1)
+        self.assertEqual(cells[0]['colspan'], 2)
+        self.assertEqual(
+            set(cells[0]['test_ids']),
+            {self.assessment_math.id, self.assessment_ela.id},
+        )
 
     def test_create_accommodation_fails_when_no_assessments_exist(self):
         self.client.force_login(self.admin_user)
@@ -1001,10 +1013,11 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertIsNone(self.user.get_accessible_student_keys())
 
     def test_can_edit_matrix(self):
-        # Coordinator holding only Testing Coordinator is read-only.
         coord = User.objects.create_user(username="coord@test.com", email="coord@test.com", password="password123")
         coord.roles.add(self.coordinator_role)
-        self.assertFalse(can_edit_desi(coord, student=self.student))
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.assertTrue(can_edit_desi(coord, student=self.student))
 
         # Teacher default = edit.
         self.assertTrue(can_edit_desi(self.user, student=self.student))
@@ -1121,6 +1134,8 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertIn(self.student, report["pending_by_assessment"][assessment.id])
 
     def test_entered_supports_report(self):
+        from unittest.mock import patch
+
         from desi.report_utils import build_entered_supports_report
 
         accommodation = Accommodation.objects.create(name="Calculator", code="CALC")
@@ -1133,10 +1148,58 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         record.updated_by = updater
         record.save()
 
-        report = build_entered_supports_report("SCH-A", "2025-2026")
+        with patch(
+            "desi.report_utils.seis_support_detail_for_student",
+            return_value={
+                "labels": ["Text-to-Speech: Read aloud"],
+                "option_ids": {999},
+                "accommodation_ids": {888},
+            },
+        ):
+            report = build_entered_supports_report("SCH-A", "2025-2026")
         rows = {row["ssid"]: row for row in report["rows"]}
         self.assertIn("Calculator: Scientific", rows["coordssid"]["supports"])
+        self.assertIn("Text-to-Speech: Read aloud (SEIS)", rows["coordssid"]["supports"])
+        self.assertTrue(rows["coordssid"]["has_seis_supports"])
+        self.assertEqual(rows["coordssid"]["from_seis"], "Yes")
         self.assertEqual(rows["coordssid"]["updated_by"], "up@test.com")
+
+    def test_entered_supports_report_support_filter(self):
+        from desi.report_utils import build_entered_supports_report
+
+        accommodation = Accommodation.objects.create(name="Masking", code="MASK")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Covers", code="COV")
+        record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=self.student.stu_annual_key,
+        )
+        record.options.add(option)
+
+        other = CurrentStudent.objects.create(
+            stu_annual_key="other_support_student",
+            ssid="otherssid",
+            student_id="other",
+            student_name="Other Student",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        StudentAccommodation.objects.get_or_create(student_annual_key=other.stu_annual_key)
+
+        report = build_entered_supports_report(
+            "SCH-A",
+            "2025-2026",
+            support_filter=f"o{option.id}",
+        )
+        ssids = {row["ssid"] for row in report["rows"]}
+        self.assertEqual(ssids, {"coordssid"})
+
+    def test_view_only_school_blocks_coordinator_save(self):
+        DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
+        coord = User.objects.create_user(username="coord2@test.com", email="coord2@test.com", password="password123")
+        coord.roles.add(self.coordinator_role)
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.assertFalse(can_edit_desi(coord, student=self.student))
 
     def test_coordinator_dashboard_access_tab_renders(self):
         coord = User.objects.create_user(username="cd@test.com", email="cd@test.com", password="password123")
@@ -1377,13 +1440,12 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
 
-        # Both math (active) and ELA (inactive) are SEIS-managed: the read-only
-        # SEIS section lists only their SEIS supports, and neither test is
-        # shown as an editable card.
-        self.assertIn("SEIS settings (read only)", html)
+        # Both math (active) and ELA (inactive) are SEIS-managed: they render
+        # as read-only matrix columns listing only their SEIS supports.
+        self.assertIn("SEIS \u00b7 read only", html)
         self.assertIn("Smarter math", html)
         self.assertIn("Smarter ELA", html)
-        self.assertIn("Imported from SEIS", html)
+        self.assertIn("Locked from SEIS", html)
 
     def test_unselected_assessment_hides_its_seis(self):
         self._fake_map = {
@@ -1403,10 +1465,189 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
 
-        # Math is SEIS-managed (read-only); ELA is not selected, so no SEIS
-        # section lists it.
-        self.assertIn("SEIS settings (read only)", html)
+        # Math is SEIS-managed (read-only); ELA is not selected, so it does not
+        # appear as a SEIS column.
+        self.assertIn("SEIS \u00b7 read only", html)
         self.assertIn("Smarter math", html)
-        self.assertIn("Imported from SEIS", html)
+        self.assertIn("Locked from SEIS", html)
         # Smarter ELA must not appear at all (not selected => not SEIS).
         self.assertNotIn("Smarter ELA", html)
+
+
+class DesiSectionCategoryTests(TestCase):
+    """Section categories coexist with the original free-text category."""
+
+    def setUp(self):
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="section@test.com",
+            email="section@test.com",
+            password="password123",
+        )
+        self.user.roles.add(role)
+        self.client.force_login(self.user)
+
+        self.assessment = Assessment.objects.create(name="Section Test", is_active=True)
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="section_student",
+            ssid="section",
+            student_id="section-local",
+            student_name="Section Student",
+            grade="04",
+            school_year="2025-2026",
+        )
+
+    def test_create_support_keeps_category_and_creates_section(self):
+        response = self.client.post(reverse("desi:create_accommodation"), {
+            "name": "Read Aloud",
+            "code": "RA",
+            "category": "Presentation",
+            "new_section_category": "Accessibility",
+            "bulk_options": "Standard",
+        })
+        self.assertEqual(response.status_code, 302)
+
+        acc = Accommodation.objects.get(name="Read Aloud")
+        self.assertEqual(acc.category, "Presentation")
+        self.assertIsNotNone(acc.section_category_id)
+        self.assertEqual(acc.section_category.name, "Accessibility")
+
+    def test_section_picker_reuses_existing_section(self):
+        existing = AccommodationCategory.objects.create(name="Timing", order=1)
+        response = self.client.post(reverse("desi:create_accommodation"), {
+            "name": "Extra Time",
+            "code": "ET",
+            "category": "Timing",
+            "section_category_id": str(existing.id),
+            "bulk_options": "Standard",
+        })
+        self.assertEqual(response.status_code, 302)
+        acc = Accommodation.objects.get(name="Extra Time")
+        self.assertEqual(acc.section_category_id, existing.id)
+
+    def test_admin_ordering_persists_sections_and_supports(self):
+        cat_a = AccommodationCategory.objects.create(name="Alpha", order=1)
+        cat_b = AccommodationCategory.objects.create(name="Beta", order=2)
+        acc1 = Accommodation.objects.create(name="One", section_category=cat_a, order=1)
+        acc2 = Accommodation.objects.create(name="Two", section_category=cat_a, order=2)
+        acc3 = Accommodation.objects.create(name="Three", section_category=cat_b, order=1)
+
+        response = self.client.post(reverse("desi:save_desi_order"), {
+            "category_order": [str(cat_b.id), str(cat_a.id)],
+            f"support_order_{cat_a.id}": [str(acc2.id), str(acc1.id)],
+            f"support_order_{cat_b.id}": [str(acc3.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+
+        cat_a.refresh_from_db(); cat_b.refresh_from_db()
+        acc1.refresh_from_db(); acc2.refresh_from_db()
+        self.assertEqual(cat_b.order, 1)
+        self.assertEqual(cat_a.order, 2)
+        self.assertEqual(acc2.order, 1)
+        self.assertEqual(acc1.order, 2)
+
+    def test_workspace_matrix_groups_follow_section_order(self):
+        cat_a = AccommodationCategory.objects.create(name="Alpha", order=2)
+        cat_b = AccommodationCategory.objects.create(name="Beta", order=1)
+        for acc in (
+            Accommodation.objects.create(name="One", section_category=cat_a, order=1),
+            Accommodation.objects.create(name="Two", section_category=cat_b, order=1),
+        ):
+            opt = AccommodationOption.objects.create(accommodation=acc, name="Standard")
+            self.assessment.supported_options.add(opt)
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        groups = response.context["category_groups"]
+        self.assertEqual([g["category"] for g in groups], [cat_b, cat_a])
+
+    def test_save_order_moves_support_between_sections(self):
+        cat_a = AccommodationCategory.objects.create(name="Alpha", order=1)
+        cat_b = AccommodationCategory.objects.create(name="Beta", order=2)
+        acc = Accommodation.objects.create(name="Mover", section_category=cat_a, order=1)
+
+        # Posting the support under Beta's list moves it into Beta.
+        response = self.client.post(reverse("desi:save_desi_order"), {
+            "category_order": [str(cat_a.id), str(cat_b.id)],
+            f"support_order_{cat_b.id}": [str(acc.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        acc.refresh_from_db()
+        self.assertEqual(acc.section_category_id, cat_b.id)
+        self.assertEqual(acc.order, 1)
+
+        # Posting it under ``none`` clears its section.
+        response = self.client.post(reverse("desi:save_desi_order"), {
+            "category_order": [str(cat_a.id), str(cat_b.id)],
+            "support_order_none": [str(acc.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        acc.refresh_from_db()
+        self.assertIsNone(acc.section_category_id)
+
+    def test_admin_dashboard_links_to_organization_page(self):
+        response = self.client.get(reverse("desi:admin_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("desi:support_organization"))
+
+    def test_support_organization_page_renders_and_creates_section(self):
+        response = self.client.get(reverse("desi:support_organization"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Support Organization")
+        self.assertContains(response, "Create Section")
+
+        response = self.client.post(reverse("desi:support_organization"), {"name": "Accessibility"})
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(AccommodationCategory.objects.filter(name="Accessibility").exists())
+
+    def test_support_organization_reuses_existing_section_name(self):
+        AccommodationCategory.objects.create(name="Timing", order=1)
+        self.client.post(reverse("desi:support_organization"), {"name": "timing"})
+        self.assertEqual(AccommodationCategory.objects.filter(name__iexact="timing").count(), 1)
+
+    def test_support_organization_lists_carry_section_keys(self):
+        cat = AccommodationCategory.objects.create(name="Alpha", order=1)
+        Accommodation.objects.create(name="One", section_category=cat, order=1)
+        Accommodation.objects.create(name="Loose", order=1)
+
+        response = self.client.get(reverse("desi:support_organization"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        # Each support list declares the section it represents and the page
+        # rewrites hidden input names on drop so moves persist.
+        self.assertIn(f'data-section-key="{cat.id}"', html)
+        self.assertIn('data-section-key="none"', html)
+        self.assertIn("syncSupportInputNames", html)
+
+    def test_delete_section_category_moves_supports_to_uncategorized(self):
+        cat = AccommodationCategory.objects.create(name="To Delete", order=1)
+        acc1 = Accommodation.objects.create(name="Support 1", section_category=cat, order=1)
+        acc2 = Accommodation.objects.create(name="Support 2", section_category=cat, order=2)
+
+        response = self.client.post(reverse("desi:delete_section_category", args=[cat.id]))
+        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(response, reverse("desi:support_organization"))
+
+        # Verify category is deleted
+        self.assertFalse(AccommodationCategory.objects.filter(id=cat.id).exists())
+
+        # Verify accommodations are moved to non-section (section_category is None)
+        acc1.refresh_from_db()
+        acc2.refresh_from_db()
+        self.assertIsNone(acc1.section_category)
+        self.assertIsNone(acc2.section_category)
+
+    def test_delete_section_category_requires_admin(self):
+        cat = AccommodationCategory.objects.create(name="Protected Section", order=1)
+        self.client.logout()
+        User = get_user_model()
+        user = User.objects.create_user(username='regular_desi_user', password='password')
+        self.client.force_login(user)
+
+        response = self.client.post(reverse("desi:delete_section_category", args=[cat.id]))
+        self.assertRedirects(response, reverse("landing:index"))
+        self.assertTrue(AccommodationCategory.objects.filter(id=cat.id).exists())
+

@@ -6,6 +6,7 @@ import re
 from django.core.cache import cache
 from django.db import connections
 from .constants import COLUMN_DEFINITIONS
+from clickhouse_utils.executor import QueryExecutor
 
 
 def _get_display_name(name):
@@ -50,11 +51,14 @@ RESULTS_STUDENT_MATCH_SQL = (
 )
 
 # Bulk fetch: params are (student_ssids, student_ids) in that order.
+# Rows are fetched by SSID OR local student id. Assigning the value still
+# prefers SSID and falls back to local id only for blank/stale SSIDs (see
+# assign_result_value_maps), so a corrected SSID does not orphan a result.
 RESULTS_BULK_MATCH_SQL = (
     "("
     "(r.ssid IS NOT NULL AND r.ssid != '' AND r.ssid != 'NaN' AND r.ssid = ANY(%s))"
     " OR "
-    "((r.ssid IS NULL OR r.ssid = '' OR r.ssid = 'NaN') AND r.local_student_id = ANY(%s))"
+    "(r.local_student_id = ANY(%s))"
     ")"
 )
 
@@ -142,20 +146,26 @@ def export_cell(value, blank='\u2014'):
     return blank if v is None else v
 
 
-def assign_result_value_maps(rows):
+def assign_result_value_maps(rows, valid_ssids=None):
     """Build local-id / ssid maps from ``(local_student_id, ssid, value)`` rows.
 
-    Rows that include an SSID are indexed only by SSID. Local-id indexing is
-    reserved for results with a blank SSID so recycled local IDs cannot leak.
+    A row whose SSID is present AND (when ``valid_ssids`` is supplied) belongs to
+    one of the students being populated is indexed by SSID. Rows with a blank,
+    sentinel (``NaN``/``null``/``None``) or stale SSID are indexed by local id so
+    they still reach the correct student (SSID corrections / recycling). Local-id
+    indexing is never used for a row whose SSID matches a known student, so
+    recycled local IDs cannot leak scores onto the wrong student.
     """
     by_id = {}
     by_ssid = {}
     for row in rows:
         local_id, ssid, val = row[0], row[1], row[2]
         ssid_s = str(ssid).strip() if ssid is not None else ''
-        if ssid_s:
-            by_ssid[ssid_s] = normalize_score_value(val)
-        elif local_id:
+        if ssid_s and ssid_s.lower() not in ('nan', 'null', 'none'):
+            if valid_ssids is None or ssid_s in valid_ssids:
+                by_ssid[ssid_s] = normalize_score_value(val)
+                continue
+        if local_id:
             by_id[str(local_id).strip()] = normalize_score_value(val)
     return by_id, by_ssid
 
@@ -210,6 +220,7 @@ def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=No
     if test_cols_info:
         student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
         student_ids = [s.get('student_id') for s in students if s.get('student_id')]
+        valid_ssids = set(str(s).strip() for s in student_ssids)
         years = list({info['year'] for info in test_cols_info if info.get('year')})
         needs_other_info = any(info.get('metric') not in ('ss', 'pl') for info in test_cols_info)
         rows = []
@@ -264,35 +275,43 @@ def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=No
                 else:
                     val = _json_key_value(other, test_info.get('other_info_key', ''))
                 matched.append((local_id, ssid, val))
-            by_id, by_ssid = assign_result_value_maps(matched)
+            by_id, by_ssid = assign_result_value_maps(matched, valid_ssids=valid_ssids)
             for student in students:
                 student[test_info['col_name']] = lookup_result_value(
                     student, by_id, by_ssid, blank=blank,
                 )
 
     if mark_cols_info:
-        student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
+        # Match marks by SSID (like assessments), so prior-year mark columns populate
+        # while the student list row reflects the filtered enrollment year. Marks
+        # whose SSID is stale (the student's SSID was corrected) are matched by
+        # local student id instead of being dropped.
+        student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
+        student_ids = [s.get('student_id') for s in students if s.get('student_id')]
+        ssid_set = set(str(s).strip() for s in student_ssids)
         years = list({info['year'] for info in mark_cols_info if info.get('year')})
         result = exec_.execute(
-            "SELECT sm.stu_annual_key, sm.school_year, sm.subject, sm.course_name, "
+            "SELECT sm.ssid, sm.student_id, sm.school_year, sm.subject, sm.course_name, "
             "sm.mark_period, sm.mark FROM analytics_student_marks sm "
-            "WHERE sm.stu_annual_key = ANY(%s) AND sm.school_year = ANY(%s)",
-            [student_keys, years],
+            "WHERE (sm.ssid = ANY(%s) OR sm.student_id = ANY(%s)) AND sm.school_year = ANY(%s)",
+            [student_ssids, student_ids, years],
         )
         rows = []
         if not result.get('error'):
             for row in result.get('rows') or []:
                 rows.append((
-                    row.get('stu_annual_key'), row.get('school_year'), row.get('subject'),
-                    row.get('course_name'), row.get('mark_period'), row.get('mark'),
+                    row.get('ssid'), row.get('student_id'), row.get('school_year'),
+                    row.get('subject'), row.get('course_name'), row.get('mark_period'),
+                    row.get('mark'),
                 ))
         for mark_info in mark_cols_info:
             want_year = _fold(mark_info.get('year'))
             subj_needle = _fold(mark_info.get('subject'))
             course_needle = _fold(mark_info.get('course_name'))
             want_period = _fold(mark_info['mark_period']) if mark_info.get('mark_period') else None
-            mark_data = {}
-            for sak, year, subject, course, period, mark in rows:
+            mark_data = {}          # ssid -> mark (authoritative)
+            mark_data_by_id = {}    # student_id -> mark (fallback for stale ssid)
+            for ssid, student_id, year, subject, course, period, mark in rows:
                 if _fold(year) != want_year:
                     continue
                 if subj_needle not in _fold(subject) or course_needle not in _fold(course):
@@ -302,11 +321,20 @@ def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=No
                         continue
                 elif _fold(period) != want_period:
                     continue
-                mark_data[sak] = mark
+                ssid_s = str(ssid).strip() if ssid is not None else ''
+                if ssid_s and ssid_s in ssid_set:
+                    mark_data[ssid_s] = mark
+                else:
+                    sid_s = str(student_id).strip() if student_id is not None else ''
+                    if sid_s:
+                        mark_data_by_id[sid_s] = mark
             for student in students:
-                student[mark_info['col_name']] = mark_data.get(
-                    student.get('stu_annual_key'), blank,
-                )
+                ssid_s = str(student.get('ssid') or '').strip()
+                if ssid_s in mark_data:
+                    student[mark_info['col_name']] = mark_data[ssid_s]
+                else:
+                    sid_s = str(student.get('student_id') or '').strip()
+                    student[mark_info['col_name']] = mark_data_by_id.get(sid_s, blank)
 
 
 def _generate_cache_key(prefix, filters, extra_hash_str=""):
@@ -696,7 +724,7 @@ def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses
 
     new_definitions = {}
 
-    with connections['default'].cursor() as cursor:
+    with QueryExecutor().cursor() as cursor:
         where_clauses = ["r.school_year IS NOT NULL", "t.test_name IS NOT NULL"]
         params = []
         if extra_where_clauses:
@@ -972,13 +1000,19 @@ def invert_marks_to_assessment_first(mark_structure: dict) -> dict:
                     result[subject][course]['years'][year] = {}
                 result[subject][course]['years'][year] = periods
 
-    # Sort years descending within each course
+    # Sort years descending within each course, and sort periods with 'Live' at the end
     for subject in result:
         for course in result[subject]:
             yr = result[subject][course].get('years', {})
-            result[subject][course]['years'] = dict(
-                sorted(yr.items(), key=lambda x: x[0], reverse=True)
-            )
+            sorted_years = {}
+            for year, periods in sorted(yr.items(), key=lambda x: x[0], reverse=True):
+                sorted_years[year] = dict(
+                    sorted(
+                        periods.items(),
+                        key=lambda x: (1, x[0]) if str(x[0]).lower() == 'live' else (0, x[0]),
+                    )
+                )
+            result[subject][course]['years'] = sorted_years
     return result
 
 
@@ -997,7 +1031,7 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
         }
     """
     extra_hash_str = f"{extra_join_sql}_{json.dumps(extra_where_clauses)}_{json.dumps(extra_params)}" if extra_join_sql or extra_where_clauses else ""
-    cache_key = _generate_cache_key("mark_columns", column_filters, extra_hash_str)
+    cache_key = _generate_cache_key("mark_columns_v2", column_filters, extra_hash_str)
     cached_data = cache.get(cache_key)
 
     if cached_data:
@@ -1007,7 +1041,7 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
 
     new_definitions = {}
 
-    with connections['default'].cursor() as cursor:
+    with QueryExecutor().cursor() as cursor:
         where_clauses = ["sm.school_year IS NOT NULL"]
         params = []
         if extra_where_clauses:
@@ -1029,7 +1063,7 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
                 sm.course_name,
                 sm.mark_period
             FROM student_marks_list sm
-            INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+            INNER JOIN current_student cs ON sm.ssid = cs.ssid
             {extra_join_sql}
             WHERE {where_sql}
             ORDER BY sm.school_year DESC, sm.subject, sm.course_name, sm.mark_period
@@ -1059,6 +1093,17 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
                 columns[year_val][subject_val][course_val] = {}
 
             columns[year_val][subject_val][course_val][period_val] = mark_key
+
+        # Sort periods within each course so 'Live' is always listed at the end
+        for year_val in columns:
+            for subject_val in columns[year_val]:
+                for course_val in columns[year_val][subject_val]:
+                    columns[year_val][subject_val][course_val] = dict(
+                        sorted(
+                            columns[year_val][subject_val][course_val].items(),
+                            key=lambda x: (1, x[0]) if str(x[0]).lower() == 'live' else (0, x[0]),
+                        )
+                    )
 
         # "All Marks" umbrella per subject — expands into course/marks wide pairs.
         # Keys are deterministic (markall_<year>_<subject>) so they can be

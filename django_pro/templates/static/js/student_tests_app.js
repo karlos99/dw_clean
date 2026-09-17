@@ -1232,7 +1232,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     // separate individual selections; render them as two groups.
                     const isMarkallMarks = /^markall_.*_MARKS$/.test(col);
                     if (isMarkallMarks && optionsForCol.some(v => String(v).startsWith('period:') || String(v).startsWith('mark:'))) {
-                        const periodOpts = optionsForCol.filter(v => String(v).startsWith('period:'));
+                        const periodOpts = optionsForCol.filter(v => String(v).startsWith('period:')).sort((a, b) => {
+                            const aIsLive = String(a).toLowerCase() === 'period:live';
+                            const bIsLive = String(b).toLowerCase() === 'period:live';
+                            if (aIsLive && !bIsLive) return 1;
+                            if (!aIsLive && bIsLive) return -1;
+                            return String(a).localeCompare(String(b));
+                        });
                         const markOpts = optionsForCol.filter(v => String(v).startsWith('mark:'));
 
                         if (periodOpts.length) {
@@ -1240,9 +1246,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             periodOpts.forEach((value) => {
                                 const checked = filters[col]?.includes(value) ? 'checked' : '';
                                 const labelValue = String(value).replace(/^period:/, '');
+                                const isLivePeriod = labelValue.toLowerCase() === 'live';
                                 html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
                                 html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">`;
-                                html += `<span>${escapeHtml(labelValue)}</span>`;
+                                html += `<span class="${isLivePeriod ? 'font-bold text-slate-900' : ''}">${escapeHtml(labelValue)}</span>`;
                                 html += `</label>`;
                             });
                         }
@@ -1266,9 +1273,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             } else if (DATE_COLUMNS.has(col)) {
                                 labelValue = formatDateForDisplay(labelValue);
                             }
+                            const isLiveVal = String(labelValue).toLowerCase() === 'live';
                             html += `<label class="flex items-center gap-2 text-xs text-slate-700 p-1 rounded hover:bg-slate-50">`;
                             html += `<input draggable="false" type="checkbox" data-filter-value="${escapeHtml(value)}" data-filter-column="${escapeHtml(col)}" ${checked} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">`;
-                            html += `<span>${escapeHtml(labelValue)}</span>`;
+                            html += `<span class="${isLiveVal ? 'font-bold text-slate-900' : ''}">${escapeHtml(labelValue)}</span>`;
                             html += `</label>`;
                         });
                     }
@@ -1327,7 +1335,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         const _scStyle = _scBg ? ` style="background-color:${escapeHtml(_scBg)};"` : '';
                         html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap text-center font-medium"${_scStyle}>${escapeHtml(value)}</td>`;
                     } else {
-                        html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${escapeHtml(value)}</td>`;
+                        let cellValHtml = escapeHtml(value);
+                        if (typeof value === 'string' && (col.startsWith('markall_') || col.startsWith('mark_'))) {
+                            cellValHtml = cellValHtml.replace(/(^|[\s,;])(Live)(:|\b)/g, '$1<span class="font-bold text-slate-900">$2</span>$3');
+                        }
+                        html += `<td class="px-4 py-3 text-sm text-slate-900 whitespace-nowrap">${cellValHtml}</td>`;
                     }
                 });
                 html += '</tr>';
@@ -1481,7 +1493,24 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAbort = new AbortController();
         inFlightUrl = urlStr;
         const requestSeq = ++loadDataSeq;
-        showLoading('Loading student data...');
+
+        // Check SWR client cache for instant table render
+        const deCacheKey = `de_data_${urlStr}`;
+        let hasSWRHit = false;
+        try {
+            const cachedStr = sessionStorage.getItem(deCacheKey);
+            if (cachedStr) {
+                const cachedPayload = JSON.parse(cachedStr);
+                if (cachedPayload && Array.isArray(cachedPayload.students)) {
+                    renderTable(cachedPayload);
+                    hasSWRHit = true;
+                }
+            }
+        } catch (e) {}
+
+        if (!hasSWRHit) {
+            showLoading('Loading student data...');
+        }
         clearStatsCache();
 
         fetch(urlStr, { credentials: 'same-origin', signal: loadAbort.signal })
@@ -1496,6 +1525,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (requestSeq !== loadDataSeq) return;
                 nextCursor = payload.next_cursor || '';
                 pendingCursor = '';
+                try {
+                    sessionStorage.setItem(deCacheKey, JSON.stringify(payload));
+                } catch (e) {}
                 renderTable(payload);
                 saveViewState();
                 hideLoading();
@@ -1505,7 +1537,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error('Error loading data:', error);
                 hideLoading();
                 const targetEl = document.querySelector('#student-table');
-                if (targetEl) {
+                if (targetEl && !hasSWRHit) {
                     targetEl.innerHTML = '<div class="text-center py-8 text-red-600">Failed to load data.</div>';
                 }
             })

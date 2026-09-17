@@ -143,7 +143,7 @@
     </div>
     {% elif schools %}
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-10 text-center text-sm text-slate-500 italic">
-        Select a school and year, then click "Run Report".
+        {% if report_requested %}No completion data for these filters.{% else %}Select a school and year, then click "Run Report".{% endif %}
     </div>
     {% endif %}
 
@@ -166,10 +166,15 @@
                         <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Student</th>
                         <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">SSID</th>
                         <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Grade</th>
+                        <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Teachers</th>
                         <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Supports Entered</th>
+                        <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">From SEIS</th>
                         <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Completed Assessments</th>
                         <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Updated By</th>
                         <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider">Updated At</th>
+                        {% if coordinator_can_edit_students %}
+                        <th class="px-4 py-2 text-left text-[10px] font-bold text-slate-500 uppercase tracking-wider"></th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 bg-white">
@@ -178,10 +183,26 @@
                         <td class="px-4 py-2 font-semibold text-slate-800 whitespace-nowrap">{{ row.student_name }}</td>
                         <td class="px-4 py-2 text-slate-600 whitespace-nowrap">{{ row.ssid }}</td>
                         <td class="px-4 py-2 text-slate-600">{{ row.grade }}</td>
+                        <td class="px-4 py-2 text-slate-600 max-w-xs">{{ row.teachers|default:"—" }}</td>
                         <td class="px-4 py-2 text-slate-700 max-w-md">{{ row.supports|default:"—" }}</td>
+                        <td class="px-4 py-2 whitespace-nowrap">
+                            {% if row.has_seis_supports %}
+                            <span class="inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-violet-100 text-violet-800 border border-violet-200">Yes</span>
+                            {% else %}
+                            <span class="text-slate-400">No</span>
+                            {% endif %}
+                        </td>
                         <td class="px-4 py-2 text-emerald-700 whitespace-nowrap">{{ row.completions|default:"—" }}</td>
                         <td class="px-4 py-2 text-slate-600 whitespace-nowrap">{{ row.updated_by|default:"—" }}</td>
                         <td class="px-4 py-2 text-slate-500 whitespace-nowrap">{{ row.updated_at|default:"—" }}</td>
+                        {% if coordinator_can_edit_students %}
+                        <td class="px-4 py-2 whitespace-nowrap">
+                            <a href="{% url 'desi:assign_accommodations' row.stu_annual_key %}?school={{ report_school.state_id }}&school_year={{ report_year|urlencode }}"
+                               class="inline-flex items-center px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition">
+                                Edit supports
+                            </a>
+                        </td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -193,7 +214,13 @@
     </div>
     {% elif schools %}
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-10 text-center text-sm text-slate-500 italic">
-        Select a school and year, then click "Run Report".
+        {% if scope == 'teacher' and report_requested %}
+            Choose a teacher, or switch export scope to "Entire school".
+        {% elif report_requested %}
+            No entered supports for these filters.
+        {% else %}
+            Select a school and year, then click "Run Report".
+        {% endif %}
     </div>
     {% endif %}
     {% endif %}

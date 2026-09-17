@@ -145,3 +145,75 @@ def build_seis_option_map(ssid, assessments):
 
     locked_accommodation_ids = {acc_id for _ast_id, acc_id in result}
     return result, locked_accommodation_ids
+
+
+def _filtered_seis_option_map(student):
+    """SEIS options for a student after display-settings and grade-only gating."""
+    ssid = getattr(student, 'ssid', None)
+    if not ssid:
+        return {}
+
+    from .models import Assessment
+    from .views import check_criteria
+
+    selected_ids = selected_seis_display_assessment_ids()
+    if selected_ids is not None and not selected_ids:
+        return {}
+
+    all_assessments = list(Assessment.objects.prefetch_related('criteria'))
+    if not all_assessments:
+        return {}
+
+    assessment_by_id = {ast.id: ast for ast in all_assessments}
+
+    def grade_eligible(ast):
+        grade_criteria = [c for c in ast.criteria.all() if c.field_name == 'grade']
+        if not grade_criteria:
+            return True
+        ok, _failed = check_criteria(grade_criteria, student)
+        return ok
+
+    raw_map, _locked = build_seis_option_map(ssid, all_assessments)
+    filtered = {}
+    for key, opt in raw_map.items():
+        ast_id, _acc_id = key
+        if selected_ids is not None and ast_id not in selected_ids:
+            continue
+        ast = assessment_by_id.get(ast_id)
+        if not ast or not grade_eligible(ast):
+            continue
+        filtered[key] = opt
+    return filtered
+
+
+def seis_support_detail_for_student(student):
+    """
+    SEIS supports for one student: labels plus option/accommodation ids for
+    filtering (same rules as the student workspace).
+    """
+    filtered = _filtered_seis_option_map(student)
+    labels = []
+    option_ids = set()
+    accommodation_ids = set()
+    seen = set()
+    for (_ast_id, acc_id), opt in filtered.items():
+        option_ids.add(opt.id)
+        accommodation_ids.add(acc_id)
+        accommodation = opt.accommodation
+        prefix = f"{accommodation.name}: " if accommodation else ''
+        label = f"{prefix}{opt.name}"
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        labels.append(label)
+    return {
+        'labels': sorted(labels, key=str.casefold),
+        'option_ids': option_ids,
+        'accommodation_ids': accommodation_ids,
+    }
+
+
+def seis_support_labels_for_student(student):
+    """Human-readable SEIS supports for one student."""
+    return seis_support_detail_for_student(student)['labels']

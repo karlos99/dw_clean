@@ -187,11 +187,11 @@
                             <div data-category="marks_{{ year|slugify }}_{{ subject|slugify }}_{{ course|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
                                 {% for period, col_key in periods.items %}
                                 <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
-                                    <input type="checkbox" data-column="{{ col_key }}"
-                                        class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4">
-                                    <span class="text-sm text-slate-700">{{ period }}</span>
-                                </label>
-                                {% endfor %}
+                                     <input type="checkbox" data-column="{{ col_key }}"
+                                         class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4">
+                                     <span class="text-sm {% if period|lower == 'live' %}font-bold text-slate-900{% else %}text-slate-700{% endif %}">{{ period }}</span>
+                                 </label>
+                                 {% endfor %}
                             </div>
                         </div>
                         {% endfor %}

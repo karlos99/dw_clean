@@ -240,9 +240,17 @@ def _fetch_test_records_for_ssid(ssid: str):
 
 def _fetch_student_marks_for_ssid(ssid: str):
     """Fetch all marks for a student from the database."""
-    return list(StudentMarks.objects.filter(ssid=ssid)
-                .order_by('-school_year', 'mark_period', 'course_name')
+    marks = list(StudentMarks.objects.filter(ssid=ssid)
+                .order_by('-school_year', 'course_name', 'mark_period')
                 .values())
+    def _sort_key(m):
+        p = str(m.get('mark_period') or '').strip()
+        is_live = 1 if p.lower() == 'live' else 0
+        sy = str(m.get('school_year') or '')
+        sy_prefix = -int(sy[:4]) if sy[:4].isdigit() else 0
+        return (sy_prefix, m.get('subject') or '', m.get('course_name') or '', is_live, p)
+    marks.sort(key=_sort_key)
+    return marks
 
 
 def get_student_info_cached(ssid: str, timeout: int = 300, user_id=None):

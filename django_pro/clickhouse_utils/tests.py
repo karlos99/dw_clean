@@ -12,16 +12,27 @@ class AnalyticsRoutingTests(SimpleTestCase):
 
         self.assertIn('ClickHouse analytics service is unavailable', result['error'])
 
-    def test_analytics_executor_routes_jsonb_object_keys_to_postgres(self):
+    def test_analytics_executor_routes_bare_jsonb_object_keys_to_postgres(self):
         executor = QueryExecutor(analytics=True)
         with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):
             with patch.object(executor, '_execute_postgres', return_value={'columns': ['key'], 'rows': [], 'row_count': 0, 'error': None}) as postgres:
                 with patch.object(executor, '_execute_clickhouse') as clickhouse:
-                    sql = "SELECT k.key FROM results r CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)"
+                    sql = "SELECT DISTINCT key FROM (SELECT jsonb_object_keys(r.other_info) AS key FROM results r) sub"
                     executor.execute(sql, [])
 
         postgres.assert_called_once()
         clickhouse.assert_not_called()
+
+    def test_analytics_executor_routes_cross_join_lateral_jsonb_keys_to_clickhouse(self):
+        executor = QueryExecutor(analytics=True)
+        with patch.object(QueryExecutor, 'ch_client', new=property(lambda _self: object())):
+            with patch.object(executor, '_execute_postgres') as postgres:
+                with patch.object(executor, '_execute_clickhouse', return_value={'columns': ['k'], 'rows': [], 'row_count': 0, 'error': None}) as clickhouse:
+                    sql = "SELECT k.key FROM results r CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)"
+                    executor.execute(sql, [])
+
+        clickhouse.assert_called_once()
+        postgres.assert_not_called()
 
     def test_analytics_executor_routes_pg_only_tables_to_postgres(self):
         """Queries referencing tables outside the CH read model run on PG."""
@@ -82,6 +93,22 @@ class ThreadPoolSizingTests(SimpleTestCase):
         self.assertEqual(get_io_pool()._max_workers, 8)
 
 class SQLTranslatorTests(SimpleTestCase):
+    def test_translate_cross_join_lateral_jsonb_object_keys(self):
+        sql = """
+            SELECT DISTINCT r.school_year, t.test_name, t.subject, k.key
+            FROM results r
+            INNER JOIN tests t ON r.test_group_key = t.test_group_key
+            CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)
+            WHERE r.other_info IS NOT NULL
+            ORDER BY r.school_year DESC, k.key
+        """
+        translated, _params = translate_pg_to_clickhouse(sql, [])
+        self.assertIn('ARRAY JOIN JSONExtractKeys(assumeNotNull(r.other_info)) AS k', translated)
+        self.assertNotIn('CROSS JOIN LATERAL', translated)
+        self.assertNotIn('jsonb_object_keys', translated)
+        self.assertIn('r.school_year, t.test_name, t.subject, k', translated)
+        self.assertIn('ORDER BY r.school_year DESC, k', translated)
+
     def test_translate_any_placeholder_with_preceding_placeholder(self):
         sql = """
             SELECT r.local_student_id, (r.other_info ->> %s)

@@ -28,7 +28,9 @@ from .column_management import (
     get_saved_default_columns,
     get_column_expression,
 )
+from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from dataexploration.school_year_utils import resolve_relative_column_key
+from clickhouse_utils.timing import timed_fn
 
 
 def _parse_multi(param_val, fallback):
@@ -49,6 +51,7 @@ def _parse_multi(param_val, fallback):
     return val_str if val_str else fallback
 
 @login_required
+@timed_fn('export_students_csv')
 def export_students_csv(request):
     """Export filtered student data as CSV."""
     
@@ -301,6 +304,9 @@ def export_students_csv(request):
         [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
         [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
     ))
+    selected_survey_cols = [
+        c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')
+    ]
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
@@ -751,14 +757,14 @@ def export_students_csv(request):
                                 f"""
                                 SELECT COALESCE(MAX(cnt), 0)
                                 FROM (
-                                    SELECT sm.stu_annual_key, COUNT(DISTINCT sm.course_name) AS cnt
+                                    SELECT sm.ssid, COUNT(DISTINCT sm.course_name) AS cnt
                                     FROM student_marks_list sm
-                                    INNER JOIN current_student cs ON sm.stu_annual_key = cs.stu_annual_key
+                                    INNER JOIN current_student cs ON sm.ssid = cs.ssid
                                     {join_sql}
                                     WHERE {where_sql}
                                       AND sm.school_year = %s AND sm.subject = %s
                                       {course_filter_sql}
-                                    GROUP BY sm.stu_annual_key
+                                    GROUP BY sm.ssid
                                 ) t
                                 """,
                                 params + [year, subject] + course_extra_params,
@@ -840,19 +846,23 @@ def export_students_csv(request):
                         dynamic_labels[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix} {year}"
                         dynamic_labels[f"apall_{yk}_{i}_PL"] = f"AP Results{suffix} {year}"
 
+                # Definitions for survey columns
+                if selected_survey_cols:
+                    dynamic_labels.update(get_survey_columns().get('definitions', {}))
+
                 # Yield Header
                 header_labels = [dynamic_labels.get(col, col) for col in export_cols]
                 yield writer.writerow(header_labels)
                 logger.info(f"CSV Export: Header yielded, starting data export with {len(export_cols)} columns")
 
                 # Fetch Loop
-                chunk_size = 500
+                chunk_size = 2000
                 offset = 0
                 
                 # Ensure we fetch minimal required columns plus sorting
                 query_base_cols = list(base_cols)
                 if 'ssid' not in query_base_cols: query_base_cols.insert(0, 'ssid')
-                if test_cols_info and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
+                if (test_cols_info or selected_mark_cols or markall_years or selected_survey_cols) and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
                 if (selected_mark_cols or markall_years) and 'stu_annual_key' not in query_base_cols: query_base_cols.insert(0, 'stu_annual_key')
                 
                 base_col_selects = []
@@ -881,7 +891,7 @@ def export_students_csv(request):
                         FROM current_student cs
                         {join_sql}
                         WHERE {where_sql}
-                        ORDER BY {order_by_expr} {dir_sql}
+                        ORDER BY {order_by_expr} {dir_sql}, cs.stu_annual_key {dir_sql}
                         LIMIT %s OFFSET %s
                     """
                     cursor.execute(query, params + [chunk_size, offset])
@@ -897,6 +907,29 @@ def export_students_csv(request):
                     enrich_students_tests_marks(
                         chunk_students, test_cols_info, mark_cols_info, blank='',
                     )
+
+                    if selected_survey_cols:
+                        try:
+                            chunk_stu_ids = [s.get('student_id') for s in chunk_students if s.get('student_id')]
+                            chunk_ssids = [s.get('ssid') for s in chunk_students if s.get('ssid')]
+                            if chunk_stu_ids or chunk_ssids:
+                                chunk_survey_data = get_survey_data_for_students(student_ids=chunk_stu_ids, ssids=chunk_ssids)
+                                for student in chunk_students:
+                                    student_id = str(student.get('student_id') or '').strip()
+                                    ssid = str(student.get('ssid') or '').strip()
+                                    student_survey_data = (
+                                        chunk_survey_data.get(student_id)
+                                        or chunk_survey_data.get(ssid)
+                                        or {}
+                                    )
+                                    for col_key in selected_survey_cols:
+                                        student[col_key] = student_survey_data.get(col_key, '')
+                            else:
+                                for student in chunk_students:
+                                    for col_key in selected_survey_cols:
+                                        student[col_key] = ''
+                        except Exception:
+                            pass
 
                     if sat_infos:
                         try:
@@ -984,37 +1017,40 @@ def export_students_csv(request):
                     # Fetch Marks "All Marks" wide-pair data for this chunk
                     if markall_years:
                         try:
-                            chunk_keys = [str(s.get('stu_annual_key') or '').strip() for s in chunk_students if str(s.get('stu_annual_key') or '').strip()]
-                            if chunk_keys:
+                            chunk_ssids = [str(s.get('ssid') or '').strip() for s in chunk_students if str(s.get('ssid') or '').strip()]
+                            if chunk_ssids:
                                 for (year, subject), umbrella in markall_years.items():
                                     n = markall_max.get((year, subject), 0)
                                     course_filter_sql, course_extra_params = markall_course_filter_parts(
                                         subject, markall_excludes.get(umbrella, set())
                                     )
                                     markall_sql = f"""
-                                        SELECT stu_annual_key, course_name, mark_period, mark
+                                        SELECT ssid, course_name, mark_period, mark
                                         FROM analytics_student_marks sm
-                                        WHERE stu_annual_key = ANY(%s) AND school_year = %s AND subject = %s
+                                        WHERE ssid = ANY(%s) AND school_year = %s AND subject = %s
                                           {course_filter_sql}
-                                        ORDER BY stu_annual_key, course_name, mark_period
+                                        ORDER BY ssid, course_name, mark_period
                                     """
                                     markall_rows = _fetchall_ch_or_pg(
                                         markall_sql,
-                                        [chunk_keys, year, subject] + course_extra_params,
+                                        [chunk_ssids, year, subject] + course_extra_params,
                                         markall_sql.replace('analytics_student_marks', 'student_marks_list'),
                                     )
                                     by_key = {}
-                                    for stu_key, course, period, mark in markall_rows:
-                                        by_key.setdefault(str(stu_key).strip(), {}).setdefault(course, []).append((period, mark))
+                                    for ssid_key, course, period, mark in markall_rows:
+                                        by_key.setdefault(str(ssid_key).strip(), {}).setdefault(course, []).append((period, mark))
                                     for student in chunk_students:
-                                        stu_key = str(student.get('stu_annual_key') or '').strip()
-                                        courses = by_key.get(stu_key, {})
+                                        ssid_key = str(student.get('ssid') or '').strip()
+                                        courses = by_key.get(ssid_key, {})
                                         for i in range(1, n + 1):
                                             course_key = f"{umbrella}_{i}_COURSE"
                                             marks_key = f"{umbrella}_{i}_MARKS"
                                             if i <= len(courses):
                                                 course_name = list(courses.keys())[i - 1]
-                                                periods = courses[course_name]
+                                                periods = sorted(
+                                                    courses[course_name],
+                                                    key=lambda x: (1, str(x[0])) if str(x[0] or '').lower() == 'live' else (0, str(x[0]))
+                                                )
                                                 # If this pair column is filtered by marking period
                                                 # and/or mark, only those entries are shown — mirror
                                                 # what load_students renders in the table.
