@@ -334,19 +334,19 @@ class IncrementalSyncDecisionTests(SimpleTestCase):
             choose_sync_mode,
         )
         self.assertEqual(
-            choose_sync_mode('student_marks_list', '2026-01-01', 100, 100, 0),
+            choose_sync_mode('schedule_list', '2026-01-01', 100, 100, 0),
             'skip',
         )
         self.assertEqual(
-            choose_sync_mode('student_marks_list', '2026-01-01', 100, 90, 0),
+            choose_sync_mode('schedule_list', '2026-01-01', 100, 90, 0),
             'full',
         )
         self.assertEqual(
-            choose_sync_mode('student_marks_list', '2026-01-01', 100, 100, 5),
+            choose_sync_mode('schedule_list', '2026-01-01', 100, 100, 5),
             'incremental',
         )
         self.assertEqual(
-            choose_sync_mode('student_marks_list', '2026-01-01', 100, 100, 50),
+            choose_sync_mode('schedule_list', '2026-01-01', 100, 100, 50),
             'full',
         )
         self.assertEqual(

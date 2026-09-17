@@ -41,6 +41,7 @@ services:
       - ./django_pro/files/staticfiles:/app/django_pro/files/staticfiles
       - ./django_pro/files/mediafiles:/app/django_pro/files/mediafiles
       - ./logs:/app/logs
+      - ./pictures:/app/pictures:ro
     depends_on:
       redis:
         condition: service_healthy

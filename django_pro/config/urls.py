@@ -16,5 +16,6 @@ urlpatterns = [
     path('mathr/', include('mathr.urls')),
     path('dataloader/', include('dataLoader.urls')),
     path('desi/', include('desi.urls')),
+    path('studata/', include('studata.urls')),
     path('', include('landing.urls')),
 ]

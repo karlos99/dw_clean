@@ -262,6 +262,9 @@ WHITENOISE_AUTOREFRESH = DEBUG
 # Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = '/app/django_pro/files/mediafiles'
+
+# Student photos named {ssid}.jpg (repo-root pictures/, gitignored)
+STUDENT_PICTURES_DIR = Path(os.getenv('STUDENT_PICTURES_DIR') or (BASE_DIR.parent / 'pictures'))
 AUTH_USER_MODEL = 'users.User'
 
 # Redis Cache Configuration (Required for performance)
