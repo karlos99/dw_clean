@@ -1087,6 +1087,259 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertIn(accommodation, rule.supports.all())
         self.assertEqual(rule.criteria.count(), 1)
 
+    def test_support_rule_with_multiple_and_criteria(self):
+        accommodation = Accommodation.objects.create(name="SpeechToText", code="STT")
+        rule = SupportRule.objects.create(name="Grade 04 SPED only", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="is", value="04", logic_operator="AND", order=0)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="sped", operator="is", value="Y", logic_operator="AND", order=1)
+
+        # Student Grade 03, SPED N -> fails both
+        self.assertIn(accommodation.id, hidden_support_ids(self.student))
+
+        # Student Grade 04, SPED Y -> passes both
+        stu_pass = CurrentStudent.objects.create(
+            stu_annual_key="pass_and_key",
+            ssid="pass_and_ssid",
+            student_id="pass_and",
+            student_name="Pass AND",
+            grade="04",
+            sped="Y",
+            school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu_pass))
+
+        # Student Grade 04, SPED N -> fails second
+        stu_fail_sped = CurrentStudent.objects.create(
+            stu_annual_key="fail_sped_key",
+            ssid="fail_sped_ssid",
+            student_id="fail_sped",
+            student_name="Fail SPED",
+            grade="04",
+            sped="N",
+            school_year="2025-2026",
+        )
+        self.assertIn(accommodation.id, hidden_support_ids(stu_fail_sped))
+
+    def test_support_rule_with_or_criteria(self):
+        accommodation = Accommodation.objects.create(name="ReadAloud", code="RA")
+        rule = SupportRule.objects.create(name="SPED or 504", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="sped", operator="is", value="Y", logic_operator="AND", order=0)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="in_504", operator="is", value="Y", logic_operator="OR", order=1)
+
+        # Student with SPED=Y, 504=N -> eligible via first branch
+        stu_sped = CurrentStudent.objects.create(
+            stu_annual_key="or_sped_key",
+            ssid="or_sped_ssid",
+            student_id="or_sped",
+            student_name="SPED Only",
+            grade="03",
+            sped="Y",
+            in_504="N",
+            school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu_sped))
+
+        # Student with SPED=N, 504=Y -> eligible via second branch
+        stu_504 = CurrentStudent.objects.create(
+            stu_annual_key="or_504_key",
+            ssid="or_504_ssid",
+            student_id="or_504",
+            student_name="504 Only",
+            grade="03",
+            sped="N",
+            in_504="Y",
+            school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu_504))
+
+        # Student with SPED=N, 504=N -> fails both branches -> hidden
+        stu_neither = CurrentStudent.objects.create(
+            stu_annual_key="or_neither_key",
+            ssid="or_neither_ssid",
+            student_id="or_neither",
+            student_name="Neither",
+            grade="03",
+            sped="N",
+            in_504="N",
+            school_year="2025-2026",
+        )
+        self.assertIn(accommodation.id, hidden_support_ids(stu_neither))
+
+    def test_support_rule_with_mixed_and_or_criteria(self):
+        # (Grade is 03 AND SPED is Y) OR (Grade is 04 AND in_504 is Y)
+        accommodation = Accommodation.objects.create(name="Braille", code="BR")
+        rule = SupportRule.objects.create(name="Compound Rule", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="is", value="03", logic_operator="AND", order=0)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="sped", operator="is", value="Y", logic_operator="AND", order=1)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="is", value="04", logic_operator="OR", order=2)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="in_504", operator="is", value="Y", logic_operator="AND", order=3)
+
+        # Grade 03 & SPED Y -> passes branch 1
+        stu_b1 = CurrentStudent.objects.create(
+            stu_annual_key="b1_key", ssid="b1_ssid", student_id="b1", student_name="Branch 1",
+            grade="03", sped="Y", in_504="N", school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu_b1))
+
+        # Grade 04 & 504 Y -> passes branch 2
+        stu_b2 = CurrentStudent.objects.create(
+            stu_annual_key="b2_key", ssid="b2_ssid", student_id="b2", student_name="Branch 2",
+            grade="04", sped="N", in_504="Y", school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu_b2))
+
+        # Grade 03 & 504 Y (but SPED N) -> fails branch 1 and branch 2
+        stu_cross = CurrentStudent.objects.create(
+            stu_annual_key="cross_key", ssid="cross_ssid", student_id="cross", student_name="Cross",
+            grade="03", sped="N", in_504="Y", school_year="2025-2026",
+        )
+        self.assertIn(accommodation.id, hidden_support_ids(stu_cross))
+
+    def test_support_rule_form_creates_and_edits_or_criteria(self):
+        project = User.objects.create_user(username="proj_admin@test.com", email="proj_admin@test.com", password="password123")
+        project.roles.add(self.project_role)
+        self.client.force_login(project)
+        accommodation = Accommodation.objects.create(name="Color Contrast", code="CC")
+
+        # 1. Create with OR logic
+        response = self.client.post(reverse("desi:support_rule_create"), {
+            "name": "SPED OR 504 Rule",
+            "description": "Accessible to either SPED or 504",
+            "is_active": "on",
+            "supports": [str(accommodation.id)],
+            "crit_field[]": ["sped", "in_504"],
+            "crit_operator[]": ["is", "is"],
+            "crit_value[]": ["Y", "Y"],
+            "crit_logic_op[]": ["AND", "OR"],
+        })
+        self.assertEqual(response.status_code, 302)
+        rule = SupportRule.objects.get(name="SPED OR 504 Rule")
+        criteria = list(rule.criteria.all())
+        self.assertEqual(len(criteria), 2)
+        self.assertEqual(criteria[0].logic_operator, "AND")
+        self.assertEqual(criteria[0].order, 0)
+        self.assertEqual(criteria[1].logic_operator, "OR")
+        self.assertEqual(criteria[1].order, 1)
+        self.assertIn("OR", rule.criteria_summary)
+
+        # 2. Edit rule to change second condition to AND
+        response_edit = self.client.post(reverse("desi:support_rule_edit", args=[rule.id]), {
+            "name": "SPED AND 504 Rule",
+            "description": "Now both must match",
+            "is_active": "on",
+            "supports": [str(accommodation.id)],
+            "crit_field[]": ["sped", "in_504"],
+            "crit_operator[]": ["is", "is"],
+            "crit_value[]": ["Y", "Y"],
+            "crit_logic_op[]": ["AND", "AND"],
+        })
+        self.assertEqual(response_edit.status_code, 302)
+        rule.refresh_from_db()
+        criteria_updated = list(rule.criteria.all())
+        self.assertEqual(criteria_updated[1].logic_operator, "AND")
+        self.assertIn("AND", rule.criteria_summary)
+        self.assertNotIn("OR", rule.criteria_summary)
+
+    def test_support_rule_form_creates_rule_with_list_in_checkboxes(self):
+        project = User.objects.create_user(username="list_admin@test.com", email="list_admin@test.com", password="password123")
+        project.roles.add(self.project_role)
+        self.client.force_login(project)
+        accommodation = Accommodation.objects.create(name="MultiListSupport", code="MLS")
+
+        # Post with 'in' operator and comma-separated list (as generated by multi-select checkboxes)
+        response = self.client.post(reverse("desi:support_rule_create"), {
+            "name": "Grades 03,04,05 OR SPED",
+            "description": "Multi-value list rule",
+            "is_active": "on",
+            "supports": [str(accommodation.id)],
+            "crit_field[]": ["grade", "sped"],
+            "crit_operator[]": ["in", "is"],
+            "crit_value[]": ["03,04,05", "Y"],
+            "crit_logic_op[]": ["AND", "OR"],
+        })
+        self.assertEqual(response.status_code, 302)
+        rule = SupportRule.objects.get(name="Grades 03,04,05 OR SPED")
+        criteria = list(rule.criteria.all())
+        self.assertEqual(len(criteria), 2)
+        self.assertEqual(criteria[0].operator, "in")
+        self.assertEqual(criteria[0].value, "03,04,05")
+        self.assertEqual(criteria[1].logic_operator, "OR")
+
+        # Student Grade 04, SPED N -> matches branch 1
+        stu_gr4 = CurrentStudent.objects.create(
+            stu_annual_key="gr4_key", ssid="gr4_ssid", student_id="gr4", student_name="Grade 4 Student",
+            grade="04", sped="N", school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu_gr4))
+
+        # Student Grade 06, SPED Y -> matches branch 2
+        stu_sped_gr6 = CurrentStudent.objects.create(
+            stu_annual_key="gr6_key", ssid="gr6_ssid", student_id="gr6", student_name="Grade 6 SPED",
+            grade="06", sped="Y", school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu_sped_gr6))
+
+        # Student Grade 06, SPED N -> matches neither branch -> hidden
+        stu_gr6_non_sped = CurrentStudent.objects.create(
+            stu_annual_key="gr6_non_key", ssid="gr6_non_ssid", student_id="gr6_non", student_name="Grade 6 Non SPED",
+            grade="06", sped="N", school_year="2025-2026",
+        )
+        self.assertIn(accommodation.id, hidden_support_ids(stu_gr6_non_sped))
+
+    def test_admin_dashboard_saves_assessment_column_order(self):
+        admin = User.objects.create_user(username="ast_admin@test.com", email="ast_admin@test.com", password="password123")
+        admin.roles.add(self.project_role)
+        self.client.force_login(admin)
+
+        ast_sci = Assessment.objects.create(name="Science", is_active=True, order=10)
+        ast_math = Assessment.objects.create(name="Math", is_active=True, order=20)
+        ast_ela = Assessment.objects.create(name="ELA", is_active=True, order=30)
+
+        # POST reorder: Math first (1), ELA second (2), Science third (3)
+        response = self.client.post(reverse("desi:admin_dashboard"), {
+            "action": "save_assessment_order",
+            "assessment_order": [str(ast_math.id), str(ast_ela.id), str(ast_sci.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+
+        ast_math.refresh_from_db()
+        ast_ela.refresh_from_db()
+        ast_sci.refresh_from_db()
+        self.assertEqual(ast_math.order, 1)
+        self.assertEqual(ast_ela.order, 2)
+        self.assertEqual(ast_sci.order, 3)
+
+        # Verify ordering query returns them in this custom order
+        ordered = list(Assessment.objects.filter(id__in=[ast_sci.id, ast_math.id, ast_ela.id]))
+        self.assertEqual([a.id for a in ordered], [ast_math.id, ast_ela.id, ast_sci.id])
+
+    def test_assign_accommodations_renders_matrix_columns_in_configured_order(self):
+        admin = User.objects.create_user(username="ast_user@test.com", email="ast_user@test.com", password="password123")
+        admin.roles.add(self.project_role)
+        self.client.force_login(admin)
+
+        ast_sci = Assessment.objects.create(name="Order Science", is_active=True, order=3)
+        ast_math = Assessment.objects.create(name="Order Math", is_active=True, order=1)
+        ast_ela = Assessment.objects.create(name="Order ELA", is_active=True, order=2)
+
+        response = self.client.get(reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]))
+        self.assertEqual(response.status_code, 200)
+
+        matrix_columns = response.context["matrix_columns"]
+        col_names = [c["assessment"].name for c in matrix_columns if c["assessment"].name.startswith("Order ")]
+        self.assertEqual(col_names, ["Order Math", "Order ELA", "Order Science"])
+
+        # Check template styling: Supports Matrix, Save Supports, and equal sizing table
+        content = response.content.decode()
+        self.assertIn("Supports Matrix", content)
+        self.assertNotIn("Designated Supports by Section", content)
+        self.assertIn("Save Supports", content)
+        self.assertIn("desi-matrix-table", content)
+        self.assertIn("desi-matrix-col-item", content)
+
     def test_resource_crud_and_embed(self):
         accommodation = Accommodation.objects.create(name="TTS", code="TTS")
         resource = AccommodationResource.objects.create(
