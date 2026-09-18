@@ -67,7 +67,10 @@ CREATE TABLE IF NOT EXISTS current_student (
     ltel Nullable(String),
     status Nullable(String),
     school_year String,
-    add_data Nullable(String)
+    add_data Nullable(String),
+    INDEX idx_cs_school school_state_id TYPE set(100) GRANULARITY 4,
+    INDEX idx_cs_grade grade TYPE set(20) GRANULARITY 4,
+    INDEX idx_cs_status status TYPE set(10) GRANULARITY 4
 )
 ENGINE = MergeTree
 ORDER BY (school_year, ssid, stu_annual_key)
@@ -506,3 +509,10 @@ PROJECTION_DDL = (
     "ALTER TABLE analytics_student_marks ADD PROJECTION IF NOT EXISTS p_mark_lookup "
     "(SELECT * ORDER BY stu_annual_key, school_year, subject)",
 )
+
+SECONDARY_INDEX_DDL = (
+    "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_school school_state_id TYPE set(100) GRANULARITY 4",
+    "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_grade grade TYPE set(20) GRANULARITY 4",
+    "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_status status TYPE set(10) GRANULARITY 4",
+)
+

@@ -28,7 +28,11 @@ logger = logging.getLogger(__name__)
 # (256KiB, the parser buffer — not a data/row limit) and fail as a confusing
 # "Syntax error" at the truncation point. Raised generously since it only
 # affects parse-buffer size, not query performance.
-_CH_QUERY_SETTINGS = {'max_query_size': 50_000_000}
+_CH_QUERY_SETTINGS = {
+    'max_query_size': 50_000_000,
+    'max_threads': 4,
+    'max_execution_time': 30,
+}
 
 # Tables mirrored into ClickHouse by `sync_to_clickhouse` (see
 # clickhouse_utils/schema.py for the DDL). Keep in sync with both.

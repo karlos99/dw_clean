@@ -21,7 +21,7 @@ from clickhouse_utils.timing import timed_fn
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '14'
+_CHART_PIPELINE_VERSION = '15'
 _timing_log = logging.getLogger('analytics.timing')
 
 # One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
@@ -49,13 +49,6 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings):
         return None
     if cfg.get('group_col'):
         return None
-    # Dataset status handling has additional semantics (including the
-    # interactive status sentinel); keep it on the established compiler path
-    # until those predicates are represented directly in this aggregate SQL.
-    if any(str(k).split('.')[-1] == 'status' for k in (filters or {})):
-        return None
-    if any(str(f.get('column', '')).split('.')[-1] == 'status' for f in (ds.filters or [])):
-        return None
 
     x_cols = cfg.get('x_cols') or []
     if not isinstance(x_cols, list):
@@ -78,6 +71,8 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings):
         build_dataset_col_index, compile_aggregated_dataset_to_sql,
         execute_compiled_query, SQLCompilationError, resolve_dataset_filters,
     )
+    from dataviz.utils.status_filter import prepare_interactive_filters
+
     index = build_dataset_col_index(ds)
 
     def resolve(value):
@@ -94,13 +89,15 @@ def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings):
         return None
 
     active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-    resolved_interactive = resolve_dataset_filters(filters or {}, ds, active_tables)
+    resolved_interactive, status_val = prepare_interactive_filters(filters or {}, ds, active_tables)
+    limit_val = _parse_chart_row_limit(cfg)
     try:
         sql, params = compile_aggregated_dataset_to_sql(
             ds, [x_full], y_full, aggregation, series_col=series_full,
-            user=None, limit=None, interactive_filters=resolved_interactive,
+            user=None, limit=limit_val, interactive_filters=resolved_interactive,
             one_row_per_stu_annual_key=bool(cfg.get('one_row_per_stu_annual_key')),
             date_bucket=(cfg.get('x_date_bucket') or '').strip().lower() or None,
+            status_filter=status_val,
         )
     except SQLCompilationError:
         return None
@@ -1101,9 +1098,38 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     pf_hash = hashlib.md5(str(pf_params).encode()).hexdigest()[:12]
     # updated_at as an int-second timestamp busts the key on every chart save
     updated_ts = int(chart.updated_at.timestamp())
+    config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
+    embed_suffix = 'e' if is_embed else 's'
+    render_cache_key = (
+        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
+        f'{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}'
+    )
+    etag = f'W/"{render_cache_key[-16:]}"'
 
-    # ── Two-layer cache: data cache (5 min) + render cache (1 hour) ──
-    # Layer 1 – Data cache: raw rows keyed by source + filters
+    if if_none_match == etag:
+        return {'not_modified': True, 'etag': etag}
+
+    # ── Check Layer 2 Render Cache first (<5ms hit, avoids deserializing raw rows) ──
+    cached_html = cache.get(render_cache_key)
+    if cached_html is not None:
+        return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
+
+    lock_key, done_key = _chart_flight_keys(
+        chart_id, updated_ts, pf_hash, embed_suffix, sync_version,
+    )
+    done = cache.get(done_key)
+    if done is not None:
+        payload = dict(done)
+        payload['cache_status'] = 'HIT'
+        return payload
+
+    got_lock = cache.add(lock_key, 1, timeout=_FLIGHT_LOCK_TTL)
+    if not got_lock:
+        waited = _wait_chart_flight(done_key)
+        if waited is not None:
+            return waited
+
+    # ── Layer 1 – Data cache: raw rows keyed by source + filters ──
     sel_cols_hash = ""
     if chart.source_type == SavedChart.SOURCE_COLUMNS:
         _sel_for_hash = list(chart.config.get('selected_columns', []))
@@ -1124,42 +1150,6 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     data_cache_key = f'chart_data:{source_part}'
     data_cached = cache.get(data_cache_key)
     result = data_cached if data_cached is not None else None
-
-    # Layer 2 – Render cache: rendered HTML keyed by chart config + data hash
-    if result is not None:
-        data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True, cls=DjangoJSONEncoder).encode()).hexdigest()[:12]
-    else:
-        data_hash = 'raw'
-    config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
-    embed_suffix = 'e' if is_embed else 's'
-    render_cache_key = (
-        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
-        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}:'
-        f'{sync_version}'
-    )
-    etag = f'W/"{render_cache_key[-16:]}"'
-
-    if if_none_match == etag:
-        return {'not_modified': True, 'etag': etag}
-
-    cached_html = cache.get(render_cache_key)
-    if cached_html is not None:
-        return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
-
-    lock_key, done_key = _chart_flight_keys(
-        chart_id, updated_ts, pf_hash, embed_suffix, sync_version,
-    )
-    done = cache.get(done_key)
-    if done is not None:
-        payload = dict(done)
-        payload['cache_status'] = 'HIT'
-        return payload
-
-    got_lock = cache.add(lock_key, 1, timeout=_FLIGHT_LOCK_TTL)
-    if not got_lock:
-        waited = _wait_chart_flight(done_key)
-        if waited is not None:
-            return waited
 
     # ── Cache miss: run the full pipeline ─────────────────────────
     chart_cfg = _effective_chart_cfg(chart)
@@ -1323,12 +1313,6 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # *is* warm will compute the real data_hash on its lookup, so storing
     # under that same real-data key (not 'raw') is what makes it a HIT.
     if not error:
-        data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True, cls=DjangoJSONEncoder).encode()).hexdigest()[:12]
-        render_cache_key = (
-        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
-        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}'
-    )
-        etag = f'W/"{render_cache_key[-16:]}"'
         cache.set(render_cache_key, html, timeout=3600)
 
     payload = {'html': html, 'error': error, 'cache_status': 'MISS', 'etag': etag}

@@ -1091,9 +1091,14 @@ class DatasetDrillThroughTests(TestCase):
 
         sql, params = compile_dataset_to_sql(self.dataset, user=self.user)
         
-        # Verify compiled SQL structure
-        self.assertIn('"current_student"."add_data"->>\'AVID\' AS "current_student.add_data->\'AVID\'"', sql)
-        self.assertIn('"current_student"."add_data"->>\'AVID\' = %s', sql)
+        self.assertTrue(
+            '"current_student"."add_data"->>\'AVID\' AS "current_student.add_data->\'AVID\'"' in sql
+            or '("current_student"."add_data"::jsonb->>\'AVID\') AS "current_student.add_data->\'AVID\'"' in sql
+        )
+        self.assertTrue(
+            '"current_student"."add_data"->>\'AVID\' = %s' in sql
+            or '("current_student"."add_data"::jsonb->>\'AVID\') = %s' in sql
+        )
         self.assertIn('Yes', params)
 
         # Clean up

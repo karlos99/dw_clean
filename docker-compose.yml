@@ -59,7 +59,7 @@ services:
     image: redis:7-alpine
     container_name: dw_redis
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "1024mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"
     networks:

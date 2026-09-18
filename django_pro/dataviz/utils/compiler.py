@@ -58,6 +58,9 @@ def generate_column_aliases(columns: list, existing_mappings: dict | None = None
     return result
 
 
+generate_dataset_column_aliases = generate_column_aliases
+
+
 def apply_column_aliases(rows: list, column_mappings: dict | None) -> list:
     """
     Rename row-dict keys from "table.column" format to their clean aliases
@@ -1020,7 +1023,7 @@ def _sql_date_bucket(expr, bucket):
     return f"formatDateTime({d}, '%Y-%m-%d')"
 
 
-def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation, series_col=None, user=None, limit=None, interactive_filters=None, one_row_per_stu_annual_key=False, date_bucket=None):
+def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation, series_col=None, user=None, limit=None, interactive_filters=None, one_row_per_stu_annual_key=False, date_bucket=None, status_filter=_UNSET):
     """
     Compiles a Dataset definition into aggregated SQL with GROUP BY.
 
@@ -1138,6 +1141,19 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
             else:
                 where_parts.append(f'{expr} = %s')
                 params.append(val)
+
+    # Status filter — callers pass this explicitly or through interactive filters.
+    from dataviz.utils.status_filter import append_quoted_status_where, normalize_status_value
+    if status_filter is not _UNSET:
+        resolved_status = status_filter
+    elif interactive_filters:
+        scratch = dict(interactive_filters)
+        resolved_status = normalize_status_value(scratch, pop=True)
+        interactive_filters = scratch
+    else:
+        resolved_status = None
+    if 'current_student' in active_tables:
+        append_quoted_status_where(where_parts, params, resolved_status, table='current_student')
 
     # Interactive filters are supplied separately by chart/page requests and
     # must be applied before aggregation. The caller resolves these keys to

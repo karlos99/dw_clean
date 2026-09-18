@@ -36,6 +36,9 @@ def get_clickhouse_client():
             username=getattr(settings, 'CLICKHOUSE_USER', 'clickhouse_user'),
             password=getattr(settings, 'CLICKHOUSE_PASSWORD', ''),
             database=getattr(settings, 'CLICKHOUSE_DB', 'fastapi_clickhouse_db'),
+            compress=True,
+            connect_timeout=10,
+            send_receive_timeout=60,
         )
         client.ping()
         logger.info("ClickHouse client connected successfully (thread %s)", threading.get_ident())
