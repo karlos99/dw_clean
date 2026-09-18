@@ -1340,6 +1340,31 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertIn("desi-matrix-table", content)
         self.assertIn("desi-matrix-col-item", content)
 
+    def test_admin_dashboard_collapsible_sections_default_collapsed(self):
+        admin = User.objects.create_user(username="collapse_admin@test.com", email="collapse_admin@test.com", password="password123")
+        admin.roles.add(self.project_role)
+        self.client.force_login(admin)
+
+        response = self.client.get(reverse("desi:admin_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+
+        # Check that sections are collapsed by default in Alpine x-data
+        self.assertIn("seisOpen: false", content)
+        self.assertIn("testsOpen: false", content)
+        self.assertIn("orderOpen: false", content)
+        self.assertIn("poolOpen: false", content)
+
+        # Check Alpine collapse bindings
+        self.assertIn("x-show=\"seisOpen\"", content)
+        self.assertIn("x-show=\"testsOpen\"", content)
+        self.assertIn("x-show=\"orderOpen\"", content)
+        self.assertIn("x-show=\"poolOpen\"", content)
+
+        # Check expand/collapse all button
+        self.assertIn("Expand All", content)
+        self.assertIn("Collapse All", content)
+
     def test_resource_crud_and_embed(self):
         accommodation = Accommodation.objects.create(name="TTS", code="TTS")
         resource = AccommodationResource.objects.create(
