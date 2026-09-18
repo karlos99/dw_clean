@@ -238,6 +238,94 @@ def _fetch_test_records_for_ssid(ssid: str):
     return _dedupe_test_records(rows)
 
 
+_PERIOD_RANK = {
+    'P1': 0, 'P2': 1, 'P3': 2, 'P4': 3, 'P5': 4, 'P6': 5,
+    'Q1': 10, 'Q2': 11, 'Q3': 12, 'Q4': 13,
+    'S1': 20, 'S2': 21, 'SEM1': 20, 'SEM2': 21,
+    'T1': 30, 'T2': 31, 'T3': 32,
+    'TR1': 40, 'TR2': 41, 'TR3': 42,
+    'FINAL': 98,
+    'LIVE': 99,
+}
+
+
+def _period_sort_key(period: str):
+    p = (period or '').strip()
+    rank = _PERIOD_RANK.get(p.upper())
+    if rank is None:
+        return (80, p.lower())
+    return (rank, p.lower())
+
+
+def _mark_tone(mark):
+    if mark is None or str(mark).strip() == '':
+        return ''
+    m = str(mark).strip().upper()
+    if m in ('A+', 'A', 'A-', '4', 'O'):
+        return 'green'
+    if m in ('B+', 'B', 'B-', '3', 'S'):
+        return 'blue'
+    if m in ('C+', 'C', 'C-', '2', 'N'):
+        return 'yellow'
+    if m in ('D+', 'D', 'D-', 'F', '1', 'U'):
+        return 'red'
+    return 'slate'
+
+
+def pivot_student_marks(marks: list) -> list:
+    """Turn flat mark rows into year → class rows × marking-period columns."""
+    if not marks:
+        return []
+    years = {}
+    year_order = []
+    for m in marks:
+        year = m.get('school_year') or ''
+        if year not in years:
+            years[year] = {'periods': set(), 'courses': {}}
+            year_order.append(year)
+        course_key = (m.get('subject') or '', m.get('course_name') or '')
+        period = (m.get('mark_period') or '').strip() or '—'
+        bucket = years[year]
+        bucket['periods'].add(period)
+        course = bucket['courses'].get(course_key)
+        if course is None:
+            course = {
+                'subject': m.get('subject') or '',
+                'course_name': m.get('course_name') or '',
+                'staff_name': m.get('staff_name') or '',
+                'by_period': {},
+            }
+            bucket['courses'][course_key] = course
+        if m.get('staff_name') and (period.lower() == 'live' or not course['staff_name']):
+            course['staff_name'] = m.get('staff_name')
+        existing = course['by_period'].get(period)
+        if existing is None or m.get('mark'):
+            course['by_period'][period] = m.get('mark')
+
+    grid = []
+    for year in year_order:
+        bucket = years[year]
+        periods = sorted(bucket['periods'], key=_period_sort_key)
+        courses = []
+        for course in bucket['courses'].values():
+            cells = []
+            for p in periods:
+                mark = course['by_period'].get(p)
+                cells.append({'period': p, 'mark': mark, 'tone': _mark_tone(mark)})
+            courses.append({
+                'subject': course['subject'],
+                'course_name': course['course_name'],
+                'staff_name': course['staff_name'],
+                'cells': cells,
+            })
+        grid.append({
+            'school_year': year,
+            'periods': periods,
+            'courses': courses,
+        })
+    return grid
+
+
 def _fetch_student_marks_for_ssid(ssid: str):
     """Fetch all marks for a student from live mark_data (not the matview)."""
     from ..column_utils import _fetch_marks_live_from_alt
@@ -328,12 +416,15 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
     if cached is not None:
         return cached
 
+    marks = get_student_marks_cached(ssid, timeout=timeout, user_id=user_id)
+    student_info = get_student_info_cached(ssid, timeout=timeout, user_id=user_id)
     context = {
         'ssid': ssid,
-        'student_info': get_student_info_cached(ssid, timeout=timeout, user_id=user_id),
-        'student_name': get_student_info_cached(ssid, timeout=timeout, user_id=user_id).get('full_name'),
+        'student_info': student_info,
+        'student_name': student_info.get('full_name'),
         'test_records': get_test_records_cached(ssid, timeout=timeout, user_id=user_id),
-        'student_marks': get_student_marks_cached(ssid, timeout=timeout, user_id=user_id),
+        'student_marks': marks,
+        'student_marks_grid': pivot_student_marks(marks),
         'embedded': embedded,
     }
     html = render_to_string('dataexploration/partials/student_test_summary_content.html', context, request=request)

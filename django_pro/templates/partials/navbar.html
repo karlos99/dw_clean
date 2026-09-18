@@ -141,7 +141,7 @@
             <!-- Right: user cluster (desktop) -->
             <div class="hidden md:flex items-center gap-4 pl-4 border-l border-slate-700">
                 {% if user.avatar %}
-                <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full border border-slate-600">
+                <img src="{{ user.avatar }}" alt="Avatar" referrerpolicy="no-referrer" class="h-8 w-8 rounded-full border border-slate-600">
                 {% else %}
                 <div class="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white">
                     {{ user.email|first|upper }}
@@ -280,7 +280,7 @@
 
             <div class="pt-2 mt-2 border-t border-slate-800 flex items-center gap-3">
                 {% if user.avatar %}
-                <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full border border-slate-600">
+                <img src="{{ user.avatar }}" alt="Avatar" referrerpolicy="no-referrer" class="h-8 w-8 rounded-full border border-slate-600">
                 {% else %}
                 <div class="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white">
                     {{ user.email|first|upper }}
@@ -468,7 +468,7 @@
             <!-- Right: user cluster (desktop) -->
             <div class="hidden md:flex items-center gap-4 pl-4 border-l border-slate-700">
                 {% if user.avatar %}
-                <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full border border-slate-600">
+                <img src="{{ user.avatar }}" alt="Avatar" referrerpolicy="no-referrer" class="h-8 w-8 rounded-full border border-slate-600">
                 {% else %}
                 <div class="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white">
                     {{ user.email|first|upper }}
@@ -628,7 +628,7 @@
 
             <div class="pt-2 mt-2 border-t border-slate-800 flex items-center gap-3">
                 {% if user.avatar %}
-                <img src="{{ user.avatar }}" alt="Avatar" class="h-8 w-8 rounded-full border border-slate-600">
+                <img src="{{ user.avatar }}" alt="Avatar" referrerpolicy="no-referrer" class="h-8 w-8 rounded-full border border-slate-600">
                 {% else %}
                 <div class="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white">
                     {{ user.email|first|upper }}

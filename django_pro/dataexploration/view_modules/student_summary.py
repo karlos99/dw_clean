@@ -11,7 +11,9 @@ from ..models import StudentWithTests
 from .student_data_utils import (
     get_student_info_cached,
     get_test_records_cached,
+    get_student_marks_cached,
     get_student_summary_partial_html_cached,
+    pivot_student_marks,
     _resolve_ssid,
 )
 
@@ -36,6 +38,9 @@ class StudentTestSummaryView(LoginRequiredMixin, ListView):
         context['student_info'] = get_student_info_cached(ssid, user_id=user_id)
         context['student_name'] = context['student_info'].get('full_name')
         context['test_records'] = get_test_records_cached(ssid, user_id=user_id)
+        marks = get_student_marks_cached(ssid, user_id=user_id)
+        context['student_marks'] = marks
+        context['student_marks_grid'] = pivot_student_marks(marks)
         return context
 
 
