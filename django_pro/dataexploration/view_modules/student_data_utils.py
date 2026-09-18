@@ -16,7 +16,7 @@ def _student_summary_cache_version():
         mtime = int(os.path.getmtime(template_path))
     except Exception:
         mtime = 0
-    return f"v3:{mtime}"
+    return f"v4:{mtime}"
 
 
 def _resolve_ssid(ssid: str) -> str:
@@ -239,10 +239,40 @@ def _fetch_test_records_for_ssid(ssid: str):
 
 
 def _fetch_student_marks_for_ssid(ssid: str):
-    """Fetch all marks for a student from the database."""
-    marks = list(StudentMarks.objects.filter(ssid=ssid)
-                .order_by('-school_year', 'course_name', 'mark_period')
-                .values())
+    """Fetch all marks for a student from live mark_data (not the matview)."""
+    from ..column_utils import _fetch_marks_live_from_alt
+
+    ssid = _resolve_ssid(ssid)
+    cs = (
+        CurrentStudent.objects.filter(ssid=ssid)
+        .order_by('-school_year')
+        .first()
+    )
+    student_id = getattr(cs, 'student_id', None) if cs else None
+    years = list(
+        CurrentStudent.objects.filter(ssid=ssid)
+        .values_list('school_year', flat=True)
+        .distinct()
+    )
+    if not years:
+        years = list(
+            StudentMarks.objects.filter(ssid=ssid)
+            .values_list('school_year', flat=True)
+            .distinct()
+        )
+    live_rows = _fetch_marks_live_from_alt([ssid], [student_id] if student_id else [], years or None)
+    marks = []
+    for row in live_rows:
+        marks.append({
+            'ssid': row.get('ssid'),
+            'student_id': row.get('student_id'),
+            'school_year': row.get('school_year'),
+            'subject': row.get('subject'),
+            'course_name': row.get('course_name'),
+            'mark_period': row.get('mark_period'),
+            'mark': row.get('mark'),
+            'staff_name': row.get('staff_name'),
+        })
     def _sort_key(m):
         p = str(m.get('mark_period') or '').strip()
         is_live = 1 if p.lower() == 'live' else 0

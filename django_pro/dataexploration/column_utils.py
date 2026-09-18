@@ -5,7 +5,7 @@ import json
 import re
 from django.core.cache import cache
 from django.db import connections
-from .constants import COLUMN_DEFINITIONS
+from .constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
 from clickhouse_utils.executor import QueryExecutor
 
 
@@ -133,6 +133,142 @@ def normalize_score_value(value):
     if not s or s.lower() in SCORE_SENTINELS:
         return None
     return s
+
+
+# Live unnest of student_marks_table_alt (same rules as student_marks_list matview).
+_MARKS_LIVE_FROM_ALT_SQL = """
+    SELECT
+        m.ssid,
+        m.student_id,
+        m.school_year,
+        m.subject,
+        m.course_name,
+        m.staff_name,
+        CASE
+            WHEN (e.item ->> 'status') ILIKE 'current' THEN 'Live'
+            ELSE (e.item ->> 'period')
+        END AS mark_period,
+        (e.item ->> 'mark') AS mark,
+        (e.item ->> 'status') AS mark_status,
+        e.ord AS mark_ord
+    FROM student_marks_table_alt m,
+         LATERAL jsonb_array_elements(
+             CASE
+                 WHEN m.mark_data IS NOT NULL AND m.mark_data <> ''
+                 THEN (m.mark_data::jsonb) -> 'marks'
+                 ELSE '[]'::jsonb
+             END
+         ) WITH ORDINALITY AS e(item, ord)
+    WHERE (m.ssid = ANY(%s) OR m.student_id = ANY(%s))
+      {year_clause}
+"""
+
+
+def _mark_row_precedence(status, mark, ord_val=0):
+    """Rank duplicate rows for the same course/period; higher wins."""
+    status_f = (str(status or '').strip()).casefold()
+    has_val = normalize_score_value(mark) is not None
+    is_final = status_f == 'final'
+    is_current = status_f == 'current'
+    # Final with a real grade beats in-progress duplicates and N/A placeholders.
+    score = 0
+    if is_final:
+        score += 100
+    if has_val:
+        score += 10
+    if not is_current:
+        score += 1
+    score += min(int(ord_val or 0), 99) / 100.0
+    return score
+
+
+def _choose_better_mark(existing, candidate):
+    """Return the better of two (mark, status, ord) tuples."""
+    if existing is None:
+        return candidate
+    ex_mark, ex_status, ex_ord = existing
+    cand_mark, cand_status, cand_ord = candidate
+    if _mark_row_precedence(cand_status, cand_mark, cand_ord) > _mark_row_precedence(ex_status, ex_mark, ex_ord):
+        return candidate
+    return existing
+
+
+def _fetch_marks_live_from_alt(student_ssids, student_ids, years):
+    """Read marks from student_marks_table_alt (not the materialized view)."""
+    ssids = [s for s in (student_ssids or []) if s]
+    ids = [s for s in (student_ids or []) if s]
+    year_list = [y for y in (years or []) if y]
+    if not ssids and not ids:
+        return []
+    if not ssids:
+        ssids = ['']
+    if not ids:
+        ids = ['']
+    year_clause = "AND m.school_year = ANY(%s)" if year_list else ""
+    sql = _MARKS_LIVE_FROM_ALT_SQL.format(year_clause=year_clause)
+    params = [ssids, ids]
+    if year_list:
+        params.append(year_list)
+    with connections['default'].cursor() as cur:
+        cur.execute(sql, params)
+        cols = [c.name for c in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def _append_grouped_mark(grouped, owner_key, course, period, mark):
+    disp = normalize_score_value(mark)
+    if disp is None and mark is not None and str(mark).strip():
+        disp = str(mark).strip()
+    grouped.setdefault(owner_key, {}).setdefault(course, []).append((period, disp or mark))
+
+
+def group_marks_by_ssid_course(rows, subject=None, course_filter_fn=None):
+    """Group live mark rows into ssid and student_id keyed course/period maps."""
+    subject_fold = _fold(subject) if subject else None
+    grouped_ssid = {}
+    grouped_id = {}
+    best = {}
+
+    for row in rows or []:
+        if subject_fold is not None and subject_fold != _fold(row.get('subject')):
+            continue
+        course = row.get('course_name') or ''
+        if course_filter_fn and not course_filter_fn(course):
+            continue
+        period = (row.get('mark_period') or '').strip()
+        cand = (row.get('mark'), row.get('mark_status'), row.get('mark_ord'))
+        ssid_s = str(row.get('ssid') or '').strip()
+        sid_s = str(row.get('student_id') or '').strip()
+        if ssid_s:
+            key = ('ssid', ssid_s, course, period)
+            best[key] = _choose_better_mark(best.get(key), cand)
+        if sid_s:
+            key = ('id', sid_s, course, period)
+            best[key] = _choose_better_mark(best.get(key), cand)
+
+    for (kind, owner, course, period), (mark, _status, _ord) in best.items():
+        target = grouped_ssid if kind == 'ssid' else grouped_id
+        _append_grouped_mark(target, owner, course, period, mark)
+
+    for grouped in (grouped_ssid, grouped_id):
+        for owner in grouped:
+            for course in grouped[owner]:
+                grouped[owner][course].sort(key=lambda t: (t[0] or ''))
+    return grouped_ssid, grouped_id
+
+
+def markall_course_filter_fn(subject, excludes):
+    """Python equivalent of ``markall_course_filter_parts`` for live mark rows."""
+
+    def _fn(course_name):
+        name = course_name or ''
+        if subject == 'Elementary' and 'homeroom' in name.casefold():
+            return False
+        if excludes and name in excludes:
+            return False
+        return True
+
+    return _fn
 
 
 def export_cell(value, blank='\u2014'):
@@ -282,52 +418,55 @@ def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=No
                 )
 
     if mark_cols_info:
-        # Match marks by SSID (like assessments), so prior-year mark columns populate
-        # while the student list row reflects the filtered enrollment year. Marks
-        # whose SSID is stale (the student's SSID was corrected) are matched by
-        # local student id instead of being dropped.
+        # Read live from student_marks_table_alt so display matches source JSON even
+        # when the student_marks_list materialized view (and ClickHouse) lag behind.
         student_ssids = [s.get('ssid') for s in students if s.get('ssid')]
         student_ids = [s.get('student_id') for s in students if s.get('student_id')]
         ssid_set = set(str(s).strip() for s in student_ssids)
+        student_id_set = set(str(s).strip() for s in student_ids)
         years = list({info['year'] for info in mark_cols_info if info.get('year')})
-        result = exec_.execute(
-            "SELECT sm.ssid, sm.student_id, sm.school_year, sm.subject, sm.course_name, "
-            "sm.mark_period, sm.mark FROM analytics_student_marks sm "
-            "WHERE (sm.ssid = ANY(%s) OR sm.student_id = ANY(%s)) AND sm.school_year = ANY(%s)",
-            [student_ssids, student_ids, years],
-        )
-        rows = []
-        if not result.get('error'):
-            for row in result.get('rows') or []:
-                rows.append((
-                    row.get('ssid'), row.get('student_id'), row.get('school_year'),
-                    row.get('subject'), row.get('course_name'), row.get('mark_period'),
-                    row.get('mark'),
-                ))
+        live_rows = _fetch_marks_live_from_alt(student_ssids, student_ids, years)
         for mark_info in mark_cols_info:
             want_year = _fold(mark_info.get('year'))
             subj_needle = _fold(mark_info.get('subject'))
             course_needle = _fold(mark_info.get('course_name'))
             want_period = _fold(mark_info['mark_period']) if mark_info.get('mark_period') else None
-            mark_data = {}          # ssid -> mark (authoritative)
-            mark_data_by_id = {}    # student_id -> mark (fallback for stale ssid)
-            for ssid, student_id, year, subject, course, period, mark in rows:
-                if _fold(year) != want_year:
+            mark_data = {}
+            mark_data_by_id = {}
+            # (ssid|student_id, period_key) -> best (mark, status, ord)
+            cell_best = {}
+            for row in live_rows:
+                if _fold(row.get('school_year')) != want_year:
                     continue
+                subject = row.get('subject')
+                course = row.get('course_name')
                 if subj_needle not in _fold(subject) or course_needle not in _fold(course):
                     continue
+                period = row.get('mark_period')
                 if want_period is None:
                     if _fold(period):
                         continue
                 elif _fold(period) != want_period:
                     continue
-                ssid_s = str(ssid).strip() if ssid is not None else ''
+                ssid_s = str(row.get('ssid') or '').strip()
+                sid_s = str(row.get('student_id') or '').strip()
                 if ssid_s and ssid_s in ssid_set:
-                    mark_data[ssid_s] = mark
+                    cell_key = ('ssid', ssid_s)
+                elif sid_s and sid_s in student_id_set:
+                    cell_key = ('id', sid_s)
                 else:
-                    sid_s = str(student_id).strip() if student_id is not None else ''
-                    if sid_s:
-                        mark_data_by_id[sid_s] = mark
+                    continue
+                cand = (row.get('mark'), row.get('mark_status'), row.get('mark_ord'))
+                prev = cell_best.get(cell_key)
+                cell_best[cell_key] = _choose_better_mark(prev, cand)
+            for (kind, owner), (mark, _st, _ord) in cell_best.items():
+                val = normalize_score_value(mark)
+                if val is None and mark is not None and str(mark).strip():
+                    val = str(mark).strip()
+                if kind == 'ssid':
+                    mark_data[owner] = val if val is not None else blank
+                else:
+                    mark_data_by_id[owner] = val if val is not None else blank
             for student in students:
                 ssid_s = str(student.get('ssid') or '').strip()
                 if ssid_s in mark_data:
@@ -689,6 +828,9 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
             conditions.append(f"({expr} IS NULL OR {expr} = '')")
         if conditions:
             where_clauses.append(f"({' OR '.join(conditions)})")
+        return
+
+    if col in VIRTUAL_COLUMNS:
         return
 
     if col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_', 'ap_', 'sat_')):

@@ -285,21 +285,17 @@ class ResultsStudentMatchTests(SimpleTestCase):
 				},
 			],
 		}
-		mark_result = {
-			'error': None,
-			'rows': [
-				{
-					'ssid': 'B', 'school_year': '2025-2026',
-					'subject': 'Mathematics', 'course_name': 'Math 8 HP',
-					'mark_period': 'Q1', 'mark': 'A',
-				},
-			],
-		}
+		live_marks = [{
+			'ssid': 'B', 'student_id': '2', 'school_year': '2025-2026',
+			'subject': 'Mathematics', 'course_name': 'Math 8 HP',
+			'mark_period': 'Q1', 'mark': 'A', 'mark_status': 'Final', 'mark_ord': 1,
+		}]
 		exec_mock = MagicMock()
-		exec_mock.execute.side_effect = [test_result, mark_result]
+		exec_mock.execute.return_value = test_result
 		with patch('clickhouse_utils.executor.QueryExecutor', return_value=exec_mock):
-			enrich_students_tests_marks(students, [test_info], [mark_info])
-		self.assertEqual(exec_mock.execute.call_count, 2)
+			with patch('dataexploration.column_utils._fetch_marks_live_from_alt', return_value=live_marks):
+				enrich_students_tests_marks(students, [test_info], [mark_info])
+		self.assertEqual(exec_mock.execute.call_count, 1)
 		self.assertEqual(students[0]['test_2025_2026_CAASPP_Math_SS'], '2400')
 		self.assertEqual(students[1]['mark_x'], 'A')
 		self.assertEqual(students[1]['test_2025_2026_CAASPP_Math_SS'], '—')
@@ -316,21 +312,40 @@ class ResultsStudentMatchTests(SimpleTestCase):
 			'subject': 'Math', 'course_name': 'Math 6', 'mark_period': 'Q2',
 		}
 		# The mark row carries a stale SSID but a correct local student id.
-		mark_result = {
-			'error': None,
-			'rows': [
-				{
-					'ssid': '3122440885', 'student_id': '20250161',
-					'school_year': '2024-2025', 'subject': 'Math',
-					'course_name': 'Math 6', 'mark_period': 'Q2', 'mark': 'B-',
-				},
-			],
-		}
-		exec_mock = MagicMock()
-		exec_mock.execute.return_value = mark_result
-		with patch('clickhouse_utils.executor.QueryExecutor', return_value=exec_mock):
+		live_marks = [{
+			'ssid': '3122440885', 'student_id': '20250161',
+			'school_year': '2024-2025', 'subject': 'Math',
+			'course_name': 'Math 6', 'mark_period': 'Q2', 'mark': 'B-',
+			'mark_status': 'Final', 'mark_ord': 1,
+		}]
+		with patch('dataexploration.column_utils._fetch_marks_live_from_alt', return_value=live_marks):
 			enrich_students_tests_marks(students, [], [mark_info])
 		self.assertEqual(students[0]['mark_x'], 'B-')
+
+	def test_choose_final_mark_over_na_duplicate(self):
+		from dataexploration.column_utils import enrich_students_tests_marks
+		from unittest.mock import patch
+
+		students = [{'ssid': '5070477262', 'student_id': '20152793'}]
+		mark_info = {
+			'col_name': 'mark_x', 'year': '2024-2025',
+			'subject': 'English', 'course_name': 'Language Arts 7', 'mark_period': 'Q1',
+		}
+		live_marks = [
+			{
+				'ssid': '5070477262', 'student_id': '20152793', 'school_year': '2024-2025',
+				'subject': 'English', 'course_name': 'Language Arts 7',
+				'mark_period': 'Q1', 'mark': 'C-', 'mark_status': 'Current', 'mark_ord': 2,
+			},
+			{
+				'ssid': '5070477262', 'student_id': '20152793', 'school_year': '2024-2025',
+				'subject': 'English', 'course_name': 'Language Arts 7',
+				'mark_period': 'Q1', 'mark': 'A', 'mark_status': 'Final', 'mark_ord': 1,
+			},
+		]
+		with patch('dataexploration.column_utils._fetch_marks_live_from_alt', return_value=live_marks):
+			enrich_students_tests_marks(students, [], [mark_info])
+		self.assertEqual(students[0]['mark_x'], 'A')
 
 	def test_enrich_other_info_uses_postgres_not_clickhouse(self):
 		from dataexploration.column_utils import enrich_students_tests_marks
@@ -388,6 +403,28 @@ class JsonListColumnTests(SimpleTestCase):
 		self.assertEqual(alias, 'dsusd_fep')
 		self.assertIn("->>'DSUSD_FEP'", expr)
 		self.assertNotIn('array_to_string', expr)
+
+
+class PictureColumnTests(SimpleTestCase):
+	def test_picture_is_first_student_info_column(self):
+		from dataexploration.constants import COLUMN_CATEGORIES, COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
+		self.assertEqual(COLUMN_CATEGORIES['student_info']['columns'][0], 'picture')
+		self.assertEqual(COLUMN_DEFINITIONS['picture'], 'Picture')
+		self.assertIn('picture', VIRTUAL_COLUMNS)
+
+	def test_picture_has_no_sql_expression(self):
+		from dataexploration.view_modules.column_management import get_column_expression
+		expr, alias = get_column_expression('picture', db_columns={'ssid', 'picture'})
+		self.assertIsNone(expr)
+		self.assertIsNone(alias)
+
+	def test_picture_filter_is_noop(self):
+		from dataexploration.column_utils import _append_cs_filter_clause
+		where_clauses = []
+		params = []
+		_append_cs_filter_clause(where_clauses, params, 'picture', ['x'])
+		self.assertEqual(where_clauses, [])
+		self.assertEqual(params, [])
 
 
 class CsFilterClauseTests(SimpleTestCase):

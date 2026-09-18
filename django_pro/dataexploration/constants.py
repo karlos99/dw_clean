@@ -1,8 +1,12 @@
 """Column definitions and constants for data exploration views."""
 
+# Columns that are not physical current_student fields (no SQL SELECT/filter).
+VIRTUAL_COLUMNS = frozenset({"picture"})
+
 # Base column definitions (student demographics and info)
 COLUMN_DEFINITIONS = {
     # Student Info
+    "picture": "Picture",
     "ssid": "SSID",
     "student_id": "Student ID",
     "student_name": "Student Name",
@@ -45,7 +49,7 @@ COLUMN_DEFINITIONS = {
 COLUMN_CATEGORIES = {
     "student_info": {
         "title": "Student Information",
-        "columns": ["ssid", "student_id", "student_name", "grade", "school_year", "school", "school_state_id", "elem_teacher_name"]
+        "columns": ["picture", "ssid", "student_id", "student_name", "grade", "school_year", "school", "school_state_id", "elem_teacher_name"]
     },
     "demographics": {
         "title": "Demographics",

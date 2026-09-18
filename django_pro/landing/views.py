@@ -56,30 +56,27 @@ def index(request):
             home_slots_json = json.dumps([s.to_dict() for s in slots])
 
         # Schools the user can filter home charts by
-        user_school_ids = request.user.schools if isinstance(request.user.schools, list) else []
-        user_schools = []
-        if user_school_ids:
-            from studata.models import School as StudataSchool
+        from dataexploration.utils import is_unrestricted
+        from studata.models import School as StudataSchool
+
+        if is_unrestricted(request.user):
             user_schools = list(
                 StudataSchool.objects
-                .filter(state_id__in=user_school_ids)
                 .order_by('school_name')
                 .values('state_id', 'school_name', 'short_name')
             )
+            school_count = len(user_schools)
         else:
-            # Unrestricted roles (superuser / Project / District Admin) get the full
-            # school list so they can filter home charts by school.
-            unrestricted = (
-                request.user.is_superuser
-                or request.user.roles.filter(name__in=['Project Admin', 'District Admin']).exists()
-            )
-            if unrestricted:
-                from studata.models import School as StudataSchool
+            user_school_ids = request.user.schools if isinstance(request.user.schools, list) else []
+            user_schools = []
+            if user_school_ids:
                 user_schools = list(
                     StudataSchool.objects
+                    .filter(state_id__in=user_school_ids)
                     .order_by('school_name')
                     .values('state_id', 'school_name', 'short_name')
                 )
+            school_count = len(user_school_ids)
 
         # Hide already-placed charts (incl. forced) from the dock so users only
         # see charts they can actually add.
@@ -95,7 +92,7 @@ def index(request):
         context = {
             'saved_queries': SavedQuery.objects.filter(owner=request.user).order_by('-updated_at')[:5],
             'shared_queries': SavedQuery.objects.filter(shares__shared_with=request.user).order_by('-updated_at')[:5],
-            'school_count': len(user_school_ids),
+            'school_count': school_count,
             'home_charts_enabled': home_charts_enabled,
             'home_dashboard_json': home_dashboard_json,
             'home_slots_json': home_slots_json,

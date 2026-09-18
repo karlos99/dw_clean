@@ -39,3 +39,7 @@ logs/
 
 *.dump
 django_pro_old/
+
+
+# Local student photos
+pictures/

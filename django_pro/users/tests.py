@@ -148,4 +148,49 @@ class DistrictRoleVisibilityTests(TestCase):
         self.assertEqual(where, ['cs.school_state_id = %s'])
         self.assertEqual(params, ['0110791'])
 
+    def test_district_view_can_switch_to_any_school(self):
+        from studata.models import School
+        from users.views import switch_role
+        from django.test import RequestFactory
+
+        School.objects.get_or_create(state_id='0110791', defaults={'dw_schoolkey': 101, 'school_name': 'School A'})
+        School.objects.get_or_create(state_id='0999999', defaults={'dw_schoolkey': 102, 'school_name': 'School B'})
+
+        dv_user = self._user('u_dv_switch', [self.district_view], schools=['0110791'])
+        dv_user.active_role = self.district_view
+
+        factory = RequestFactory()
+        request = factory.post('/users/switch-role/', {'school_id': '0999999'}, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        request.user = dv_user
+        request.session = {}
+
+        response = switch_role(request)
+        self.assertEqual(response.status_code, 200)
+        import json
+        data = json.loads(response.content)
+        self.assertTrue(data['success'])
+        self.assertEqual(data['school_id'], '0999999')
+
+    def test_district_view_middleware_populates_all_available_schools(self):
+        from studata.models import School
+        from users.middleware import ActiveRoleMiddleware
+
+        School.objects.get_or_create(state_id='0110791', defaults={'dw_schoolkey': 101, 'school_name': 'School A'})
+        School.objects.get_or_create(state_id='0999999', defaults={'dw_schoolkey': 102, 'school_name': 'School B'})
+
+        dv_user = self._user('u_dv_mid', [self.district_view], schools=['0110791'])
+        middleware = ActiveRoleMiddleware(get_response=lambda r: None)
+
+        from django.test import RequestFactory
+        factory = RequestFactory()
+        request = factory.get('/')
+        request.user = dv_user
+        request.session = {}
+
+        middleware(request)
+        available_ids = list(request.user.available_schools.values_list('state_id', flat=True))
+        self.assertIn('0110791', available_ids)
+        self.assertIn('0999999', available_ids)
+
+
 
