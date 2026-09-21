@@ -1023,25 +1023,87 @@ def _sql_date_bucket(expr, bucket):
     return f"formatDateTime({d}, '%Y-%m-%d')"
 
 
-def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation, series_col=None, user=None, limit=None, interactive_filters=None, one_row_per_stu_annual_key=False, date_bucket=None, status_filter=_UNSET):
+# Must stay identical to the blank set ``build_option`` drops before aggregating
+# (see dataviz/utils/chart_builder/build.py). When a pushed-down aggregation
+# filters blanks, SQL and the Python chart builder have to discard exactly the
+# same values or the chart categories diverge.
+_CHART_BLANK_VALUES = (
+    '', '-', '\u2014', '\u2013', 'N/A', 'n/a', 'None', 'null', 'NULL',
+    'nan', 'NAN', 'NaN',
+)
+
+
+def _chart_blank_filter_expr(expr):
+    """ClickHouse predicate mirroring ``build_option``'s blank/nulls drop.
+
+    Matches a null value or a blank sentinel, case-insensitively for the
+    alphabetic sentinels so ``NULL``/``null`` and ``NAN``/``nan`` both match.
+    """
+    blanks = ', '.join("'" + b.replace("'", "''") + "'" for b in _CHART_BLANK_VALUES)
+    text = f"lower(trimBoth(toString({expr})))"
+    return f"({expr} IS NOT NULL AND {text} NOT IN ({blanks}))"
+
+
+def _chart_agg_sql(agg_func, aggregation, col_expr):
+    """ClickHouse aggregate expression for one chart measure."""
+    if agg_func == 'COUNT' and not col_expr:
+        return 'COUNT(*)'
+    if aggregation in ('count', 'count_occurrence', 'count_non_null'):
+        return f'COUNT({col_expr})'
+    if aggregation == 'count_unique':
+        return f'uniqExact({col_expr})'
+    return f"{agg_func}(toFloat64OrNull(nullIf(toString({col_expr}), '')))"
+
+
+def compile_aggregated_dataset_to_sql(
+    dataset, group_by_cols, y_col, aggregation, series_col=None, user=None,
+    limit=None, interactive_filters=None, one_row_per_stu_annual_key=False,
+    date_bucket=None, status_filter=_UNSET, extra_group_cols=None,
+    filter_blank_group_cols=False, distinct_over_cols=None, measure_specs=None,
+):
     """
     Compiles a Dataset definition into aggregated SQL with GROUP BY.
 
     ``group_by_cols`` — list of ``table.column`` strings for the GROUP BY clause.
     ``y_col``          — ``table.column`` string for the value column to aggregate,
                          or ``None`` for row counts.
-    ``aggregation``    — one of ``count, sum, avg, min, max, median``.
+    ``aggregation``    — one of ``count, sum, avg, min, max, median,
+                         count_unique, count_occurrence``.
     ``series_col``     — optional ``table.column`` for series grouping (added to GROUP BY).
+    ``extra_group_cols`` — additional ``table.column`` dimensions appended to the
+                         GROUP BY after ``group_by_cols``/``series_col``. Used by
+                         chart pushdown for grouped bars (group column) and
+                         composite category axes (multi-column x). One output
+                         column is emitted per dimension, aliased to the
+                         ``table_column`` key the chart config expects.
+    ``filter_blank_group_cols`` — drop rows whose group values are null or a blank
+                         sentinel. Must be true whenever the caller feeds the
+                         result to ``build_option``, which performs the same drop
+                         before aggregating.
+    ``distinct_over_cols`` — when set, aggregate over ``SELECT DISTINCT`` of these
+                         ``table.column`` values instead of the raw table rows.
+                         The raw-row chart path compiles with ``SELECT DISTINCT``
+                         (``Dataset.distinct`` defaults to True), so a pushed-down
+                         aggregation that skips this counts join fan-out rows the
+                         chart never saw. Mutually exclusive with ``date_bucket``:
+                         bucketing a dimension rewrites its expression, so the
+                         caller must fall back to the raw path instead.
 
     Returns ``(sql_query_string, parameters_list)``.
     """
     SQL_FUNCS = {
         'count': 'COUNT', 'sum': 'SUM', 'avg': 'AVG',
         'min': 'MIN', 'max': 'MAX', 'median': 'median',
+        'count_unique': 'uniqExact', 'count_occurrence': 'COUNT',
+        'count_non_null': 'COUNT',
     }
     agg_func = SQL_FUNCS.get(aggregation)
     if not agg_func:
         raise SQLCompilationError(f"Unsupported aggregation: {aggregation}")
+    if distinct_over_cols and date_bucket:
+        raise SQLCompilationError(
+            'date_bucket cannot be combined with a DISTINCT aggregation input'
+        )
 
     base_table = dataset.base_table
     allowed_tables = get_allowed_dataset_tables()
@@ -1063,7 +1125,20 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
     all_group_cols = list(group_by_cols)
     if series_col and series_col not in all_group_cols:
         all_group_cols.append(series_col)
+    for extra_col in (extra_group_cols or []):
+        if extra_col and extra_col not in all_group_cols:
+            all_group_cols.append(extra_col)
     x_col_str = group_by_cols[0] if group_by_cols else None
+
+    # Columns the raw-row path would have fetched before deduplicating. Only
+    # used to rebuild that projection when aggregating over DISTINCT.
+    distinct_exprs = []
+    if distinct_over_cols:
+        for col_str in distinct_over_cols:
+            if col_str in all_group_cols:
+                continue
+            tbl, col = validate_column_identifier(col_str, active_tables)
+            distinct_exprs.append((format_column_expr(tbl, col), col_str.replace('.', '_')))
 
     group_items = []
     for col_str in all_group_cols:
@@ -1074,12 +1149,59 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
         alias = col_str.replace('.', '_')
         group_items.append((expr, alias))
 
+    # ``build_option`` drops blank/null group values before aggregating, so the
+    # pushdown has to drop the same rows or the chart gains blank categories.
+    blank_parts = []
+    if filter_blank_group_cols:
+        for expr, _alias in group_items:
+            blank_parts.append(_chart_blank_filter_expr(expr))
+
     y_expr = None
     if not (aggregation == 'count' and not y_col):
         if not y_col:
             raise SQLCompilationError(f"Aggregation '{aggregation}' requires a value column")
         y_tbl, y_col_name = validate_column_identifier(y_col, active_tables)
         y_expr = format_column_expr(y_tbl, y_col_name)
+
+    # Named measures: each gets its own aggregate over the same grouped rows.
+    # ``filter_sql`` is a raw predicate applied only inside that aggregate, so a
+    # threshold column (e.g. attendance < 85) never narrows the other columns.
+    resolved_measures = []
+    for spec in (measure_specs or []):
+        m_name = spec.get('name')
+        if not m_name:
+            continue
+        m_agg = str(spec.get('aggregation') or 'count').lower()
+        m_func = SQL_FUNCS.get(m_agg)
+        if not m_func:
+            raise SQLCompilationError(f"Unsupported aggregation: {m_agg}")
+        m_col = spec.get('y_col')
+        m_expr = None
+        m_alias = ''
+        if m_col:
+            m_tbl, m_col_name = validate_column_identifier(m_col, active_tables)
+            m_expr = format_column_expr(m_tbl, m_col_name)
+            m_alias = m_col.replace('.', '_')
+        elif m_agg != 'count':
+            raise SQLCompilationError(f"Aggregation '{m_agg}' requires a value column")
+        resolved_measures.append(
+            (m_name, m_agg, m_func, m_expr, spec.get('filter_sql') or '', m_alias)
+        )
+
+    def _measure_sql(m_func, m_agg, m_expr, m_filter):
+        """One chart measure, optionally restricted by a threshold predicate."""
+        if m_agg in ('count', 'count_occurrence', 'count_non_null'):
+            # A filtered count only counts rows the predicate accepts.
+            if m_filter:
+                return f'countIf({m_filter})' if not m_expr else f'countIf({m_filter})'
+            return _chart_agg_sql('COUNT', m_agg, m_expr)
+        if m_agg == 'count_unique':
+            expr = f'uniqExact({m_expr})'
+            return f'uniqExactIf({m_expr}, {m_filter})' if m_filter else expr
+        numeric = f"toFloat64OrNull(nullIf(toString({m_expr}), ''))"
+        if m_filter:
+            return f'{m_func}If({m_filter})({numeric})'
+        return f'{m_func}({numeric})'
 
     from_sql = f'FROM "{base_table}"'
 
@@ -1230,10 +1352,56 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
                     where_parts.append("1=0")  # No students assigned
 
     from_where = from_sql
-    if where_parts:
-        from_where += " WHERE " + " AND ".join(where_parts)
 
     aliases = [alias for _expr, alias in group_items]
+
+    if distinct_over_cols:
+        # Aggregate over exactly the projection the raw-row chart path fetches
+        # (``SELECT DISTINCT`` over every dataset column, with the chart's own
+        # dimensions and measure aliased), so join fan-out rows cannot inflate
+        # the measure.
+        #
+        # Every predicate runs inside the subquery: the join filters address the
+        # source tables (``current_student.status``, joined-table columns), which
+        # are only in scope there, and ``build_option`` drops blank group values
+        # itself, so filtering them before aggregating changes nothing. A
+        # predicate selects the same rows before or after deduplication.
+        inner_cols = [f'{expr} AS "{alias}"' for expr, alias in distinct_exprs]
+        for col_str in all_group_cols:
+            alias = col_str.replace('.', '_')
+            tbl, col = validate_column_identifier(col_str, active_tables)
+            expr = format_column_expr(tbl, col)
+            if date_bucket and col_str == x_col_str:
+                expr = _sql_date_bucket(expr, date_bucket)
+            inner_cols.append(f'{expr} AS "{alias}"')
+        if y_expr is not None and y_col:
+            y_alias = y_col.replace('.', '_')
+            inner_cols.append(f'{y_expr} AS "{y_alias}"')
+            y_expr = f'"{y_alias}"'
+        # Named measures each read their own projected column.
+        for m_name, m_agg, _m_func, _m_expr, _m_filter, m_alias in resolved_measures:
+            if m_alias:
+                inner_cols.append(f'"{m_alias}" AS "{m_alias}"')
+
+        inner_sql = f'SELECT DISTINCT {", ".join(inner_cols)} {from_sql}'
+        # ``blank_parts`` is only populated when the caller asked for blank
+        # filtering; a measure that is itself a group column must not be
+        # filtered, and the caller signals that by passing False.
+        inner_predicates = blank_parts + where_parts
+        if inner_predicates:
+            inner_sql += " WHERE " + " AND ".join(inner_predicates)
+        from_where = f'FROM ({inner_sql}) AS "_dv_rows"'
+
+        # The outer query can only see the projected aliases, so the GROUP BY
+        # and SELECT clauses have to reference those instead of the table
+        # expressions that produced them.
+        group_items = [(f'"{alias}"', alias) for _expr, alias in group_items]
+        aliases = [alias for _expr, alias in group_items]
+    else:
+        # No deduplication step: every predicate applies to the base tables.
+        all_predicates = where_parts + blank_parts
+        if all_predicates:
+            from_where += " WHERE " + " AND ".join(all_predicates)
 
     if one_row_per_stu_annual_key:
         sak_col = find_stu_annual_key_column(active_tables, dataset.columns or [])
@@ -1246,30 +1414,65 @@ def compile_aggregated_dataset_to_sql(dataset, group_by_cols, y_col, aggregation
         inner_cols = [f'{sak_expr} AS _sak']
         for expr, alias in group_items:
             inner_cols.append(f'any({expr}) AS "{alias}"')
-        if y_expr is not None:
+        if resolved_measures:
+            for m_name, _m_agg, _m_func, m_expr, _m_filter, _m_alias in resolved_measures:
+                inner_cols.append(
+                    f'groupArray({m_expr}) AS _m_{m_name}' if m_expr
+                    else f'count() AS _m_{m_name}'
+                )
+        elif y_expr is not None:
             inner_cols.append(f'any({y_expr}) AS _y')
         inner = (
             f"SELECT {', '.join(inner_cols)} {from_where} GROUP BY {sak_expr}"
         )
         outer_groups = ", ".join(f'"{a}"' for a in aliases)
-        if y_expr is None:
-            outer_agg = 'COUNT(*)'
-        elif aggregation == 'count':
-            outer_agg = 'COUNT(_y)'
-        else:
-            outer_agg = (
-                f"{agg_func}(toFloat64OrNull(nullIf(toString(_y), '')))"
+        if resolved_measures:
+            out_cols = []
+            for m_name, m_agg, m_func, m_expr, m_filter, _m_alias in resolved_measures:
+                ref = f'_m_{m_name}'
+                if m_agg in ('count', 'count_occurrence', 'count_non_null'):
+                    agg_sql = f'countIf({m_filter})({ref})' if m_filter else f'length({ref})'
+                elif m_agg == 'count_unique':
+                    agg_sql = f'uniqExactIf({m_filter})({ref})' if m_filter else f'uniqExact({ref})'
+                else:
+                    base = f'{m_func}If({m_filter})({ref})' if m_filter else f'{m_func}({ref})'
+                    agg_sql = base
+                out_cols.append(f'{agg_sql} AS "{m_name}"')
+            sql = (
+                f'SELECT {outer_groups}, {", ".join(out_cols)} '
+                f'FROM ({inner}) AS _sak GROUP BY {outer_groups}'
             )
-        sql = (
-            f'SELECT {outer_groups}, {outer_agg} AS "__dv_value" '
-            f'FROM ({inner}) AS _sak GROUP BY {outer_groups}'
-        )
+        else:
+            if y_expr is None:
+                outer_agg = 'COUNT(*)'
+            elif aggregation in ('count', 'count_non_null'):
+                outer_agg = 'COUNT(_y)'
+            elif aggregation in ('count_unique', 'count_occurrence'):
+                outer_agg = 'uniqExact(_y)' if aggregation == 'count_unique' else 'COUNT(_y)'
+            else:
+                outer_agg = (
+                    f"{agg_func}(toFloat64OrNull(nullIf(toString(_y), '')))"
+                )
+            sql = (
+                f'SELECT {outer_groups}, {outer_agg} AS "__dv_value" '
+                f'FROM ({inner}) AS _sak GROUP BY {outer_groups}'
+            )
     else:
         select_clauses = [f'{expr} AS "{alias}"' for expr, alias in group_items]
-        if y_expr is None:
+        if resolved_measures:
+            for m_name, m_agg, m_func, m_expr, m_filter, m_alias in resolved_measures:
+                # Inside a DISTINCT subquery the measure is read from its
+                # projected alias; otherwise from the column expression.
+                ref = f'"{m_alias}"' if (distinct_over_cols and m_alias) else m_expr
+                select_clauses.append(
+                    f'{_measure_sql(m_func, m_agg, ref, m_filter)} AS "{m_name}"'
+                )
+        elif y_expr is None:
             select_clauses.append('COUNT(*) AS "__dv_value"')
-        elif aggregation == 'count':
+        elif aggregation in ('count', 'count_occurrence', 'count_non_null'):
             select_clauses.append(f'COUNT({y_expr}) AS "__dv_value"')
+        elif aggregation == 'count_unique':
+            select_clauses.append(f'uniqExact({y_expr}) AS "__dv_value"')
         else:
             num_expr = f"toFloat64OrNull(nullIf(toString({y_expr}), ''))"
             select_clauses.append(f'{agg_func}({num_expr}) AS "__dv_value"')

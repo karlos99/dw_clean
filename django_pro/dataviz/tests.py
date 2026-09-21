@@ -15,6 +15,52 @@ from dataviz.utils.drill_through import execute_drill_query
 User = get_user_model()
 
 class CompilerSqlTests(SimpleTestCase):
+    @patch('dataviz.utils.status_filter.prepare_interactive_filters', return_value=({}, None))
+    @patch('dataviz.utils.compiler.execute_compiled_query', return_value={
+        'columns': ['grade', '__dv_value'],
+        'rows': [{'grade': 'K', '__dv_value': 2}],
+        'error': None,
+    })
+    @patch('dataviz.utils.compiler.compile_aggregated_dataset_to_sql', return_value=('SELECT 1', []))
+    @patch('dataviz.utils.compiler.build_dataset_col_index', return_value={})
+    def test_saved_chart_aggregation_ignores_configured_row_limit(
+        self, _index, compile_sql, _execute, _filters,
+    ):
+        """A chart limit must not truncate the population being aggregated."""
+        from dataviz.views.api.chart_api import _clickhouse_aggregate_dataset
+
+        dataset = SimpleNamespace(
+            base_table='current_student',
+            joins=[],
+            columns=['current_student.grade'],
+        )
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count', 'limit': 1}
+
+        result = _clickhouse_aggregate_dataset(dataset, cfg, {}, {})
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(compile_sql.call_args.kwargs['limit'])
+
+    @patch('dataviz.utils.status_filter.prepare_interactive_filters', return_value=({}, None))
+    @patch('dataviz.utils.compiler.execute_compiled_query', return_value={
+        'columns': ['grade', '__dv_value'], 'rows': [], 'error': None,
+    })
+    @patch('dataviz.utils.compiler.compile_aggregated_dataset_to_sql', return_value=('SELECT 1', []))
+    @patch('dataviz.utils.compiler.build_dataset_col_index', return_value={})
+    def test_preview_aggregation_can_use_configured_row_limit(
+        self, _index, compile_sql, _execute, _filters,
+    ):
+        from dataviz.views.api.chart_api import _clickhouse_aggregate_dataset
+
+        dataset = SimpleNamespace(
+            base_table='current_student', joins=[], columns=['current_student.grade'],
+        )
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count', 'limit': 7}
+
+        _clickhouse_aggregate_dataset(dataset, cfg, {}, {}, allow_limit=True)
+
+        self.assertEqual(compile_sql.call_args.kwargs['limit'], 7)
+
     def test_compile_dataset_to_sql_one_row_per_stu_annual_key(self):
         dataset = SimpleNamespace(
             base_table='current_student',
@@ -454,6 +500,467 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertTrue(any('cs.atendace_rate < %s' in p for p in parts))
         self.assertTrue(any('cs.atendace_rate > %s' in p for p in parts))
         self.assertEqual(params, ['2024-01-01', '2024-12-31', 90, 95])
+
+
+class ChartAggregationPushdownEquivalenceTests(TestCase):
+    """The ClickHouse chart pushdown must preserve chart semantics.
+
+    ``_clickhouse_aggregate_dataset`` replaces "fetch every matching row and
+    aggregate in Polars" with a grouped ClickHouse query. These tests pin the
+    contracts that keep the pushed-down chart identical to the raw-row one:
+    no application row limit, blank dimensions dropped in SQL, ``SELECT
+    DISTINCT`` over the dataset projection, multi-dimension grouping, and the
+    compact config handing ``build_option`` the right dimensions and measure
+    label. Value-level equivalence against a live ClickHouse is checked by
+    ``verify_chart_pushdown.py``.
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from studata.models import CurrentStudent
+
+        self.owner = get_user_model().objects.create_user(
+            username='pushdown-owner', password='x',
+        )
+        CurrentStudent.objects.bulk_create([
+            CurrentStudent(
+                stu_annual_key=f'AK{i}', ssid=str(i), student_id=str(i),
+                student_name=f'S{i}', grade=grade, school='S1',
+                school_state_id='ST1', status='Active', school_year='2024-2025',
+            )
+            for i, grade in enumerate(['K', 'K', '1', '1', '1', '2'], start=1)
+        ])
+        CurrentStudent.objects.bulk_create([
+            # Blank / null dimensions: build_option drops these before
+            # aggregating, so the SQL pushdown must drop them too.
+            CurrentStudent(
+                stu_annual_key='AKB', ssid='B', student_id='B', student_name='Blank',
+                grade='', school='S1', school_state_id='ST1', status='Active',
+                school_year='2024-2025',
+            ),
+            CurrentStudent(
+                stu_annual_key='AKN', ssid='N', student_id='N', student_name='Null',
+                grade=None, school='S1', school_state_id='ST1', status='Active',
+                school_year='2024-2025',
+            ),
+        ])
+
+        self.dataset = Dataset.objects.create(
+            name='Pushdown contracts',
+            owner=self.owner,
+            source_type=Dataset.SOURCE_VISUAL,
+            base_table='current_student',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=[
+                'current_student.grade',
+                'current_student.school_state_id',
+                'current_student.gender',
+                'current_student.school_year',
+                'current_student.ssid',
+                'current_student.stu_annual_key',
+            ],
+            column_mappings={
+                'current_student.grade': 'grade',
+                'current_student.school_state_id': 'school',
+                'current_student.gender': 'gender',
+                'current_student.school_year': 'school_year',
+                'current_student.ssid': 'ssid',
+                'current_student.stu_annual_key': 'stu_annual_key',
+            },
+        )
+
+    # ── helpers ────────────────────────────────────────────────────────────
+
+    def _pushdown(self, cfg, rows=None, error=None, allow_limit=False):
+        """Run the pushdown with its compiled SQL replaced by canned rows."""
+        from dataviz.views.api import chart_api
+
+        captured = {}
+
+        def _fake(sql, params):
+            captured['sql'] = sql
+            captured['params'] = params
+            if error:
+                return {'columns': [], 'rows': [], 'error': error}
+            return {'columns': [], 'rows': list(rows or []), 'error': None}
+
+        with patch.object(chart_api, 'execute_compiled_query', _fake, create=True), \
+             patch('dataviz.utils.compiler.execute_compiled_query', _fake), \
+             patch('dataviz.utils.compiler.build_dataset_col_index',
+                   return_value={'grade': 'current_student.grade',
+                                 'school': 'current_student.school_state_id'}), \
+             patch('dataviz.utils.status_filter.prepare_interactive_filters',
+                   return_value=({}, 'Active')):
+            out = chart_api._clickhouse_aggregate_dataset(
+                self.dataset, dict(cfg), {'status': 'Active'},
+                self.dataset.column_mappings, allow_limit=allow_limit,
+            )
+        return out, captured
+
+    def _compact_cfg(self, cfg, rows):
+        out, captured = self._pushdown(cfg, rows=rows)
+        self.assertIsNotNone(out, 'pushdown declined this chart shape')
+        return out[1], captured['sql']
+
+    # ── SQL contracts ─────────────────────────────────────────────────────
+
+    def test_configured_chart_limit_never_truncates_the_aggregation(self):
+        """A saved chart's limit is a preview concern, not an aggregation cap."""
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count',
+               'limit': 1}
+        out, captured = self._pushdown(cfg, rows=[{'current_student_grade': 'K',
+                                                   '__dv_value': 2}])
+        self.assertIsNotNone(out)
+        self.assertNotIn('LIMIT', captured['sql'].upper())
+
+    def test_preview_limit_is_still_honoured(self):
+        """Explicit builder previews keep their bound."""
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count',
+               'limit': 7}
+        _out, captured = self._pushdown(
+            cfg, rows=[{'current_student_grade': 'K', '__dv_value': 2}],
+            allow_limit=True,
+        )
+        self.assertIn('LIMIT 7', captured['sql'].upper())
+
+    def test_distinct_dataset_aggregates_over_the_projection(self):
+        """Without a unique key the pushdown has to reproduce SELECT DISTINCT."""
+        from dataviz.views.api import chart_api
+
+        # Strip the unique key so DISTINCT can actually collapse rows, which is
+        # what the raw-row path relies on.
+        self.dataset.columns = ['current_student.grade',
+                                'current_student.school_state_id']
+        self.dataset.column_mappings = {
+            'current_student.grade': 'grade',
+            'current_student.school_state_id': 'school',
+        }
+        self.dataset.save(update_fields=['columns', 'column_mappings'])
+
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count'}
+        _cfg_out, sql = self._compact_cfg(
+            cfg, [{'current_student_grade': 'K', '__dv_value': 2}],
+        )
+        self.assertIn('SELECT DISTINCT', sql.upper())
+        self.assertIn('AS "_dv_rows"', sql)
+
+    def test_unique_key_projection_skips_the_distinct_subquery(self):
+        """A projected student id makes DISTINCT a no-op, so skip it."""
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count'}
+        _cfg_out, sql = self._compact_cfg(
+            cfg, [{'current_student_grade': 'K', '__dv_value': 2}],
+        )
+        self.assertNotIn('SELECT DISTINCT', sql.upper())
+        self.assertNotIn('AS "_dv_rows"', sql)
+        self.assertIn('GROUP BY', sql.upper())
+
+    def test_table_cells_skip_distinct_when_the_key_is_projected(self):
+        """The pivot cell query applies the same DISTINCT-elision rule."""
+        cfg = {
+            'chart_type': 'summary_table',
+            'st_row_col': 'current_student.grade',
+            'st_col_col': 'current_student.gender',
+            'st_col_mode': 'values',
+            'st_agg_func': 'count',
+            'st_value_col': '',
+        }
+        out, captured = self._pushdown_table(
+            cfg,
+            rows=[{'current_student_grade': 'K', 'current_student_gender': 'F',
+                   '__dv_value': 2}],
+        )
+        self.assertIsNotNone(out)
+        self.assertNotIn('SELECT DISTINCT', captured['sql'].upper())
+
+    def test_group_column_is_grouped_by_in_sql(self):
+        cfg = {
+            'chart_type': 'grouped_bar', 'x_col': 'current_student.grade',
+            'x_cols': ['current_student.grade'],
+            'group_col': 'current_student.school_state_id',
+            'stack_col': 'current_student.school_state_id', 'agg': 'count',
+        }
+        _cfg_out, sql = self._compact_cfg(
+            cfg,
+            [{'current_student_grade': 'K', 'current_student_school_state_id': 'ST1',
+              '__dv_value': 2}],
+        )
+        self.assertIn('GROUP BY', sql.upper())
+        self.assertIn('ST1', sql.upper() + 'ST1')  # dimension is projected for grouping
+        # The builder receives the group column so it can lay the chart out.
+        self.assertEqual(_cfg_out.get('group_col'), 'school')
+
+    def test_blank_dimension_predicate_is_present(self):
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count'}
+        _cfg_out, sql = self._compact_cfg(
+            cfg, [{'current_student_grade': 'K', '__dv_value': 2}],
+        )
+        self.assertIn('IS NOT NULL', sql.upper())
+        self.assertIn('NOT IN', sql.upper())
+
+    def test_aggregation_other_than_count_is_pushed_down(self):
+        cfg = {
+            'chart_type': 'bar', 'x_col': 'current_student.grade',
+            'y_col': 'current_student.school_state_id', 'agg': 'avg',
+        }
+        _cfg_out, sql = self._compact_cfg(
+            cfg, [{'current_student_grade': 'K', '__dv_value': 91.5}],
+        )
+        self.assertIn('AVG(', sql.upper())
+        self.assertIn('GROUP BY', sql.upper())
+
+    # ── compact config contracts ──────────────────────────────────────────
+
+    def test_compact_rows_only_carry_chart_dimensions(self):
+        """A ``table.column`` key would be read as a second, duplicate column."""
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count'}
+        out, _captured = self._pushdown(
+            cfg, rows=[{'current_student_grade': 'K', '__dv_value': 2}],
+        )
+        self.assertIsNotNone(out)
+        rows = out[0]['rows']
+        self.assertEqual(rows, [{'grade': 'K', '__dv_value': 2}])
+
+    def test_measure_label_is_carried_to_the_builder(self):
+        """The pushed-down chart keeps the measure's real display label."""
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count'}
+        cfg_out, _sql = self._compact_cfg(
+            cfg, [{'current_student_grade': 'K', '__dv_value': 2}],
+        )
+        self.assertEqual(cfg_out['y_col'], '__dv_value')
+        self.assertEqual(cfg_out['__measure_label__'], 'Count')
+
+    def test_measure_label_uses_the_aggregated_column_name(self):
+        cfg = {
+            'chart_type': 'bar', 'x_col': 'current_student.grade',
+            'y_col': 'current_student.school_state_id', 'agg': 'avg',
+        }
+        cfg_out, _sql = self._compact_cfg(
+            cfg, [{'current_student_grade': 'K', '__dv_value': 91.5}],
+        )
+        self.assertEqual(cfg_out['__measure_label__'], 'school')
+
+    def test_query_error_declines_the_pushdown(self):
+        """Any execution error must fall back to the raw-row path."""
+        cfg = {'chart_type': 'bar', 'x_col': 'current_student.grade', 'agg': 'count'}
+        out, _captured = self._pushdown(cfg, error='boom')
+        self.assertIsNone(out)
+
+    # ── pivot table pushdown ──────────────────────────────────────────────
+
+    def _pushdown_table(self, cfg, rows=None, error=None):
+        """Run the table-cell pushdown with its compiled SQL replaced."""
+        from dataviz.views.api import chart_api
+
+        captured = {}
+
+        def _fake(sql, params):
+            captured['sql'] = sql
+            if error:
+                return {'columns': [], 'rows': [], 'error': error}
+            return {'columns': [], 'rows': list(rows or []), 'error': None}
+
+        with patch.object(chart_api, 'execute_compiled_query', _fake, create=True), \
+             patch('dataviz.utils.compiler.execute_compiled_query', _fake), \
+             patch('dataviz.utils.compiler.build_dataset_col_index',
+                   return_value={'grade': 'current_student.grade',
+                                 'school': 'current_student.school_state_id',
+                                 'gender': 'current_student.gender',
+                                 'school_year': 'current_student.school_year',
+                                 'ssid': 'current_student.ssid',
+                                 'student_id': 'current_student.student_id'}), \
+             patch('dataviz.utils.status_filter.prepare_interactive_filters',
+                   return_value=({}, 'Active')):
+            out = chart_api._clickhouse_aggregate_table_cells(
+                self.dataset, dict(cfg), {'status': 'Active'},
+                self.dataset.column_mappings,
+            )
+        return out, captured
+
+    def test_summary_table_values_mode_groups_by_row_and_column(self):
+        cfg = {
+            'chart_type': 'summary_table',
+            'st_row_col': 'current_student.grade',
+            'st_col_col': 'current_student.gender',
+            'st_col_mode': 'values',
+            'st_agg_func': 'count',
+            'st_value_col': '',
+        }
+        rows = [{'current_student_grade': 'K', 'current_student_gender': 'F',
+                 '__dv_value': 2}]
+        out, captured = self._pushdown_table(cfg, rows=rows)
+        self.assertIsNotNone(out)
+        self.assertIn('GROUP BY', captured['sql'].upper())
+        self.assertNotIn('LIMIT', captured['sql'].upper())
+        self.assertEqual(out[1]['__compact_cells__'], True)
+        self.assertEqual(out[0]['rows'][0]['current_student.grade'], 'K')
+        self.assertEqual(out[0]['rows'][0]['current_student.gender'], 'F')
+
+    def test_summary_table_count_uses_the_dedupe_key(self):
+        """A cell counts distinct students, not fan-out rows."""
+        cfg = {
+            'chart_type': 'summary_table',
+            'st_row_col': 'current_student.grade',
+            'st_col_col': 'current_student.gender',
+            'st_col_mode': 'values',
+            'st_agg_func': 'count',
+            'st_value_col': '',
+        }
+        _out, captured = self._pushdown_table(
+            cfg,
+            rows=[{'current_student_grade': 'K', 'current_student_gender': 'F',
+                   '__dv_value': 2}],
+        )
+        self.assertIn('COUNT(', captured['sql'].upper())
+
+    def test_dynamic_pivot_multi_row_columns_are_grouped(self):
+        cfg = {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'pivot',
+            'dyn_row_cols': ['current_student.grade',
+                             'current_student.school_state_id'],
+            'dyn_col_cols': ['current_student.gender'],
+            'dyn_agg_func': 'count',
+        }
+        rows = [{'current_student_grade': 'K', 'current_student_school_state_id': 'ST1',
+                 'current_student_gender': 'F', '__dv_value': 2}]
+        out, captured = self._pushdown_table(cfg, rows=rows)
+        self.assertIsNotNone(out)
+        self.assertIn('GROUP BY', captured['sql'].upper())
+        self.assertEqual(out[1]['dyn_row_cols'],
+                         ['current_student.grade', 'current_student.school_state_id'])
+
+    def test_columns_mode_declines_the_pushdown(self):
+        """``columns`` mode pivots each column separately; not covered yet."""
+        cfg = {
+            'chart_type': 'summary_table',
+            'st_row_col': 'current_student.grade',
+            'st_col_mode': 'columns',
+            'st_col_cols': ['current_student.school_state_id'],
+            'st_agg_func': 'count',
+        }
+        out, _captured = self._pushdown_table(cfg)
+        self.assertIsNone(out)
+
+    def test_calculations_mode_declines_the_pushdown(self):
+        """Calculation columns carry their own threshold filters."""
+        cfg = {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'calculations',
+            'dyn_row_cols': ['current_student.grade'],
+            'dyn_col_cols': [],
+            'dyn_agg_func': 'count',
+            'dyn_calculations': [{'id': 'c0', 'calc_type': 'base',
+                                  'value_col': 'current_student.ssid'}],
+        }
+        out, _captured = self._pushdown_table(cfg)
+        self.assertIsNone(out)
+
+    def test_table_query_error_declines_the_pushdown(self):
+        cfg = {
+            'chart_type': 'summary_table',
+            'st_row_col': 'current_student.grade',
+            'st_col_col': 'current_student.gender',
+            'st_col_mode': 'values',
+            'st_agg_func': 'count',
+            'st_value_col': '',
+        }
+        out, _captured = self._pushdown_table(cfg, error='boom')
+        self.assertIsNone(out)
+
+    def test_table_with_no_cells_declines_the_pushdown(self):
+        """An empty result must fall back so the builder can show its own message."""
+        cfg = {
+            'chart_type': 'summary_table',
+            'st_row_col': 'current_student.grade',
+            'st_col_col': 'current_student.gender',
+            'st_col_mode': 'values',
+            'st_agg_func': 'count',
+            'st_value_col': '',
+        }
+        out, _captured = self._pushdown_table(cfg, rows=[])
+        self.assertIsNone(out)
+
+    # ── calculations-mode pushdown ────────────────────────────────────────
+
+    def _calc_cfg(self, calculations, row_cols=None):
+        return {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_col_mode': 'calculations',
+            'dyn_row_cols': row_cols or ['current_student.grade'],
+            'dyn_col_cols': [],
+            'dyn_agg_func': 'count',
+            'dyn_calculations': calculations,
+        }
+
+    def test_calc_mode_emits_one_conditional_aggregate_per_base_calc(self):
+        cfg = self._calc_cfg([
+            {'id': 'c0', 'calc_type': 'base', 'agg_func': 'count'},
+            {'id': 'c1', 'calc_type': 'base', 'agg_func': 'count',
+             'filters': [{'col': 'current_student.school_state_id', 'op': 'eq',
+                          'val': 'ST1'}]},
+            {'id': 'c2', 'calc_type': 'derived', 'op': 'divide',
+             'ref_a': 'c1', 'ref_b': 'c0'},
+        ])
+        out, captured = self._pushdown_table(
+            cfg,
+            rows=[{'current_student_grade': 'K', 'c0': 10, 'c1': 4, 'c2': 0.4}],
+        )
+        self.assertIsNotNone(out)
+        sql = captured['sql']
+        self.assertIn('COUNT(*) AS "c0"', sql)
+        self.assertIn('countIf(', sql)
+        self.assertIn('AS "c1"', sql)
+        # Derived columns are arithmetic over the base ones, never their own
+        # aggregate.
+        self.assertNotIn('AS "c2"', sql)
+        self.assertEqual(out[1]['dyn_row_cols'], ['current_student.grade'])
+        self.assertIn('K', out[1]['__compact_calc_cells__'])
+
+    def test_calc_mode_honours_or_filter_logic(self):
+        cfg = self._calc_cfg([
+            {'id': 'c0', 'calc_type': 'base', 'agg_func': 'count',
+             'filters': [{'col': 'current_student.school_state_id', 'op': 'eq', 'val': 'ST1'},
+                         {'col': 'current_student.school_state_id', 'op': 'eq', 'val': 'ST2',
+                          'logic': 'or'}]},
+        ])
+        _out, captured = self._pushdown_table(
+            cfg, rows=[{'current_student_grade': 'K', 'c0': 6}],
+        )
+        self.assertIn(' OR ', captured['sql'])
+        self.assertNotIn(' AND ', captured['sql'].split('AS "c0"')[0].replace(
+            ' AND "current_student"', ''))
+
+    def test_calc_mode_totals_only_declines(self):
+        """A table with no row dimension has nothing to group by."""
+        cfg = self._calc_cfg(
+            [{'id': 'c0', 'calc_type': 'base', 'agg_func': 'count'}],
+            row_cols=[],
+        )
+        out, _captured = self._pushdown_table(cfg)
+        self.assertIsNone(out)
+
+    def test_calc_mode_treats_explicit_base_type_as_base(self):
+        """A stray ``op`` on an explicit base column must not reclassify it."""
+        cfg = self._calc_cfg([
+            {'id': 'c0', 'calc_type': 'base', 'agg_func': 'count',
+             'op': 'divide', 'ref_a': 'x', 'ref_b': 'y'},
+        ])
+        out, captured = self._pushdown_table(
+            cfg, rows=[{'current_student_grade': 'K', 'c0': 3}],
+        )
+        self.assertIsNotNone(out)
+        self.assertIn('AS "c0"', captured['sql'])
+
+    def test_calc_mode_never_adds_a_row_limit(self):
+        cfg = self._calc_cfg(
+            [{'id': 'c0', 'calc_type': 'base', 'agg_func': 'count'}],
+        )
+        _out, captured = self._pushdown_table(
+            cfg, rows=[{'current_student_grade': 'K', 'c0': 3}],
+        )
+        self.assertNotIn('LIMIT', captured['sql'].upper())
 
 
 class StatusFilterTests(SimpleTestCase):
@@ -2499,6 +3006,43 @@ class DateSeriesActiveRangeTests(SimpleTestCase):
         self.assertEqual(result['total_rows'], 2)
         returned_ssids = sorted(r['ssid'] for r in result['rows'])
         self.assertEqual(returned_ssids, ['1', '2'])
+
+    @patch('dataviz.utils.drill_through.run_raw_sql')
+    def test_sql_source_drill_filters_full_source_before_pagination(self, mock_run_sql):
+        from dataviz.utils.drill_through import execute_drill_query
+
+        rows = [
+            {'ssid': '1', 'grade': 'K'},
+            {'ssid': '2', 'grade': '1'},
+        ]
+        mock_run_sql.return_value = {'columns': ['ssid', 'grade'], 'rows': rows, 'error': None}
+        chart = SimpleNamespace(
+            pk=102,
+            updated_at=SimpleNamespace(timestamp=lambda: 0),
+            source_type='sql',
+            source_sql='SELECT ssid, grade FROM current_student',
+            source_id=None,
+            source_filters={},
+            chart_type='bar',
+            config={},
+            drill_through_columns=['ssid', 'grade'],
+            drill_through_filter_map={},
+            column_defs={},
+        )
+        user = SimpleNamespace(
+            pk=1,
+            is_superuser=True,
+            is_project_admin=True,
+            roles=SimpleNamespace(all=lambda: []),
+        )
+
+        result = execute_drill_query(
+            chart, {'grade': 'K'}, columns=['ssid', 'grade'], user=user,
+            page=1, per_page=1,
+        )
+
+        self.assertEqual(result['total_rows'], 1)
+        self.assertEqual(result['rows'], [{'ssid': '1', 'grade': 'K'}])
 
 
 class DateSeriesCalcOperatorTests(SimpleTestCase):

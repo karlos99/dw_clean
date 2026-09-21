@@ -1,5 +1,6 @@
 import threading
 import logging
+import time
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -11,17 +12,23 @@ logger = logging.getLogger(__name__)
 # connection reuse (no repeat handshake per request) while staying
 # concurrency-safe under Django's threaded dev server / thread-pooled workers.
 _local = threading.local()
+_PING_INTERVAL_SECONDS = 30.0
 
 
 def get_clickhouse_client():
     client = getattr(_local, 'client', None)
     if client is not None:
+        last_ping = getattr(_local, 'last_ping', 0.0)
+        if time.monotonic() - last_ping < _PING_INTERVAL_SECONDS:
+            return client
         try:
             client.ping()
+            _local.last_ping = time.monotonic()
             return client
         except Exception:
             logger.warning("ClickHouse ping failed, reconnecting", exc_info=True)
             _local.client = None
+            _local.last_ping = 0.0
 
     try:
         from clickhouse_connect import get_client
@@ -43,8 +50,10 @@ def get_clickhouse_client():
         client.ping()
         logger.info("ClickHouse client connected successfully (thread %s)", threading.get_ident())
         _local.client = client
+        _local.last_ping = time.monotonic()
         return client
     except Exception as exc:
         logger.warning("Cannot connect to ClickHouse: %s", exc)
         _local.client = None
+        _local.last_ping = 0.0
         return None

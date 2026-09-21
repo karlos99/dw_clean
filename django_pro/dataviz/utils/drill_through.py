@@ -21,7 +21,12 @@ def _drill_user_part(user) -> str:
     role_name = user_role.name if user_role else 'None'
     active_school = getattr(user, 'active_school', None)
     school_id = active_school.state_id if active_school else 'All'
-    return f":u{user.pk}:r{role_name}:s{school_id}"
+    user_id = getattr(user, 'pk', None) or getattr(user, 'id', None)
+    if user_id is None:
+        # Test doubles and lightweight service callers may not expose a
+        # database identity; keep their cache entries isolated by instance.
+        user_id = f'obj{id(user)}'
+    return f":u{user_id}:r{role_name}:s{school_id}"
 
 
 def _drill_fetch_hash(chart, drill_filters: dict, extra_columns: list | None) -> str:
@@ -863,6 +868,14 @@ def execute_drill_query(
     # — role, school, and even per-teacher restrictions can change the rows
     # returned for the same chart+filters.
     user_part = _drill_user_part(user)
+    raw_dataset_source = False
+    if chart.source_type == 'dataset' and chart.source_id:
+        # Preserve the source-type decision across fetch-cache hits so
+        # SQL-backed datasets still receive their post-fetch click filters.
+        from dataviz.models import Dataset as _Dataset
+        raw_dataset_source = _Dataset.objects.filter(
+            pk=chart.source_id,
+        ).values_list('source_type', flat=True).first() == _Dataset.SOURCE_SQL
     _fetch_hash = _drill_fetch_hash(chart, drill_filters, extra_columns)
     sql_paginate = _can_sql_paginate_drill(chart, drill_filters, sort_by)
     if sql_paginate:
@@ -921,6 +934,10 @@ def execute_drill_query(
             one_per_sak = bool((chart.config or {}).get('one_row_per_stu_annual_key'))
             if getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL:
                 from dataviz.utils.compiler import load_dataset_result
+                # SQL-backed datasets are intentionally fetched without an
+                # application LIMIT: the authored SQL defines the source
+                # population, and drill filters must be applied to that full
+                # result before row pagination below.
                 ds_result = load_dataset_result(ds, apply_aliases=True, one_per_sak=one_per_sak)
                 error = ds_result.get('error')
                 if error:
@@ -929,6 +946,8 @@ def execute_drill_query(
                 else:
                     rows = ds_result.get('rows', [])
                     cols = list(rows[0].keys()) if rows else (ds_result.get('columns') or [])
+                    if user and rows:
+                        rows, cols = _apply_user_access_filter(rows, cols, user)
             else:
                 merged_filters = dict(chart.source_filters or {})
                 merged_filters.update(drill_filters)
@@ -1192,6 +1211,12 @@ def execute_drill_query(
                     else:
                         rows = [r for r in rows if str(r.get(col_name) or '').strip() == target]
 
+        # Raw SQL sources cannot receive safe predicates from the generic
+        # compiler. Apply their click-derived equality filters after the full
+        # source result is fetched, then paginate the filtered rows below.
+        if rows and drill_filters and (chart.source_type == 'sql' or raw_dataset_source):
+            rows = _apply_drill_row_filters(rows, drill_filters)
+
         if rows and drill_filters and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
             rows = _apply_drill_row_filters(rows, drill_filters)
 
@@ -1284,6 +1309,10 @@ def execute_drill_query(
                 enter_col = _resolve_ds_col(ds_active_enter_col)
                 leave_col = _resolve_ds_col(ds_active_leave_col) if ds_active_leave_col else None
                 if start is not None and enter_col:
+                    # Pandas 2.3+ uses datetime64 series for parsed dates;
+                    # normalize Python date boundaries before comparison.
+                    start = pd.Timestamp(start)
+                    end = pd.Timestamp(end)
                     enter_dt = pd.Series([r.get(enter_col) for r in rows])
                     enter_dt = pd.to_datetime(enter_dt, errors='coerce')
                     if leave_col:
