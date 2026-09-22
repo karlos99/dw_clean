@@ -257,14 +257,36 @@ def group_marks_by_ssid_course(rows, subject=None, course_filter_fn=None):
     return grouped_ssid, grouped_id
 
 
-def markall_course_filter_fn(subject, excludes):
+def _normalise_markall_course_picker(course_picker=None, excludes=None):
+    if course_picker is None and excludes is not None:
+        if isinstance(excludes, set):
+            return {'mode': 'all', 'courses': set(excludes)}
+        if isinstance(excludes, dict):
+            course_picker = excludes
+        else:
+            return {'mode': 'all', 'courses': set(excludes or [])}
+    if course_picker is None:
+        return {'mode': 'all', 'courses': set()}
+    if isinstance(course_picker, set):
+        return {'mode': 'all', 'courses': set(course_picker)}
+    mode = course_picker.get('mode') or 'all'
+    courses = course_picker.get('courses') or set()
+    return {'mode': mode, 'courses': set(courses)}
+
+
+def markall_course_filter_fn(subject, course_picker=None, excludes=None):
     """Python equivalent of ``markall_course_filter_parts`` for live mark rows."""
+    picker = _normalise_markall_course_picker(course_picker, excludes)
+    mode = picker['mode']
+    names = picker['courses']
 
     def _fn(course_name):
         name = course_name or ''
         if subject == 'Elementary' and 'homeroom' in name.casefold():
             return False
-        if excludes and name in excludes:
+        if mode == 'only':
+            return name in names if names else False
+        if names and name in names:
             return False
         return True
 

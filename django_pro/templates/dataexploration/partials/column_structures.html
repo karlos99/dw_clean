@@ -176,13 +176,23 @@
                             <span class="text-sm font-semibold text-slate-800">All Marks</span>
                         </label>
 
-                        {% comment %}Course picker for "All Marks": lets users uncheck courses they
-                           don't want included in the course/marks columns. Hidden until the umbrella
-                           is selected (toggled in student_tests_app.js). Homeroom courses are never
-                           part of the Elementary All Marks view, so those rows are hidden by JS.{% endcomment %}
+                        {% comment %}Course picker for "All Marks": **All** = every course minus
+                           unchecks (exclude list). **Only** = whitelist specific courses.
+                           At least one course must stay selected. Hidden until the umbrella is
+                           selected (student_tests_app.js). Homeroom rows hidden for Elementary.{% endcomment %}
                         <div data-markall-course-box class="hidden ml-1 mt-0.5 space-y-1">
+                            <div class="flex items-center justify-between gap-2 px-1 flex-wrap">
+                                <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Courses</span>
+                                <div class="flex rounded overflow-hidden border border-emerald-200 text-[10px] font-semibold">
+                                    <button type="button" data-markall-mode-btn="all"
+                                        class="px-2 py-0.5 transition-colors bg-emerald-600 text-white">All</button>
+                                    <button type="button" data-markall-mode-btn="only"
+                                        class="px-2 py-0.5 transition-colors bg-white text-emerald-800 hover:bg-emerald-50">Only</button>
+                                </div>
+                            </div>
                             <div class="flex items-center justify-between px-1">
-                                <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Include courses</span>
+                                <button type="button" data-markall-select-all-courses
+                                    class="text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline underline-offset-2">Select all courses</button>
                                 <span data-markall-course-hint class="text-[10px] text-slate-400"></span>
                             </div>
                             <div class="ml-1 space-y-0.5 pl-2 border-l border-emerald-100">

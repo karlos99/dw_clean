@@ -49,7 +49,7 @@ from ..school_year_utils import get_school_year_choices, get_year_labels_map, ge
 from .filter_sql import (
     apply_column_filters,
     normalize_filter_param as _normalize_filter_param,
-    extract_markall_course_excludes,
+    extract_markall_course_picker,
 )
 from landing.utils import get_project_config
 
@@ -668,16 +668,14 @@ def _load_students(request):
             if not (isinstance(k, str) and k.startswith('mark_') and not k.startswith('markall_'))
         }
 
-    # Courses the user deselected from an "All Marks" umbrella. Stored under the
-    # umbrella key as 'exclude:<course>' values; read before SQL filtering since
-    # these entries only shape the wide-pair columns, never the row population.
-    markall_excludes = extract_markall_course_excludes(filters)
+    # All Marks course picker (exclude list in "all" mode, include list in "only" mode).
+    markall_pickers = extract_markall_course_picker(filters)
 
-    def _markall_course_excludes(year, subject):
+    def _markall_course_picker(year, subject):
         umbrella = markall_years.get((year, subject))
-        if umbrella:
-            return markall_excludes.get(umbrella, set())
-        return set()
+        if umbrella and umbrella in markall_pickers:
+            return markall_pickers[umbrella]
+        return {'mode': 'all', 'courses': set()}
 
     # Subjects the user unchecked from an "All Results" umbrella. Stored under
     # the umbrella key as 'exclude:<subject>' values; like the marks course
@@ -1225,7 +1223,7 @@ def _load_students(request):
         if markall_years:
             for (year, subject), umbrella in markall_years.items():
                 course_filter_sql, course_extra_params = _markall_course_sql_parts(
-                    subject, _markall_course_excludes(year, subject)
+                    subject, _markall_course_picker(year, subject)
                 )
                 markall_cache_key = (
                     f"dataexp:markall_max:{_sync_v}:"
@@ -1761,7 +1759,7 @@ def _load_students(request):
                 if student_ssids_all or student_ids_all:
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
-                        excludes = _markall_course_excludes(year, subject)
+                        excludes = _markall_course_picker(year, subject)
                         live_rows = _fetch_marks_live_from_alt(
                             student_ssids_all, student_ids_all, [year],
                         )
@@ -2216,7 +2214,7 @@ def _load_students(request):
             for (year, subject), umbrella in markall_years.items():
                 n = markall_max.get((year, subject), 0)
                 course_filter_sql, course_extra_params = _markall_course_sql_parts(
-                    subject, _markall_course_excludes(year, subject)
+                    subject, _markall_course_picker(year, subject)
                 )
                 for i in range(1, n + 1):
                     course_col = f"{umbrella}_{i}_COURSE"
