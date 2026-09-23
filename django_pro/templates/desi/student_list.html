@@ -265,17 +265,23 @@
                 }
             }
 
+            function isResourceModalOpen() {
+                return document.body.classList.contains('desi-resource-modal-open');
+            }
+
             function hideSupportPopover() {
                 const pop = document.getElementById('desi-support-popover');
                 if (pop) pop.classList.add('hidden');
             }
+
+            document.addEventListener('desi-hide-support-popover', hideSupportPopover);
 
             function showSupportPopover(anchor, accId) {
                 const info = supportInfoMap()[String(accId)];
                 const pop = document.getElementById('desi-support-popover');
                 if (!pop || !info) return;
 
-                document.getElementById('desi-popover-name').textContent = info.code ? `${info.name} (${info.code})` : info.name;
+                document.getElementById('desi-popover-name').textContent = info.name || '';
                 const metaParts = [];
                 if (info.section_category) metaParts.push(info.section_category);
                 if (info.category) metaParts.push(info.category);
@@ -292,8 +298,17 @@
                     btn.className = 'inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded border border-blue-100';
                     const icon = res.kind === 'youtube' ? '🎥' : res.kind === 'video' ? '📺' : res.kind === 'pdf' ? '📄' : '🔗';
                     btn.textContent = `${icon} ${res.label}`;
-                    btn.addEventListener('click', () => {
-                        window.dispatchEvent(new CustomEvent('desi-open-resource', { detail: { label: res.label, url: res.url } }));
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (!res.url && !res.embed_url) return;
+                        hideSupportPopover();
+                        window.dispatchEvent(new CustomEvent('desi-open-resource', {
+                            detail: {
+                                label: res.label,
+                                embed_url: res.embed_url || '',
+                                url: res.url || res.embed_url || '',
+                            },
+                        }));
                     });
                     resWrap.appendChild(btn);
                 });
@@ -346,15 +361,18 @@
                     hideSupportPopover();
                     return;
                 }
+                if (isResourceModalOpen()) return;
                 const pop = document.getElementById('desi-support-popover');
                 if (pop && !pop.classList.contains('hidden') && !pop.contains(e.target)
-                    && !e.target.closest('select.acc-option-select') && !e.target.closest('input[name="student_supports"]')) {
+                    && !e.target.closest('select.acc-option-select') && !e.target.closest('input[name="student_supports"]')
+                    && !e.target.closest('[data-support-info]')) {
                     hideSupportPopover();
                 }
             });
 
             document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') hideSupportPopover();
+                if (e.key !== 'Escape' || isResourceModalOpen()) return;
+                hideSupportPopover();
             });
 
             document.body.addEventListener('htmx:afterSwap', (e) => {

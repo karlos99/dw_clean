@@ -291,6 +291,71 @@ class DesiWorkflowAndViewsTests(TestCase):
             {self.assessment_math.id, self.assessment_ela.id},
         )
 
+    def test_admin_dashboard_saves_hidden_from_student_list(self):
+        self.client.force_login(self.admin_user)
+        response = self.client.post(reverse('desi:admin_dashboard'), {
+            'action': 'save_student_list_hidden_supports',
+            'hidden_from_student_list': [str(self.acc.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        self.acc.refresh_from_db()
+        self.assertTrue(self.acc.hide_from_student_list)
+
+        response = self.client.post(reverse('desi:admin_dashboard'), {
+            'action': 'save_student_list_hidden_supports',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.acc.refresh_from_db()
+        self.assertFalse(self.acc.hide_from_student_list)
+
+    def test_hidden_from_student_list_omits_workspace_but_not_export(self):
+        self.client.force_login(self.admin_user)
+        self.acc.hide_from_student_list = True
+        self.acc.save(update_fields=['hide_from_student_list'])
+
+        url = reverse('desi:assign_accommodations', args=[self.student.stu_annual_key])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        rows = [row for group in response.context['category_groups'] for row in group['rows']]
+        self.assertEqual(rows, [])
+
+        export_url = reverse('desi:export_data')
+        support_col_key = f'support__{self.acc.id}'
+        response = self.client.post(export_url, {
+            'school_year': '2025-2026',
+            'assessment_ids': [str(self.assessment_math.id)],
+            'include__student_name': 'on',
+            'header__student_name': 'Student',
+            'order__student_name': '1',
+            f'include__{support_col_key}': 'on',
+            f'header__{support_col_key}': 'TTS Support',
+            f'order__{support_col_key}': '2',
+            'header__assessment_name': 'Assessment Name',
+            'order__assessment_name': '99',
+            'header__student_id': 'Local Student ID',
+            'order__student_id': '99',
+            'header__ssid': 'SSID',
+            'order__ssid': '99',
+            'header__stu_annual_key': 'Student Annual Key',
+            'order__stu_annual_key': '99',
+            'header__grade': 'Grade',
+            'order__grade': '99',
+            'header__school_name': 'School',
+            'order__school_name': '99',
+            'header__school_year': 'School Year',
+            'order__school_year': '99',
+            'header__assessment_subject': 'Assessment Subject',
+            'order__assessment_subject': '99',
+            'header__assessment_school_year': 'Assessment School Year',
+            'order__assessment_school_year': '99',
+            'header__assessment_completed': 'Assessment Completed',
+            'order__assessment_completed': '99',
+        })
+        self.assertEqual(response.status_code, 200)
+        reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
+        rows = list(reader)
+        self.assertEqual(rows[0], ['Student', 'TTS Support'])
+
     def test_create_accommodation_fails_when_no_assessments_exist(self):
         self.client.force_login(self.admin_user)
         
@@ -1067,6 +1132,68 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         )
         self.assertNotIn(accommodation.id, hidden_support_ids(grade4))
 
+    def test_support_rule_hides_support_in_workspace_matrix(self):
+        project = User.objects.create_user(username="rule_view@test.com", email="rule_view@test.com", password="password123")
+        project.roles.add(self.project_role)
+        self.client.force_login(project)
+
+        accommodation = Accommodation.objects.create(name="Calculator Matrix", code="CALCM")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Standard", code="STD")
+        assessment = Assessment.objects.create(name="Matrix Math", subject="Math", is_active=True)
+        assessment.supported_options.add(option)
+
+        rule = SupportRule.objects.create(name="Grade 04-05 only", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="in", value="04,05")
+
+        response = self.client.get(reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]))
+        self.assertEqual(response.status_code, 200)
+        rows = [
+            row for group in response.context["category_groups"]
+            for row in group["rows"]
+        ]
+        self.assertEqual(rows, [])
+
+        grade5 = CurrentStudent.objects.create(
+            stu_annual_key="grade5_matrix",
+            ssid="g5ssid",
+            student_id="g5",
+            student_name="Grade Five",
+            grade="05",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        response = self.client.get(reverse("desi:assign_accommodations", args=[grade5.stu_annual_key]))
+        rows = [
+            row for group in response.context["category_groups"]
+            for row in group["rows"]
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["accommodation"].id, accommodation.id)
+
+    def test_support_rule_grade_normalizes_unpadded_values(self):
+        accommodation = Accommodation.objects.create(name="GradeNorm", code="GN")
+        rule = SupportRule.objects.create(name="Grade 4 list", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="in", value="04,05")
+
+        stu = CurrentStudent.objects.create(
+            stu_annual_key="gn_key",
+            ssid="gn_ssid",
+            student_id="gn",
+            student_name="Grade Norm",
+            grade="4",
+            school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu))
+
+    def test_inactive_support_rule_does_not_hide(self):
+        accommodation = Accommodation.objects.create(name="InactiveRuleSupport", code="IRS")
+        rule = SupportRule.objects.create(name="Inactive", is_active=False)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="is", value="99")
+        self.assertNotIn(accommodation.id, hidden_support_ids(self.student))
+
     def test_support_rule_form_creates_rule(self):
         project = User.objects.create_user(username="p@test.com", email="p@test.com", password="password123")
         project.roles.add(self.project_role)
@@ -1374,6 +1501,17 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
             kind="youtube",
         )
         self.assertIn("youtube.com/embed/abc123", resource.get_embed_url())
+
+    def test_page_resource_opens_externally_not_in_iframe(self):
+        accommodation = Accommodation.objects.create(name="Directions", code="DIR")
+        resource = AccommodationResource.objects.create(
+            accommodation=accommodation,
+            label="Translated directions",
+            url="https://www.caaspp-elpac.org/resources/preparation/accessibility-resources/translated-test-directions#sb-ela",
+            kind="page",
+        )
+        self.assertIsNone(resource.get_embed_url())
+        self.assertTrue(resource.opens_in_new_tab())
 
     def test_school_report_counts(self):
         from desi.report_utils import build_school_report

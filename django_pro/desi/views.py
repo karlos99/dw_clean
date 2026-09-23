@@ -6,7 +6,7 @@ from django.core.paginator import Paginator
 from django.core import signing
 from django.db import transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import HttpResponse, HttpResponseForbidden
+from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.template.loader import render_to_string
 from django.urls import reverse
 import csv
@@ -191,6 +191,16 @@ def get_visible_students(user, active_school=None):
     return CurrentStudent.objects.all()
 
 
+def _normalize_demographic_value(field_name, raw_value):
+    """Normalize student/rule values for consistent comparisons (e.g. grade 4 vs 04)."""
+    if raw_value is None:
+        return ""
+    text = str(raw_value).strip().lower()
+    if field_name == 'grade' and text.isdigit():
+        return text.zfill(2)
+    return text
+
+
 def check_criteria(criteria_list, student):
     """
     Dynamically evaluates a list of AssessmentCriteria or SupportRuleCriteria
@@ -208,10 +218,13 @@ def check_criteria(criteria_list, student):
         else:
             student_value = None
 
-        # Normalize values to string for case-insensitive comparison
-        stu_val_str = str(student_value).strip().lower() if student_value is not None else ""
-        crit_val_str = criterion.value.strip().lower()
-        crit_list_vals = [v.strip().lower() for v in criterion.value.split(',') if v.strip()]
+        stu_val_str = _normalize_demographic_value(field_name, student_value)
+        crit_val_str = _normalize_demographic_value(field_name, criterion.value)
+        crit_list_vals = [
+            _normalize_demographic_value(field_name, v)
+            for v in criterion.value.split(',')
+            if v.strip()
+        ]
 
         match = False
         op = criterion.operator
@@ -281,6 +294,13 @@ def check_criteria(criteria_list, student):
     return False, flattened_reasons
 
 
+def hidden_from_student_list_ids():
+    """Designated supports hidden from the student workspace by project admin."""
+    return set(
+        Accommodation.objects.filter(hide_from_student_list=True).values_list('id', flat=True)
+    )
+
+
 def hidden_support_ids(student):
     """
     Designated supports that should be hidden for this student.
@@ -290,11 +310,13 @@ def hidden_support_ids(student):
     Accommodation ids.
     """
     hidden = set()
+    criteria_qs = SupportRuleCriteria.objects.order_by('order', 'id')
     rules = (
         SupportRule.objects.filter(is_active=True)
-        .exclude(supports__isnull=True)
-        .prefetch_related('criteria', 'supports')
-        .distinct()
+        .prefetch_related(
+            Prefetch('criteria', queryset=criteria_qs),
+            'supports',
+        )
     )
     for rule in rules:
         criteria = list(rule.criteria.all())
@@ -424,6 +446,26 @@ def _apply_dependency_rules(selected_option_ids, option_to_accommodation, suppor
         if next_selected == selected:
             return next_selected
         selected = next_selected
+
+
+def _desi_display_school_name(school):
+    return (school.short_name or school.school_name or '').strip()
+
+
+def _desi_schools_for_dropdown(available_schools):
+    """School choices for DESI filters: A–Z by displayed name, no Unknown placeholders."""
+    rows = list(available_schools) if available_schools else []
+    filtered = []
+    for school in rows:
+        short = (school.short_name or '').strip()
+        name = (school.school_name or '').strip()
+        if short.casefold() == 'unknown' or name.casefold() == 'unknown':
+            continue
+        filtered.append(school)
+    filtered.sort(
+        key=lambda s: (_desi_display_school_name(s).casefold(), getattr(s, 'dw_schoolkey', 0)),
+    )
+    return filtered
 
 
 def _get_student_list_context(request):
@@ -570,15 +612,13 @@ def _get_student_list_context(request):
 
     available_schools = getattr(request.user, 'available_schools', [])
     if not available_schools and request.user.is_superuser:
-        available_schools = StudataSchool.objects.all().order_by('school_name')
+        available_schools = StudataSchool.objects.all()
+    available_schools = _desi_schools_for_dropdown(available_schools)
 
-    if hasattr(available_schools, 'exists'):
-        has_multiple_schools = available_schools.count() > 1
-    else:
-        has_multiple_schools = len(available_schools) > 1
+    has_multiple_schools = len(available_schools) > 1
 
     grade_options_by_school = {}
-    school_ids = [s.state_id for s in available_schools if getattr(s, 'state_id', None)] if not hasattr(available_schools, 'values_list') else list(available_schools.values_list('state_id', flat=True))
+    school_ids = [s.state_id for s in available_schools if getattr(s, 'state_id', None)]
     for school_id in school_ids:
         grade_options_by_school[school_id] = list(
             CurrentStudent.objects.filter(school_year=school_year, school_state_id=school_id)
@@ -587,8 +627,7 @@ def _get_student_list_context(request):
         )
 
     school_names = {}
-    school_rows = available_schools if hasattr(available_schools, '__iter__') else available_schools
-    for school in school_rows:
+    for school in available_schools:
         school_names[school.state_id] = school.short_name or school.school_name
     for student in page_obj:
         student.school_display = school_names.get(student.school_state_id) or student.school or student.school_state_id
@@ -660,28 +699,45 @@ def admin_dashboard(request):
             )
             return redirect('desi:admin_dashboard')
 
-        # Otherwise handle SEIS settings
-        seis_settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
-        selected_assessment_ids = {
-            int(x) for x in request.POST.getlist('seis_display_assessments') if x.isdigit()
-        }
-        seis_settings.assessments.set(
-            Assessment.objects.filter(id__in=selected_assessment_ids)
-        )
-        seis_settings.updated_by = request.user
-        seis_settings.save()
-        messages.success(
-            request,
-            "SEIS display settings saved. "
-            f"{len(selected_assessment_ids)} assessment(s) will display SEIS settings.",
-        )
-        return redirect('desi:admin_dashboard')
+        if action == 'save_student_list_hidden_supports':
+            hidden_ids = {
+                int(x) for x in request.POST.getlist('hidden_from_student_list') if str(x).isdigit()
+            }
+            Accommodation.objects.all().update(hide_from_student_list=False)
+            if hidden_ids:
+                Accommodation.objects.filter(id__in=hidden_ids).update(hide_from_student_list=True)
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'ok': True, 'hidden_count': len(hidden_ids)})
+            messages.success(
+                request,
+                f"Student list visibility saved. {len(hidden_ids)} support(s) hidden from the student workspace.",
+            )
+            return redirect('desi:admin_dashboard')
+
+        if action == 'seis_display_settings' or 'seis_display_assessments' in request.POST:
+            seis_settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
+            selected_assessment_ids = {
+                int(x) for x in request.POST.getlist('seis_display_assessments') if x.isdigit()
+            }
+            seis_settings.assessments.set(
+                Assessment.objects.filter(id__in=selected_assessment_ids)
+            )
+            seis_settings.updated_by = request.user
+            seis_settings.save()
+            messages.success(
+                request,
+                "SEIS display settings saved. "
+                f"{len(selected_assessment_ids)} assessment(s) will display SEIS settings.",
+            )
+            return redirect('desi:admin_dashboard')
 
     seis_selected_assessment_ids = (
         set(seis_settings.assessments.values_list('id', flat=True))
         if seis_settings else set()
     )
-    accommodations = list(Accommodation.objects.all().prefetch_related('options'))
+    accommodations = list(
+        Accommodation.objects.all().prefetch_related('options').order_by('name', 'id')
+    )
 
     # Map each accommodation to the assessments connected through its options.
     accommodation_assessments = {}
@@ -2269,7 +2325,7 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
     seis_option_map = seis_option_map or {}
     selected_support_ids = set(selected_support_ids or [])
     student_option_ids = set(student_option_ids or [])
-    hidden_ids = hidden_support_ids(student)
+    hidden_ids = hidden_support_ids(student) | hidden_from_student_list_ids()
 
     eligible_assessments = list(eligible_assessments)
     seis_managed_assessments = list(seis_managed_assessments or [])
@@ -2467,7 +2523,8 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
             'resources': [
                 {
                     'label': res.label or res.get_kind_display(),
-                    'url': res.get_embed_url() or res.url,
+                    'url': res.url,
+                    'embed_url': res.get_embed_url(),
                     'kind': res.kind,
                 }
                 for res in acc.resources.all()
@@ -2665,6 +2722,16 @@ def assign_accommodations(request, stu_annual_key):
             support_contexts,
             dependency_rules,
         )
+        rule_hidden_ids = hidden_support_ids(student) | hidden_from_student_list_ids()
+        if rule_hidden_ids:
+            selected_opt_ids = [
+                opt_id for opt_id in selected_opt_ids
+                if option_to_accommodation.get(opt_id) not in rule_hidden_ids
+            ]
+            selected_support_ids = [
+                sid for sid in selected_support_ids
+                if sid not in rule_hidden_ids
+            ]
         # SEIS supports are read-only: their controls are disabled so they never
         # post. Keep any option previously stored under a SEIS-locked support so
         # an unrelated save does not silently erase it.

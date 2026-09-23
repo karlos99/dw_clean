@@ -333,7 +333,8 @@
 
         <div x-show="poolOpen" x-collapse>
             <div class="p-6">
-                <p class="text-sm text-slate-600 mb-4">These are the global supports available. You can register, edit, and delete them here.</p>
+                <p class="text-sm text-slate-600 mb-4">These are the global supports available. Register, edit, or delete them here. Use <span class="font-semibold">Hide</span> to remove a support from the student workspace matrix (export is unchanged).</p>
+                {% csrf_token %}
 
                 <!-- POOL FILTERS -->
                 <div class="mb-5 flex flex-col lg:flex-row lg:items-end gap-3">
@@ -373,7 +374,7 @@
 
                 <div id="support-pool-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {% for acc in accommodations %}
-                    <div class="pool-card border border-slate-200 rounded-lg p-5 bg-slate-50 hover:shadow-sm transition flex flex-col justify-between"
+                    <div class="pool-card border rounded-lg p-5 hover:shadow-sm transition flex flex-col justify-between {% if acc.hide_from_student_list %}border-amber-300 bg-amber-50/40{% else %}border-slate-200 bg-slate-50{% endif %}"
                          data-search="{{ acc.name|lower }} {{ acc.code|lower }} {{ acc.category|lower }} {{ acc.tag|lower }} {{ acc.description|lower }}"
                          data-category="{{ acc.category|lower }}"
                          data-tests="{% for ast in acc.connected_assessments %}{{ ast.name|lower }}||{% endfor %}">
@@ -426,7 +427,18 @@
                             </div>
                         </div>
 
-                        <div class="flex justify-end gap-2 pt-3 border-t border-slate-100 mt-auto">
+                        <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 mt-auto flex-wrap">
+                            <label class="inline-flex items-center gap-2 mr-auto cursor-pointer" title="Hide from student workspace (still included in export)">
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Hide</span>
+                                <span class="relative inline-flex items-center">
+                                    <input type="checkbox" value="{{ acc.id }}"
+                                           {% if acc.hide_from_student_list %}checked{% endif %}
+                                           class="sr-only peer"
+                                           data-list-hidden-toggle
+                                           data-pool-hide-toggle>
+                                    <span class="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-amber-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500 peer-disabled:opacity-50"></span>
+                                </span>
+                            </label>
                             <a href="{% url 'desi:edit_accommodation' acc.pk %}" class="inline-flex items-center px-2.5 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
                                 Edit
                             </a>
@@ -522,6 +534,58 @@
         };
         boxes.forEach(box => box.addEventListener('change', updateCount));
         updateCount();
+    });
+</script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const toggles = Array.from(document.querySelectorAll('[data-pool-hide-toggle]'));
+        const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+        if (!toggles.length || !csrfInput) return;
+
+        const syncCardStyle = (toggle) => {
+            const card = toggle.closest('.pool-card');
+            if (!card) return;
+            card.classList.toggle('border-amber-300', toggle.checked);
+            card.classList.toggle('bg-amber-50/40', toggle.checked);
+            card.classList.toggle('border-slate-200', !toggle.checked);
+            card.classList.toggle('bg-slate-50', !toggle.checked);
+        };
+
+        const saveHiddenSupports = async () => {
+            const formData = new FormData();
+            formData.append('action', 'save_student_list_hidden_supports');
+            formData.append('csrfmiddlewaretoken', csrfInput.value);
+            toggles.forEach(toggle => {
+                if (toggle.checked) formData.append('hidden_from_student_list', toggle.value);
+            });
+            const response = await fetch('{% url "desi:admin_dashboard" %}', {
+                method: 'POST',
+                body: formData,
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin',
+            });
+            if (!response.ok) {
+                throw new Error('Save failed');
+            }
+        };
+
+        toggles.forEach(toggle => {
+            syncCardStyle(toggle);
+            toggle.addEventListener('change', async () => {
+                syncCardStyle(toggle);
+                toggle.disabled = true;
+                try {
+                    await saveHiddenSupports();
+                } catch (err) {
+                    toggle.checked = !toggle.checked;
+                    syncCardStyle(toggle);
+                    window.alert('Could not save hide setting. Please try again.');
+                } finally {
+                    toggle.disabled = false;
+                }
+            });
+        });
     });
 </script>
 
