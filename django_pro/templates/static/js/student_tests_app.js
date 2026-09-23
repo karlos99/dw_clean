@@ -371,14 +371,62 @@ document.addEventListener('DOMContentLoaded', () => {
             return n === umbrella || n.startsWith(prefix);
         });
     };
+    const markallPickerMode = (umbrellaKey) => {
+        const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        return vals.some((v) => String(v) === 'mode:only') ? 'only' : 'all';
+    };
     const markallExcludeSet = (umbrellaKey) => {
         const set = new Set();
+        if (markallPickerMode(umbrellaKey) !== 'all') return set;
         const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
         vals.forEach((v) => {
             const s = String(v);
             if (s.startsWith('exclude:')) set.add(s.slice('exclude:'.length));
         });
         return set;
+    };
+    const markallIncludeSet = (umbrellaKey) => {
+        const set = new Set();
+        if (markallPickerMode(umbrellaKey) !== 'only') return set;
+        const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        vals.forEach((v) => {
+            const s = String(v);
+            if (s.startsWith('include:')) set.add(s.slice('include:'.length));
+        });
+        return set;
+    };
+    const getMarkallVisibleCourseInputs = (box, subject) => Array.from(box.querySelectorAll('input[data-markall-course]'))
+        .filter((ci) => !isMarkallHiddenCourse(subject, ci.dataset.markallCourseName || ''));
+    const getMarkallVisibleCourseNames = (box, subject) => getMarkallVisibleCourseInputs(box, subject)
+        .map((ci) => String(ci.dataset.markallCourseName || '').trim())
+        .filter(Boolean);
+    const persistMarkallCoursePicker = (umbrellaKey, mode, checkedNames, allVisibleNames) => {
+        const checked = [...new Set(checkedNames)];
+        const visible = [...new Set(allVisibleNames)];
+        if (mode === 'only') {
+            filters[umbrellaKey] = ['mode:only', ...checked.map((n) => `include:${n}`)];
+            return;
+        }
+        const excluded = visible.filter((n) => !checked.includes(n));
+        if (excluded.length) {
+            filters[umbrellaKey] = excluded.map((n) => `exclude:${n}`);
+        } else {
+            delete filters[umbrellaKey];
+        }
+    };
+    const updateMarkallModeButtons = (box, mode) => {
+        box.querySelectorAll('[data-markall-mode-btn]').forEach((btn) => {
+            const active = btn.dataset.markallModeBtn === mode;
+            btn.classList.toggle('bg-emerald-600', active);
+            btn.classList.toggle('text-white', active);
+            btn.classList.toggle('bg-white', !active);
+            btn.classList.toggle('text-emerald-800', !active);
+            btn.classList.toggle('hover:bg-emerald-50', !active);
+        });
+        const selectAllBtn = box.querySelector('[data-markall-select-all-courses]');
+        if (selectAllBtn) {
+            selectAllBtn.classList.toggle('hidden', mode === 'all');
+        }
     };
 
     const syncMarkallCourseControls = () => {
@@ -396,7 +444,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             const umbrellaKey = markallUmbrellaKey(year, subject);
+            const mode = markallPickerMode(umbrellaKey);
             const excluded = markallExcludeSet(umbrellaKey);
+            const included = markallIncludeSet(umbrellaKey);
+            updateMarkallModeButtons(box, mode);
             const courseInputs = Array.from(box.querySelectorAll('input[data-markall-course]'));
             courseInputs.forEach((ci) => {
                 const name = ci.dataset.markallCourseName || '';
@@ -407,11 +458,23 @@ document.addEventListener('DOMContentLoaded', () => {
                     ci.checked = false;
                     return;
                 }
-                ci.checked = !excluded.has(name);
+                if (mode === 'only') {
+                    ci.checked = included.has(name);
+                } else {
+                    ci.checked = !excluded.has(name);
+                }
             });
-            const visible = courseInputs.filter((ci) => !isMarkallHiddenCourse(subject, ci.dataset.markallCourseName || ''));
+            const visible = getMarkallVisibleCourseInputs(box, subject);
             const checked = visible.filter((ci) => ci.checked).length;
-            if (hint) hint.textContent = visible.length ? `${checked}/${visible.length} selected` : '';
+            if (hint) {
+                if (!visible.length) {
+                    hint.textContent = '';
+                } else if (mode === 'only') {
+                    hint.textContent = checked === visible.length ? `${checked} courses` : `Only ${checked} of ${visible.length}`;
+                } else {
+                    hint.textContent = `${checked}/${visible.length} selected`;
+                }
+            }
         });
     };
 
@@ -432,17 +495,50 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const umbrellaKey = markallUmbrellaKey(year, subject);
         if (!name) return;
-        const excluded = markallExcludeSet(umbrellaKey);
-        if (courseCb.checked) {
-            excluded.delete(name);
-        } else {
-            excluded.add(name);
+        const visible = getMarkallVisibleCourseInputs(box, subject);
+        const checkedAfter = visible.filter((ci) => ci.checked);
+        if (checkedAfter.length === 0) {
+            courseCb.checked = true;
+            return;
         }
-        if (excluded.size) {
-            filters[umbrellaKey] = Array.from(excluded).map((n) => `exclude:${n}`);
+        const mode = markallPickerMode(umbrellaKey);
+        const allNames = getMarkallVisibleCourseNames(box, subject);
+        const checkedNames = checkedAfter.map((ci) => String(ci.dataset.markallCourseName || '').trim()).filter(Boolean);
+        persistMarkallCoursePicker(umbrellaKey, mode, checkedNames, allNames);
+        resetPage();
+        syncMarkallCourseControls();
+        triggerLoadData();
+    };
+
+    const setMarkallPickerMode = (box, year, subject, mode) => {
+        if (!markallUmbrellaActive(year, subject)) return;
+        const umbrellaKey = markallUmbrellaKey(year, subject);
+        const allNames = getMarkallVisibleCourseNames(box, subject);
+        const visible = getMarkallVisibleCourseInputs(box, subject);
+        const checkedNames = visible.filter((ci) => ci.checked).map((ci) => String(ci.dataset.markallCourseName || '').trim()).filter(Boolean);
+        if (mode === 'only') {
+            // Entering Only: whitelist only explicit picks — not the full All-mode set.
+            let includes = checkedNames;
+            if (allNames.length && includes.length >= allNames.length) {
+                includes = [allNames[0]];
+            } else if (!includes.length && allNames.length) {
+                includes = [allNames[0]];
+            }
+            persistMarkallCoursePicker(umbrellaKey, 'only', includes, allNames);
         } else {
-            delete filters[umbrellaKey];
+            persistMarkallCoursePicker(umbrellaKey, 'all', checkedNames.length ? checkedNames : allNames, allNames);
         }
+        resetPage();
+        syncMarkallCourseControls();
+        triggerLoadData();
+    };
+
+    const selectAllMarkallCourses = (box, year, subject) => {
+        if (!markallUmbrellaActive(year, subject)) return;
+        const umbrellaKey = markallUmbrellaKey(year, subject);
+        const allNames = getMarkallVisibleCourseNames(box, subject);
+        if (!allNames.length) return;
+        persistMarkallCoursePicker(umbrellaKey, 'only', allNames, allNames);
         resetPage();
         syncMarkallCourseControls();
         triggerLoadData();
@@ -537,6 +633,33 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = e.target.closest('[data-year-mode-btn]');
         if (btn) {
             setYearMode(btn.dataset.yearModeBtn);
+            return;
+        }
+        const markallModeBtn = e.target.closest('[data-markall-mode-btn]');
+        if (markallModeBtn) {
+            const box = markallModeBtn.closest('[data-markall-course-box]');
+            const umbrellaCb = box?.closest('[data-category^="marks_"]')?.querySelector('input[data-markall="1"]');
+            if (box && umbrellaCb) {
+                setMarkallPickerMode(
+                    box,
+                    umbrellaCb.dataset.markallYear || '',
+                    umbrellaCb.dataset.markallSubject || '',
+                    markallModeBtn.dataset.markallModeBtn || 'all',
+                );
+            }
+            return;
+        }
+        const markallSelectAll = e.target.closest('[data-markall-select-all-courses]');
+        if (markallSelectAll) {
+            const box = markallSelectAll.closest('[data-markall-course-box]');
+            const umbrellaCb = box?.closest('[data-category^="marks_"]')?.querySelector('input[data-markall="1"]');
+            if (box && umbrellaCb) {
+                selectAllMarkallCourses(
+                    box,
+                    umbrellaCb.dataset.markallYear || '',
+                    umbrellaCb.dataset.markallSubject || '',
+                );
+            }
         }
     });
     const selectedCountEl = document.getElementById('selected-count');
@@ -784,31 +907,86 @@ document.addEventListener('DOMContentLoaded', () => {
         selectAllEl.indeterminate = selectedOnPage > 0 && selectedOnPage < pageSsids.length;
     };
 
+    const isColumnCheckboxSelected = (checkbox) => {
+        const col = checkbox.dataset.column;
+        if (!col) return false;
+        if (checkbox.dataset.markall === '1') {
+            const yr = (checkbox.dataset.markallYear || '').replace('-', '_');
+            const subj = (checkbox.dataset.markallSubject || '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+            const prefix = `markall_${yr}_${subj}_`;
+            return selectedColumns.some((sc) =>
+                normaliseKey(sc) === normaliseKey(col)
+                || normaliseKey(sc).startsWith(prefix)
+                || toRelativeKey(normaliseKey(col)) === toRelativeKey(normaliseKey(sc))
+            );
+        }
+        if (checkbox.dataset.apall === '1') {
+            return apallUmbrellaActive(checkbox.dataset.apallYear || '');
+        }
+        return selectedColumns.includes(col)
+            || selectedColumns.includes(normaliseKey(col))
+            || selectedColumns.includes(toRelativeKey(normaliseKey(col)));
+    };
+
+    const countSelectedColumnsInSection = (sectionEl) => {
+        if (!sectionEl) return 0;
+        let count = 0;
+        sectionEl.querySelectorAll('input[data-column]').forEach((checkbox) => {
+            if (isColumnCheckboxSelected(checkbox)) count += 1;
+        });
+        return count;
+    };
+
+    const updateColumnSelectorSectionUi = () => {
+        const root = document.getElementById('column-selector');
+        if (!root) return;
+
+        root.querySelectorAll('input[data-column]').forEach((checkbox) => {
+            const label = checkbox.closest('label');
+            if (!label) return;
+            const selected = isColumnCheckboxSelected(checkbox);
+            label.classList.toggle('bg-blue-50', selected);
+            label.classList.toggle('ring-1', selected);
+            label.classList.toggle('ring-inset', selected);
+            label.classList.toggle('ring-blue-200', selected);
+            const text = label.querySelector('span');
+            if (text) {
+                text.classList.toggle('font-semibold', selected);
+                text.classList.toggle('text-blue-900', selected);
+                text.classList.toggle('text-slate-700', !selected);
+            }
+        });
+
+        root.querySelectorAll('[data-toggle-category]').forEach((button) => {
+            const category = button.getAttribute('data-toggle-category');
+            if (!category) return;
+            const section = root.querySelector(`[data-category="${cssEscape(category)}"]`);
+            const count = countSelectedColumnsInSection(section);
+
+            const titleEl = [...button.children].find((el) => !el.hasAttribute('data-caret'));
+            if (!titleEl) return;
+
+            let badge = titleEl.querySelector('[data-section-selected-count]');
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.setAttribute('data-section-selected-count', '');
+                titleEl.classList.add('inline-flex', 'items-center', 'gap-1.5', 'min-w-0');
+                titleEl.appendChild(badge);
+            }
+            badge.className = 'inline-flex min-w-[0.875rem] h-3.5 px-0.5 items-center justify-center rounded-full text-[9px] font-semibold leading-none tabular-nums bg-blue-600 text-white';
+
+            badge.textContent = String(count);
+            badge.classList.toggle('hidden', count === 0);
+            button.classList.toggle('bg-blue-50', count > 0);
+            button.classList.toggle('ring-1', count > 0);
+            button.classList.toggle('ring-inset', count > 0);
+            button.classList.toggle('ring-blue-100', count > 0);
+        });
+    };
+
     const syncCheckboxes = () => {
         document.querySelectorAll('input[data-column]').forEach((checkbox) => {
-            const col = checkbox.dataset.column;
-            // "All Marks" umbrella: checked if the umbrella OR any expanded pair is selected
-            if (checkbox.dataset.markall === '1') {
-                const yr = (checkbox.dataset.markallYear || '').replace('-', '_');
-                const subj = (checkbox.dataset.markallSubject || '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
-                const prefix = `markall_${yr}_${subj}_`;
-                checkbox.checked = selectedColumns.some(sc =>
-                    normaliseKey(sc) === normaliseKey(col)
-                    || normaliseKey(sc).startsWith(prefix)
-                    || toRelativeKey(normaliseKey(col)) === toRelativeKey(normaliseKey(sc))
-                );
-                return;
-            }
-            // "All Results" AP umbrella: checked if the umbrella OR any expanded pair is selected
-            if (checkbox.dataset.apall === '1') {
-                checkbox.checked = apallUmbrellaActive(checkbox.dataset.apallYear || '');
-                return;
-            }
-            // Match regardless of whether stored as specific or relative key
-            const matches = selectedColumns.includes(col)
-                || selectedColumns.includes(normaliseKey(col))
-                || selectedColumns.includes(toRelativeKey(normaliseKey(col)));
-            checkbox.checked = matches;
+            checkbox.checked = isColumnCheckboxSelected(checkbox);
         });
         document.querySelectorAll('input[data-action="select-topic"]').forEach((topicCb) => {
             const targetCategory = topicCb.dataset.targetCategory;
@@ -823,6 +1001,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         syncMarkallCourseControls();
         syncApallSubjectControls();
+        updateColumnSelectorSectionUi();
     };
 
     const renderSelectedColumns = () => {

@@ -117,12 +117,19 @@
                 tr.support-row:focus-within .desi-matrix-name-cell {
                     box-shadow: inset 4px 0 0 rgb(29 78 216), 2px 0 8px -3px rgb(15 23 42 / 0.14);
                 }
+                .desi-matrix-table {
+                    min-width: max(100%, calc(18rem + var(--num-cols, 1) * 13rem));
+                }
+                .desi-matrix-col-item {
+                    width: calc((100% - 18rem) / var(--num-cols, 1));
+                    min-width: 13rem;
+                }
             </style>
             <div class="bg-slate-900 text-white px-5 py-3 flex items-center justify-between gap-3 rounded-t-xl">
                 <div class="flex items-center gap-3">
                     <span class="h-2.5 w-2.5 rounded-full bg-fuchsia-500 shrink-0"></span>
                     <div>
-                        <h2 class="text-sm font-bold">Designated Supports by Section</h2>
+                        <h2 class="text-sm font-bold">Supports Matrix</h2>
                         <p class="text-[11px] text-slate-300 mt-0.5">Each test is a column. Rows are grouped by section category, and identical rows across tests are merged into one selection.</p>
                     </div>
                 </div>
@@ -132,14 +139,20 @@
             </div>
 
             <div class="desi-matrix-scroll rounded-b-xl">
-                <table class="min-w-full border-separate border-spacing-0 text-xs">
+                <table class="desi-matrix-table w-full table-fixed border-separate border-spacing-0 text-xs" style="--num-cols: {{ matrix_columns|length }};">
+                    <colgroup>
+                        <col style="width: 18rem;">
+                        {% for col in matrix_columns %}
+                        <col class="desi-matrix-col-item">
+                        {% endfor %}
+                    </colgroup>
                     <thead class="desi-matrix-thead">
                         <tr class="desi-matrix-test-header-row">
-                            <th class="desi-matrix-corner-cell bg-slate-800 text-white text-left px-4 py-3 min-w-[15rem] border-b border-slate-700">
-                                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-300">Designated support</span>
+                            <th class="desi-matrix-corner-cell bg-slate-800 text-white text-left px-4 py-3 border-b border-slate-700">
+                                <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-300">Supports</span>
                             </th>
                             {% for col in matrix_columns %}
-                            <th class="desi-matrix-col-head border-b border-l border-slate-200 px-3 py-2.5 min-w-[12rem] text-left border-t-4 border-t-{{ col.card_color }}-500">
+                            <th class="desi-matrix-col-head border-b border-l border-slate-200 px-3 py-2.5 text-left border-t-4 border-t-{{ col.card_color }}-500">
                                 <span class="desi-matrix-test-name">{{ col.assessment.name }}</span>
                                 {% if col.assessment.subject %}
                                 <span class="block text-[10px] text-slate-500 mt-0.5">{{ col.assessment.subject }}</span>
@@ -166,11 +179,14 @@
                     </thead>
                     <tbody>
                         {% for group in category_groups %}
-                        <tr>
-                            <td colspan="{{ matrix_columns|length|add:1 }}" class="bg-slate-100 border-b border-slate-200 px-4 py-1.5">
-                                <span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                                    {{ group.category.name|default:"Uncategorized" }}
-                                </span>
+                        <tr class="category-header-row">
+                            <td colspan="{{ matrix_columns|length|add:1 }}" class="bg-slate-200/90 border-y border-slate-300 px-4 py-2.5">
+                                <div class="flex items-center gap-2.5">
+                                    <span class="w-1.5 h-4 bg-blue-600 rounded-full inline-block shrink-0"></span>
+                                    <span class="text-xs md:text-sm font-extrabold uppercase tracking-wider text-slate-800">
+                                        {{ group.category.name|default:"Uncategorized" }}
+                                    </span>
+                                </div>
                             </td>
                         </tr>
                         {% for row in group.rows %}
@@ -256,7 +272,7 @@
         {% if can_edit %}
         <div class="flex justify-end gap-3 pt-4 border-t border-slate-200 sticky bottom-0 bg-slate-100/95 backdrop-blur-md py-3">
             <button type="submit" class="inline-flex justify-center items-center px-8 py-2.5 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition">
-                Save Designated Supports
+                Save Supports
             </button>
         </div>
         {% else %}

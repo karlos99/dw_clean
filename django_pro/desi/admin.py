@@ -34,6 +34,7 @@ class AccommodationResourceInline(admin.TabularInline):
 
 class SupportRuleCriteriaInline(admin.TabularInline):
     model = SupportRuleCriteria
+    fields = ('order', 'logic_operator', 'field_name', 'operator', 'value')
     extra = 1
 
 
@@ -54,7 +55,9 @@ class AccommodationAdmin(admin.ModelAdmin):
 
 @admin.register(Assessment)
 class AssessmentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'subject', 'tag', 'is_active', 'created_at')
+    list_display = ('order', 'name', 'subject', 'tag', 'is_active', 'created_at')
+    list_display_links = ('name',)
+    list_editable = ('order',)
     list_filter = ('subject', 'tag', 'is_active')
     search_fields = ('name', 'subject', 'tag')
     filter_horizontal = ('supported_options',)
@@ -63,7 +66,7 @@ class AssessmentAdmin(admin.ModelAdmin):
 
 @admin.register(SupportRule)
 class SupportRuleAdmin(admin.ModelAdmin):
-    list_display = ('name', 'is_active', 'updated_at')
+    list_display = ('name', 'criteria_summary', 'is_active', 'updated_at')
     list_filter = ('is_active',)
     search_fields = ('name',)
     filter_horizontal = ('supports',)

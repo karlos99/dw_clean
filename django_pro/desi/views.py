@@ -193,18 +193,18 @@ def get_visible_students(user, active_school=None):
 
 def check_criteria(criteria_list, student):
     """
-    Dynamically evaluates a list of AssessmentCriteria against a student's current demographics.
+    Dynamically evaluates a list of AssessmentCriteria or SupportRuleCriteria
+    against a student's current demographics, supporting 'AND' and 'OR' connectors.
     Returns (is_eligible: bool, failed_reasons: list of str).
     """
-    failed_reasons = []
-    for criterion in criteria_list:
+    def _eval_criterion(criterion, stu):
         field_name = criterion.field_name
-        
+
         # Resolve value from student attributes or add_data dict
-        if hasattr(student, field_name):
-            student_value = getattr(student, field_name)
-        elif student.add_data and isinstance(student.add_data, dict) and field_name in student.add_data:
-            student_value = student.add_data.get(field_name)
+        if hasattr(stu, field_name):
+            student_value = getattr(stu, field_name)
+        elif stu.add_data and isinstance(stu.add_data, dict) and field_name in stu.add_data:
+            student_value = stu.add_data.get(field_name)
         else:
             student_value = None
 
@@ -224,16 +224,61 @@ def check_criteria(criteria_list, student):
         elif op == 'not_in':
             match = (stu_val_str not in crit_list_vals)
 
+        failure_reason = None
         if not match:
-            # Generate descriptive error message
             display_field = criterion.get_field_name_display()
             display_operator = criterion.get_operator_display()
             current_display = f"'{student_value}'" if student_value is not None else "(Not Set)"
-            failed_reasons.append(
-                f"{display_field} must be {display_operator} '{criterion.value}' (current value: {current_display})"
-            )
-            
-    return len(failed_reasons) == 0, failed_reasons
+            failure_reason = f"{display_field} must be {display_operator} '{criterion.value}' (current value: {current_display})"
+
+        return match, failure_reason
+
+    # Group criteria into conjunction groups separated by OR (Disjunctive Normal Form)
+    groups = []
+    current_group = []
+    for idx, criterion in enumerate(criteria_list):
+        logic_op = getattr(criterion, 'logic_operator', 'AND') or 'AND'
+        if idx > 0 and logic_op == 'OR':
+            if current_group:
+                groups.append(current_group)
+            current_group = [criterion]
+        else:
+            current_group.append(criterion)
+    if current_group:
+        groups.append(current_group)
+
+    if not groups:
+        return True, []
+
+    # If all criteria are connected by AND (only 1 group), preserve exact existing behavior:
+    if len(groups) == 1:
+        failed_reasons = []
+        for crit in groups[0]:
+            match, reason = _eval_criterion(crit, student)
+            if not match and reason:
+                failed_reasons.append(reason)
+        return len(failed_reasons) == 0, failed_reasons
+
+    # When OR is used, the student is eligible if ANY conjunction group passes
+    all_group_failed_reasons = []
+    for group in groups:
+        group_failed = []
+        for crit in group:
+            match, reason = _eval_criterion(crit, student)
+            if not match and reason:
+                group_failed.append(reason)
+        if not group_failed:
+            # This entire AND-group matched, so the rule is satisfied!
+            return True, []
+        all_group_failed_reasons.append(group_failed)
+
+    # If we reached here, NO group matched. Collect failure reasons across groups.
+    flattened_reasons = []
+    for group_failed in all_group_failed_reasons:
+        for r in group_failed:
+            if r not in flattened_reasons:
+                flattened_reasons.append(r)
+    return False, flattened_reasons
 
 
 def hidden_support_ids(student):
@@ -595,13 +640,27 @@ def admin_dashboard(request):
     except Exception:
         default_year = "2025-2026"
 
-    assessments = list(Assessment.objects.prefetch_related('criteria', 'supported_options').order_by('name'))
+    assessments = list(Assessment.objects.prefetch_related('criteria', 'supported_options').order_by('order', 'name', 'id'))
 
     # SEIS display settings: which assessments surface SEIS settings for
     # students, independent of each assessment's is_active flag.
     from .models import DesiSeisDisplaySettings
     seis_settings = DesiSeisDisplaySettings.objects.first()
     if request.method == 'POST':
+        action = request.POST.get('action', '').strip()
+        if action == 'save_assessment_order' or 'assessment_order' in request.POST:
+            assessment_ids = [
+                int(x) for x in request.POST.getlist('assessment_order') if str(x).isdigit()
+            ]
+            for index, ast_id in enumerate(assessment_ids, start=1):
+                Assessment.objects.filter(id=ast_id).update(order=index)
+            messages.success(
+                request,
+                f"Assessment column order updated successfully ({len(assessment_ids)} assessments)."
+            )
+            return redirect('desi:admin_dashboard')
+
+        # Otherwise handle SEIS settings
         seis_settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
         selected_assessment_ids = {
             int(x) for x in request.POST.getlist('seis_display_assessments') if x.isdigit()
@@ -1989,9 +2048,20 @@ def support_rule_form(request, id=None):
         crit_fields = request.POST.getlist('crit_field[]')
         crit_operators = request.POST.getlist('crit_operator[]')
         crit_values = request.POST.getlist('crit_value[]')
-        for field, op, val in zip(crit_fields, crit_operators, crit_values):
+        crit_logics = request.POST.getlist('crit_logic_op[]')
+        for idx, (field, op, val) in enumerate(zip(crit_fields, crit_operators, crit_values)):
             if field and op and val:
-                SupportRuleCriteria.objects.create(rule=rule, field_name=field, operator=op, value=val)
+                logic = crit_logics[idx].strip().upper() if idx < len(crit_logics) else 'AND'
+                if logic not in ('AND', 'OR'):
+                    logic = 'AND'
+                SupportRuleCriteria.objects.create(
+                    rule=rule,
+                    field_name=field,
+                    operator=op,
+                    value=val,
+                    logic_operator=logic,
+                    order=idx,
+                )
 
         messages.success(request, f"Support rule '{rule.name}' saved.")
         return redirect('desi:support_rule_list')
@@ -2475,7 +2545,7 @@ def assign_accommodations(request, stu_annual_key):
         'supported_options__accommodation__depends_on_option',
         'supported_options__accommodation__dependency_assessments',
         'supported_options__accommodation__resources',
-    ))
+    ).order_by('order', 'name', 'id'))
     for index, ast in enumerate(assessments):
         ast.card_color = ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)]
 
@@ -2507,7 +2577,7 @@ def assign_accommodations(request, stu_annual_key):
         from .seis_data import selected_seis_display_assessment_ids
         selected_ids = selected_seis_display_assessment_ids()
         all_assessments = list(
-            Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation')
+            Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation').order_by('order', 'name', 'id')
         )
         _assessment_by_id = {ast.id: ast for ast in all_assessments}
 

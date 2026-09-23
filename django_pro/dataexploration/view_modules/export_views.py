@@ -22,7 +22,7 @@ from ..column_utils import (
 )
 from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
 from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
-from .filter_sql import apply_column_filters, extract_markall_course_excludes, markall_course_filter_parts
+from .filter_sql import apply_column_filters, extract_markall_course_picker, markall_course_filter_parts
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -229,8 +229,10 @@ def export_students_csv(request):
             new_selected.append(c)
         selected_columns = new_selected
 
-    # Courses the user deselected from an "All Marks" umbrella (exclude:<course>)
-    markall_excludes = extract_markall_course_excludes(filters)
+    markall_pickers = extract_markall_course_picker(filters)
+
+    def _markall_course_picker_for_umbrella(umbrella):
+        return markall_pickers.get(umbrella, {'mode': 'all', 'courses': set()})
 
     # ── AP "All Results" expansion setup ───────────────────────────────────
     # The apall_<year> umbrella (or already-expanded pairs) collapses back to
@@ -755,7 +757,7 @@ def export_students_csv(request):
                     with connections['default'].cursor() as markall_cursor:
                         for (year, subject), umbrella in markall_years.items():
                             course_filter_sql, course_extra_params = markall_course_filter_parts(
-                                subject, markall_excludes.get(umbrella, set())
+                                subject, _markall_course_picker_for_umbrella(umbrella)
                             )
                             markall_cursor.execute(
                                 f"""
@@ -1026,12 +1028,12 @@ def export_students_csv(request):
                             if chunk_ssids or chunk_ids:
                                 for (year, subject), umbrella in markall_years.items():
                                     n = markall_max.get((year, subject), 0)
-                                    excludes = markall_excludes.get(umbrella, set())
+                                    picker = _markall_course_picker_for_umbrella(umbrella)
                                     live_rows = _fetch_marks_live_from_alt(chunk_ssids, chunk_ids, [year])
                                     by_ssid, by_student_id = group_marks_by_ssid_course(
                                         live_rows,
                                         subject=subject,
-                                        course_filter_fn=markall_course_filter_fn(subject, excludes),
+                                        course_filter_fn=markall_course_filter_fn(subject, picker),
                                     )
                                     for student in chunk_students:
                                         ssid_key = str(student.get('ssid') or '').strip()

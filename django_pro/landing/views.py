@@ -30,28 +30,41 @@ def index(request):
             slots = list(home_dashboard.chart_slots.select_related('chart').order_by('position'))
 
             # Pre-render each chart via the shared (cached) pipeline so the home
-            # page renders charts exactly like the dataviz pages do. The user's
-            # saved school (if any) narrows the visuals to that school.
+            # page renders charts exactly like the dataviz pages do. Parallelized across
+            # worker threads so homepage latency is max(single_chart) rather than sum.
+            from clickhouse_utils.thread_pool import get_io_pool
             from dataviz.views.api.chart_api import _render_saved_chart
+
             for slot in slots:
                 slot.rendered_html = ''
                 slot.render_error = None
-                if slot.element_type != 'chart' or not slot.chart_id:
-                    continue
+
+            def _render_slot(s):
+                if s.element_type != 'chart' or not s.chart_id:
+                    return
                 try:
                     res = _render_saved_chart(
-                        slot.chart_id, {},
+                        s.chart_id, {},
                         drill_source='dashboard',
-                        drill_source_id=slot.dashboard_id,
+                        drill_source_id=s.dashboard_id,
                         drill_source_name='My Charts',
                         is_embed=True,
                         request=request,
                         school_id=active_school_id,
                     )
-                    slot.rendered_html = res.get('html', '')
-                    slot.render_error = res.get('error')
+                    s.rendered_html = res.get('html', '')
+                    s.render_error = res.get('error')
                 except Exception as exc:
-                    slot.render_error = str(exc)
+                    s.render_error = str(exc)
+
+            render_targets = [s for s in slots if s.element_type == 'chart' and s.chart_id]
+            if len(render_targets) > 1:
+                pool = get_io_pool()
+                futures = [pool.submit(_render_slot, s) for s in render_targets]
+                for f in futures:
+                    f.result()
+            elif len(render_targets) == 1:
+                _render_slot(render_targets[0])
             home_dashboard_json = json.dumps(home_dashboard.to_dict())
             home_slots_json = json.dumps([s.to_dict() for s in slots])
 

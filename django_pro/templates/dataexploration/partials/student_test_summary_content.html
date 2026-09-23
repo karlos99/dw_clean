@@ -1,4 +1,5 @@
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+<div class="{% if embedded %}px-0 py-0{% else %}max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6{% endif %}">
+    {% if not embedded %}
     <div class="flex items-start justify-between gap-4 mb-4">
         <div>
             <h2 class="text-2xl font-bold text-slate-900">Student Test Summary</h2>
@@ -9,154 +10,178 @@
         <button type="button" data-action="close-student-summary"
             class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Close</button>
     </div>
+    {% endif %}
 
     {% if student_info %}
-    <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-6">
-        <div class="flex items-center gap-5 mb-4">
+    <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-5 mb-6">
+        <div class="flex items-start gap-5 mb-5">
             <img src="{% url 'studata:picture' ssid %}"
                  alt="{% if student_info.full_name %}Photo of {{ student_info.full_name }}{% else %}Student photo{% endif %}"
-                 width="112" height="112"
-                 class="h-28 w-28 shrink-0 rounded-full object-cover bg-slate-100 ring-1 ring-slate-200">
-            <h3 class="text-lg font-semibold text-slate-900">Student Information</h3>
-        </div>
-
-        <!-- Basic Demographics -->
-        <div class="mb-4">
-            <h4 class="text-sm font-semibold text-slate-700 mb-2">Demographics</h4>
-            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                <div>
-                    <p class="text-xs text-slate-600">Student ID</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.student_id|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">SSID</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.ssid|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Grade</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.grade|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Gender</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.gender|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Race</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.race|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Birth Date</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.birth_date|date:"m/d/Y"|default:"-" }}</p>
+                 width="96" height="96"
+                 class="h-24 w-24 shrink-0 rounded-full object-cover bg-slate-100 ring-1 ring-slate-200">
+            <div class="min-w-0 flex-1">
+                <h3 class="text-xl font-semibold text-slate-900 truncate">{{ student_info.full_name|default:"Student Information" }}</h3>
+                <p class="mt-1 text-sm text-slate-600">
+                    Grade {{ student_info.grade|default:"-" }}
+                    · {{ student_info.school_short_name|default:student_info.school|truncatewords:3|default:"-" }}
+                    · {{ student_info.school_year|default:"-" }}
+                    · {{ student_info.status|default:"-" }}
+                </p>
+                <p class="mt-0.5 text-xs text-slate-500">
+                    ID {{ student_info.student_id|default:"-" }}
+                    · SSID {{ student_info.ssid|default:ssid }}
+                </p>
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                    {% if student_info.ell_status and student_info.ell_status|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">ELL{% if student_info.ell_status|upper != 'Y' %} {{ student_info.ell_status }}{% endif %}</span>{% endif %}
+                    {% if student_info.sped and student_info.sped|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-800">SPED{% if student_info.sped|upper != 'Y' %} {{ student_info.sped }}{% endif %}</span>{% endif %}
+                    {% if student_info.in_504 and student_info.in_504|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">504{% if student_info.in_504|upper != 'Y' %} {{ student_info.in_504 }}{% endif %}</span>{% endif %}
+                    {% if student_info.gate and student_info.gate|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">GATE{% if student_info.gate|upper != 'Y' %} {{ student_info.gate }}{% endif %}</span>{% endif %}
+                    {% if student_info.sed and student_info.sed|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">SED{% if student_info.sed|upper != 'Y' %} {{ student_info.sed }}{% endif %}</span>{% endif %}
+                    {% if student_info.foster and student_info.foster|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">Foster{% if student_info.foster|upper != 'Y' %} {{ student_info.foster }}{% endif %}</span>{% endif %}
+                    {% if student_info.homeless and student_info.homeless|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">Homeless{% if student_info.homeless|upper != 'Y' %} {{ student_info.homeless }}{% endif %}</span>{% endif %}
+                    {% if student_info.migrant and student_info.migrant|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-800">Migrant{% if student_info.migrant|upper != 'Y' %} {{ student_info.migrant }}{% endif %}</span>{% endif %}
+                    {% if student_info.dli and student_info.dli|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800">DLI{% if student_info.dli|upper != 'Y' %} {{ student_info.dli }}{% endif %}</span>{% endif %}
+                    {% if student_info.suspension_indicator and student_info.suspension_indicator|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800">Suspension{% if student_info.suspension_indicator|upper != 'Y' %} {{ student_info.suspension_indicator }}{% endif %}</span>{% endif %}
+                    {% if student_info.ltel and student_info.ltel|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">LTEL{% if student_info.ltel|upper != 'Y' %} {{ student_info.ltel }}{% endif %}</span>{% endif %}
                 </div>
             </div>
         </div>
 
-        <!-- School Information -->
-        <div class="mb-4">
-            <h4 class="text-sm font-semibold text-slate-700 mb-2">School Information</h4>
-            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                <div>
-                    <p class="text-xs text-slate-600">School</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.school_short_name|default:student_info.school|truncatewords:3 }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">School State ID</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.school_state_id|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">School Year</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.school_year|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Status</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.status|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Attendance Rate</p>
-                    <p class="text-sm font-medium text-slate-900">{% if student_info.atendace_rate %}{{ student_info.atendace_rate }}%{% else %}-{% endif %}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Instructional Setting</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.instructional_setting|default:"-" }}</p>
-                </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-5">
+            <div>
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Demographics</h4>
+                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+                    <div>
+                        <dt class="text-xs text-slate-500">Student ID</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.student_id|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">SSID</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.ssid|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Grade</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.grade|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Gender</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.gender|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Race</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.race|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Birth Date</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.birth_date|date:"m/d/Y"|default:"-" }}</dd>
+                    </div>
+                </dl>
             </div>
-        </div>
 
-        <!-- Language & Program Information -->
-        <div class="mb-4">
-            <h4 class="text-sm font-semibold text-slate-700 mb-2">Language & Programs</h4>
-            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                <div>
-                    <p class="text-xs text-slate-600">ELL Status</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.ell_status|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">LTEL</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.ltel|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">FEP Date</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.fep_date|date:"m/d/Y"|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">DSUSD FEP</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.dsusd_fep|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">US Enter Date</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.us_enter_date|date:"m/d/Y"|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">State Enter Date</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.state_enter_date|date:"m/d/Y"|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Special Program</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.special_program_code|default:"-" }}</p>
-                </div>
+            <div>
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">School Information</h4>
+                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+                    <div>
+                        <dt class="text-xs text-slate-500">School</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.school_short_name|default:student_info.school|truncatewords:3 }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">School State ID</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.school_state_id|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">School Year</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.school_year|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Status</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.status|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Attendance Rate</dt>
+                        <dd class="text-sm font-medium text-slate-900">{% if student_info.atendace_rate %}{{ student_info.atendace_rate }}%{% else %}-{% endif %}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Instructional Setting</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.instructional_setting|default:"-" }}</dd>
+                    </div>
+                </dl>
             </div>
-        </div>
 
-        <!-- Special Services & Indicators -->
-        <div>
-            <h4 class="text-sm font-semibold text-slate-700 mb-2">Special Services & Indicators</h4>
-            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                <div>
-                    <p class="text-xs text-slate-600">SPED</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.sped|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">504 Plan</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.in_504|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">GATE</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.gate|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">SED</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.sed|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Foster</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.foster|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Homeless</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.homeless|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Migrant</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.migrant|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">DLI</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.dli|default:"-" }}</p>
-                </div>
-                <div>
-                    <p class="text-xs text-slate-600">Suspension</p>
-                    <p class="text-sm font-medium text-slate-900">{{ student_info.suspension_indicator|default:"-" }}</p>
-                </div>
+            <div>
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Language &amp; Programs</h4>
+                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+                    <div>
+                        <dt class="text-xs text-slate-500">ELL Status</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.ell_status|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">LTEL</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.ltel|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">FEP Date</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.fep_date|date:"m/d/Y"|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">DSUSD FEP</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.dsusd_fep|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">US Enter Date</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.us_enter_date|date:"m/d/Y"|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">State Enter Date</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.state_enter_date|date:"m/d/Y"|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Special Program</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.special_program_code|default:"-" }}</dd>
+                    </div>
+                </dl>
+            </div>
+
+            <div>
+                <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Special Services &amp; Indicators</h4>
+                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+                    <div>
+                        <dt class="text-xs text-slate-500">SPED</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.sped|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">504 Plan</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.in_504|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">GATE</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.gate|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">SED</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.sed|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Foster</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.foster|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Homeless</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.homeless|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Migrant</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.migrant|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">DLI</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.dli|default:"-" }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-xs text-slate-500">Suspension</dt>
+                        <dd class="text-sm font-medium text-slate-900">{{ student_info.suspension_indicator|default:"-" }}</dd>
+                    </div>
+                </dl>
             </div>
         </div>
     </div>
@@ -173,10 +198,9 @@
         {% regroup test_records by school_year as year_list %}
         <div class="flex flex-col">
             {% for year in year_list %}
-            <div class="border-b border-slate-200 last:border-b-0" x-data="{ expanded: false }">
+            <div class="border-b border-slate-200 last:border-b-0" x-data="{ expanded: {{ forloop.first|yesno:'true,false' }} }">
                 <div class="bg-slate-50 px-6 py-3 border-y border-slate-100 flex justify-between items-center cursor-pointer hover:bg-slate-100 transition-colors" @click="expanded = !expanded">
                      <div class="flex items-center gap-2">
-                        <!-- Chevron Icon -->
                         <svg class="w-4 h-4 text-slate-500 transition-transform duration-200" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                         </svg>
@@ -187,8 +211,7 @@
                     </div>
                     <span class="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">{{ year.list|length }} Tests</span>
                 </div>
-                <!-- Collapsible Content -->
-                <div class="overflow-x-auto" x-show="expanded" x-collapse style="display: none;">
+                <div class="overflow-x-auto" x-show="expanded" x-collapse {% if not forloop.first %}style="display: none;"{% endif %}>
                     <table class="min-w-full divide-y divide-slate-100">
                         <thead class="bg-white">
                             <tr>
@@ -209,7 +232,7 @@
                                 <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-600">{{ record.subject|default:"-" }}</td>
                                 <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-600">{{ record.grade|default:"-" }}</td>
                                 <td class="px-6 py-3 whitespace-nowrap bg-blue-50/10">
-                                    <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full 
+                                    <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full
                                         {% if record.pl == '4' or record.pl == 'Advanced' or record.pl == 'Standard Exceeded' %}bg-green-100 text-green-800 border border-green-200
                                         {% elif record.pl == '3' or record.pl == 'Proficient' or record.pl == 'Standard Met' %}bg-blue-100 text-blue-800 border border-blue-200
                                         {% elif record.pl == '2' or record.pl == 'Basic' or record.pl == 'Standard Nearly Met' %}bg-yellow-100 text-yellow-800 border border-yellow-200
@@ -252,53 +275,57 @@
             <p class="text-sm text-slate-600 mt-1">{{ student_marks|length }} mark(s) found</p>
         </div>
 
-        {% if student_marks %}
-        {% regroup student_marks by school_year as marks_year_list %}
+        {% if student_marks_grid %}
         <div class="flex flex-col">
-            {% for year in marks_year_list %}
-            <div class="border-b border-slate-200 last:border-b-0" x-data="{ expanded: false }">
+            {% for year in student_marks_grid %}
+            <div class="border-b border-slate-200 last:border-b-0" x-data="{ expanded: {{ forloop.first|yesno:'true,false' }} }">
                 <div class="bg-slate-50 px-6 py-3 border-y border-slate-100 flex justify-between items-center cursor-pointer hover:bg-slate-100 transition-colors" @click="expanded = !expanded">
                      <div class="flex items-center gap-2">
-                         <!-- Chevron Icon -->
                         <svg class="w-4 h-4 text-slate-500 transition-transform duration-200" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                         </svg>
                         <h4 class="font-bold text-slate-800 flex items-center gap-2">
                             <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
-                            {{ year.grouper }}
+                            {{ year.school_year }}
                         </h4>
                     </div>
-                    <span class="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">{{ year.list|length }} Marks</span>
+                    <span class="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">{{ year.courses|length }} Classes</span>
                 </div>
-                <!-- Collapsible Content -->
-                <div class="overflow-x-auto" x-show="expanded" x-collapse style="display: none;">
+                <div class="overflow-x-auto" x-show="expanded" x-collapse {% if not forloop.first %}style="display: none;"{% endif %}>
                     <table class="min-w-full divide-y divide-slate-100">
                         <thead class="bg-white">
                             <tr>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Course Name</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Subject</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Period</th>
-                                <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-blue-50/30">Mark</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Teacher</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider sticky left-0 bg-white z-10">Class</th>
+                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Teacher</th>
+                                {% for period in year.periods %}
+                                <th class="px-3 py-3 text-center text-xs font-bold uppercase tracking-wider {% if period|lower == 'live' %}text-slate-900 bg-blue-50/50{% else %}text-slate-700 bg-blue-50/30{% endif %}">{{ period }}</th>
+                                {% endfor %}
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-slate-50">
-                            {% for mark in year.list %}
+                            {% for course in year.courses %}
                             <tr class="hover:bg-slate-50 transition-colors">
-                                <td class="px-6 py-3 whitespace-nowrap text-sm font-medium text-slate-900">{{ mark.course_name|default:"-" }}</td>
-                                <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-600">{{ mark.subject|default:"-" }}</td>
-                                <td class="px-6 py-3 whitespace-nowrap text-sm {% if mark.mark_period|lower == 'live' %}font-bold text-slate-900{% else %}text-slate-600{% endif %}">{{ mark.mark_period|default:"-" }}</td>
-                                <td class="px-6 py-3 whitespace-nowrap bg-blue-50/10">
-                                    <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full 
-                                        {% if mark.mark == 'A' or mark.mark == 'A+' or mark.mark == 'A-' %}bg-green-100 text-green-800 border border-green-200
-                                        {% elif mark.mark == 'B' or mark.mark == 'B+' or mark.mark == 'B-' %}bg-blue-100 text-blue-800 border border-blue-200
-                                        {% elif mark.mark == 'C' or mark.mark == 'C+' or mark.mark == 'C-' %}bg-yellow-100 text-yellow-800 border border-yellow-200
-                                        {% elif mark.mark == 'D' or mark.mark == 'F' %}bg-red-100 text-red-800 border border-red-200
-                                        {% else %}bg-slate-100 text-slate-800 border border-slate-200{% endif %}">
-                                        {{ mark.mark|default:"-" }}
-                                    </span>
+                                <td class="px-4 py-3 whitespace-nowrap sticky left-0 bg-white hover:bg-slate-50">
+                                    <div class="text-sm font-medium text-slate-900">{{ course.course_name|default:"-" }}</div>
+                                    <div class="text-xs text-slate-500">{{ course.subject|default:"-" }}</div>
                                 </td>
-                                <td class="px-6 py-3 whitespace-nowrap text-xs text-slate-500">{{ mark.staff_name|default:"-" }}</td>
+                                <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500">{{ course.staff_name|default:"-" }}</td>
+                                {% for cell in course.cells %}
+                                <td class="px-3 py-3 whitespace-nowrap text-center {% if cell.period|lower == 'live' %}bg-blue-50/20{% endif %}">
+                                    {% if cell.mark %}
+                                    <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full
+                                        {% if cell.tone == 'green' %}bg-green-100 text-green-800 border border-green-200
+                                        {% elif cell.tone == 'blue' %}bg-blue-100 text-blue-800 border border-blue-200
+                                        {% elif cell.tone == 'yellow' %}bg-yellow-100 text-yellow-800 border border-yellow-200
+                                        {% elif cell.tone == 'red' %}bg-red-100 text-red-800 border border-red-200
+                                        {% else %}bg-slate-100 text-slate-800 border border-slate-200{% endif %}">
+                                        {{ cell.mark }}
+                                    </span>
+                                    {% else %}
+                                    <span class="text-xs text-slate-300">—</span>
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
                             </tr>
                             {% endfor %}
                         </tbody>

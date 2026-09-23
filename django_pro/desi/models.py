@@ -157,11 +157,16 @@ class Assessment(models.Model):
         help_text="Accommodation options allowed for this assessment"
     )
     is_active = models.BooleanField(default=True)
+    order = models.IntegerField(
+        default=0,
+        db_index=True,
+        help_text="Display order of assessment column in student list"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['name']
+        ordering = ['order', 'name', 'id']
         unique_together = ('name', 'subject')
 
     def __str__(self):
@@ -369,16 +374,44 @@ class SupportRule(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def criteria_summary(self):
+        """Human-readable string representation of this rule's criteria logic."""
+        criteria = list(self.criteria.all())
+        if not criteria:
+            return "No conditions"
+        parts = []
+        for idx, c in enumerate(criteria):
+            prefix = f" {c.logic_operator} " if idx > 0 else ""
+            parts.append(f"{prefix}{c.get_field_name_display()} {c.get_operator_display()} '{c.value}'")
+        return "".join(parts)
+
 
 class SupportRuleCriteria(models.Model):
-    """One demographic condition belonging to a SupportRule (all conditions AND together)."""
+    """One demographic condition belonging to a SupportRule with AND/OR logic connectors."""
+    LOGIC_CHOICES = [
+        ('AND', 'AND'),
+        ('OR', 'OR'),
+    ]
+
     rule = models.ForeignKey(SupportRule, on_delete=models.CASCADE, related_name='criteria')
+    logic_operator = models.CharField(
+        max_length=3,
+        choices=LOGIC_CHOICES,
+        default='AND',
+        help_text="Logical connector to this condition ('AND' or 'OR').",
+    )
     field_name = models.CharField(max_length=50, choices=AssessmentCriteria.FIELD_CHOICES)
     operator = models.CharField(max_length=20, choices=AssessmentCriteria.OPERATOR_CHOICES)
     value = models.CharField(max_length=255, help_text="Comparison value (e.g. '03,04,05' or 'Y')")
+    order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'id']
 
     def __str__(self):
-        return f"{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
+        prefix = f"{self.logic_operator} " if self.order > 0 else ""
+        return f"{prefix}{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
 
 
 class AccommodationResource(models.Model):

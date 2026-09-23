@@ -3,7 +3,16 @@
 import re
 from datetime import date, datetime, timezone
 
-from ..column_utils import RESULTS_BLANK_SSID_SQL, parse_markall_key, markall_key as _markall_key, get_mark_columns, parse_sat_column_key, sat_column_db_field, parse_apall_sort_key
+from ..column_utils import (
+    RESULTS_BLANK_SSID_SQL,
+    parse_markall_key,
+    markall_key as _markall_key,
+    get_mark_columns,
+    parse_sat_column_key,
+    sat_column_db_field,
+    parse_apall_sort_key,
+    _normalise_markall_course_picker,
+)
 from .column_management import (
     get_column_expression,
     json_list_key_for_column,
@@ -42,26 +51,39 @@ def markall_excluded_course_sql():
     return "(sm.course_name NOT ILIKE '%%Homeroom%%')"
 
 
-def markall_course_filter_parts(subject, excludes):
+def markall_course_filter_parts(subject, course_picker=None, excludes=None):
     """SQL predicate + extra params restricting which courses participate.
 
     Homeroom courses (e.g. "Homeroom Gr 1", "IS Homeroom Gr KN-5") are
     administrative placeholder courses and are filtered out of the Elementary
-    subject's "All Marks" view. User-deselected courses (from the course picker)
-    are excluded here too so the whole wide-pair view stays consistent.
+    subject's "All Marks" view.
+
+    In **all** mode, ``courses`` are names to exclude (course picker unchecks).
+    In **only** mode, ``courses`` are the sole names to include.
 
     Returns ``(sql_fragment, extra_params)``; ``sql_fragment`` is empty when no
-    restriction applies.
+    restriction applies beyond Elementary Homeroom handling.
     """
+    picker = _normalise_markall_course_picker(course_picker, excludes)
+    mode = picker['mode']
+    names = picker['courses']
     clauses = []
     extra = []
     if subject == 'Elementary':
         clauses.append("(sm.course_name NOT ILIKE '%%Homeroom%%')")
-    if excludes:
-        names = sorted(excludes)
-        placeholders = ", ".join(["%s"] * len(names))
+    if mode == 'only':
+        if names:
+            sorted_names = sorted(names)
+            placeholders = ", ".join(["%s"] * len(sorted_names))
+            clauses.append(f"sm.course_name IN ({placeholders})")
+            extra.extend(sorted_names)
+        else:
+            clauses.append("(1=0)")
+    elif names:
+        sorted_names = sorted(names)
+        placeholders = ", ".join(["%s"] * len(sorted_names))
         clauses.append(f"sm.course_name NOT IN ({placeholders})")
-        extra.extend(names)
+        extra.extend(sorted_names)
     if not clauses:
         return "", []
     return (" AND " + " AND ".join(clauses), extra)
@@ -88,29 +110,46 @@ def is_markall_umbrella_key(col):
     return bool(parsed) and parsed['kind'] is None
 
 
-def extract_markall_course_excludes(filters_to_apply):
-    """Read the per-umbrella course exclude list from a filters dict.
+def extract_markall_course_picker(filters_to_apply):
+    """Read per-umbrella All Marks course picker state from a filters dict.
 
-    The Data Explorer stores courses the user deselected under the ``All Marks``
-    umbrella key (e.g. ``markall_2025_2026_Math``) as ``exclude:<course>`` values.
-    Returns ``{umbrella_key: set(course_names)}``. These entries only describe
-    which courses participate in the All Marks wide pairs — they are never row
-    filters, so callers skip them when building SQL.
+    **All** mode (default): ``exclude:<course>`` values — unchecked courses.
+    **Only** mode: ``mode:only`` plus ``include:<course>`` for each selected course.
+
+    Returns ``{umbrella_key: {'mode': 'all'|'only', 'courses': set}}``.
     """
-    excludes = {}
+    pickers = {}
     if not isinstance(filters_to_apply, dict):
-        return excludes
+        return pickers
     for col, values in filters_to_apply.items():
         if not is_markall_umbrella_key(col):
             continue
+        mode = 'all'
         names = set()
         for value in values or []:
             value_str = str(value)
-            if value_str.startswith('exclude:'):
+            if value_str == 'mode:only':
+                mode = 'only'
+                names = set()
+            elif mode == 'only' and value_str.startswith('include:'):
+                names.add(value_str[len('include:'):])
+            elif mode == 'all' and value_str.startswith('exclude:'):
                 names.add(value_str[len('exclude:'):])
-        if names:
-            excludes[col] = names
-    return excludes
+        if mode == 'only' or names:
+            pickers[col] = {'mode': mode, 'courses': names}
+        elif mode == 'only':
+            pickers[col] = {'mode': 'only', 'courses': set()}
+    return pickers
+
+
+def extract_markall_course_excludes(filters_to_apply):
+    """Legacy helper: exclude sets for umbrellas still in **all** mode."""
+    pickers = extract_markall_course_picker(filters_to_apply)
+    return {
+        k: v['courses']
+        for k, v in pickers.items()
+        if v.get('mode') == 'all' and v.get('courses')
+    }
 
 
 def apply_column_filters(

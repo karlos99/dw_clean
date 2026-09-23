@@ -22,7 +22,7 @@ from clickhouse_utils.marks_source_sql import (
     STUDENT_MARKS_FROM_ALT_SELECT,
     STUDENT_MARKS_LIST_COLUMN_NAMES,
 )
-from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES, PROJECTION_DDL, get_all_ddl
+from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES, PROJECTION_DDL, SECONDARY_INDEX_DDL, get_all_ddl
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +185,12 @@ class Command(BaseCommand):
                 ch.command(projection_sql)
             except Exception as exc:
                 self.stderr.write(self.style.WARNING(f'Projection skipped: {exc}'))
+
+        for index_sql in SECONDARY_INDEX_DDL:
+            try:
+                ch.command(index_sql)
+            except Exception as exc:
+                self.stderr.write(self.style.WARNING(f'Index skipped: {exc}'))
 
         if schema_only:
             self.stdout.write(self.style.SUCCESS('Schema-only sync complete.'))

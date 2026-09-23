@@ -12,6 +12,9 @@ class TemplateCompilationTests(SimpleTestCase):
 	def test_student_with_tests_list_template_compiles(self):
 		get_template("dataexploration/student_with_tests_list.html")
 
+	def test_student_test_summary_content_compiles(self):
+		get_template("dataexploration/partials/student_test_summary_content.html")
+
 	def test_dataexploration_manage_default_columns_compiles(self):
 		get_template("dataexploration/manage_default_columns.html")
 
@@ -123,6 +126,37 @@ class StudentSummaryDedupeTests(SimpleTestCase):
 	def test_dedupe_empty(self):
 		from dataexploration.view_modules.student_data_utils import _dedupe_test_records
 		self.assertEqual(_dedupe_test_records([]), [])
+
+
+class StudentMarksGridTests(SimpleTestCase):
+	def test_pivot_groups_class_rows_and_period_columns(self):
+		from dataexploration.view_modules.student_data_utils import pivot_student_marks
+
+		marks = [
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Q2', 'mark': 'B+', 'staff_name': 'Smith'},
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Q1', 'mark': 'B', 'staff_name': 'Smith'},
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Live', 'mark': 'A-', 'staff_name': 'Smith'},
+			{'school_year': '2025-2026', 'subject': 'English', 'course_name': 'ELA 8',
+			 'mark_period': 'Q1', 'mark': 'A', 'staff_name': 'Jones'},
+			{'school_year': '2024-2025', 'subject': 'Math', 'course_name': 'Math 7',
+			 'mark_period': 'Q4', 'mark': 'C', 'staff_name': 'Lee'},
+		]
+		grid = pivot_student_marks(marks)
+		self.assertEqual([y['school_year'] for y in grid], ['2025-2026', '2024-2025'])
+		self.assertEqual(grid[0]['periods'], ['Q1', 'Q2', 'Live'])
+		self.assertEqual(len(grid[0]['courses']), 2)
+		alg = next(c for c in grid[0]['courses'] if c['course_name'] == 'Algebra I')
+		self.assertEqual(alg['subject'], 'Math')
+		self.assertEqual(alg['staff_name'], 'Smith')
+		self.assertEqual([c['mark'] for c in alg['cells']], ['B', 'B+', 'A-'])
+		self.assertEqual(alg['cells'][2]['tone'], 'green')
+
+	def test_pivot_empty(self):
+		from dataexploration.view_modules.student_data_utils import pivot_student_marks
+		self.assertEqual(pivot_student_marks([]), [])
 
 
 class TestMetadataMatchesTests(SimpleTestCase):
