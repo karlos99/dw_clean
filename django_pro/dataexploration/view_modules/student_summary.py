@@ -74,10 +74,30 @@ def warm_student_test_summary_cache(request):
 
     ssids = [s.strip() for s in ssids_raw.split(',') if s.strip()]
     ssids = ssids[:limit]
+    if not ssids:
+        return JsonResponse({'warmed': 0, 'limit': limit})
 
-    warmed = 0
-    for ssid in ssids:
-        get_student_summary_partial_html_cached(request, ssid)
-        warmed += 1
+    # Warm concurrently through the shared bounded I/O pool instead of one
+    # student at a time. Each summary does ORM + ClickHouse + template work, so
+    # a sequential loop held the request (and its DB connections) open for
+    # seconds on every page load. Worker threads must close their thread-local
+    # PostgreSQL connection when done so pooled threads don't leak connections.
+    from clickhouse_utils.thread_pool import get_io_pool
+    from django.db import connections
+
+    def _warm_one(ssid):
+        try:
+            get_student_summary_partial_html_cached(request, ssid)
+            return True
+        except Exception:
+            return False
+        finally:
+            try:
+                connections['default'].close()
+            except Exception:
+                pass
+
+    pool = get_io_pool()
+    warmed = sum(1 for ok in pool.map(_warm_one, ssids) if ok)
 
     return JsonResponse({'warmed': warmed, 'limit': limit})

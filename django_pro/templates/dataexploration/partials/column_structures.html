@@ -219,15 +219,15 @@
                                 <span data-caret="open" class="hidden text-slate-400">▼</span>
                             </button>
 
-                            <div data-category="marks_{{ year|slugify }}_{{ subject|slugify }}_{{ course|slugify }}" class="ml-3 mt-1 space-y-1 hidden">
-                                {% for period, col_key in periods.items %}
-                                <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
-                                    <input type="checkbox" data-column="{{ col_key }}"
-                                        class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4">
-                                    <span class="text-sm {% if period|lower == 'live' %}font-bold text-slate-900{% else %}text-slate-700{% endif %}">{{ period }}</span>
-                                </label>
-                                {% endfor %}
-                            </div>
+                            {# Period checkboxes are fetched on first expand. Rendering
+                               every period eagerly emitted ~20k labels (~14MB) that
+                               the client usually never opened. #}
+                            <div data-category="marks_{{ year|slugify }}_{{ subject|slugify }}_{{ course|slugify }}"
+                                 data-lazy-marks="1"
+                                 data-lazy-year="{{ year }}"
+                                 data-lazy-subject="{{ subject }}"
+                                 data-lazy-course="{{ course }}"
+                                 class="ml-3 mt-1 space-y-1 hidden"></div>
                         </div>
                         {% endfor %}
                     </div>

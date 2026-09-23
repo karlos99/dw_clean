@@ -902,6 +902,7 @@ document.addEventListener('DOMContentLoaded', () => {
         appendScheduleQueryList(url, 'period', getScheduleSelectValues('schedule_period'));
         appendScheduleQueryList(url, 'subject', getScheduleSelectValues('schedule_subject'));
         appendScheduleQueryList(url, 'course_name', getScheduleSelectValues('schedule_course_name'));
+        appendScheduleQueryList(url, 'staff', getScheduleSelectValues('schedule_staff'));
         if (filters && Object.keys(filters).length) {
             url.searchParams.set('filters', JSON.stringify(filters));
         }
@@ -929,20 +930,18 @@ document.addEventListener('DOMContentLoaded', () => {
             || scheduleFilterUiMode === 'teacher_schedule'
             || scheduleFilterUiMode === 'school_marks'
         ) {
-            fillScheduleMultiSelect('schedule_period', data.periods, keepPeriod);
+            fillScheduleMultiSelect('schedule_period', data.periods || [], keepPeriod);
         }
         if (
             scheduleFilterUiMode === 'district_full'
             || scheduleFilterUiMode === 'school_marks'
             || scheduleFilterUiMode === 'school_elementary'
         ) {
-            fillScheduleMultiSelect('schedule_subject', data.subjects, keepSubject);
+            fillScheduleMultiSelect('schedule_subject', data.subjects || [], keepSubject);
         }
-        if (data.courses?.length) {
-            fillScheduleMultiSelect('schedule_course_name', data.courses, keepCourse);
-        }
-        if (scheduleMarksCascade() && scheduleFilterShowStaff && data.staff?.length) {
-            fillScheduleMultiSelect('schedule_staff', data.staff, keepStaff, { valueKey: 'id', labelKey: 'name' });
+        fillScheduleMultiSelect('schedule_course_name', data.courses || [], keepCourse);
+        if (scheduleMarksCascade() && scheduleFilterShowStaff) {
+            fillScheduleMultiSelect('schedule_staff', data.staff || [], keepStaff, { valueKey: 'id', labelKey: 'name' });
         }
         syncScheduleCourseStaffDisabled();
     };
@@ -1123,23 +1122,40 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    const refreshColumnStructures = async () => {
+    // The dynamic selector only depends on these filters. Refetching it on
+    // every loadData (pagination, sort, row selection) re-renders thousands of
+    // checkboxes for no visible change, so track the last applied signature and
+    // skip the request unless a structure-affecting filter actually changed.
+    let lastStructuresSignature = '';
+
+    const refreshColumnStructures = async (opts = {}) => {
         if (!columnStructuresUrl) return;
         const target = document.getElementById('dynamic-column-structures');
         if (!target) return;
-
-        const openCategories = Array.from(target.querySelectorAll('[data-category]'))
-            .filter((el) => !el.classList.contains('hidden'))
-            .map((el) => el.getAttribute('data-category'))
-            .filter(Boolean);
 
         const columnFilters = {
             school_year: document.getElementById('school_year')?.value || '',
             grade: document.getElementById('grade')?.value || '',
             status: document.getElementById('status')?.value || '',
             search: document.getElementById('search')?.value || '',
-            ...filters,
         };
+        // Merge active column filters in a stable order for the signature.
+        Object.keys(filters || {}).sort().forEach((k) => {
+            columnFilters[k] = filters[k];
+        });
+        const signature = JSON.stringify(columnFilters);
+        if (!opts.force && target.dataset.loaded === '1' && signature === lastStructuresSignature) {
+            // Structures already reflect the current filters; just resync the
+            // selected-column UI (cheap, no network).
+            renderSelectedColumns();
+            updateYearModeButtons();
+            return;
+        }
+
+        const openCategories = Array.from(target.querySelectorAll('[data-category]'))
+            .filter((el) => !el.classList.contains('hidden'))
+            .map((el) => el.getAttribute('data-category'))
+            .filter(Boolean);
 
         const url = new URL(columnStructuresUrl, window.location.origin);
         url.searchParams.set('column_filters', JSON.stringify(columnFilters));
@@ -1148,6 +1164,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch(url.toString(), { credentials: 'same-origin' });
             if (!res.ok) return;
             target.innerHTML = await res.text();
+            lastStructuresSignature = signature;
+            target.dataset.loaded = '1';
             if (window.htmx) htmx.process(target);
             if (openCategories.length) {
                 openCategories.forEach((category) => {
@@ -1159,6 +1177,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             button.querySelectorAll('[data-caret="open"]').forEach((c) => c.classList.remove('hidden'));
                             button.querySelectorAll('[data-caret="closed"]').forEach((c) => c.classList.add('hidden'));
                         }
+                        if (el.dataset.lazyMarks === '1') loadLazyMarkCourse(el);
                     }
                 });
             }
@@ -1304,6 +1323,30 @@ document.addEventListener('DOMContentLoaded', () => {
         syncCheckboxes();
     };
 
+    // Fetch a mark course's period checkboxes the first time its section is
+    // expanded. The initial selector response intentionally omits them.
+    const loadLazyMarkCourse = async (section) => {
+        if (!section || !columnStructuresUrl) return;
+        if (section.dataset.lazyLoaded === '1') return;
+        section.dataset.lazyLoaded = '1';
+        const url = new URL(columnStructuresUrl, window.location.origin);
+        url.searchParams.set('marks_course_year', section.dataset.lazyYear || '');
+        url.searchParams.set('marks_course_subject', section.dataset.lazySubject || '');
+        url.searchParams.set('marks_course_name', section.dataset.lazyCourse || '');
+        try {
+            const res = await fetch(url.toString(), { credentials: 'same-origin' });
+            if (!res.ok) {
+                section.dataset.lazyLoaded = '';
+                return;
+            }
+            section.innerHTML = await res.text();
+            if (window.htmx) htmx.process(section);
+            renderSelectedColumns();
+        } catch (e) {
+            section.dataset.lazyLoaded = '';
+        }
+    };
+
     const toggleCategory = (category) => {
         const section = document.querySelector(`[data-category="${category}"]`);
         if (!section) return;
@@ -1316,6 +1359,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const isHidden = section.classList.contains('hidden');
             if (openCaret) openCaret.classList.toggle('hidden', isHidden);
             if (closedCaret) closedCaret.classList.toggle('hidden', !isHidden);
+        }
+
+        if (!section.classList.contains('hidden') && section.dataset.lazyMarks === '1') {
+            loadLazyMarkCourse(section);
         }
     };
 

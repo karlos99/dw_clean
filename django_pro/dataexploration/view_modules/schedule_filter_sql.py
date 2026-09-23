@@ -219,19 +219,37 @@ def _restrict_schedule_filters(user, schedule_filters, column_filters=None):
     return schedule_filters
 
 
-def _sl_period_sql_suffix(periods, ui_mode):
-    periods = _normalize_multi_value(periods)
-    if not periods:
-        return '', []
-    if ui_mode not in (
-        SCHEDULE_FILTER_MODE_DISTRICT,
-        SCHEDULE_FILTER_MODE_SCHOOL,
-        SCHEDULE_FILTER_MODE_TEACHER,
-    ):
-        return '', []
-    if len(periods) == 1:
-        return " AND sl.period = %s", [periods[0]]
-    return " AND sl.period = ANY(%s)", [periods]
+def _append_sl_schedule_selection_filters(
+    clauses,
+    params,
+    ui_mode,
+    *,
+    periods=None,
+    subjects=None,
+    courses=None,
+    staff=None,
+    omit=(),
+):
+    """Apply selected schedule dimensions; omit the field being loaded (cascade)."""
+    omit_set = frozenset(omit or ())
+
+    if 'period' not in omit_set:
+        period_vals = _normalize_multi_value(periods)
+        if period_vals and ui_mode in (
+            SCHEDULE_FILTER_MODE_DISTRICT,
+            SCHEDULE_FILTER_MODE_SCHOOL,
+            SCHEDULE_FILTER_MODE_TEACHER,
+        ):
+            _append_in_clause('sl.period', period_vals, clauses, params)
+
+    if 'subject' not in omit_set:
+        _append_in_clause('sl.course_subject', subjects, clauses, params)
+
+    if 'course' not in omit_set:
+        _append_in_clause('sl.course_name', courses, clauses, params)
+
+    if 'staff' not in omit_set:
+        _append_in_clause('sl.staff_employee_id', staff, clauses, params)
 
 
 def parse_schedule_marks_filters(request, saved_filters=None, column_filters=None, user=None):
@@ -275,21 +293,32 @@ def apply_schedule_marks_filters(where_clauses, params, user, schedule_filters, 
     params.extend(sub_params)
 
 
-def _cache_key(prefix, user, school_year, period, subject, course_name, column_filters=None, status=None):
+def _cache_key(
+    prefix,
+    user,
+    school_year,
+    period,
+    subject,
+    course_name,
+    column_filters=None,
+    status=None,
+    staff_filter=None,
+):
     active = getattr(getattr(user, 'active_school', None), 'state_id', None)
     scoped = single_school_state_id_from_column_filters(column_filters)
     schools = getattr(user, 'schools', None) if isinstance(getattr(user, 'schools', None), list) else []
-    staff = getattr(user, 'staff_id', None) or ''
+    user_staff = getattr(user, 'staff_id', None) or ''
     raw = json.dumps({
         'sy': school_year,
         'period': _normalize_multi_value(period),
         'subject': _normalize_multi_value(subject),
         'course': _normalize_multi_value(course_name),
+        'staff_sel': _normalize_multi_value(staff_filter),
         'status': _normalize_multi_value(status),
         'active': active,
         'scoped': scoped,
         'schools': schools,
-        'staff': staff,
+        'staff': user_staff,
         'uid': user.id,
     }, sort_keys=True)
     return f"dataexp:sched_filt:{prefix}:{hashlib.md5(raw.encode()).hexdigest()}"
@@ -303,18 +332,20 @@ def fetch_schedule_filter_options(
     course_name=None,
     column_filters=None,
     status=None,
+    staff=None,
 ):
     """Return {periods, subjects, courses, staff} for cascading dropdowns."""
     periods = _normalize_multi_value(period)
     subjects = _normalize_multi_value(subject)
     courses = _normalize_multi_value(course_name)
+    staff_sel = _normalize_multi_value(staff)
     ui_mode = schedule_filter_ui_mode(user, column_filters)
 
     if not schedule_filter_bar_visible(user, column_filters, school_year):
         return {'periods': [], 'subjects': [], 'courses': [], 'staff': []}
 
     cache_key = _cache_key(
-        'opts', user, school_year, periods, subjects, courses, column_filters, status,
+        'opts', user, school_year, periods, subjects, courses, column_filters, status, staff_sel,
     )
     cache_key = f"{cache_key}:{ui_mode}"
     cached = cache.get(cache_key)
@@ -337,6 +368,19 @@ def fetch_schedule_filter_options(
             )
             p_sql += _school_scope_sql('sl', user, p_params, column_filters)
             p_sql += _teacher_staff_sql('sl', user, p_params)
+            p_clauses = []
+            _append_sl_schedule_selection_filters(
+                p_clauses,
+                p_params,
+                ui_mode,
+                periods=periods,
+                subjects=subjects,
+                courses=courses,
+                staff=staff_sel,
+                omit=('period',),
+            )
+            if p_clauses:
+                p_sql += " AND " + " AND ".join(p_clauses)
             p_sql += _schedule_student_year_scope_sql(
                 user, school_year, p_params, column_filters, status,
             )
@@ -357,9 +401,19 @@ def fetch_schedule_filter_options(
             )
             s_sql += _school_scope_sql('sl', user, s_params, column_filters)
             s_sql += _teacher_staff_sql('sl', user, s_params)
-            period_sql, period_params = _sl_period_sql_suffix(periods, ui_mode)
-            s_sql += period_sql
-            s_params.extend(period_params)
+            s_clauses = []
+            _append_sl_schedule_selection_filters(
+                s_clauses,
+                s_params,
+                ui_mode,
+                periods=periods,
+                subjects=subjects,
+                courses=courses,
+                staff=staff_sel,
+                omit=('subject',),
+            )
+            if s_clauses:
+                s_sql += " AND " + " AND ".join(s_clauses)
             s_sql += _schedule_student_year_scope_sql(
                 user, school_year, s_params, column_filters, status,
             )
@@ -381,22 +435,21 @@ def fetch_schedule_filter_options(
                 "WHERE sl.school_year = %s AND sl.schedule_status = 'Active' "
                 "AND sl.course_name IS NOT NULL AND sl.course_name <> ''"
             )
-            if ui_mode in (
-                SCHEDULE_FILTER_MODE_DISTRICT,
-                SCHEDULE_FILTER_MODE_SCHOOL,
-                SCHEDULE_FILTER_MODE_SCHOOL_ELEM,
-            ) and subjects:
-                if len(subjects) == 1:
-                    c_sql += " AND sl.course_subject = %s"
-                    c_params.append(subjects[0])
-                else:
-                    c_sql += " AND sl.course_subject = ANY(%s)"
-                    c_params.append(subjects)
             c_sql += _school_scope_sql('sl', user, c_params, column_filters)
             c_sql += _teacher_staff_sql('sl', user, c_params)
-            period_sql, period_params = _sl_period_sql_suffix(periods, ui_mode)
-            c_sql += period_sql
-            c_params.extend(period_params)
+            c_clauses = []
+            _append_sl_schedule_selection_filters(
+                c_clauses,
+                c_params,
+                ui_mode,
+                periods=periods,
+                subjects=subjects,
+                courses=courses,
+                staff=staff_sel,
+                omit=('course',),
+            )
+            if c_clauses:
+                c_sql += " AND " + " AND ".join(c_clauses)
             c_sql += _schedule_student_year_scope_sql(
                 user, school_year, c_params, column_filters, status,
             )
@@ -416,24 +469,20 @@ def fetch_schedule_filter_options(
                 "WHERE sl.school_year = %s AND sl.schedule_status = 'Active' "
                 "AND sl.staff_employee_id IS NOT NULL AND sl.staff_employee_id <> ''"
             )
-            if subjects:
-                if len(subjects) == 1:
-                    st_sql += " AND sl.course_subject = %s"
-                    st_params.append(subjects[0])
-                else:
-                    st_sql += " AND sl.course_subject = ANY(%s)"
-                    st_params.append(subjects)
-            if courses:
-                if len(courses) == 1:
-                    st_sql += " AND sl.course_name = %s"
-                    st_params.append(courses[0])
-                else:
-                    st_sql += " AND sl.course_name = ANY(%s)"
-                    st_params.append(courses)
             st_sql += _school_scope_sql('sl', user, st_params, column_filters)
-            period_sql, period_params = _sl_period_sql_suffix(periods, ui_mode)
-            st_sql += period_sql
-            st_params.extend(period_params)
+            st_clauses = []
+            _append_sl_schedule_selection_filters(
+                st_clauses,
+                st_params,
+                ui_mode,
+                periods=periods,
+                subjects=subjects,
+                courses=courses,
+                staff=staff_sel,
+                omit=('staff',),
+            )
+            if st_clauses:
+                st_sql += " AND " + " AND ".join(st_clauses)
             st_sql += _schedule_student_year_scope_sql(
                 user, school_year, st_params, column_filters, status,
             )

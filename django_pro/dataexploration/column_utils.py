@@ -499,14 +499,25 @@ def enrich_students_tests_marks(students, test_cols_info=None, mark_cols_info=No
 
 
 def _generate_cache_key(prefix, filters, extra_hash_str=""):
-    """Generate a consistent cache key from filters and extra conditions."""
+    """Generate a consistent cache key from filters and extra conditions.
+
+    The ClickHouse sync version is part of the key so a re-sync (which can add
+    or remove assessment/mark columns) immediately invalidates cached
+    structures instead of serving a stale tree until the TTL expires.
+    """
     if filters:
         # Sort keys to ensure consistent hash
         filter_str = json.dumps(filters, sort_keys=True)
     else:
         filter_str = "None"
-    
-    combined_str = f"{filter_str}_{extra_hash_str}"
+
+    try:
+        from django.core.cache import cache as _cache
+        sync_version = _cache.get('analytics:clickhouse_sync_version', 'legacy')
+    except Exception:
+        sync_version = 'legacy'
+
+    combined_str = f"{filter_str}_{extra_hash_str}_{sync_version}"
     key_hash = hashlib.md5(combined_str.encode('utf-8')).hexdigest()
     return f"{prefix}_{key_hash}"
 
@@ -860,6 +871,117 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
         params.append(vals)
 
 
+def _metadata_rows(sql):
+    """Return rows from a ClickHouse metadata table, or None if unavailable.
+
+    Used by the unfiltered column-discovery fast path. Returns None on any
+    error (e.g. the table has not been built yet) so callers fall back to the
+    fact-table query. An empty result also returns None to avoid serving an
+    empty column tree if the metadata table exists but is not yet populated.
+    """
+    try:
+        from clickhouse_utils.executor import QueryExecutor
+        result = QueryExecutor().execute(sql)
+    except Exception:
+        return None
+    if result.get('error'):
+        return None
+    rows = result.get('rows') or []
+    return rows or None
+
+
+def _build_test_columns_from_metadata():
+    """Build the unfiltered test-column tree from analytics_test_metadata.
+
+    Mirrors the logic in get_test_columns (same keys/labels/structure) but
+    avoids the INNER JOIN over the multi-hundred-thousand-row results table
+    that the unfiltered path otherwise performs on every cold call.
+    """
+    rows = _metadata_rows(
+        "SELECT school_year, test_name, subject, test_window, info_key "
+        "FROM analytics_test_metadata "
+        "ORDER BY school_year DESC, test_name, subject, test_window, info_key"
+    )
+    if not rows:
+        return None
+
+    def _norm_part(v):
+        return (v or '').replace(' ', '_').replace('-', '_')
+
+    columns = {}
+    new_definitions = {}
+
+    for row in rows:
+        year = row.get('school_year')
+        test_name = row.get('test_name')
+        subject = row.get('subject')
+        test_window = row.get('test_window')
+        info_key = row.get('info_key')
+
+        assessment_name = _get_display_name((test_name or '').strip()) or 'Assessment'
+        clean_subject = _get_display_name((subject or '').strip())
+        testing_name = clean_subject or 'Testing'
+        window_name = (test_window or '').strip()
+
+        if window_name:
+            test_key = f"{year}_{test_name}_{subject}_{window_name}".replace(" ", "_").replace("-", "_")
+        else:
+            test_key = f"{year}_{test_name}_{subject}".replace(" ", "_").replace("-", "_")
+
+        display_test_name = _get_display_name(test_name)
+        label_base = f"{display_test_name} {clean_subject} ({year})"
+
+        if year not in columns:
+            columns[year] = {}
+        if assessment_name not in columns[year]:
+            columns[year][assessment_name] = {'windows': {}, 'additional_info': {}}
+
+        raw_key_str = str(info_key) if info_key is not None else ''
+
+        if raw_key_str == '':
+            ss_key = f"test_{test_key}_SS"
+            pl_key = f"test_{test_key}_PL"
+            COLUMN_DEFINITIONS[ss_key] = f"{label_base} SS"
+            new_definitions[ss_key] = COLUMN_DEFINITIONS[ss_key]
+            COLUMN_DEFINITIONS[pl_key] = f"{label_base} PL"
+            new_definitions[pl_key] = COLUMN_DEFINITIONS[pl_key]
+
+            windows = columns[year][assessment_name]['windows']
+            if '' not in windows and window_name == '':
+                windows[''] = {}
+            if window_name not in windows:
+                windows[window_name] = {}
+            windows[window_name][testing_name] = {'SS': ss_key, 'PL': pl_key}
+            continue
+
+        if raw_key_str.lower() == 'dfp':
+            dfp_key = f"test_{test_key}_DFP"
+            COLUMN_DEFINITIONS[dfp_key] = f"{label_base} DFP"
+            new_definitions[dfp_key] = COLUMN_DEFINITIONS[dfp_key]
+            windows = columns[year][assessment_name]['windows']
+            if window_name not in windows:
+                windows[window_name] = {}
+            if testing_name not in windows[window_name]:
+                windows[window_name][testing_name] = {}
+            windows[window_name][testing_name]['DFP'] = dfp_key
+            continue
+
+        key_norm = _norm_part(raw_key_str)
+        key_hash = hashlib.md5(raw_key_str.encode('utf-8')).hexdigest()[:6]
+        other_key = f"test_{test_key}_OI_{key_norm}_{key_hash}"
+        COLUMN_DEFINITIONS[other_key] = f"{label_base} {raw_key_str}"
+        new_definitions[other_key] = COLUMN_DEFINITIONS[other_key]
+
+        add = columns[year][assessment_name]['additional_info']
+        if window_name not in add:
+            add[window_name] = {}
+        if testing_name not in add[window_name]:
+            add[window_name][testing_name] = []
+        add[window_name][testing_name].append({'key': other_key, 'label': raw_key_str})
+
+    return columns, new_definitions
+
+
 def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses=None, extra_params=None):
     """Get dynamic test columns from database organized by year and test.
     
@@ -885,6 +1007,17 @@ def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses
         columns, definitions = cached_data
         COLUMN_DEFINITIONS.update(definitions)
         return columns
+
+    # Unfiltered fast path: read the sync-time metadata table instead of
+    # re-scanning results/tests/current_student on every cold call. Gated to the
+    # no-filter case so cohort-scoped discovery keeps its existing SQL semantics.
+    if not column_filters and not extra_join_sql and not extra_where_clauses and not extra_params:
+        built = _build_test_columns_from_metadata()
+        if built is not None:
+            columns, new_definitions = built
+            COLUMN_DEFINITIONS.update(new_definitions)
+            cache.set(cache_key, (columns, new_definitions), timeout=3600)
+            return columns
 
     new_definitions = {}
 
@@ -1180,6 +1313,65 @@ def invert_marks_to_assessment_first(mark_structure: dict) -> dict:
     return result
 
 
+def _build_mark_columns_from_metadata():
+    """Build the unfiltered mark-column tree from analytics_marks_metadata.
+
+    Same output as the fact-table query in get_mark_columns but without the
+    join/scan over the ~3M-row student_marks_list table.
+    """
+    rows = _metadata_rows(
+        "SELECT school_year, subject, course_name, mark_period "
+        "FROM analytics_marks_metadata "
+        "ORDER BY school_year DESC, subject, course_name, mark_period"
+    )
+    if not rows:
+        return None
+
+    columns = {}
+    new_definitions = {}
+
+    for row in rows:
+        year_val = (row.get('school_year') or '').strip() or 'Unknown'
+        subject_val = (row.get('subject') or '').strip() or 'Unknown'
+        course_val = (row.get('course_name') or '').strip() or 'Course'
+        period_val = (row.get('mark_period') or '').strip() or 'Unknown'
+
+        key_base = f"{year_val}_{subject_val}_{course_val}_{period_val}".replace(" ", "_").replace("-", "_")
+        mark_key = f"mark_{key_base}"
+        label = f"{course_val} ({subject_val}) {period_val}\n{year_val}"
+        COLUMN_DEFINITIONS[mark_key] = label
+        new_definitions[mark_key] = label
+
+        if year_val not in columns:
+            columns[year_val] = {}
+        if subject_val not in columns[year_val]:
+            columns[year_val][subject_val] = {}
+        if course_val not in columns[year_val][subject_val]:
+            columns[year_val][subject_val][course_val] = {}
+        columns[year_val][subject_val][course_val][period_val] = mark_key
+
+    for year_val in columns:
+        for subject_val in columns[year_val]:
+            for course_val in columns[year_val][subject_val]:
+                columns[year_val][subject_val][course_val] = dict(
+                    sorted(
+                        columns[year_val][subject_val][course_val].items(),
+                        key=lambda x: (1, x[0]) if str(x[0]).lower() == 'live' else (0, x[0]),
+                    )
+                )
+
+    for year_val, subjects in columns.items():
+        year_key = year_val.replace(' ', '_').replace('-', '_')
+        for subject_val in subjects:
+            subj_key = subject_val.replace(' ', '_').replace('-', '_')
+            umbrella = f"markall_{year_key}_{subj_key}"
+            label = f"All Marks\n{subject_val}\n{year_val}"
+            COLUMN_DEFINITIONS[umbrella] = label
+            new_definitions[umbrella] = label
+
+    return columns, new_definitions
+
+
 def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses=None, extra_params=None):
     """Get dynamic mark columns from student_marks_list organized by year/subject/course/period.
 
@@ -1202,6 +1394,15 @@ def get_mark_columns(column_filters=None, extra_join_sql="", extra_where_clauses
         columns, definitions = cached_data
         COLUMN_DEFINITIONS.update(definitions)
         return columns
+
+    # Unfiltered fast path via the sync-time metadata table.
+    if not column_filters and not extra_join_sql and not extra_where_clauses and not extra_params:
+        built = _build_mark_columns_from_metadata()
+        if built is not None:
+            columns, new_definitions = built
+            COLUMN_DEFINITIONS.update(new_definitions)
+            cache.set(cache_key, (columns, new_definitions), timeout=3600)
+            return columns
 
     new_definitions = {}
 

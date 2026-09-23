@@ -40,6 +40,7 @@ def schedule_filter_options(request):
             column_filters = {}
 
     status = _query_multi(request, 'status')
+    staff = _query_multi(request, 'staff')
 
     data = fetch_schedule_filter_options(
         request.user,
@@ -49,5 +50,6 @@ def schedule_filter_options(request):
         course_name=course_name,
         column_filters=column_filters,
         status=status,
+        staff=staff,
     )
     return JsonResponse(data)

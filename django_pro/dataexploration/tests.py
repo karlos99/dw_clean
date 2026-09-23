@@ -614,10 +614,13 @@ class SurveyDataResolutionTests(SimpleTestCase):
 		mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
 		mock_cursor.__exit__ = MagicMock(return_value=False)
 
-		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=mock_cursor):
-			with patch('django.core.cache.cache.get', return_value=None):
-				with patch('django.core.cache.cache.set'):
-					cols = get_mark_columns()
+		# Force the SQL path (the metadata fast path is exercised separately);
+		# this test verifies period ordering from cursor rows.
+		with patch('dataexploration.column_utils._build_mark_columns_from_metadata', return_value=None):
+			with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=mock_cursor):
+				with patch('django.core.cache.cache.get', return_value=None):
+					with patch('django.core.cache.cache.set'):
+						cols = get_mark_columns()
 
 		periods = list(cols['2026-2027']['English']['English 10'].keys())
 		self.assertEqual(periods, ['P1', 'P2', 'Q1', 'Live'])

@@ -87,6 +87,11 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_ap_awards': set(),
     'analytics_sat_results': set(),
     'analytics_survey_responses': set(),
+    # Column-discovery tables: depend on the denormalized result/mark tables and
+    # current_student (to preserve the INNER JOIN that scopes discovery to known
+    # students).
+    'analytics_test_metadata': {'results_with_tests', 'current_student'},
+    'analytics_marks_metadata': {'student_marks_list', 'current_student'},
 }
 
 
@@ -513,6 +518,51 @@ class Command(BaseCommand):
                 FROM {ch_db}.student_marks_list sm
                 LEFT JOIN {ch_db}.current_student cs
                     ON cs.ssid = sm.ssid AND cs.school_year = sm.school_year
+            """
+        if table == 'analytics_test_metadata':
+            # One row per (year, test, subject, window, info_key). info_key ''
+            # represents the base SS/PL columns; each additional key (DFP,
+            # condition codes, …) gets its own row. The current_student join
+            # mirrors the read-path semantics (a result only counts when it maps
+            # to a known student via local_student_id).
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT DISTINCT
+                    r.school_year,
+                    ifNull(r.test_name, ''),
+                    ifNull(r.subject, ''),
+                    ifNull(r.test_window, ''),
+                    '' AS info_key
+                FROM {ch_db}.results_with_tests r
+                INNER JOIN {ch_db}.current_student cs
+                    ON cs.student_id = r.local_student_id
+                WHERE r.school_year IS NOT NULL AND r.test_name IS NOT NULL
+                UNION ALL
+                SELECT DISTINCT
+                    r.school_year,
+                    ifNull(r.test_name, ''),
+                    ifNull(r.subject, ''),
+                    ifNull(r.test_window, ''),
+                    k AS info_key
+                FROM {ch_db}.results_with_tests r
+                INNER JOIN {ch_db}.current_student cs
+                    ON cs.student_id = r.local_student_id
+                ARRAY JOIN JSONExtractKeys(assumeNotNull(r.other_info)) AS k
+                WHERE r.school_year IS NOT NULL AND r.test_name IS NOT NULL
+                  AND r.other_info IS NOT NULL AND r.other_info != ''
+            """
+        if table == 'analytics_marks_metadata':
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT DISTINCT
+                    sm.school_year,
+                    ifNull(sm.subject, ''),
+                    ifNull(sm.course_name, ''),
+                    ifNull(sm.mark_period, '')
+                FROM {ch_db}.student_marks_list sm
+                INNER JOIN {ch_db}.current_student cs
+                    ON cs.ssid = sm.ssid
+                WHERE sm.school_year IS NOT NULL
             """
         pg = pg_fn_kwargs or {}
         if table == 'analytics_ap_results':

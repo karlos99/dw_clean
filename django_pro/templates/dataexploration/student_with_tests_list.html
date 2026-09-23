@@ -175,9 +175,16 @@
                     </div>
                 </div>
 
-                <!-- Dynamic Test Structures (loaded via HTMX) -->
+                <!-- Dynamic column structures. Loaded once by the client
+                     (student_tests_app.js refreshColumnStructures) for the active
+                     filters. Rendering the full selector server-side used to
+                     emit ~20k mark checkboxes (~20MB HTML) on every page load,
+                     then get replaced anyway. A skeleton keeps first paint fast
+                     and avoids the duplicate work. -->
                 <div id="dynamic-column-structures">
-                    {% include 'dataexploration/partials/column_structures.html' %}
+                    <div class="px-3 py-6 text-center text-xs text-slate-400">
+                        <span class="inline-block animate-pulse">Loading columns…</span>
+                    </div>
                 </div>
             </div>
         </div>

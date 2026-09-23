@@ -370,9 +370,36 @@ def load_column_structures(request):
     
     _apply_de_school_filter(where_clauses, params, user)
 
+    # Lazy mark-course fragment: the selector renders a course's period
+    # checkboxes on first expand rather than emitting every period up front.
+    # This keeps the initial selector response small instead of shipping ~20k
+    # period labels (~14 MB) that are usually collapsed anyway.
+    lazy_course = request.GET.get('marks_course_name')
+    if lazy_course is not None:
+        lazy_year = request.GET.get('marks_course_year', '')
+        lazy_subject = request.GET.get('marks_course_subject', '')
+        try:
+            marks_structure = get_mark_columns(
+                column_filters=column_filters,
+                extra_where_clauses=where_clauses,
+                extra_params=params,
+            )
+            periods = (
+                marks_structure.get(lazy_year, {})
+                .get(lazy_subject, {})
+                .get(lazy_course, {})
+            ) or {}
+        except Exception:
+            periods = {}
+        fragment = render_to_string(
+            'dataexploration/partials/column_structures_marks_course.html',
+            {'periods': periods},
+        )
+        return HttpResponse(fragment)
+
     # Cache the fully rendered selector HTML — the underlying column structure
-    # queries are fast, but rendering ~12k mark columns to HTML takes ~1s and
-    # produces a multi-MB response. The result is deterministic per (filter,
+    # queries are fast, but rendering the mark column tree to HTML is expensive
+    # and produces a multi-MB response. The result is deterministic per (filter,
     # school scope, sync version), so reuse it across identical requests.
     _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
     _html_cache_key = (
