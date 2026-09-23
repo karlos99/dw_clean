@@ -32,7 +32,25 @@ from ..column_utils import (
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, VIRTUAL_COLUMNS
-from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
+from ..utils import (
+    can_user_view_query,
+    get_user_folders,
+    is_unrestricted as _is_user_unrestricted,
+    _apply_de_school_filter,
+    schedule_filters_eligible,
+    schedule_filter_bar_visible,
+    schedule_filter_staff_eligible,
+    schedule_filter_show_staff,
+    schedule_filter_toggle_visible,
+    schedule_filter_unrestricted_requires_school,
+    schedule_filter_ui_mode,
+    get_project_default_school_year,
+)
+from .schedule_filter_sql import (
+    _read_multi_param,
+    parse_schedule_marks_filters,
+    apply_schedule_marks_filters,
+)
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -369,6 +387,39 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['selected_school_year'] = selected_year
         context['selected_grade'] = get_param('grade')
         context['selected_status'] = get_param('status', 'Active')
+        visibility_filters = dict(filters) if isinstance(filters, dict) else {}
+        if not _project_default_year:
+            _project_default_year = get_project_default_school_year()
+        context['project_default_school_year'] = _project_default_year
+        context['schedule_filters_eligible'] = schedule_filters_eligible(self.request.user)
+        context['schedule_district_requires_school'] = schedule_filter_unrestricted_requires_school(
+            self.request.user,
+        )
+        context['schedule_filter_toggle_visible'] = schedule_filter_toggle_visible(
+            self.request.user, visibility_filters, selected_year,
+        )
+        context['show_schedule_filters'] = context['schedule_filter_toggle_visible']
+        context['schedule_filter_staff_eligible'] = schedule_filter_staff_eligible(
+            self.request.user,
+        )
+        context['schedule_filter_show_staff'] = schedule_filter_show_staff(
+            self.request.user, visibility_filters, selected_year,
+        )
+        context['schedule_filter_ui_mode'] = schedule_filter_ui_mode(
+            self.request.user, visibility_filters,
+        )
+        context['selected_schedule_period'] = _read_multi_param(
+            self.request, 'schedule_period', filters,
+        )
+        context['selected_schedule_subject'] = _read_multi_param(
+            self.request, 'schedule_subject', filters,
+        )
+        context['selected_schedule_course_name'] = _read_multi_param(
+            self.request, 'schedule_course_name', filters,
+        )
+        context['selected_schedule_staff'] = _read_multi_param(
+            self.request, 'schedule_staff', filters,
+        )
         
         return context
 
@@ -645,7 +696,17 @@ def _load_students(request):
             filters = saved_filters.copy()
     else:
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
-        filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
+        filters = {
+            k: v for k, v in saved_filters.items()
+            if k not in [
+                'search', 'school_year', 'grade', 'status',
+                'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
+            ]
+        }
+
+    schedule_marks_filters = parse_schedule_marks_filters(
+        request, saved_filters, column_filters=filters, user=request.user,
+    )
     
     # Resolve any relative column keys in sort_by and filters keys
     if sort_by:
@@ -1031,6 +1092,15 @@ def _load_students(request):
 
         # Apply active school context or enforce school permissions
         _apply_de_school_filter(base_where_clauses, base_params, request.user)
+
+        apply_schedule_marks_filters(
+            base_where_clauses,
+            base_params,
+            request.user,
+            schedule_marks_filters,
+            school_year,
+            filters,
+        )
 
         active_role_name = getattr(getattr(request.user, 'active_role', None), 'name', None)
         if active_role_name == 'School Gr View':
@@ -2600,6 +2670,10 @@ def _load_students(request):
             'sort_dir': sort_dir,
             'next_cursor': next_cursor,
             'survey_colors': survey_colors,
+            'schedule_period': schedule_marks_filters.get('schedule_period') or [],
+            'schedule_subject': schedule_marks_filters.get('schedule_subject') or [],
+            'schedule_course_name': schedule_marks_filters.get('schedule_course_name') or [],
+            'schedule_staff': schedule_marks_filters.get('schedule_staff') or [],
         })
 
     context = {

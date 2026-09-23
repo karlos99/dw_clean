@@ -20,6 +20,7 @@ urlpatterns = [
     path('api/students/export-csv/', views.export_students_csv, name='export_students_csv'),
     path('api/students/statistics/', views.get_column_statistics, name='get_column_statistics'),
     path('api/column-structures/', load_column_structures, name='load_column_structures'),
+    path('api/schedule-filter-options/', views.schedule_filter_options, name='schedule_filter_options'),
     path('api/folders/', views.folder_browser, name='folder_browser'),
     path('api/save-query/', views.save_query, name='save_query'),
     path('api/save-list/', views.save_student_list, name='save_student_list'),

@@ -21,6 +21,7 @@ from ..column_utils import (
     parse_sat_column_key,
 )
 from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
+from .schedule_filter_sql import parse_schedule_marks_filters, apply_schedule_marks_filters
 from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
 from .filter_sql import apply_column_filters, extract_markall_course_picker, markall_course_filter_parts
 from .student_data_utils import (
@@ -166,7 +167,17 @@ def export_students_csv(request):
             filters = saved_filters.copy()
     else:
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
-        filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
+        filters = {
+            k: v for k, v in saved_filters.items()
+            if k not in [
+                'search', 'school_year', 'grade', 'status',
+                'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
+            ]
+        }
+
+    schedule_marks_filters = parse_schedule_marks_filters(
+        request, saved_filters, column_filters=filters, user=request.user,
+    )
 
     if sort_by:
         sort_by = resolve_relative_column_key(sort_by)
@@ -690,6 +701,15 @@ def export_students_csv(request):
 
                 # Apply active school context or enforce school permissions
                 _apply_de_school_filter(base_where_clauses, base_params, request.user)
+
+                apply_schedule_marks_filters(
+                    base_where_clauses,
+                    base_params,
+                    request.user,
+                    schedule_marks_filters,
+                    school_year,
+                    filters,
+                )
 
                 # Apply specific row-level permissions (e.g. Teacher seeing only their students)
                 if hasattr(request.user, 'get_accessible_student_keys'):

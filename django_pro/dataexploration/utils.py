@@ -310,6 +310,220 @@ def can_user_manage_list(user, student_list):
     # Check if user has edit permission on the folder
     return can_user_edit_folder(user, student_list.folder)
 
+SCHEDULE_FILTER_SCHOOL_ROLES = frozenset({
+    'School Admin',
+    'School Gr View',
+    'School View',
+    'Testing Coordinator',
+})
+
+SCHEDULE_FILTER_MODE_DISTRICT = 'district_full'
+SCHEDULE_FILTER_MODE_SCHOOL = 'school_marks'
+SCHEDULE_FILTER_MODE_SCHOOL_ELEM = 'school_elementary'
+SCHEDULE_FILTER_MODE_TEACHER = 'teacher_schedule'
+SCHEDULE_FILTER_MODE_TEACHER_ELEM = 'teacher_course'
+
+
+def _is_elementary_school_group(value):
+    return (value or '').strip().casefold() == 'elementary school'
+
+
+def _teacher_only(user):
+    if not user or not user.is_authenticated:
+        return False
+    roles = get_user_roles(user)
+    return 'Teacher' in roles and not (roles & SCHEDULE_FILTER_SCHOOL_ROLES)
+
+
+def _resolve_schedule_filter_school(user, column_filters=None):
+    """Resolve a single School row for schedule UI (uses ``school`` table)."""
+    from studata.models import School
+
+    active = getattr(user, 'active_school', None)
+    if active is not None:
+        state_id = getattr(active, 'state_id', None)
+        if state_id:
+            row = School.objects.filter(state_id=state_id).first()
+            if row:
+                return row
+        if getattr(active, 'pk', None):
+            row = School.objects.filter(pk=active.pk).first()
+            if row:
+                return row
+
+    state_id = single_school_state_id_from_column_filters(column_filters)
+    if state_id:
+        return School.objects.filter(state_id=state_id).first()
+
+    if isinstance(column_filters, dict):
+        names = column_filters.get('school')
+        if isinstance(names, list):
+            cleaned = [str(v).strip() for v in names if str(v).strip()]
+            if len(cleaned) == 1:
+                row = School.objects.filter(school_name=cleaned[0]).first()
+                if row:
+                    return row
+
+    schools = getattr(user, 'schools', None)
+    if isinstance(schools, list) and len(schools) == 1:
+        return School.objects.filter(state_id=schools[0]).first()
+    return None
+
+
+def _school_role_schedule_mode(user, column_filters=None):
+    """School-level roles: period for non-elementary schools only."""
+    school = _resolve_schedule_filter_school(user, column_filters)
+    if school and _is_elementary_school_group(getattr(school, 'school_group', None)):
+        return SCHEDULE_FILTER_MODE_SCHOOL_ELEM
+    schools = getattr(user, 'schools', None)
+    if isinstance(schools, list) and len(schools) > 1 and not school:
+        from studata.models import School
+        groups = list(
+            School.objects.filter(state_id__in=schools).values_list('school_group', flat=True)
+        )
+        non_empty = [g for g in groups if g]
+        if non_empty and all(_is_elementary_school_group(g) for g in non_empty):
+            return SCHEDULE_FILTER_MODE_SCHOOL_ELEM
+    return SCHEDULE_FILTER_MODE_SCHOOL
+
+
+def schedule_filter_ui_mode(user, column_filters=None):
+    """Which schedule filter controls this user may use."""
+    if is_unrestricted(user):
+        return SCHEDULE_FILTER_MODE_DISTRICT
+    if _teacher_only(user):
+        school = _resolve_schedule_filter_school(user, column_filters)
+        if school and _is_elementary_school_group(getattr(school, 'school_group', None)):
+            return SCHEDULE_FILTER_MODE_TEACHER_ELEM
+        return SCHEDULE_FILTER_MODE_TEACHER
+    return _school_role_schedule_mode(user, column_filters)
+
+
+def single_school_state_id_from_column_filters(column_filters):
+    """When the School column filter pins exactly one school, return its state id."""
+    if not isinstance(column_filters, dict):
+        return None
+
+    def _one(key):
+        vals = column_filters.get(key)
+        if not isinstance(vals, list):
+            return None
+        cleaned = [str(v).strip() for v in vals if str(v).strip() not in ('', 'null', 'None')]
+        if len(cleaned) != 1:
+            return None
+        return cleaned[0]
+
+    state_id = _one('school_state_id')
+    if state_id:
+        return state_id
+
+    school_name = _one('school')
+    if not school_name:
+        return None
+
+    from studata.models import School
+
+    state_ids = list(
+        School.objects.filter(school_name=school_name)
+        .exclude(state_id__isnull=True)
+        .exclude(state_id='')
+        .values_list('state_id', flat=True)
+        .distinct()[:2]
+    )
+    if len(state_ids) == 1:
+        return state_ids[0]
+    return None
+
+
+def should_show_schedule_filters(user):
+    """Show the schedule/marks filter bar for school-scoped Data Exploration users."""
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, 'active_school', None):
+        return True
+    roles = get_user_roles(user)
+    if 'Teacher' in roles:
+        return True
+    if roles & SCHEDULE_FILTER_SCHOOL_ROLES:
+        return True
+    return False
+
+
+def get_project_default_school_year():
+    try:
+        from landing.utils import get_project_config
+        cfg = get_project_config()
+        return (cfg.default_school_year or '').strip()
+    except Exception:
+        return ''
+
+
+def is_schedule_filter_project_year(school_year):
+    """True when the selected school year is the project default (aliases resolved)."""
+    from .school_year_utils import resolve_school_year
+
+    if not school_year:
+        return False
+    if isinstance(school_year, list):
+        if len(school_year) != 1:
+            return False
+        school_year = school_year[0]
+    resolved = resolve_school_year(str(school_year).strip())
+    default = get_project_default_school_year()
+    if not default or not resolved:
+        return False
+    return resolved == resolve_school_year(default)
+
+
+def schedule_filters_eligible(user):
+    """User may use schedule filters (bar in DOM), including district/project roles."""
+    if should_show_schedule_filters(user):
+        return True
+    return is_unrestricted(user)
+
+
+def schedule_filter_unrestricted_requires_school(user):
+    """District/project roles must pin one school via column filter."""
+    return is_unrestricted(user) and not should_show_schedule_filters(user)
+
+
+def schedule_filter_toggle_visible(user, column_filters=None, school_year=None):
+    """Show the schedule filter toggle and allow options / query filtering."""
+    if not schedule_filters_eligible(user):
+        return False
+    if school_year is not None and not is_schedule_filter_project_year(school_year):
+        return False
+    if should_show_schedule_filters(user):
+        return True
+    if is_unrestricted(user):
+        return bool(single_school_state_id_from_column_filters(column_filters))
+    return False
+
+
+def schedule_filter_bar_visible(user, column_filters=None, school_year=None):
+    """Whether schedule filters may affect the student query or load options."""
+    return schedule_filter_toggle_visible(user, column_filters, school_year)
+
+
+def schedule_filter_staff_eligible(user):
+    """User may see the Staff schedule filter (not teacher-only)."""
+    if not user or not user.is_authenticated:
+        return False
+    if not schedule_filters_eligible(user):
+        return False
+    roles = get_user_roles(user)
+    if 'Teacher' in roles and not (roles & SCHEDULE_FILTER_SCHOOL_ROLES):
+        return False
+    return True
+
+
+def schedule_filter_show_staff(user, column_filters=None, school_year=None):
+    """Staff dropdown visible in the UI for the current bar visibility state."""
+    if not schedule_filter_staff_eligible(user):
+        return False
+    return schedule_filter_bar_visible(user, column_filters, school_year)
+
+
 def _apply_de_school_filter(where_clauses, params, user):
     """Apply the active school context or enforce school permissions.
 
