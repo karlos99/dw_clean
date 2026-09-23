@@ -9,7 +9,7 @@ import logging
 
 from dataexploration.models import SavedQuery
 from dataexploration.view_modules.student_data_utils import get_current_student_columns, get_student_enroll_columns
-from dataexploration.column_utils import _get_display_name, export_cell
+from dataexploration.column_utils import _get_display_name, export_csv_cell
 from ..constants import COLUMN_DEFINITIONS
 from ..utils import can_user_view_query
 from ..view_modules.column_management import get_saved_default_columns, get_column_expression
@@ -616,7 +616,7 @@ def export_students_csv(request):
                 row_count = 0
                 for row in cursor:
                     row_count += 1
-                    yield [export_cell(row[p]) if p is not None else '\u2014' for p in col_positions]
+                    yield [export_csv_cell(row[p]) if p is not None else '' for p in col_positions]
 
                 logger.info("NYL CSV Export: completed, %d rows", row_count)
 
@@ -632,10 +632,16 @@ def export_students_csv(request):
     writer = csv.writer(Echo())
 
     def streaming_content():
+        first = True
         for row in csv_rows():
-            yield writer.writerow(row)
+            line = writer.writerow(row)
+            if first:
+                first = False
+                yield '\ufeff' + line
+            else:
+                yield line
 
     logger.info("NYL CSV Export: StreamingHttpResponse with %d columns", len(selected_columns))
-    response = StreamingHttpResponse(streaming_content(), content_type='text/csv')
+    response = StreamingHttpResponse(streaming_content(), content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="next_year_list.csv"'
     return response

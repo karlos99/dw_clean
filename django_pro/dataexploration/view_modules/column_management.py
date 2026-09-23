@@ -403,7 +403,7 @@ def load_column_structures(request):
     # school scope, sync version), so reuse it across identical requests.
     _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
     _html_cache_key = (
-        "dataexp:column_structures_html:"
+        "dataexp:column_structures_html:v2:"
         + hashlib.md5(json.dumps({
             'column_filters': column_filters,
             'where': where_clauses,

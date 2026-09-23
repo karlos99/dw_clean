@@ -219,9 +219,6 @@
                                 <span data-caret="open" class="hidden text-slate-400">▼</span>
                             </button>
 
-                            {# Period checkboxes are fetched on first expand. Rendering
-                               every period eagerly emitted ~20k labels (~14MB) that
-                               the client usually never opened. #}
                             <div data-category="marks_{{ year|slugify }}_{{ subject|slugify }}_{{ course|slugify }}"
                                  data-lazy-marks="1"
                                  data-lazy-year="{{ year }}"

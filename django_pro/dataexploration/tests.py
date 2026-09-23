@@ -27,6 +27,24 @@ class TemplateCompilationTests(SimpleTestCase):
 	def test_users_column_structures_compiles(self):
 		get_template("users/partials/column_structures.html")
 
+	def test_dataexploration_column_structures_strips_django_comments(self):
+		from django.template.loader import render_to_string
+
+		html = render_to_string(
+			"dataexploration/partials/column_structures.html",
+			{
+				"test_structure": {},
+				"marks_structure": {"2024": {"Math": {"Algebra I": {}}}},
+				"survey_structure": {},
+				"ap_structure": {},
+				"sat_structure": {},
+				"column_definitions": {},
+				"year_labels": {"2024": "2024"},
+				"year_to_alias": {},
+			},
+		)
+		self.assertNotIn("{#", html)
+
 	def test_dataexploration_manage_default_assessment_tree_compiles(self):
 		get_template("dataexploration/partials/manage_default_assessment_tree.html")
 
@@ -258,6 +276,12 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		by_id, by_ssid = assign_result_value_maps(rows, valid_ssids={'8442970229'})
 		self.assertEqual(by_id['20250161'], '3')
 		self.assertNotIn('NaN', by_ssid)
+
+	def test_export_csv_cell_uses_empty_blank(self):
+		from dataexploration.column_utils import export_csv_cell
+		self.assertEqual(export_csv_cell(None), '')
+		self.assertEqual(export_csv_cell('NaN'), '')
+		self.assertEqual(export_csv_cell('3'), '3')
 
 	def test_export_cell_uses_blank_marker_consistently(self):
 		from dataexploration.column_utils import export_cell

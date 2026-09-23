@@ -304,6 +304,11 @@ def export_cell(value, blank='\u2014'):
     return blank if v is None else v
 
 
+def export_csv_cell(value):
+    """CSV export blank cells — empty string avoids Excel mojibake on the UI em dash."""
+    return export_cell(value, blank='')
+
+
 def assign_result_value_maps(rows, valid_ssids=None):
     """Build local-id / ssid maps from ``(local_student_id, ssid, value)`` rows.
 

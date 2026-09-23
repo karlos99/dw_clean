@@ -11,7 +11,7 @@ from ..models import SavedQuery, StudentList
 from ..constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
 from ..column_utils import (
     _get_display_name,
-    export_cell,
+    export_csv_cell,
     enrich_students_tests_marks,
     _fetch_marks_live_from_alt,
     group_marks_by_ssid_course,
@@ -876,8 +876,9 @@ def export_students_csv(request):
                 if selected_survey_cols:
                     dynamic_labels.update(get_survey_columns().get('definitions', {}))
 
-                # Yield Header
+                # Yield Header (UTF-8 BOM so Excel opens the file as UTF-8)
                 header_labels = [dynamic_labels.get(col, col) for col in export_cols]
+                yield '\ufeff'
                 yield writer.writerow(header_labels)
                 logger.info(f"CSV Export: Header yielded, starting data export with {len(export_cols)} columns")
 
@@ -1106,7 +1107,7 @@ def export_students_csv(request):
                     for student in chunk_students:
                         row = []
                         for col in export_cols:
-                            row.append(export_cell(student.get(col)))
+                            row.append(export_csv_cell(student.get(col)))
                         yield writer.writerow(row)
                 
                     logger.info(f"CSV Export: Yielded {len(chunk_students)} rows")
@@ -1123,7 +1124,7 @@ def export_students_csv(request):
             yield writer.writerow([f"Error exporting data: {str(e)}"])
 
     logger.info(f"CSV Export: Creating StreamingHttpResponse with {len(selected_columns)} columns")
-    response = StreamingHttpResponse(stream_csv(), content_type="text/csv")
+    response = StreamingHttpResponse(stream_csv(), content_type="text/csv; charset=utf-8")
     response['Content-Disposition'] = 'attachment; filename="students_export.csv"'
     logger.info(f"CSV Export: Returning response")
     return response
