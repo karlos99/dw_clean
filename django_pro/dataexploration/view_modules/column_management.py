@@ -351,6 +351,77 @@ def manage_default_columns(request):
     return render(request, 'dataexploration/manage_default_columns.html', context)
 
 
+SCHEDULE_COLUMN_FILTER_KEYS = frozenset({
+    'schedule_period',
+    'schedule_subject',
+    'schedule_course_name',
+    'schedule_staff',
+})
+
+
+def _normalize_schedule_filter_values(val):
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return [str(v).strip() for v in val if v is not None and str(v).strip()]
+    s = str(val).strip()
+    return [s] if s else []
+
+
+def split_schedule_column_filters(column_filters):
+    """Split schedule filter keys out of column_filters JSON (mirrors student list GET params)."""
+    if not isinstance(column_filters, dict):
+        return {}, {}
+    base = {}
+    schedule = {
+        'schedule_period': [],
+        'schedule_subject': [],
+        'schedule_course_name': [],
+        'schedule_staff': [],
+    }
+    for key, val in column_filters.items():
+        if key in SCHEDULE_COLUMN_FILTER_KEYS:
+            schedule[key] = _normalize_schedule_filter_values(val)
+        else:
+            base[key] = val
+    return base, schedule
+
+
+def build_column_structure_scope(user, column_filters):
+    """Cohort scope for test/mark column discovery (school role + schedule filters)."""
+    from .schedule_filter_sql import apply_schedule_marks_filters, _restrict_schedule_filters
+
+    base_filters, schedule_filters = split_schedule_column_filters(column_filters)
+    where_clauses = []
+    params = []
+    _apply_de_school_filter(where_clauses, params, user)
+
+    school_year = ''
+    if isinstance(base_filters, dict):
+        sy = base_filters.get('school_year') or ''
+        if isinstance(sy, list):
+            sy = sy[0] if sy else ''
+        school_year = str(sy or '').strip()
+    if school_year:
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            school_year = resolve_school_year(school_year)
+        except Exception:
+            pass
+
+    if user and user.is_authenticated:
+        _restrict_schedule_filters(user, schedule_filters, base_filters)
+    apply_schedule_marks_filters(
+        where_clauses,
+        params,
+        user,
+        schedule_filters,
+        school_year,
+        base_filters,
+    )
+    return base_filters, where_clauses, params
+
+
 def load_column_structures(request):
     """Load dynamic column structures for the selector via HTMX."""
     import json
@@ -363,12 +434,10 @@ def load_column_structures(request):
         except json.JSONDecodeError:
             pass
 
-    # Build school filtering based on user permissions
-    where_clauses = []
-    params = []
     user = request.user
-    
-    _apply_de_school_filter(where_clauses, params, user)
+    base_column_filters, where_clauses, params = build_column_structure_scope(
+        user, column_filters,
+    )
 
     # Lazy mark-course fragment: the selector renders a course's period
     # checkboxes on first expand rather than emitting every period up front.
@@ -380,7 +449,7 @@ def load_column_structures(request):
         lazy_subject = request.GET.get('marks_course_subject', '')
         try:
             marks_structure = get_mark_columns(
-                column_filters=column_filters,
+                column_filters=base_column_filters,
                 extra_where_clauses=where_clauses,
                 extra_params=params,
             )
@@ -403,7 +472,7 @@ def load_column_structures(request):
     # school scope, sync version), so reuse it across identical requests.
     _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
     _html_cache_key = (
-        "dataexp:column_structures_html:v2:"
+        "dataexp:column_structures_html:v3:"
         + hashlib.md5(json.dumps({
             'column_filters': column_filters,
             'where': where_clauses,
@@ -416,14 +485,14 @@ def load_column_structures(request):
         return HttpResponse(cached_html)
 
     test_structure = get_test_columns(
-        column_filters=column_filters,
+        column_filters=base_column_filters,
         extra_where_clauses=where_clauses,
         extra_params=params
     )
     marks_structure = get_mark_columns(
-        column_filters=column_filters,
+        column_filters=base_column_filters,
         extra_where_clauses=where_clauses,
-        extra_params=params
+        extra_params=params,
     )
     survey_structure = get_survey_columns()
     ap_structure = get_ap_columns()

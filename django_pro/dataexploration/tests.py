@@ -3,6 +3,46 @@ from django.test import SimpleTestCase
 from django.template.loader import get_template
 
 
+class ScheduleFilterScopeTests(SimpleTestCase):
+	def test_district_admin_elementary_school_uses_elementary_schedule_mode(self):
+		from unittest.mock import MagicMock, patch
+		from dataexploration.utils import (
+			SCHEDULE_FILTER_MODE_SCHOOL_ELEM,
+			schedule_filter_ui_mode,
+		)
+
+		user = MagicMock()
+		with patch('dataexploration.utils.is_unrestricted', return_value=True):
+			with patch(
+				'dataexploration.utils.single_school_state_id_from_column_filters',
+				return_value='ELEM123',
+			):
+				school = MagicMock()
+				school.school_group = 'Elementary School'
+				with patch(
+					'dataexploration.utils._resolve_schedule_filter_school',
+					return_value=school,
+				):
+					mode = schedule_filter_ui_mode(user, {'school_state_id': ['ELEM123']})
+		self.assertEqual(mode, SCHEDULE_FILTER_MODE_SCHOOL_ELEM)
+
+	def test_column_filter_school_overrides_active_school_for_schedule_scope(self):
+		from dataexploration.view_modules.schedule_filter_sql import _resolve_scope_state_school_id
+
+		class _School:
+			state_id = 'ACTIVE_SCHOOL'
+
+		class _User:
+			active_school = _School()
+
+		user = _User()
+		column_filters = {'school_state_id': ['FILTER_SCHOOL']}
+		self.assertEqual(
+			_resolve_scope_state_school_id(user, column_filters),
+			'FILTER_SCHOOL',
+		)
+
+
 class TemplateCompilationTests(SimpleTestCase):
 	def test_folder_browser_template_compiles(self):
 		# This template is rendered via HTMX at /dataexploration/api/folders/.
@@ -26,6 +66,19 @@ class TemplateCompilationTests(SimpleTestCase):
 
 	def test_users_column_structures_compiles(self):
 		get_template("users/partials/column_structures.html")
+
+	def test_split_schedule_column_filters(self):
+		from dataexploration.view_modules.column_management import split_schedule_column_filters
+
+		base, sched = split_schedule_column_filters({
+			'school_year': '2024-2025',
+			'grade': '10',
+			'schedule_period': ['1', '2'],
+			'schedule_subject': 'Math',
+		})
+		self.assertEqual(base, {'school_year': '2024-2025', 'grade': '10'})
+		self.assertEqual(sched['schedule_period'], ['1', '2'])
+		self.assertEqual(sched['schedule_subject'], ['Math'])
 
 	def test_dataexploration_column_structures_strips_django_comments(self):
 		from django.template.loader import render_to_string

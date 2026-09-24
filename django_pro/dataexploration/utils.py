@@ -339,6 +339,12 @@ def _resolve_schedule_filter_school(user, column_filters=None):
     """Resolve a single School row for schedule UI (uses ``school`` table)."""
     from studata.models import School
 
+    state_id = single_school_state_id_from_column_filters(column_filters)
+    if state_id:
+        row = School.objects.filter(state_id=state_id).first()
+        if row:
+            return row
+
     active = getattr(user, 'active_school', None)
     if active is not None:
         state_id = getattr(active, 'state_id', None)
@@ -350,10 +356,6 @@ def _resolve_schedule_filter_school(user, column_filters=None):
             row = School.objects.filter(pk=active.pk).first()
             if row:
                 return row
-
-    state_id = single_school_state_id_from_column_filters(column_filters)
-    if state_id:
-        return School.objects.filter(state_id=state_id).first()
 
     if isinstance(column_filters, dict):
         names = column_filters.get('school')
@@ -390,7 +392,15 @@ def _school_role_schedule_mode(user, column_filters=None):
 def schedule_filter_ui_mode(user, column_filters=None):
     """Which schedule filter controls this user may use."""
     if is_unrestricted(user):
-        return SCHEDULE_FILTER_MODE_DISTRICT
+        # District/project admins must pick one school; then use that school's
+        # schedule shape (elementary = no period filter, etc.) instead of always
+        # district_full, which applies period cascades that empty options for ES.
+        if not single_school_state_id_from_column_filters(column_filters):
+            return SCHEDULE_FILTER_MODE_DISTRICT
+        school = _resolve_schedule_filter_school(user, column_filters)
+        if school and _is_elementary_school_group(getattr(school, 'school_group', None)):
+            return SCHEDULE_FILTER_MODE_SCHOOL_ELEM
+        return SCHEDULE_FILTER_MODE_SCHOOL
     if _teacher_only(user):
         school = _resolve_schedule_filter_school(user, column_filters)
         if school and _is_elementary_school_group(getattr(school, 'school_group', None)):
@@ -432,6 +442,27 @@ def single_school_state_id_from_column_filters(column_filters):
     )
     if len(state_ids) == 1:
         return state_ids[0]
+    if len(state_ids) > 1:
+        return None
+
+    # ``current_student.school`` labels often differ from ``School.school_name``.
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT DISTINCT cs.school_state_id
+            FROM current_student cs
+            WHERE cs.school = %s
+              AND cs.school_state_id IS NOT NULL
+              AND TRIM(cs.school_state_id) <> ''
+            LIMIT 2
+            """,
+            [school_name],
+        )
+        rows = [r[0] for r in cursor.fetchall() if r and r[0]]
+    if len(rows) == 1:
+        return rows[0]
     return None
 
 

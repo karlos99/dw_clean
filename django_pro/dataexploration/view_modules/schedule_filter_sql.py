@@ -23,11 +23,12 @@ from ..utils import (
 
 
 def _resolve_scope_state_school_id(user, column_filters=None):
-    if getattr(user, 'active_school', None):
-        return user.active_school.state_id
+    """Single-school scope for schedule_list: column filter wins over navbar active school."""
     scoped = single_school_state_id_from_column_filters(column_filters)
     if scoped:
         return scoped
+    if getattr(user, 'active_school', None):
+        return user.active_school.state_id
     return None
 
 
@@ -96,7 +97,7 @@ def _current_student_scope_clauses(user, params, column_filters=None):
         return clauses
     if getattr(user, 'active_school', None):
         clauses.append("cs.school_state_id = %s")
-        params.append(user.active_school.state_id)
+        params.append(getattr(user.active_school, 'state_id', None))
     elif isinstance(getattr(user, 'schools', None), list) and user.schools:
         clauses.append("cs.school_state_id = ANY(%s)")
         params.append(user.schools)
@@ -342,7 +343,7 @@ def fetch_schedule_filter_options(
     ui_mode = schedule_filter_ui_mode(user, column_filters)
 
     if not schedule_filter_bar_visible(user, column_filters, school_year):
-        return {'periods': [], 'subjects': [], 'courses': [], 'staff': []}
+        return {'periods': [], 'subjects': [], 'courses': [], 'staff': [], 'ui_mode': ui_mode}
 
     cache_key = _cache_key(
         'opts', user, school_year, periods, subjects, courses, column_filters, status, staff_sel,
@@ -350,9 +351,11 @@ def fetch_schedule_filter_options(
     cache_key = f"{cache_key}:{ui_mode}"
     cached = cache.get(cache_key)
     if cached is not None:
+        if isinstance(cached, dict) and 'ui_mode' not in cached:
+            cached = {**cached, 'ui_mode': ui_mode}
         return cached
 
-    result = {'periods': [], 'subjects': [], 'courses': [], 'staff': []}
+    result = {'periods': [], 'subjects': [], 'courses': [], 'staff': [], 'ui_mode': ui_mode}
 
     with connection.cursor() as cursor:
         if ui_mode in (

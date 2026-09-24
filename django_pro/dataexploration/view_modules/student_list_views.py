@@ -533,11 +533,15 @@ def _load_students(request):
     # Selecting it also unselects the individual mark_<year>_<subject>_* columns.
     from dataexploration.column_utils import parse_markall_key, markall_key as _markall_key
 
+    _marks_struct_for_markall = None
+
     def _markall_subject_actual(year, subject_norm):
         """Resolve the normalized subject name back to its real spelling."""
+        nonlocal _marks_struct_for_markall
         try:
-            marks_struct = get_mark_columns()
-            subjects = marks_struct.get(year, {})
+            if _marks_struct_for_markall is None:
+                _marks_struct_for_markall = get_mark_columns()
+            subjects = _marks_struct_for_markall.get(year, {})
             for s in subjects:
                 if _markall_key(year, s) == _markall_key(year, subject_norm):
                     return s
