@@ -69,7 +69,7 @@
         <div class="bg-violet-50 border border-violet-200 rounded-xl px-4 py-3 flex items-start gap-3 text-xs text-violet-800">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 shrink-0 mt-0.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
             <div>
-                <p class="font-bold">This student has {{ seis_count }} designated support{{ seis_count|pluralize }} imported from SEIS.</p>
+                <p class="font-bold">This student has {{ seis_count }} setting{{ seis_count|pluralize }} imported from SEIS.</p>
                 <p class="text-[10px] text-violet-600 mt-0.5">SEIS supports are read-only and locked from the SEIS source. Their test columns cannot be edited here.</p>
             </div>
         </div>
@@ -200,18 +200,28 @@
                             {% endfor %}
                         </tr>
                     </thead>
+                    {% for group in category_groups %}
                     <tbody>
-                        {% for group in category_groups %}
-                        <tr class="category-header-row">
+                        <tr class="category-header-row cursor-pointer select-none"
+                            data-category-toggle
+                            data-category-target="{{ forloop.counter0 }}"
+                            aria-expanded="true"
+                            title="Collapse or expand this section">
                             <td colspan="{{ matrix_columns|length|add:1 }}" class="bg-slate-200/90 border-y border-slate-300 px-4 py-2.5">
                                 <div class="flex items-center gap-2.5">
+                                    <svg class="desi-category-chevron w-3.5 h-3.5 text-slate-500 shrink-0 transform transition-transform duration-200" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd"/></svg>
                                     <span class="w-1.5 h-4 bg-blue-600 rounded-full inline-block shrink-0"></span>
                                     <span class="text-xs md:text-sm font-extrabold uppercase tracking-wider text-slate-800">
                                         {{ group.category.name|default:"Uncategorized" }}
                                     </span>
+                                    <span class="ml-auto text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                        {{ group.rows|length }} support{{ group.rows|length|pluralize }}
+                                    </span>
                                 </div>
                             </td>
                         </tr>
+                    </tbody>
+                    <tbody class="desi-category-group" data-category-group="{{ forloop.counter0 }}">
                         {% for row in group.rows %}
                         <tr class="support-row"
                             data-accommodation-id="{{ row.accommodation.id }}"
@@ -277,8 +287,8 @@
                             {% endfor %}
                         </tr>
                         {% endfor %}
-                        {% endfor %}
                     </tbody>
+                    {% endfor %}
                 </table>
             </div>
         </div>

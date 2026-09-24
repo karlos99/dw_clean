@@ -28,7 +28,11 @@ from .models import (
     SupportRule,
     SupportRuleCriteria,
 )
-from .seis_data import build_seis_option_map
+from .seis_data import (
+    build_seis_option_map,
+    seis_assigned_assessments,
+    seis_assigned_assessments_by_ssid,
+)
 
 
 BASE_EXPORT_COLUMNS = [
@@ -482,9 +486,10 @@ def _get_student_list_context(request):
     grade_filter = request.GET.get('grade', '').strip()
     teacher_filter = request.GET.get('teacher', '').strip()
     
-    active_school = getattr(request.user, 'active_school', None)
+    global_active_school = getattr(request.user, 'active_school', None)
+    active_school = global_active_school
     school_filter_id = request.GET.get('school', '')
-    
+
     if school_filter_id and not active_school:
         user_schools = getattr(request.user, 'schools', None)
         if not user_schools or school_filter_id in user_schools:
@@ -580,26 +585,49 @@ def _get_student_list_context(request):
                 completions_map[c.student_annual_key] = set()
             completions_map[c.student_annual_key].add(c.assessment_id)
 
-    all_year_assessments = list(Assessment.objects.filter(is_active=True).prefetch_related('criteria'))
+    all_assessments = list(Assessment.objects.prefetch_related('criteria'))
+    all_year_assessments = [ast for ast in all_assessments if ast.is_active]
+
+    # Students with a SEIS test assignment show only their SEIS-assigned tests
+    # (incl. inactive), matching the workspace, instead of the editable list.
+    seis_assigned_by_ssid = seis_assigned_assessments_by_ssid(
+        [s.ssid for s in page_obj], all_assessments
+    )
 
     for student in page_obj:
-        eligible_ids = []
-        for ast in all_year_assessments:
-            eligible, _ = check_criteria(ast.criteria.all(), student)
-            if eligible:
-                eligible_ids.append(ast.id)
-        
-        student.eligible_count = len(eligible_ids)
-        student_completed_ids = completions_map.get(student.stu_annual_key, set())
-        student.completed_count = len(student_completed_ids.intersection(set(eligible_ids)))
-        student.assessment_statuses = [
-            {
-                'assessment': ast,
-                'is_completed': ast.id in student_completed_ids,
-            }
-            for ast in all_year_assessments
-            if ast.id in eligible_ids
-        ]
+        seis_assigned = seis_assigned_by_ssid.get(student.ssid, []) if student.ssid else []
+        if seis_assigned:
+            student.is_seis = True
+            student.eligible_count = 0
+            student.completed_count = 0
+            student.assessment_statuses = [
+                {
+                    'assessment': ast,
+                    'is_completed': False,
+                    'is_seis': True,
+                }
+                for ast in seis_assigned
+            ]
+        else:
+            eligible_ids = []
+            for ast in all_year_assessments:
+                eligible, _ = check_criteria(ast.criteria.all(), student)
+                if eligible:
+                    eligible_ids.append(ast.id)
+
+            student.is_seis = False
+            student.eligible_count = len(eligible_ids)
+            student_completed_ids = completions_map.get(student.stu_annual_key, set())
+            student.completed_count = len(student_completed_ids.intersection(set(eligible_ids)))
+            student.assessment_statuses = [
+                {
+                    'assessment': ast,
+                    'is_completed': ast.id in student_completed_ids,
+                    'is_seis': False,
+                }
+                for ast in all_year_assessments
+                if ast.id in eligible_ids
+            ]
         student.global_accommodations = global_acc_map.get(student.stu_annual_key, [])
 
     grade_base = CurrentStudent.objects.filter(school_year=school_year)
@@ -644,6 +672,8 @@ def _get_student_list_context(request):
         'grades': grades,
         'schools': available_schools,
         'active_school': active_school,
+        'global_active_school': global_active_school,
+        'school_locked': bool(global_active_school),
         'is_project_admin': _is_project_admin(request.user),
         'show_teacher_filter': not _is_teacher(request.user),
         'students_qs_raw': students_qs,
@@ -1858,8 +1888,9 @@ def edit_accommodation(request, id):
         if not all_names_to_create:
             all_names_to_create.add("Standard")
 
-        # Capture mappings to NON-ACTIVE assessments so they are never lost,
-        # regardless of how the edit is submitted.
+        # Capture mappings to NON-ACTIVE assessments so existing (non-deleted)
+        # options keep their mappings even though those assessments are not
+        # shown in the form.
         mapped_pairs_pre = list(
             Assessment.supported_options.through.objects
             .filter(accommodationoption__accommodation=accommodation)
@@ -1868,9 +1899,6 @@ def edit_accommodation(request, id):
         inactive_assessment_ids = set(
             Assessment.objects.filter(is_active=False).values_list('id', flat=True)
         )
-        protected_option_ids = {
-            opt_id for ast_id, opt_id in mapped_pairs_pre if ast_id in inactive_assessment_ids
-        }
 
         # ID-preserving option updates with editable name/code
         existing_opts = {str(opt.id): opt for opt in accommodation.options.all()}
@@ -1909,12 +1937,9 @@ def edit_accommodation(request, id):
             keep_opt_ids.append(new_opt.id)
             existing_names.add(name)
 
-        # Options still mapped to non-active assessments must never be deleted.
-        for opt_id in protected_option_ids:
-            if opt_id not in keep_opt_ids:
-                keep_opt_ids.append(opt_id)
-
-        # Remove any options not in the new set
+        # Remove any options the admin removed from the list (and their
+        # assessment mappings). Options still in the list keep their mappings,
+        # including those on assessments not shown in the form.
         accommodation.options.exclude(id__in=keep_opt_ids).delete()
 
         # ---- Assessment support mapping update ----
@@ -2311,16 +2336,19 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
     Build workspace context for the DESI accommodation editor.
 
     ``eligible_assessments`` are the tests that remain editable for this
-    student (active + criteria-eligible, and NOT fully SEIS-managed).
+    student (active + criteria-eligible, and NOT SEIS-managed). When the SEIS
+    source assigns the student any test, this list is empty and the workspace is
+    read-only.
 
     ``seis_option_map`` is an optional dict keyed by ``(assessment_id,
     accommodation_id)`` -> ``AccommodationOption`` produced from the read-only
     SEIS source table.
 
-    ``seis_managed_assessments`` lists every assessment for which this student
-    has matched SEIS data.  These tests are fully read-only: they render as a
-    separate SEIS section that lists ONLY the SEIS supports (never the rest of
-    the editable test), and the user cannot edit any part of them.
+    ``seis_managed_assessments`` lists every assessment the SEIS source assigns
+    to this student (including inactive ones). These tests are fully read-only:
+    they render as a separate SEIS section that lists ONLY the SEIS supports
+    (never the rest of the editable test), and the user cannot edit any part of
+    them.
     """
     seis_option_map = seis_option_map or {}
     selected_support_ids = set(selected_support_ids or [])
@@ -2331,7 +2359,10 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
     seis_managed_assessments = list(seis_managed_assessments or [])
     eligible_ids = {ast.id for ast in eligible_assessments}
 
-    # ---- Columns: editable tests first, then SEIS-managed tests ----
+    # ---- Columns: editable + SEIS-managed, in the configured column order ----
+    # Both editable tests and SEIS-managed tests (which may be inactive) are
+    # positioned by the same Assessment Column Order configured in the admin
+    # dashboard, rather than always appending SEIS columns to the end.
     columns = []
     for ast in eligible_assessments:
         columns.append({
@@ -2351,6 +2382,9 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
             'is_seis': True,
             'is_active': ast.is_active,
         })
+    columns.sort(
+        key=lambda c: (c['assessment'].order, c['assessment'].name, c['assessment'].id)
+    )
 
     # ---- Gather support -> test -> options, including SEIS ----
     # acc_ast_opts: accommodation_id -> { assessment_id: {options, is_seis, seis_option} }
@@ -2617,70 +2651,49 @@ def assign_accommodations(request, stu_annual_key):
 
     # Read-only SEIS settings already configured for this student.
     #
-    # SEIS data is authoritative and read-only: if a student has any matched
-    # SEIS support on an assessment, that assessment is shown read-only and
-    # lists ONLY the SEIS supports (the rest of the test is not editable).
-    # SEIS eligibility ignores every demographic criteria except grade.
-    #
-    # Project admins can restrict which assessments surface SEIS data via the
-    # "SEIS display settings" section of the DESI admin dashboard.  When a
-    # selection is saved, only the chosen assessments show SEIS settings;
-    # otherwise (no selection yet) SEIS settings are shown for every referenced
-    # assessment.
+    # The SEIS source table is authoritative. The ``assessments`` JSON on each
+    # ``desi_seis`` row lists the tests the student is assigned to; those tests
+    # become read-only columns that show ONLY the SEIS supports, regardless of
+    # the assessment's ``is_active`` flag, DESI eligibility criteria, or the
+    # admin "SEIS display settings" selection. A student whose SEIS rows name
+    # no specific test (``No_Test``) has no SEIS assignment and keeps the normal
+    # editable test list.
     seis_option_map = {}
     seis_locked_accommodation_ids = set()
     seis_managed_assessments = []
+    seis_assigned = []
     if student.ssid:
-        from .seis_data import selected_seis_display_assessment_ids
-        selected_ids = selected_seis_display_assessment_ids()
         all_assessments = list(
             Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation').order_by('order', 'name', 'id')
         )
-        _assessment_by_id = {ast.id: ast for ast in all_assessments}
+        seis_assigned = seis_assigned_assessments(student.ssid, all_assessments)
+        if seis_assigned:
+            seis_managed_assessments = list(seis_assigned)
+            raw_map, _ = build_seis_option_map(student.ssid, seis_assigned)
+            seis_option_map = dict(raw_map)
+            seis_locked_accommodation_ids = {acc_id for _ast_id, acc_id in seis_option_map}
 
-        def grade_eligible(ast):
-            """Only 'grade' criteria gate SEIS display; all others are ignored."""
-            grade_criteria = [c for c in ast.criteria.all() if c.field_name == 'grade']
-            if not grade_criteria:
-                return True
-            ok, _ = check_criteria(grade_criteria, student)
-            return ok
+            # Color code managed assessments (incl. inactive ones) so read-only
+            # sections render with a stable accent.
+            active_color = {
+                ast.id: ast.card_color for ast in assessments if hasattr(ast, 'card_color')
+            }
+            for index, ast in enumerate(seis_managed_assessments):
+                ast.card_color = active_color.get(
+                    ast.id,
+                    ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)],
+                )
 
-        # Build the map across every assessment.  The mapping itself scopes each
-        # SEIS setting to the assessments that support the matched option (and,
-        # when a SEIS row names specific tests, to exactly those).  We then keep
-        # only entries that are admin-selected (when a selection exists) and
-        # grade-eligible.
-        raw_map, _ = build_seis_option_map(student.ssid, all_assessments)
-        seis_option_map = {
-            (ast_id, acc_id): opt
-            for (ast_id, acc_id), opt in raw_map.items()
-            if (selected_ids is None or ast_id in selected_ids)
-            and grade_eligible(_assessment_by_id[ast_id])
-        }
-        seis_locked_accommodation_ids = {acc_id for _ast_id, acc_id in seis_option_map}
-
-        managed_ids = {ast_id for ast_id, _acc_id in seis_option_map}
-        seis_managed_assessments = [
-            ast for ast in all_assessments if ast.id in managed_ids
+    # SEIS is authoritative: when the student has SEIS-assigned tests, the
+    # workspace shows only those read-only columns and nothing is editable.
+    # Otherwise, the teacher gets the normal active + criteria-eligible tests.
+    if seis_assigned:
+        editable_assessments = []
+    else:
+        managed_ids = {ast.id for ast in seis_managed_assessments}
+        editable_assessments = [
+            ast for ast in eligible_assessments if ast.id not in managed_ids
         ]
-        # Color code managed assessments (incl. inactive ones) so read-only
-        # sections render with a stable accent.
-        active_color = {
-            ast.id: ast.card_color for ast in assessments if hasattr(ast, 'card_color')
-        }
-        for index, ast in enumerate(seis_managed_assessments):
-            ast.card_color = active_color.get(
-                ast.id,
-                ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)],
-            )
-
-    # Assessments available for teacher entry = active + eligible by the
-    # configured criteria, EXCLUDING tests that are fully SEIS-managed.
-    managed_ids = {ast.id for ast in seis_managed_assessments}
-    editable_assessments = [
-        ast for ast in eligible_assessments if ast.id not in managed_ids
-    ]
 
     is_htmx = request.headers.get('HX-Request') == 'true' or request.META.get('HTTP_HX_REQUEST') == 'true'
 
@@ -2742,6 +2755,16 @@ def assign_accommodations(request, stu_annual_key):
                 .values_list('id', flat=True)
             )
             selected_opt_ids = list(set(selected_opt_ids) | preserved_locked_opt_ids)
+        # A fully SEIS-managed workspace is read-only: no support controls are
+        # rendered, so nothing is posted. Preserve every existing selection
+        # rather than clearing the student's stored DESI data.
+        if not editable_assessments:
+            selected_opt_ids = list(
+                student_acc.options.values_list('id', flat=True)
+            )
+            selected_support_ids = list(
+                student_acc.selected_accommodations.values_list('id', flat=True)
+            )
         student_acc.options.set(AccommodationOption.objects.filter(id__in=selected_opt_ids))
         student_acc.selected_accommodations.set(Accommodation.objects.filter(id__in=selected_support_ids))
         student_acc.updated_by = request.user

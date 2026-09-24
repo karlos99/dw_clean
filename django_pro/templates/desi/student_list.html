@@ -47,9 +47,9 @@
                     <!-- School Dropdown -->
                     <div>
                         <label for="school" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">School</label>
-                        {% if active_school %}
-                            <input type="text" value="{{ active_school.short_name|default:active_school.school_name }}" disabled class="block w-full rounded border-slate-200 bg-slate-100 text-slate-500 text-xs py-1 px-2">
-                            <input type="hidden" name="school" value="{{ active_school.state_id }}">
+                        {% if school_locked %}
+                            <input type="text" value="{{ global_active_school.short_name|default:global_active_school.school_name }}" disabled class="block w-full rounded border-slate-200 bg-slate-100 text-slate-500 text-xs py-1 px-2">
+                            <input type="hidden" name="school" value="{{ global_active_school.state_id }}">
                         {% else %}
                             <select name="school" id="school" class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1 px-2">
                                 <option value="">All</option>
@@ -150,7 +150,7 @@
             const filterForm = document.getElementById('desi-student-filter-form');
             const gradesBySchool = {{ grade_options_by_school_json|default:'{}'|safe }};
             const teachersByFilter = {{ teacher_options_by_filter_json|default:'{}'|safe }};
-            const activeSchoolId = "{{ active_school.state_id|default:''|escapejs }}";
+            const activeSchoolId = "{{ global_active_school.state_id|default:''|escapejs }}";
             const initialGrade = "{{ grade_filter|escapejs }}";
             const initialTeacher = "{{ teacher_filter|escapejs }}";
 
@@ -209,6 +209,25 @@
                     link.classList.remove('border-transparent', 'hover:bg-slate-50');
                     link.classList.add('bg-blue-50/70', 'border-blue-600');
                 }
+            });
+
+            // 1b. Collapse/expand the supports matrix by organization section.
+            // The section header lives in a separate, always-visible <tbody>, so
+            // only the support rows are hidden and the header can be clicked
+            // again to expand.
+            document.body.addEventListener('click', (e) => {
+                const header = e.target.closest('[data-category-toggle]');
+                if (!header) return;
+                const key = header.getAttribute('data-category-target');
+                const group = key === null ? null : document.querySelector(
+                    'tbody.desi-category-group[data-category-group="' + key + '"]'
+                );
+                if (!group) return;
+                const willCollapse = group.style.display !== 'none';
+                group.style.display = willCollapse ? 'none' : '';
+                header.setAttribute('aria-expanded', String(!willCollapse));
+                const chevron = header.querySelector('.desi-category-chevron');
+                if (chevron) chevron.classList.toggle('-rotate-90', willCollapse);
             });
 
             // 2. Designated supports matrix: dependencies, synchronization, popover
