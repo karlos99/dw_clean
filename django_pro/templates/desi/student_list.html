@@ -74,6 +74,19 @@
                     </div>
                 {% endif %}
 
+                {% if show_period_filter %}
+                    <!-- Period Dropdown (non-elementary schools, once a teacher is chosen) -->
+                    <div>
+                        <label for="period" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Period</label>
+                        <select name="period" id="period" class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1 px-2">
+                            <option value="">All Periods</option>
+                            {% for period in periods %}
+                            <option value="{{ period }}" {% if period_filter == period %}selected{% endif %}>Period {{ period }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                {% endif %}
+
                 <!-- Submit / Clear Buttons -->
                 <div class="flex gap-2 justify-end pt-1">
                     <a href="{% url 'desi:student_list' %}" class="inline-flex justify-center items-center px-2.5 py-1 border border-slate-300 rounded text-[10px] font-bold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-100 transition">
@@ -195,6 +208,8 @@
                 submitFilters();
             });
             if (teacherSelect) teacherSelect.addEventListener('change', submitFilters);
+            const periodSelect = document.getElementById('period');
+            if (periodSelect) periodSelect.addEventListener('change', submitFilters);
             updateGrades();
             updateTeachers();
 

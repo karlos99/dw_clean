@@ -1884,7 +1884,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const label = getColumnLabel(col);
             const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
             const hasActiveFilter = Array.isArray(filters[col]) && filters[col].length > 0;
-            const hasFilter = optionsForCol.length > 0 || hasActiveFilter;
+            // Race List is stored in add_data JSON; always offer the filter UI when the
+            // column is visible (options may load from PostgreSQL after the table renders).
+            const hasFilter = optionsForCol.length > 0 || hasActiveFilter || col === 'race_list';
             const isSorted = sortBy === col;
             const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
             const sortColorClass = isSorted ? 'text-blue-400' : 'text-slate-600 group-hover:text-slate-400';

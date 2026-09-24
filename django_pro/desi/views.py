@@ -4,7 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.core import signing
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Count, Prefetch, Q
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.template.loader import render_to_string
@@ -12,7 +12,7 @@ from django.urls import reverse
 import csv
 import json
 
-from studata.models import CurrentStudent, School as StudataSchool, TeacherAccess
+from studata.models import CurrentStudent, School as StudataSchool, Schedule, TeacherAccess
 from landing.utils import get_project_config
 from .models import (
     Accommodation,
@@ -472,6 +472,102 @@ def _desi_schools_for_dropdown(available_schools):
     return filtered
 
 
+def _teacher_option_rows(school_year, student_keys):
+    """
+    Distinct ``(staff_name, school_state_id, grade)`` triples for a set of
+    students.
+
+    Computed server-side (one query) instead of pulling every teacher-access row
+    into Python, which dominated load time for district-wide views. Returns an
+    empty list when the teacher-access view is not available.
+    """
+    keys = list(student_keys or [])
+    if not keys:
+        return []
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT ta.staff_name, cs.school_state_id, cs.grade
+                    FROM teacher_access_list ta
+                    JOIN current_student cs ON cs.stu_annual_key = ta.stu_annual_key
+                    WHERE ta.school_year = %s
+                      AND cs.school_year = %s
+                      AND ta.staff_name IS NOT NULL AND ta.staff_name <> ''
+                      AND ta.stu_annual_key = ANY(%s)
+                    """,
+                    [school_year, school_year, keys],
+                )
+                return cursor.fetchall()
+    except Exception:
+        return []
+
+
+def _is_elementary_school(school):
+    """True when the school's group is an elementary school."""
+    group = (getattr(school, 'school_group', '') or '').strip().casefold()
+    return 'elementary' in group
+
+
+def _period_sort_key(value):
+    """Sort periods numerically when possible ('1' < '2' < '10'), else by text."""
+    text = str(value).strip()
+    return (0, int(text)) if text.isdigit() else (1, text)
+
+
+def _schedule_periods(school_year, school_state_id, staff_name, student_keys=None):
+    """
+    Distinct periods from ``schedule_list`` for one school + staff member.
+
+    Used to populate the DESI period filter for non-elementary schools. When
+    ``student_keys`` is given the lookup is restricted to those students and can
+    use the ``stu_annual_key`` index. Returns an empty list when the input is
+    incomplete or the schedule table is not available (some deployments/tests).
+    """
+    if not school_state_id or not staff_name:
+        return []
+    try:
+        with transaction.atomic():
+            qs = Schedule.objects.filter(
+                school_year=school_year,
+                state_school_id=school_state_id,
+                staff_name__iexact=staff_name,
+            )
+            if student_keys:
+                qs = qs.filter(stu_annual_key__in=student_keys)
+            values = {
+                str(p).strip()
+                for p in qs.exclude(period__isnull=True).exclude(period='')
+                .values_list('period', flat=True)
+                .distinct()
+                if str(p).strip()
+            }
+    except Exception:
+        return []
+    return sorted(values, key=_period_sort_key)
+
+
+def _schedule_student_keys(school_year, school_state_id, period, staff_name='', student_keys=None):
+    """Student annual keys scheduled for ``period`` with the given staff."""
+    if not school_state_id or not period:
+        return []
+    try:
+        with transaction.atomic():
+            qs = Schedule.objects.filter(
+                school_year=school_year,
+                state_school_id=school_state_id,
+                period=period,
+            )
+            if student_keys:
+                qs = qs.filter(stu_annual_key__in=student_keys)
+            if staff_name:
+                qs = qs.filter(staff_name__iexact=staff_name)
+            return list(qs.values_list('stu_annual_key', flat=True).distinct())
+    except Exception:
+        return []
+
+
 def _get_student_list_context(request):
     try:
         default_year = get_project_config().default_school_year
@@ -485,6 +581,7 @@ def _get_student_list_context(request):
     search_query = request.GET.get('search', '').strip()
     grade_filter = request.GET.get('grade', '').strip()
     teacher_filter = request.GET.get('teacher', '').strip()
+    period_filter = request.GET.get('period', '').strip()
     
     global_active_school = getattr(request.user, 'active_school', None)
     active_school = global_active_school
@@ -507,26 +604,19 @@ def _get_student_list_context(request):
     # then optionally narrow the student list to that teacher's students.
     teacher_names = []
     teacher_options_by_filter = {}
+    teacher_student_keys = []
     try:
         # Wrap in a savepoint: some deployments do not have the teacher-access
         # view/table, and a swallowed DB error would otherwise abort the whole
         # surrounding transaction (PostgreSQL) and break every later query.
         with transaction.atomic():
-            teacher_access_qs = TeacherAccess.objects.filter(
-                school_year=school_year,
-                stu_annual_key__in=students_qs.values('stu_annual_key'),
-            )
-            student_details = {
-                row['stu_annual_key']: row
-                for row in students_qs.values('stu_annual_key', 'school_state_id', 'grade')
-            }
-            for access in teacher_access_qs.values('staff_name', 'stu_annual_key'):
-                name = (access['staff_name'] or '').strip()
-                student_detail = student_details.get(access['stu_annual_key'])
-                if not name or not student_detail:
+            student_keys = list(students_qs.values_list('stu_annual_key', flat=True))
+            for staff_name, school_key, grade_key in _teacher_option_rows(school_year, student_keys):
+                name = (staff_name or '').strip()
+                if not name:
                     continue
-                school_key = student_detail['school_state_id'] or ''
-                grade_key = student_detail['grade'] or ''
+                school_key = (school_key or '').strip()
+                grade_key = (grade_key or '').strip()
                 for key in ('::', f'{school_key}::', f'::{grade_key}', f'{school_key}::{grade_key}'):
                     teacher_options_by_filter.setdefault(key, set()).add(name)
 
@@ -541,16 +631,43 @@ def _get_student_list_context(request):
                 else teacher_options_by_filter.get(f'::{grade_filter}', teacher_options_by_filter.get('::', [])),
             )
             if teacher_filter:
-                students_qs = students_qs.filter(
-                    stu_annual_key__in=teacher_access_qs.filter(
-                        staff_name__iexact=teacher_filter
-                    ).values('stu_annual_key')
+                # Resolve the teacher's student keys to a plain list. Using a
+                # nested teacher_access subquery here made the paginator's
+                # COUNT/SELECT (combined with the period IN list) fall back to a
+                # very slow plan.
+                teacher_student_keys = list(
+                    TeacherAccess.objects.filter(
+                        school_year=school_year,
+                        staff_name__iexact=teacher_filter,
+                        stu_annual_key__in=students_qs.values('stu_annual_key'),
+                    ).values_list('stu_annual_key', flat=True).distinct()
                 )
+                students_qs = students_qs.filter(stu_annual_key__in=teacher_student_keys)
     except Exception:
         # Some deployments do not have the teacher-access view available.
         teacher_names = []
+        teacher_student_keys = []
         if teacher_filter:
             students_qs = students_qs.none()
+
+    # Non-elementary schools schedule by period. When a school and teacher are
+    # chosen, offer a period filter sourced from the schedule table (the periods
+    # for that staff member's students), then narrow the student list to it.
+    selected_school_id = school_filter_id or getattr(active_school, 'state_id', '') or ''
+    periods = []
+    if selected_school_id and teacher_filter and not _is_elementary_school(active_school):
+        periods = _schedule_periods(
+            school_year, selected_school_id, teacher_filter, teacher_student_keys
+        )
+    show_period_filter = bool(periods)
+
+    if period_filter and period_filter not in periods:
+        period_filter = ''
+    if period_filter:
+        period_keys = _schedule_student_keys(
+            school_year, selected_school_id, period_filter, teacher_filter, teacher_student_keys
+        )
+        students_qs = students_qs.filter(stu_annual_key__in=period_keys)
 
     if search_query:
         students_qs = students_qs.filter(
@@ -665,6 +782,9 @@ def _get_student_list_context(request):
         'search_query': search_query,
         'grade_filter': grade_filter,
         'teacher_filter': teacher_filter,
+        'period_filter': period_filter,
+        'periods': periods,
+        'show_period_filter': show_period_filter,
         'teachers': teacher_names,
         'teacher_options_by_filter_json': json.dumps(teacher_options_by_filter),
         'school_filter': school_filter_id,

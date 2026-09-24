@@ -6,6 +6,7 @@ from django.urls import reverse
 from django.core import signing
 import csv
 import io
+from unittest import mock
 
 from studata.models import CurrentStudent, School as StudataSchool
 from users.models import Role
@@ -2341,3 +2342,93 @@ class DesiStudentListSchoolFilterTests(TestCase):
         # Locked: a disabled input replaces the dropdown.
         self.assertNotIn('id="school"', content)
         self.assertIn('value="SCH-A"', content)
+
+
+class DesiStudentListPeriodFilterTests(TestCase):
+    """Period filter for non-elementary schools, sourced from the schedule table."""
+
+    def setUp(self):
+        # Isolate from a stale shared project-config cache.
+        cache.delete('landing:project_config')
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="period-filter@test.com",
+            email="period-filter@test.com",
+            password="password123",
+        )
+        self.user.roles.add(role)
+        self.client.force_login(self.user)
+
+        self.high = StudataSchool.objects.create(
+            dw_schoolkey=11, state_id="HS-1", short_name="High", school_name="High School",
+            school_group="High School",
+        )
+        self.elementary = StudataSchool.objects.create(
+            dw_schoolkey=12, state_id="EL-1", short_name="Elem", school_name="Elementary School",
+            school_group="Elementary School",
+        )
+        self.students = {
+            "HS-1": CurrentStudent.objects.create(
+                stu_annual_key="period-hs", ssid="period-hs", student_id="period-hs",
+                student_name="High Student", grade="09",
+                school_state_id="HS-1", school_year="2025-2026",
+            ),
+            "EL-1": CurrentStudent.objects.create(
+                stu_annual_key="period-el", ssid="period-el", student_id="period-el",
+                student_name="Elem Student", grade="03",
+                school_state_id="EL-1", school_year="2025-2026",
+            ),
+        }
+
+    def _get(self, school, teacher="Smith", period=None):
+        student = self.students[school]
+        url = reverse("desi:assign_accommodations", args=[student.stu_annual_key])
+        params = {"school": school, "teacher": teacher}
+        if period is not None:
+            params["period"] = period
+        return self.client.get(url, params)
+
+    def test_period_sort_and_elementary_helpers(self):
+        from desi.views import _is_elementary_school, _period_sort_key
+        self.assertTrue(_is_elementary_school(self.elementary))
+        self.assertFalse(_is_elementary_school(self.high))
+        self.assertFalse(_is_elementary_school(None))
+        self.assertEqual(
+            sorted(["10", "2", "1", "A"], key=_period_sort_key),
+            ["1", "2", "10", "A"],
+        )
+
+    @mock.patch("desi.views._schedule_periods", return_value=["1", "2", "10"])
+    def test_period_filter_shows_for_non_elementary_with_teacher(self, mock_periods):
+        response = self._get("HS-1")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["show_period_filter"])
+        self.assertEqual(response.context["periods"], ["1", "2", "10"])
+        content = response.content.decode()
+        self.assertIn('id="period"', content)
+        self.assertIn("Period 10", content)
+
+    @mock.patch("desi.views._schedule_periods", return_value=["1"])
+    def test_period_filter_hidden_for_elementary(self, mock_periods):
+        response = self._get("EL-1")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["show_period_filter"])
+        self.assertNotIn('id="period"', response.content.decode())
+        mock_periods.assert_not_called()
+
+    def test_period_filter_hidden_without_teacher(self):
+        response = self._get("HS-1", teacher="")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["show_period_filter"])
+
+    @mock.patch("desi.views._schedule_student_keys", return_value=[])
+    @mock.patch("desi.views._schedule_periods", return_value=["1", "2"])
+    def test_period_filter_narrows_using_schedule(self, mock_periods, mock_keys):
+        response = self._get("HS-1", period="2")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["period_filter"], "2")
+        mock_keys.assert_called_once()
+        args = mock_keys.call_args.args
+        self.assertEqual(args[1], "HS-1")
+        self.assertEqual(args[2], "2")
+        self.assertEqual(args[3], "Smith")

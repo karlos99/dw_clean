@@ -552,6 +552,15 @@ class CsFilterClauseTests(SimpleTestCase):
 		self.assertEqual(params, [['Y']])
 
 
+class ClickHouseExecutorTests(SimpleTestCase):
+	def test_l_race_sql_routes_to_postgres(self):
+		from clickhouse_utils.executor import _sql_uses_pg_add_data_key
+		from dataexploration.view_modules.column_management import race_list_overlap_sql
+
+		sql = f"SELECT 1 FROM current_student cs WHERE {race_list_overlap_sql('cs')}"
+		self.assertTrue(_sql_uses_pg_add_data_key(sql))
+
+
 class ApplyColumnFilterTests(SimpleTestCase):
 	def test_grade_column_filter_applies_to_cs_grade(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
@@ -566,6 +575,21 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('cs.grade', where_clauses[0])
 		self.assertEqual(params, [['03']])
+
+	def test_race_list_filter_uses_l_race_json_overlap(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+
+		where_clauses = []
+		params = []
+		apply_column_filters(
+			where_clauses, params,
+			{'race_list': ['White', 'Asian']},
+			{}, {}, set(), {}, False,
+		)
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn('l_race', where_clauses[0])
+		self.assertIn('&&', where_clauses[0])
+		self.assertEqual(params, [['White', 'Asian']])
 
 	def test_mark_column_filter_uses_ssid_subquery(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
