@@ -42,15 +42,15 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'school', 'schedule_list', 'relative_year', 'mathr_recommendation',
     'student_attendance', 'student_incidents',
     'analytics_student_profile', 'analytics_student_results',
-    'analytics_student_marks', 'analytics_ap_results', 'analytics_ap_awards',
+    'analytics_student_marks',     'analytics_ap_results', 'analytics_ap_awards',
     'analytics_sat_results',
     'analytics_survey_responses',
+    'analytics_test_metadata', 'analytics_marks_metadata',
 })
 
-# Keys newly written to Postgres add_data can be missing from the ClickHouse
-# mirror. JSONExtract on stale CH returns empty strings without error, so we
-# keep those extracts on Postgres until CH is re-synced.
-_PG_ADD_DATA_KEYS = ('dsusd_fep', 'DSUSD_FEP')
+# add_data JSON keys that may be missing or stale in the ClickHouse mirror.
+# JSONExtract on stale CH returns empty without error, so keep these on Postgres.
+_PG_ADD_DATA_KEYS = ('dsusd_fep', 'DSUSD_FEP', 'l_race')
 
 # Application tables that are NOT part of the ClickHouse read model (they are
 # intentionally absent from CLICKHOUSE_SYNCED_TABLES). Queries that reference

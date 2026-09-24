@@ -63,6 +63,10 @@ class Accommodation(models.Model):
         help_text="YouTube video link explaining this support/question"
     )
     order = models.IntegerField(default=0, help_text="Order in which this accommodation is displayed")
+    hide_from_student_list = models.BooleanField(
+        default=False,
+        help_text="Hide this support on the student workspace matrix; export still includes it.",
+    )
     depends_on_accommodation = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -441,18 +445,34 @@ class AccommodationResource(models.Model):
         label = self.label or self.url
         return f"{label} ({self.get_kind_display()})"
 
-    def get_embed_url(self):
-        """Return an embeddable URL for youtube; other types embed as-is when possible."""
-        if self.kind == 'youtube':
-            import re
-            patterns = [
-                r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&\s]+)',
-                r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^\?\s]+)',
-                r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^\?\s]+)',
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, self.url)
-                if match:
-                    return f"https://www.youtube.com/embed/{match.group(1)}"
+    def _youtube_embed_url(self):
+        import re
+        url = (self.url or '').strip()
+        if not url:
             return None
-        return self.url
+        patterns = [
+            r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&\s]+)',
+            r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^\?\s]+)',
+            r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^\?\s]+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return f"https://www.youtube.com/embed/{match.group(1)}"
+        return None
+
+    def get_embed_url(self):
+        """
+        Return a URL safe to load in an iframe, or None.
+
+        Most external sites (including CAASPP) send X-Frame-Options and cannot
+        be embedded; those open in a new browser tab instead.
+        """
+        if self.kind in ('youtube', 'video'):
+            return self._youtube_embed_url()
+        if self.kind == 'pdf':
+            return (self.url or '').strip() or None
+        return None
+
+    def opens_in_new_tab(self):
+        return self.get_embed_url() is None

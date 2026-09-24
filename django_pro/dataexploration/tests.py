@@ -3,6 +3,46 @@ from django.test import SimpleTestCase
 from django.template.loader import get_template
 
 
+class ScheduleFilterScopeTests(SimpleTestCase):
+	def test_district_admin_elementary_school_uses_elementary_schedule_mode(self):
+		from unittest.mock import MagicMock, patch
+		from dataexploration.utils import (
+			SCHEDULE_FILTER_MODE_SCHOOL_ELEM,
+			schedule_filter_ui_mode,
+		)
+
+		user = MagicMock()
+		with patch('dataexploration.utils.is_unrestricted', return_value=True):
+			with patch(
+				'dataexploration.utils.single_school_state_id_from_column_filters',
+				return_value='ELEM123',
+			):
+				school = MagicMock()
+				school.school_group = 'Elementary School'
+				with patch(
+					'dataexploration.utils._resolve_schedule_filter_school',
+					return_value=school,
+				):
+					mode = schedule_filter_ui_mode(user, {'school_state_id': ['ELEM123']})
+		self.assertEqual(mode, SCHEDULE_FILTER_MODE_SCHOOL_ELEM)
+
+	def test_column_filter_school_overrides_active_school_for_schedule_scope(self):
+		from dataexploration.view_modules.schedule_filter_sql import _resolve_scope_state_school_id
+
+		class _School:
+			state_id = 'ACTIVE_SCHOOL'
+
+		class _User:
+			active_school = _School()
+
+		user = _User()
+		column_filters = {'school_state_id': ['FILTER_SCHOOL']}
+		self.assertEqual(
+			_resolve_scope_state_school_id(user, column_filters),
+			'FILTER_SCHOOL',
+		)
+
+
 class TemplateCompilationTests(SimpleTestCase):
 	def test_folder_browser_template_compiles(self):
 		# This template is rendered via HTMX at /dataexploration/api/folders/.
@@ -26,6 +66,37 @@ class TemplateCompilationTests(SimpleTestCase):
 
 	def test_users_column_structures_compiles(self):
 		get_template("users/partials/column_structures.html")
+
+	def test_split_schedule_column_filters(self):
+		from dataexploration.view_modules.column_management import split_schedule_column_filters
+
+		base, sched = split_schedule_column_filters({
+			'school_year': '2024-2025',
+			'grade': '10',
+			'schedule_period': ['1', '2'],
+			'schedule_subject': 'Math',
+		})
+		self.assertEqual(base, {'school_year': '2024-2025', 'grade': '10'})
+		self.assertEqual(sched['schedule_period'], ['1', '2'])
+		self.assertEqual(sched['schedule_subject'], ['Math'])
+
+	def test_dataexploration_column_structures_strips_django_comments(self):
+		from django.template.loader import render_to_string
+
+		html = render_to_string(
+			"dataexploration/partials/column_structures.html",
+			{
+				"test_structure": {},
+				"marks_structure": {"2024": {"Math": {"Algebra I": {}}}},
+				"survey_structure": {},
+				"ap_structure": {},
+				"sat_structure": {},
+				"column_definitions": {},
+				"year_labels": {"2024": "2024"},
+				"year_to_alias": {},
+			},
+		)
+		self.assertNotIn("{#", html)
 
 	def test_dataexploration_manage_default_assessment_tree_compiles(self):
 		get_template("dataexploration/partials/manage_default_assessment_tree.html")
@@ -259,6 +330,12 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		self.assertEqual(by_id['20250161'], '3')
 		self.assertNotIn('NaN', by_ssid)
 
+	def test_export_csv_cell_uses_empty_blank(self):
+		from dataexploration.column_utils import export_csv_cell
+		self.assertEqual(export_csv_cell(None), '')
+		self.assertEqual(export_csv_cell('NaN'), '')
+		self.assertEqual(export_csv_cell('3'), '3')
+
 	def test_export_cell_uses_blank_marker_consistently(self):
 		from dataexploration.column_utils import export_cell
 		self.assertEqual(export_cell(None), '—')
@@ -475,6 +552,15 @@ class CsFilterClauseTests(SimpleTestCase):
 		self.assertEqual(params, [['Y']])
 
 
+class ClickHouseExecutorTests(SimpleTestCase):
+	def test_l_race_sql_routes_to_postgres(self):
+		from clickhouse_utils.executor import _sql_uses_pg_add_data_key
+		from dataexploration.view_modules.column_management import race_list_overlap_sql
+
+		sql = f"SELECT 1 FROM current_student cs WHERE {race_list_overlap_sql('cs')}"
+		self.assertTrue(_sql_uses_pg_add_data_key(sql))
+
+
 class ApplyColumnFilterTests(SimpleTestCase):
 	def test_grade_column_filter_applies_to_cs_grade(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
@@ -489,6 +575,21 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('cs.grade', where_clauses[0])
 		self.assertEqual(params, [['03']])
+
+	def test_race_list_filter_uses_l_race_json_overlap(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+
+		where_clauses = []
+		params = []
+		apply_column_filters(
+			where_clauses, params,
+			{'race_list': ['White', 'Asian']},
+			{}, {}, set(), {}, False,
+		)
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn('l_race', where_clauses[0])
+		self.assertIn('&&', where_clauses[0])
+		self.assertEqual(params, [['White', 'Asian']])
 
 	def test_mark_column_filter_uses_ssid_subquery(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
@@ -614,10 +715,13 @@ class SurveyDataResolutionTests(SimpleTestCase):
 		mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
 		mock_cursor.__exit__ = MagicMock(return_value=False)
 
-		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=mock_cursor):
-			with patch('django.core.cache.cache.get', return_value=None):
-				with patch('django.core.cache.cache.set'):
-					cols = get_mark_columns()
+		# Force the SQL path (the metadata fast path is exercised separately);
+		# this test verifies period ordering from cursor rows.
+		with patch('dataexploration.column_utils._build_mark_columns_from_metadata', return_value=None):
+			with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=mock_cursor):
+				with patch('django.core.cache.cache.get', return_value=None):
+					with patch('django.core.cache.cache.set'):
+						cols = get_mark_columns()
 
 		periods = list(cols['2026-2027']['English']['English 10'].keys())
 		self.assertEqual(periods, ['P1', 'P2', 'Q1', 'Live'])

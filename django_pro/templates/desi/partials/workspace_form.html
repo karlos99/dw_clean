@@ -1,5 +1,28 @@
-<div x-data="{ videoOpen: false, embedUrl: '', modalLabel: '', openEmbed(label, url) { this.videoOpen = true; this.embedUrl = url || ''; this.modalLabel = label || 'Resource'; } }"
-     @desi-open-resource.window="openEmbed($event.detail.label, $event.detail.url)">
+<div x-data="{
+        videoOpen: false,
+        embedUrl: '',
+        externalUrl: '',
+        previewOnly: false,
+        modalLabel: '',
+        get linkHost() {
+            try { return new URL(this.externalUrl).hostname.replace(/^www\./, ''); } catch (e) { return ''; }
+        },
+        openEmbed(label, embedUrl, externalUrl) {
+            this.modalLabel = label || 'Resource';
+            this.externalUrl = externalUrl || embedUrl || '';
+            if (!this.externalUrl) return;
+            this.previewOnly = !embedUrl;
+            this.embedUrl = embedUrl || '';
+            window.dispatchEvent(new CustomEvent('desi-hide-support-popover'));
+            this.videoOpen = true;
+        },
+        init() {
+            this.$watch('videoOpen', (open) => {
+                document.body.classList.toggle('desi-resource-modal-open', open);
+            });
+        }
+     }"
+     @desi-open-resource.window="openEmbed($event.detail.label, $event.detail.embed_url || '', $event.detail.url || '')">
 
     {{ support_info|json_script:"desi-support-info" }}
 
@@ -46,7 +69,7 @@
         <div class="bg-violet-50 border border-violet-200 rounded-xl px-4 py-3 flex items-start gap-3 text-xs text-violet-800">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 shrink-0 mt-0.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
             <div>
-                <p class="font-bold">This student has {{ seis_count }} designated support{{ seis_count|pluralize }} imported from SEIS.</p>
+                <p class="font-bold">This student has {{ seis_count }} setting{{ seis_count|pluralize }} imported from SEIS.</p>
                 <p class="text-[10px] text-violet-600 mt-0.5">SEIS supports are read-only and locked from the SEIS source. Their test columns cannot be edited here.</p>
             </div>
         </div>
@@ -177,18 +200,28 @@
                             {% endfor %}
                         </tr>
                     </thead>
+                    {% for group in category_groups %}
                     <tbody>
-                        {% for group in category_groups %}
-                        <tr class="category-header-row">
+                        <tr class="category-header-row cursor-pointer select-none"
+                            data-category-toggle
+                            data-category-target="{{ forloop.counter0 }}"
+                            aria-expanded="true"
+                            title="Collapse or expand this section">
                             <td colspan="{{ matrix_columns|length|add:1 }}" class="bg-slate-200/90 border-y border-slate-300 px-4 py-2.5">
                                 <div class="flex items-center gap-2.5">
+                                    <svg class="desi-category-chevron w-3.5 h-3.5 text-slate-500 shrink-0 transform transition-transform duration-200" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd"/></svg>
                                     <span class="w-1.5 h-4 bg-blue-600 rounded-full inline-block shrink-0"></span>
                                     <span class="text-xs md:text-sm font-extrabold uppercase tracking-wider text-slate-800">
                                         {{ group.category.name|default:"Uncategorized" }}
                                     </span>
+                                    <span class="ml-auto text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                        {{ group.rows|length }} support{{ group.rows|length|pluralize }}
+                                    </span>
                                 </div>
                             </td>
                         </tr>
+                    </tbody>
+                    <tbody class="desi-category-group" data-category-group="{{ forloop.counter0 }}">
                         {% for row in group.rows %}
                         <tr class="support-row"
                             data-accommodation-id="{{ row.accommodation.id }}"
@@ -201,9 +234,6 @@
                                     <div class="min-w-0">
                                         <div class="font-semibold text-sm text-slate-900">{{ row.accommodation.name }}</div>
                                         <div class="flex flex-wrap items-center gap-1.5 mt-0.5">
-                                            {% if row.accommodation.code %}
-                                            <span class="font-mono text-[10px] text-slate-400 uppercase">{{ row.accommodation.code }}</span>
-                                            {% endif %}
                                             {% if row.accommodation.category %}
                                             <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-100">
                                                 {{ row.accommodation.category }}
@@ -232,7 +262,7 @@
                                             {% if cell.readonly %}disabled{% endif %}>
                                         <option value="">-- Not selected --</option>
                                         {% for opt in cell.options %}
-                                        <option value="{{ opt.id }}" {% if cell.selected_option and opt.id == cell.selected_option.id %}selected{% endif %}>{{ opt.name }}{% if opt.code %} ({{ opt.code }}){% endif %}</option>
+                                        <option value="{{ opt.id }}" {% if cell.selected_option and opt.id == cell.selected_option.id %}selected{% endif %}>{{ opt.name }}</option>
                                         {% endfor %}
                                     </select>
                                     {% else %}
@@ -257,8 +287,8 @@
                             {% endfor %}
                         </tr>
                         {% endfor %}
-                        {% endfor %}
                     </tbody>
+                    {% endfor %}
                 </table>
             </div>
         </div>
@@ -284,28 +314,45 @@
         {% endif %}
     </form>
 
-    <!-- ALPINE MODAL FOR YOUTUBE VIDEOS -->
-    <div x-show="videoOpen" x-cloak class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="videoOpen = false">
-        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"></div>
+    <!-- Resource preview modal (embedded video/PDF or small external-page preview) -->
+    <div x-show="videoOpen" x-cloak class="fixed inset-0 z-[100] overflow-y-auto" @keydown.escape.window="videoOpen = false">
+        <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" @click="videoOpen = false"></div>
 
-        <div class="flex min-h-full items-center justify-center p-4 text-center">
-            <div class="relative transform overflow-hidden rounded-lg bg-white p-6 text-left shadow-2xl transition-all w-full max-w-2xl border border-slate-200"
-                 @click.away="videoOpen = false" x-transition>
+        <div class="flex min-h-full items-center justify-center p-4 text-center pointer-events-none relative z-[101]">
+            <div class="relative transform overflow-hidden rounded-lg bg-white p-6 text-left shadow-2xl transition-all w-full border border-slate-200 pointer-events-auto"
+                 :class="previewOnly ? 'max-w-lg' : 'max-w-2xl'"
+                 @click.stop x-transition>
                  <div class="flex justify-between items-center mb-4">
                      <h3 class="text-base font-bold text-slate-900" x-text="modalLabel || 'Support Resource'">Support Resource</h3>
                      <button @click="videoOpen = false" class="text-slate-400 hover:text-slate-600 text-2xl font-bold focus:outline-none">&times;</button>
                  </div>
-                 <div class="relative aspect-video w-full bg-slate-100 rounded overflow-hidden">
-                     <template x-if="videoOpen">
+                 <p x-show="previewOnly" x-cloak class="text-[11px] text-slate-500 mb-2 leading-snug">
+                     This site opens in your browser — use <span class="font-semibold">Open in New Tab</span> below (in-app preview is not available for external pages).
+                 </p>
+                 <div class="relative w-full rounded overflow-hidden border border-slate-200"
+                      :class="previewOnly ? 'h-40 sm:h-44 bg-gradient-to-br from-slate-50 to-slate-100' : 'aspect-video bg-slate-100'">
+                     <template x-if="videoOpen && !previewOnly && embedUrl">
                          <iframe :src="embedUrl" class="absolute inset-0 w-full h-full" frameborder="0"
+                                 :title="modalLabel"
                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                                  referrerpolicy="strict-origin-when-cross-origin"
                                  allowfullscreen></iframe>
                      </template>
+                     <template x-if="videoOpen && previewOnly">
+                         <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+                             <span class="text-3xl leading-none" aria-hidden="true">🔗</span>
+                             <p class="text-xs font-bold text-slate-700 uppercase tracking-wide" x-text="linkHost || 'External link'"></p>
+                             <p class="text-[10px] text-slate-500 line-clamp-2 break-all max-w-full" x-text="externalUrl"></p>
+                         </div>
+                     </template>
                  </div>
-                 <div class="mt-4 flex justify-end">
+                 <div class="mt-4 flex justify-end gap-2 flex-wrap">
+                     <a x-show="externalUrl" :href="externalUrl" target="_blank" rel="noopener noreferrer"
+                        class="px-4 py-2 border border-blue-200 rounded text-xs font-semibold uppercase text-blue-700 bg-blue-50 hover:bg-blue-100 transition">
+                         Open in New Tab
+                     </a>
                      <button @click="videoOpen = false" class="px-4 py-2 border border-slate-300 rounded text-xs font-semibold uppercase text-slate-700 hover:bg-slate-50 transition">
-                         Close Player
+                         Close
                      </button>
                  </div>
             </div>
@@ -313,7 +360,7 @@
     </div>
 
     <!-- SUPPORT INFO POPOVER (positioned by script) -->
-    <div id="desi-support-popover" class="hidden fixed z-50 w-80 max-w-[90vw] rounded-xl border border-slate-200 bg-white shadow-2xl p-4 text-left">
+    <div id="desi-support-popover" class="hidden fixed z-[90] w-80 max-w-[90vw] rounded-xl border border-slate-200 bg-white shadow-2xl p-4 text-left">
         <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
                 <h3 id="desi-popover-name" class="text-sm font-bold text-slate-900"></h3>

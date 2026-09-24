@@ -1,11 +1,14 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.db import connection
 from django.urls import reverse
 from django.core import signing
 import csv
 import io
+from unittest import mock
 
-from studata.models import CurrentStudent
+from studata.models import CurrentStudent, School as StudataSchool
 from users.models import Role
 from desi.models import (
     Accommodation,
@@ -32,6 +35,29 @@ from desi.views import (
 from desi import importers
 
 User = get_user_model()
+
+
+def ensure_desi_seis_table():
+    """Create the externally-managed ``desi_seis`` table for tests.
+
+    ``DesiSeis`` is ``managed = False`` (the table is populated outside
+    Django), so the test database does not create it. Tests that need SEIS
+    rows create it here; the surrounding ``TestCase`` transaction rolls it
+    back afterwards.
+    """
+    json_type = "jsonb" if connection.vendor == "postgresql" else "text"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS desi_seis (
+                id varchar(64) PRIMARY KEY,
+                ssid varchar(32) NOT NULL,
+                test_group varchar(32) NOT NULL,
+                settings {json_type} NOT NULL,
+                assessments {json_type} NOT NULL
+            )
+            """
+        )
 
 
 class DesiModelsAndEligibilityTests(TestCase):
@@ -290,6 +316,71 @@ class DesiWorkflowAndViewsTests(TestCase):
             set(cells[0]['test_ids']),
             {self.assessment_math.id, self.assessment_ela.id},
         )
+
+    def test_admin_dashboard_saves_hidden_from_student_list(self):
+        self.client.force_login(self.admin_user)
+        response = self.client.post(reverse('desi:admin_dashboard'), {
+            'action': 'save_student_list_hidden_supports',
+            'hidden_from_student_list': [str(self.acc.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        self.acc.refresh_from_db()
+        self.assertTrue(self.acc.hide_from_student_list)
+
+        response = self.client.post(reverse('desi:admin_dashboard'), {
+            'action': 'save_student_list_hidden_supports',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.acc.refresh_from_db()
+        self.assertFalse(self.acc.hide_from_student_list)
+
+    def test_hidden_from_student_list_omits_workspace_but_not_export(self):
+        self.client.force_login(self.admin_user)
+        self.acc.hide_from_student_list = True
+        self.acc.save(update_fields=['hide_from_student_list'])
+
+        url = reverse('desi:assign_accommodations', args=[self.student.stu_annual_key])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        rows = [row for group in response.context['category_groups'] for row in group['rows']]
+        self.assertEqual(rows, [])
+
+        export_url = reverse('desi:export_data')
+        support_col_key = f'support__{self.acc.id}'
+        response = self.client.post(export_url, {
+            'school_year': '2025-2026',
+            'assessment_ids': [str(self.assessment_math.id)],
+            'include__student_name': 'on',
+            'header__student_name': 'Student',
+            'order__student_name': '1',
+            f'include__{support_col_key}': 'on',
+            f'header__{support_col_key}': 'TTS Support',
+            f'order__{support_col_key}': '2',
+            'header__assessment_name': 'Assessment Name',
+            'order__assessment_name': '99',
+            'header__student_id': 'Local Student ID',
+            'order__student_id': '99',
+            'header__ssid': 'SSID',
+            'order__ssid': '99',
+            'header__stu_annual_key': 'Student Annual Key',
+            'order__stu_annual_key': '99',
+            'header__grade': 'Grade',
+            'order__grade': '99',
+            'header__school_name': 'School',
+            'order__school_name': '99',
+            'header__school_year': 'School Year',
+            'order__school_year': '99',
+            'header__assessment_subject': 'Assessment Subject',
+            'order__assessment_subject': '99',
+            'header__assessment_school_year': 'Assessment School Year',
+            'order__assessment_school_year': '99',
+            'header__assessment_completed': 'Assessment Completed',
+            'order__assessment_completed': '99',
+        })
+        self.assertEqual(response.status_code, 200)
+        reader = csv.reader(io.StringIO(response.content.decode('utf-8')))
+        rows = list(reader)
+        self.assertEqual(rows[0], ['Student', 'TTS Support'])
 
     def test_create_accommodation_fails_when_no_assessments_exist(self):
         self.client.force_login(self.admin_user)
@@ -1067,6 +1158,68 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         )
         self.assertNotIn(accommodation.id, hidden_support_ids(grade4))
 
+    def test_support_rule_hides_support_in_workspace_matrix(self):
+        project = User.objects.create_user(username="rule_view@test.com", email="rule_view@test.com", password="password123")
+        project.roles.add(self.project_role)
+        self.client.force_login(project)
+
+        accommodation = Accommodation.objects.create(name="Calculator Matrix", code="CALCM")
+        option = AccommodationOption.objects.create(accommodation=accommodation, name="Standard", code="STD")
+        assessment = Assessment.objects.create(name="Matrix Math", subject="Math", is_active=True)
+        assessment.supported_options.add(option)
+
+        rule = SupportRule.objects.create(name="Grade 04-05 only", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="in", value="04,05")
+
+        response = self.client.get(reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]))
+        self.assertEqual(response.status_code, 200)
+        rows = [
+            row for group in response.context["category_groups"]
+            for row in group["rows"]
+        ]
+        self.assertEqual(rows, [])
+
+        grade5 = CurrentStudent.objects.create(
+            stu_annual_key="grade5_matrix",
+            ssid="g5ssid",
+            student_id="g5",
+            student_name="Grade Five",
+            grade="05",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        response = self.client.get(reverse("desi:assign_accommodations", args=[grade5.stu_annual_key]))
+        rows = [
+            row for group in response.context["category_groups"]
+            for row in group["rows"]
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["accommodation"].id, accommodation.id)
+
+    def test_support_rule_grade_normalizes_unpadded_values(self):
+        accommodation = Accommodation.objects.create(name="GradeNorm", code="GN")
+        rule = SupportRule.objects.create(name="Grade 4 list", is_active=True)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="in", value="04,05")
+
+        stu = CurrentStudent.objects.create(
+            stu_annual_key="gn_key",
+            ssid="gn_ssid",
+            student_id="gn",
+            student_name="Grade Norm",
+            grade="4",
+            school_year="2025-2026",
+        )
+        self.assertNotIn(accommodation.id, hidden_support_ids(stu))
+
+    def test_inactive_support_rule_does_not_hide(self):
+        accommodation = Accommodation.objects.create(name="InactiveRuleSupport", code="IRS")
+        rule = SupportRule.objects.create(name="Inactive", is_active=False)
+        rule.supports.add(accommodation)
+        SupportRuleCriteria.objects.create(rule=rule, field_name="grade", operator="is", value="99")
+        self.assertNotIn(accommodation.id, hidden_support_ids(self.student))
+
     def test_support_rule_form_creates_rule(self):
         project = User.objects.create_user(username="p@test.com", email="p@test.com", password="password123")
         project.roles.add(self.project_role)
@@ -1375,6 +1528,17 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         )
         self.assertIn("youtube.com/embed/abc123", resource.get_embed_url())
 
+    def test_page_resource_opens_externally_not_in_iframe(self):
+        accommodation = Accommodation.objects.create(name="Directions", code="DIR")
+        resource = AccommodationResource.objects.create(
+            accommodation=accommodation,
+            label="Translated directions",
+            url="https://www.caaspp-elpac.org/resources/preparation/accessibility-resources/translated-test-directions#sb-ela",
+            kind="page",
+        )
+        self.assertIsNone(resource.get_embed_url())
+        self.assertTrue(resource.opens_in_new_tab())
+
     def test_school_report_counts(self):
         from desi.report_utils import build_school_report
 
@@ -1543,7 +1707,7 @@ class DesiMappingPreservationTests(TestCase):
         self.assertTrue(self.inactive.supported_options.filter(id=self.opt.id).exists())
         self.assertTrue(self.extra.supported_options.filter(id=self.opt.id).exists())
 
-    def test_option_used_only_by_inactive_assessment_is_never_dropped(self):
+    def test_option_removed_by_admin_is_deleted_even_if_inactive_only(self):
         self.client.force_login(self.user)
 
         # An option that only serves the inactive assessment.
@@ -1552,7 +1716,8 @@ class DesiMappingPreservationTests(TestCase):
         )
         self.inactive.supported_options.add(inactive_only)
 
-        # Edit posts ONLY the Standard option row (not Inactive Only).
+        # Edit posts ONLY the Standard option row (not Inactive Only), which
+        # means the admin removed it and it must be deleted.
         response = self.client.post(reverse("desi:edit_accommodation", args=[self.acc.id]), {
             "name": self.acc.name,
             "code": self.acc.code,
@@ -1566,9 +1731,55 @@ class DesiMappingPreservationTests(TestCase):
         })
         self.assertEqual(response.status_code, 302)
 
-        inactive_only.refresh_from_db()
-        self.assertTrue(self.inactive.supported_options.filter(id=inactive_only.id).exists())
+        self.assertFalse(
+            AccommodationOption.objects.filter(id=inactive_only.id).exists()
+        )
         self.assertTrue(self.active.supported_options.filter(id=self.opt.id).exists())
+
+    def test_project_admin_can_edit_option_text_and_code(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(reverse("desi:edit_accommodation", args=[self.acc.id]), {
+            "name": self.acc.name,
+            "code": self.acc.code,
+            "category": self.acc.category,
+            "description": "",
+            "order": "0",
+            "option_id[]": [str(self.opt.id)],
+            "option_name[]": ["Read Aloud"],
+            "option_code[]": ["RA"],
+            "supported_assessments": [str(self.active.id), str(self.inactive.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        self.opt.refresh_from_db()
+        self.assertEqual(self.opt.name, "Read Aloud")
+        self.assertEqual(self.opt.code, "RA")
+
+    def test_project_admin_can_delete_an_option(self):
+        self.client.force_login(self.user)
+
+        removable = AccommodationOption.objects.create(
+            accommodation=self.acc, name="Removable", code="REM"
+        )
+        self.active.supported_options.add(removable)
+        self.inactive.supported_options.add(removable)
+
+        # Post ONLY the Standard option (Removable omitted = deleted).
+        response = self.client.post(reverse("desi:edit_accommodation", args=[self.acc.id]), {
+            "name": self.acc.name,
+            "code": self.acc.code,
+            "category": self.acc.category,
+            "description": "",
+            "order": "0",
+            "option_id[]": [str(self.opt.id)],
+            "option_name[]": ["Standard"],
+            "option_code[]": ["STD"],
+            "supported_assessments": [str(self.active.id), str(self.inactive.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            AccommodationOption.objects.filter(id=removable.id).exists()
+        )
 
 
 class DesiSeisDisplaySettingsTests(TestCase):
@@ -1647,6 +1858,8 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
 
     def setUp(self):
         from unittest import mock
+        cache.delete('landing:project_config')
+        ensure_desi_seis_table()
         self._patchers = []
         self._fake_map = {}
 
@@ -1701,15 +1914,22 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
             except Exception:
                 pass
 
-    def test_selected_assessments_show_seis_locks_and_readonly(self):
-        # Simulate the student's SEIS row referencing both math and ELA.
+    def _create_seis_row(self, row_id, assessments, settings=None):
+        return DesiSeis.objects.create(
+            id=row_id,
+            ssid=self.student.ssid,
+            test_group="caaspp",
+            settings=settings or {"TTS": "TTS"},
+            assessments=assessments,
+        )
+
+    def test_seis_assigned_tests_show_locks_and_readonly(self):
+        # The SEIS source assigns both math (active) and ELA (inactive).
         self._fake_map = {
             (self.ast_math.id, self.acc.id): self.opt,
             (self.ast_ela.id, self.acc.id): self.opt,
         }
-        DesiSeisDisplaySettings.objects.create(pk=1)
-        settings = DesiSeisDisplaySettings.objects.get(pk=1)
-        settings.assessments.set([self.ast_math.id, self.ast_ela.id])
+        self._create_seis_row("seis-row-1", ["Smarter math", "Smarter ELA"])
 
         response = self.client.get(
             reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
@@ -1718,23 +1938,20 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
 
-        # Both math (active) and ELA (inactive) are SEIS-managed: they render
-        # as read-only matrix columns listing only their SEIS supports.
+        # Both are read-only SEIS columns listing only their SEIS supports.
         self.assertIn("SEIS \u00b7 read only", html)
         self.assertIn("Smarter math", html)
         self.assertIn("Smarter ELA", html)
         self.assertIn("Locked from SEIS", html)
 
-    def test_unselected_assessment_hides_its_seis(self):
+    def test_test_not_assigned_in_seis_is_hidden(self):
         self._fake_map = {
             (self.ast_math.id, self.acc.id): self.opt,
             (self.ast_ela.id, self.acc.id): self.opt,
         }
-        # Admin only selected math -> ELA's SEIS is hidden even though the
-        # simulated SEIS source references it.
-        DesiSeisDisplaySettings.objects.create(pk=1)
-        settings = DesiSeisDisplaySettings.objects.get(pk=1)
-        settings.assessments.set([self.ast_math.id])
+        # SEIS only assigns math -> ELA (inactive) must not appear, even though
+        # the option map still carries an entry for it.
+        self._create_seis_row("seis-row-2", ["Smarter math"])
 
         response = self.client.get(
             reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
@@ -1743,13 +1960,102 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.content.decode()
 
-        # Math is SEIS-managed (read-only); ELA is not selected, so it does not
-        # appear as a SEIS column.
         self.assertIn("SEIS \u00b7 read only", html)
         self.assertIn("Smarter math", html)
-        self.assertIn("Locked from SEIS", html)
-        # Smarter ELA must not appear at all (not selected => not SEIS).
         self.assertNotIn("Smarter ELA", html)
+
+    def test_no_test_assignment_keeps_normal_editable_tests(self):
+        # "No_Test" carries no per-test SEIS settings: the normal editable list
+        # is shown instead of a read-only SEIS column.
+        self._create_seis_row("seis-row-3", ["No_Test"])
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+
+        columns = response.context["matrix_columns"]
+        names = [c["assessment"].name for c in columns]
+        math_col = next(c for c in columns if c["assessment"].name == "Smarter math")
+        self.assertFalse(math_col["is_seis"])
+        self.assertNotIn("Smarter ELA", names)
+
+    def test_readonly_seis_workspace_preserves_existing_supports(self):
+        # A fully SEIS-managed workspace renders no support controls, so a save
+        # must not wipe the student's existing DESI selections.
+        self._fake_map = {
+            (self.ast_math.id, self.acc.id): self.opt,
+        }
+        self._create_seis_row("seis-row-5", ["Smarter math"])
+
+        extra = Accommodation.objects.create(name="Extra Support", code="EX")
+        extra_opt = AccommodationOption.objects.create(
+            accommodation=extra, name="Extra Option", code="EXO"
+        )
+        record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=self.student.stu_annual_key
+        )
+        record.options.add(extra_opt)
+        record.selected_accommodations.add(extra)
+
+        response = self.client.post(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            {"action": "save_accommodations"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        record.refresh_from_db()
+        self.assertIn(extra_opt, record.options.all())
+        self.assertIn(extra, record.selected_accommodations.all())
+
+    def test_student_list_shows_only_seis_assigned_tests(self):
+        # A plain active test would normally be listed in the sidebar.
+        Assessment.objects.create(name="Plain Active", is_active=True)
+        self._create_seis_row("seis-row-6", ["Smarter math"])
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+
+        row = next(
+            s for s in response.context["page_obj"]
+            if s.stu_annual_key == self.student.stu_annual_key
+        )
+        names = [st["assessment"].name for st in row.assessment_statuses]
+        self.assertEqual(names, ["Smarter math"])
+        self.assertTrue(row.assessment_statuses[0]["is_seis"])
+        self.assertNotIn("Plain Active", names)
+        self.assertNotIn("Smarter ELA", names)
+
+        # The sidebar shows a SEIS marker rather than a Completed/Pending status.
+        content = response.content.decode()
+        self.assertIn(">SEIS</span>", content)
+
+    def test_seis_columns_follow_configured_assessment_order(self):
+        # SEIS assigns an inactive test (ordered first) and an active one
+        # (ordered last); they must render in the configured column order.
+        self.ast_ela.order = 10
+        self.ast_ela.save(update_fields=["order"])
+        self.ast_math.order = 30
+        self.ast_math.save(update_fields=["order"])
+
+        self._fake_map = {
+            (self.ast_math.id, self.acc.id): self.opt,
+            (self.ast_ela.id, self.acc.id): self.opt,
+        }
+        self._create_seis_row("seis-row-4", ["Smarter math", "Smarter ELA"])
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+
+        columns = response.context["matrix_columns"]
+        names = [c["assessment"].name for c in columns]
+        self.assertEqual(names, ["Smarter ELA", "Smarter math"])
+        self.assertTrue(columns[0]["is_seis"])
+        self.assertTrue(columns[1]["is_seis"])
 
 
 class DesiSectionCategoryTests(TestCase):
@@ -1789,6 +2095,30 @@ class DesiSectionCategoryTests(TestCase):
         self.assertEqual(acc.category, "Presentation")
         self.assertIsNotNone(acc.section_category_id)
         self.assertEqual(acc.section_category.name, "Accessibility")
+
+    def test_workspace_matrix_groups_are_collapsible(self):
+        cat = AccommodationCategory.objects.create(name="Presentation", order=1)
+        acc = Accommodation.objects.create(name="Read Aloud", section_category=cat, order=1)
+        opt = AccommodationOption.objects.create(accommodation=acc, name="Standard", code="STD")
+        self.assessment.supported_options.add(opt)
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Each organization section has a collapsible rows <tbody> and a
+        # separate, always-visible header so it can be expanded again.
+        self.assertIn("desi-category-group", content)
+        self.assertIn("data-category-toggle", content)
+        self.assertIn("data-category-target=", content)
+        self.assertIn("Presentation", content)
+        # The toggle header must NOT live inside the collapsible tbody (that
+        # would hide the control when a section collapses).
+        self.assertNotRegex(
+            content,
+            r'<tbody class="desi-category-group"[^>]*>\s*<tr[^>]*data-category-toggle',
+        )
 
     def test_section_picker_reuses_existing_section(self):
         existing = AccommodationCategory.objects.create(name="Timing", order=1)
@@ -1929,3 +2259,176 @@ class DesiSectionCategoryTests(TestCase):
         self.assertRedirects(response, reverse("landing:index"))
         self.assertTrue(AccommodationCategory.objects.filter(id=cat.id).exists())
 
+
+
+class DesiStudentListSchoolFilterTests(TestCase):
+    """The DESI student-list school filter must stay switchable after a selection."""
+
+    def setUp(self):
+        # The project config is cached in shared Redis; isolate this test from
+        # a stale production value so the school year resolves from the test DB.
+        cache.delete('landing:project_config')
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="school-filter@test.com",
+            email="school-filter@test.com",
+            password="password123",
+        )
+        self.user.roles.add(role)
+        self.client.force_login(self.user)
+
+        self.school_a = StudataSchool.objects.create(
+            dw_schoolkey=1, state_id="SCH-A", short_name="Alpha", school_name="Alpha High"
+        )
+        self.school_b = StudataSchool.objects.create(
+            dw_schoolkey=2, state_id="SCH-B", short_name="Beta", school_name="Beta High"
+        )
+        CurrentStudent.objects.create(
+            stu_annual_key="sf-a", ssid="sf-a", student_id="sf-a",
+            student_name="Alpha Student", grade="03",
+            school_state_id="SCH-A", school_year="2025-2026",
+        )
+        CurrentStudent.objects.create(
+            stu_annual_key="sf-b", ssid="sf-b", student_id="sf-b",
+            student_name="Beta Student", grade="03",
+            school_state_id="SCH-B", school_year="2025-2026",
+        )
+
+    def _get(self, school=None):
+        url = reverse("desi:assign_accommodations", args=["sf-a"])
+        params = {"school": school} if school else None
+        return self.client.get(url, params)
+
+    def test_selecting_a_school_keeps_the_dropdown_switchable(self):
+        # Without a school filter the dropdown is rendered.
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["school_locked"])
+        self.assertIsNone(response.context["global_active_school"])
+        self.assertIn('id="school"', response.content.decode())
+
+        # Applying a school filter keeps the dropdown (not a locked input) so
+        # the user can switch to another school.
+        response = self._get("SCH-A")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["school_locked"])
+        self.assertEqual(response.context["school_filter"], "SCH-A")
+        content = response.content.decode()
+        self.assertIn('id="school"', content)
+        self.assertIn('value="SCH-A" selected', content)
+        self.assertIn('id="student-list-item-sf-a"', content)
+        self.assertNotIn('id="student-list-item-sf-b"', content)
+
+    def test_switching_from_one_school_to_another_works(self):
+        first = self._get("SCH-A")
+        self.assertIn('value="SCH-A" selected', first.content.decode())
+
+        second = self._get("SCH-B")
+        content = second.content.decode()
+        self.assertIn('id="school"', content)
+        self.assertIn('value="SCH-B" selected', content)
+        self.assertIn('id="student-list-item-sf-b"', content)
+        self.assertNotIn('id="student-list-item-sf-a"', content)
+
+    def test_global_active_school_locks_the_filter(self):
+        session = self.client.session
+        session["active_school_id"] = "SCH-A"
+        session.save()
+
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["school_locked"])
+        content = response.content.decode()
+        # Locked: a disabled input replaces the dropdown.
+        self.assertNotIn('id="school"', content)
+        self.assertIn('value="SCH-A"', content)
+
+
+class DesiStudentListPeriodFilterTests(TestCase):
+    """Period filter for non-elementary schools, sourced from the schedule table."""
+
+    def setUp(self):
+        # Isolate from a stale shared project-config cache.
+        cache.delete('landing:project_config')
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="period-filter@test.com",
+            email="period-filter@test.com",
+            password="password123",
+        )
+        self.user.roles.add(role)
+        self.client.force_login(self.user)
+
+        self.high = StudataSchool.objects.create(
+            dw_schoolkey=11, state_id="HS-1", short_name="High", school_name="High School",
+            school_group="High School",
+        )
+        self.elementary = StudataSchool.objects.create(
+            dw_schoolkey=12, state_id="EL-1", short_name="Elem", school_name="Elementary School",
+            school_group="Elementary School",
+        )
+        self.students = {
+            "HS-1": CurrentStudent.objects.create(
+                stu_annual_key="period-hs", ssid="period-hs", student_id="period-hs",
+                student_name="High Student", grade="09",
+                school_state_id="HS-1", school_year="2025-2026",
+            ),
+            "EL-1": CurrentStudent.objects.create(
+                stu_annual_key="period-el", ssid="period-el", student_id="period-el",
+                student_name="Elem Student", grade="03",
+                school_state_id="EL-1", school_year="2025-2026",
+            ),
+        }
+
+    def _get(self, school, teacher="Smith", period=None):
+        student = self.students[school]
+        url = reverse("desi:assign_accommodations", args=[student.stu_annual_key])
+        params = {"school": school, "teacher": teacher}
+        if period is not None:
+            params["period"] = period
+        return self.client.get(url, params)
+
+    def test_period_sort_and_elementary_helpers(self):
+        from desi.views import _is_elementary_school, _period_sort_key
+        self.assertTrue(_is_elementary_school(self.elementary))
+        self.assertFalse(_is_elementary_school(self.high))
+        self.assertFalse(_is_elementary_school(None))
+        self.assertEqual(
+            sorted(["10", "2", "1", "A"], key=_period_sort_key),
+            ["1", "2", "10", "A"],
+        )
+
+    @mock.patch("desi.views._schedule_periods", return_value=["1", "2", "10"])
+    def test_period_filter_shows_for_non_elementary_with_teacher(self, mock_periods):
+        response = self._get("HS-1")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["show_period_filter"])
+        self.assertEqual(response.context["periods"], ["1", "2", "10"])
+        content = response.content.decode()
+        self.assertIn('id="period"', content)
+        self.assertIn("Period 10", content)
+
+    @mock.patch("desi.views._schedule_periods", return_value=["1"])
+    def test_period_filter_hidden_for_elementary(self, mock_periods):
+        response = self._get("EL-1")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["show_period_filter"])
+        self.assertNotIn('id="period"', response.content.decode())
+        mock_periods.assert_not_called()
+
+    def test_period_filter_hidden_without_teacher(self):
+        response = self._get("HS-1", teacher="")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["show_period_filter"])
+
+    @mock.patch("desi.views._schedule_student_keys", return_value=[])
+    @mock.patch("desi.views._schedule_periods", return_value=["1", "2"])
+    def test_period_filter_narrows_using_schedule(self, mock_periods, mock_keys):
+        response = self._get("HS-1", period="2")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["period_filter"], "2")
+        mock_keys.assert_called_once()
+        args = mock_keys.call_args.args
+        self.assertEqual(args[1], "HS-1")
+        self.assertEqual(args[2], "2")
+        self.assertEqual(args[3], "Smith")

@@ -309,6 +309,39 @@ if not DEBUG:
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Structured analytics timing logs. AnalyticsTimingMiddleware and the
+# ClickHouse executor/query layer emit INFO records; without this
+# configuration the root logger's default WARNING level drops them and there
+# is no visibility into hot-path latency. Level is tunable via env so
+# production can dial it back without a deploy.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'analytics': {
+            'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'analytics',
+        },
+    },
+    'loggers': {
+        'analytics.timing': {
+            'handlers': ['console'],
+            'level': os.getenv('ANALYTICS_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'clickhouse_utils': {
+            'handlers': ['console'],
+            'level': os.getenv('ANALYTICS_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+    },
+}
+
 # Allow larger POST bodies for chart rendering (rows payload)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50 MB
 

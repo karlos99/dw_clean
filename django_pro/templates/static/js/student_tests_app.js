@@ -210,6 +210,200 @@ document.addEventListener('DOMContentLoaded', () => {
         yearAliasMap = {};
     }
 
+    const scheduleFiltersEligible = appDataEl.dataset.scheduleFiltersEligible === '1';
+    let scheduleFilterBarOpen = false;
+    const scheduleFilterShowStaff = appDataEl.dataset.scheduleFilterShowStaff === '1';
+    let scheduleFilterUiMode = appDataEl.dataset.scheduleFilterMode || 'district_full';
+    const scheduleFilterOptionsUrl = appDataEl.dataset.scheduleFilterOptionsUrl || '';
+    const projectDefaultSchoolYear = appDataEl.dataset.projectDefaultSchoolYear || '';
+    const scheduleDistrictRequiresSchool = appDataEl.dataset.scheduleDistrictRequiresSchool === '1';
+
+    const SCHEDULE_MS_KEYS = ['schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff'];
+    const SCHEDULE_MS_PLACEHOLDERS = {
+        schedule_period: 'All periods',
+        schedule_subject: 'All subjects',
+        schedule_course_name: 'All courses',
+        schedule_staff: 'All staff',
+    };
+
+    const getScheduleFilterRoot = (key) => document.querySelector(`[data-schedule-filter="${key}"]`);
+
+    const getScheduleSelectValues = (key) => {
+        const root = getScheduleFilterRoot(key);
+        if (!root) return [];
+        return [...root.querySelectorAll('[data-schedule-ms-value]:checked')].map((cb) => cb.value);
+    };
+
+    const syncScheduleMsLabel = (key) => {
+        const root = getScheduleFilterRoot(key);
+        if (!root) return;
+        const labelEl = root.querySelector('[data-schedule-ms-label]');
+        const placeholder = SCHEDULE_MS_PLACEHOLDERS[key] || 'All';
+        const checked = root.querySelectorAll('[data-schedule-ms-value]:checked');
+        if (!labelEl) return;
+        if (!checked.length) {
+            labelEl.textContent = placeholder;
+            labelEl.classList.add('text-slate-400');
+            labelEl.classList.remove('text-slate-700');
+            return;
+        }
+        const text = [...checked].map((cb) => {
+            const lab = cb.closest('label')?.querySelector('span')?.textContent;
+            return lab || cb.value;
+        }).join(', ');
+        labelEl.textContent = text.length > 48 ? `${checked.length} selected` : text;
+        labelEl.classList.remove('text-slate-400');
+        labelEl.classList.add('text-slate-700');
+    };
+
+    const setScheduleSelectValues = (key, values) => {
+        const root = getScheduleFilterRoot(key);
+        if (!root) return;
+        const list = Array.isArray(values)
+            ? values
+            : (values ? String(values).split(',') : []);
+        const selected = new Set(list.map((v) => String(v).trim()).filter(Boolean));
+        root.querySelectorAll('[data-schedule-ms-value]').forEach((cb) => {
+            cb.checked = selected.has(cb.value);
+        });
+        syncScheduleMsLabel(key);
+    };
+
+    const clearScheduleSelect = (key) => setScheduleSelectValues(key, []);
+
+    const fillScheduleMultiSelect = (key, items, selectedValue, { valueKey = null, labelKey = null } = {}) => {
+        const root = getScheduleFilterRoot(key);
+        const panel = root?.querySelector('[data-schedule-ms-panel]');
+        if (!panel) return;
+        const prev = (selectedValue !== undefined && selectedValue !== null && selectedValue !== '')
+            ? (Array.isArray(selectedValue) ? selectedValue : String(selectedValue).split(','))
+            : getScheduleSelectValues(key);
+        const selected = new Set(prev.map((v) => String(v).trim()).filter(Boolean));
+        panel.innerHTML = (items || []).map((item) => {
+            const val = (item && typeof item === 'object')
+                ? String(item[valueKey || 'id'] || '')
+                : String(item);
+            const label = (item && typeof item === 'object')
+                ? String(item[labelKey || 'name'] || val)
+                : String(item);
+            const checked = selected.has(val) ? ' checked' : '';
+            return `<label class="flex items-center gap-2 px-1 py-1 hover:bg-slate-50 rounded cursor-pointer text-sm text-slate-700">
+                <input type="checkbox" data-schedule-ms-value class="rounded border-slate-300 text-blue-600 focus:ring-blue-500" value="${escapeHtml(val)}"${checked}>
+                <span class="truncate">${escapeHtml(label)}</span>
+            </label>`;
+        }).join('');
+        syncScheduleMsLabel(key);
+    };
+
+    let scheduleMsDropdownInit = false;
+    const initScheduleMultiSelectDropdowns = () => {
+        if (scheduleMsDropdownInit) return;
+        const bar = document.getElementById('schedule-filters-bar');
+        if (!bar) return;
+        scheduleMsDropdownInit = true;
+        bar.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-schedule-ms-btn]');
+            if (!btn) return;
+            e.stopPropagation();
+            const panel = btn.closest('[data-schedule-filter]')?.querySelector('[data-schedule-ms-panel]');
+            if (!panel) return;
+            bar.querySelectorAll('[data-schedule-ms-panel]').forEach((p) => {
+                if (p !== panel) p.classList.add('hidden');
+            });
+            panel.classList.toggle('hidden');
+        });
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('#schedule-filters-bar')) return;
+            bar.querySelectorAll('[data-schedule-ms-panel]').forEach((p) => p.classList.add('hidden'));
+        });
+    };
+
+    const scheduleFilterShowsPeriod = () => (
+        scheduleFilterUiMode === 'district_full'
+        || scheduleFilterUiMode === 'teacher_schedule'
+        || scheduleFilterUiMode === 'school_marks'
+    );
+    const scheduleFilterShowsSubject = () => (
+        scheduleFilterUiMode === 'district_full'
+        || scheduleFilterUiMode === 'school_marks'
+        || scheduleFilterUiMode === 'school_elementary'
+    );
+    const scheduleFilterShowsStaff = () => (
+        scheduleFilterShowStaff
+        && scheduleFilterUiMode !== 'teacher_schedule'
+        && scheduleFilterUiMode !== 'teacher_course'
+    );
+    const scheduleMarksCascade = () => (
+        scheduleFilterUiMode === 'district_full'
+        || scheduleFilterUiMode === 'school_marks'
+        || scheduleFilterUiMode === 'school_elementary'
+    );
+
+    const syncScheduleFilterModeVisibility = () => {
+        const periodField = document.getElementById('schedule-field-period');
+        const subjectField = document.getElementById('schedule-field-subject');
+        const staffField = document.getElementById('schedule-field-staff');
+        if (periodField) periodField.classList.toggle('hidden', !scheduleFilterShowsPeriod());
+        if (subjectField) subjectField.classList.toggle('hidden', !scheduleFilterShowsSubject());
+        if (staffField) staffField.classList.toggle('hidden', !scheduleFilterShowsStaff());
+    };
+
+    const hasSingleSchoolColumnFilter = () => {
+        for (const key of ['school', 'school_state_id']) {
+            const vals = filters[key];
+            if (!Array.isArray(vals)) continue;
+            const cleaned = vals.filter((v) => v !== '' && v !== null && v !== undefined && v !== 'null' && v !== 'None');
+            if (cleaned.length === 1) return true;
+        }
+        return false;
+    };
+
+    const isSelectedProjectSchoolYear = () => {
+        if (!projectDefaultSchoolYear) return false;
+        const raw = document.getElementById('school_year')?.value || '';
+        const resolved = resolveRelativeSchoolYear(raw);
+        return resolved === projectDefaultSchoolYear;
+    };
+
+    const canShowScheduleFilterToggle = () => {
+        if (!scheduleFiltersEligible) return false;
+        if (!isSelectedProjectSchoolYear()) return false;
+        if (scheduleDistrictRequiresSchool && !hasSingleSchoolColumnFilter()) return false;
+        return true;
+    };
+
+    const isScheduleFilterBarActive = () => (
+        canShowScheduleFilterToggle() && scheduleFilterBarOpen
+    );
+
+    const syncScheduleFilterBarDisplay = () => {
+        const bar = document.getElementById('schedule-filters-bar');
+        const toggleBtn = document.getElementById('schedule-filters-toggle');
+        if (bar) bar.classList.toggle('hidden', !scheduleFilterBarOpen);
+        if (toggleBtn) {
+            toggleBtn.textContent = scheduleFilterBarOpen
+                ? 'Hide schedule filters'
+                : 'Show schedule filters';
+            toggleBtn.setAttribute('aria-expanded', scheduleFilterBarOpen ? 'true' : 'false');
+        }
+    };
+
+    const updateScheduleFilterChrome = () => {
+        const toggleWrap = document.getElementById('schedule-filters-toggle-wrap');
+        const showToggle = canShowScheduleFilterToggle();
+        if (toggleWrap) toggleWrap.classList.toggle('hidden', !showToggle);
+        if (!showToggle) {
+            scheduleFilterBarOpen = false;
+            clearScheduleFilterControls();
+        }
+        syncScheduleFilterBarDisplay();
+    };
+
+    const clearScheduleFilterControls = () => {
+        SCHEDULE_MS_KEYS.forEach((key) => clearScheduleSelect(key));
+        syncScheduleCourseStaffDisabled();
+    };
+
     // --- Year Mode Helpers ---
     const aliasLabelMap = {
         '__sy_this__': 'This School Year',
@@ -348,6 +542,72 @@ document.addEventListener('DOMContentLoaded', () => {
         const yr = String(year || '').replace(/-/g, '_').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
         return `markall_${yr}_${normMarkallToken(subject)}`;
     };
+
+    // Fast lookups for column selection (All Marks expands to many pair keys server-side).
+    let selectedColumnIndex = null;
+    const invalidateSelectedColumnIndex = () => {
+        selectedColumnIndex = null;
+    };
+    const getSelectedColumnIndex = () => {
+        if (selectedColumnIndex) return selectedColumnIndex;
+        const normKeys = new Set();
+        const markallUmbrellas = new Set();
+        const apallUmbrellas = new Set();
+        for (const col of selectedColumns) {
+            const n = normaliseKey(col);
+            normKeys.add(n);
+            normKeys.add(toRelativeKey(n));
+            if (n.startsWith('markall_')) {
+                const u = markallUmbrellaKeyFromColumn(n);
+                if (u) markallUmbrellas.add(u);
+            } else if (n.startsWith('apall_')) {
+                const u = apallUmbrellaKeyFromColumn(n);
+                if (u) apallUmbrellas.add(u);
+            }
+        }
+        selectedColumnIndex = { normKeys, markallUmbrellas, apallUmbrellas };
+        return selectedColumnIndex;
+    };
+    const isNormColumnSelected = (normCol) => {
+        if (!normCol) return false;
+        const idx = getSelectedColumnIndex();
+        const n = normaliseKey(normCol);
+        return idx.normKeys.has(n) || idx.normKeys.has(toRelativeKey(n));
+    };
+    const countLogicalSelectedColumns = () => {
+        let n = 0;
+        const seenMarkall = new Set();
+        const seenApall = new Set();
+        for (const col of selectedColumns) {
+            const key = normaliseKey(col);
+            if (key.startsWith('markall_')) {
+                const u = markallUmbrellaKeyFromColumn(key);
+                if (u) {
+                    if (!seenMarkall.has(u)) {
+                        seenMarkall.add(u);
+                        n += 1;
+                    }
+                } else {
+                    n += 1;
+                }
+                continue;
+            }
+            if (key.startsWith('apall_')) {
+                const u = apallUmbrellaKeyFromColumn(key);
+                if (u) {
+                    if (!seenApall.has(u)) {
+                        seenApall.add(u);
+                        n += 1;
+                    }
+                } else {
+                    n += 1;
+                }
+                continue;
+            }
+            n += 1;
+        }
+        return n;
+    };
     // From an umbrella OR an already-expanded pair key, return the specific
     // umbrella key (e.g. "markall_2025_2026_Math"), or '' when unparseable.
     const markallUmbrellaKeyFromColumn = (colKey) => {
@@ -365,11 +625,10 @@ document.addEventListener('DOMContentLoaded', () => {
         && (String(col).endsWith('_COURSE') || String(col).endsWith('_MARKS'));
     const markallUmbrellaActive = (year, subject) => {
         const umbrella = markallUmbrellaKey(year, subject);
-        const prefix = `${umbrella}_`;
-        return selectedColumns.some((sc) => {
-            const n = normaliseKey(sc);
-            return n === umbrella || n.startsWith(prefix);
-        });
+        const idx = getSelectedColumnIndex();
+        return idx.markallUmbrellas.has(umbrella)
+            || idx.normKeys.has(umbrella)
+            || idx.normKeys.has(toRelativeKey(umbrella));
     };
     const markallPickerMode = (umbrellaKey) => {
         const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
@@ -507,7 +766,7 @@ document.addEventListener('DOMContentLoaded', () => {
         persistMarkallCoursePicker(umbrellaKey, mode, checkedNames, allNames);
         resetPage();
         syncMarkallCourseControls();
-        triggerLoadData();
+        triggerLoadData({ debounceMs: 250 });
     };
 
     const setMarkallPickerMode = (box, year, subject, mode) => {
@@ -530,7 +789,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         resetPage();
         syncMarkallCourseControls();
-        triggerLoadData();
+        triggerLoadData({ debounceMs: 250 });
     };
 
     const selectAllMarkallCourses = (box, year, subject) => {
@@ -541,7 +800,7 @@ document.addEventListener('DOMContentLoaded', () => {
         persistMarkallCoursePicker(umbrellaKey, 'only', allNames, allNames);
         resetPage();
         syncMarkallCourseControls();
-        triggerLoadData();
+        triggerLoadData({ debounceMs: 250 });
     };
 
     // ─── "All Results" AP subject picker ──────────────────────────────────
@@ -688,12 +947,141 @@ document.addEventListener('DOMContentLoaded', () => {
         return (input?.value || '').trim();
     };
 
+    const getScheduleFilterValues = () => ({
+        schedule_period: getScheduleSelectValues('schedule_period'),
+        schedule_subject: getScheduleSelectValues('schedule_subject'),
+        schedule_course_name: getScheduleSelectValues('schedule_course_name'),
+        schedule_staff: getScheduleSelectValues('schedule_staff'),
+    });
+
+    const appendScheduleFilterParams = (url) => {
+        if (!isScheduleFilterBarActive()) return;
+        const sf = getScheduleFilterValues();
+        Object.entries(sf).forEach(([key, vals]) => {
+            url.searchParams.delete(key);
+            (vals || []).forEach((v) => {
+                if (v) url.searchParams.append(key, v);
+            });
+        });
+    };
+
+    const syncScheduleCourseStaffDisabled = () => {
+        const courseBtn = getScheduleFilterRoot('schedule_course_name')?.querySelector('[data-schedule-ms-btn]');
+        const staffBtn = getScheduleFilterRoot('schedule_staff')?.querySelector('[data-schedule-ms-btn]');
+        if (courseBtn) courseBtn.disabled = false;
+        if (staffBtn) staffBtn.disabled = false;
+    };
+
+    const appendScheduleQueryList = (url, key, values) => {
+        url.searchParams.delete(key);
+        (values || []).forEach((v) => {
+            if (v) url.searchParams.append(key, v);
+        });
+    };
+
+    let scheduleOptionsRefreshSeq = 0;
+    let scheduleOptionsAbort = null;
+
+    const resetScheduleFiltersForSchoolChange = () => {
+        SCHEDULE_MS_KEYS.forEach((key) => clearScheduleSelect(key));
+        syncScheduleCourseStaffDisabled();
+    };
+
+    const onSchoolColumnFilterChanged = () => {
+        if (!scheduleFiltersEligible) return;
+        updateScheduleFilterChrome();
+        if (!isScheduleFilterBarActive()) return;
+        resetScheduleFiltersForSchoolChange();
+        refreshScheduleFilterDropdowns({ preserveSelections: false });
+    };
+
+    const fetchScheduleFilterOptions = async (refreshSeq) => {
+        if (!isScheduleFilterBarActive() || !scheduleFilterOptionsUrl) return null;
+        const schoolYearRaw = document.getElementById('school_year')?.value || '';
+        const schoolYear = resolveRelativeSchoolYear(schoolYearRaw);
+        if (!schoolYear) return null;
+        const url = new URL(scheduleFilterOptionsUrl, window.location.origin);
+        url.searchParams.set('school_year', schoolYear);
+        const statusVal = document.getElementById('status')?.value || '';
+        if (statusVal) url.searchParams.set('status', statusVal);
+        appendScheduleQueryList(url, 'period', getScheduleSelectValues('schedule_period'));
+        appendScheduleQueryList(url, 'subject', getScheduleSelectValues('schedule_subject'));
+        appendScheduleQueryList(url, 'course_name', getScheduleSelectValues('schedule_course_name'));
+        appendScheduleQueryList(url, 'staff', getScheduleSelectValues('schedule_staff'));
+        url.searchParams.set('filters', JSON.stringify(filters || {}));
+
+        if (scheduleOptionsAbort) scheduleOptionsAbort.abort();
+        scheduleOptionsAbort = new AbortController();
+        const signal = scheduleOptionsAbort.signal;
+        try {
+            const res = await fetch(url.toString(), { credentials: 'same-origin', signal });
+            if (refreshSeq !== scheduleOptionsRefreshSeq) return null;
+            if (!res.ok) return null;
+            const data = await res.json();
+            if (refreshSeq !== scheduleOptionsRefreshSeq) return null;
+            if (data && data.error) return null;
+            return data;
+        } catch (e) {
+            if (e.name === 'AbortError') return null;
+            return null;
+        }
+    };
+
+    const refreshScheduleFilterDropdowns = async ({ preserveSelections = true } = {}) => {
+        if (!isScheduleFilterBarActive()) return;
+        const refreshSeq = ++scheduleOptionsRefreshSeq;
+        const keepPeriod = preserveSelections ? getScheduleSelectValues('schedule_period') : [];
+        const keepSubject = preserveSelections ? getScheduleSelectValues('schedule_subject') : [];
+        const keepCourse = preserveSelections ? getScheduleSelectValues('schedule_course_name') : [];
+        const keepStaff = preserveSelections ? getScheduleSelectValues('schedule_staff') : [];
+
+        const data = await fetchScheduleFilterOptions(refreshSeq);
+        if (!data || refreshSeq !== scheduleOptionsRefreshSeq) return;
+
+        if (data.ui_mode) {
+            scheduleFilterUiMode = data.ui_mode;
+            syncScheduleFilterModeVisibility();
+        }
+
+        if (scheduleFilterShowsPeriod()) {
+            fillScheduleMultiSelect('schedule_period', data.periods || [], keepPeriod);
+        } else {
+            clearScheduleSelect('schedule_period');
+        }
+        if (scheduleFilterShowsSubject()) {
+            fillScheduleMultiSelect('schedule_subject', data.subjects || [], keepSubject);
+        }
+        fillScheduleMultiSelect('schedule_course_name', data.courses || [], keepCourse);
+        if (scheduleFilterShowsStaff() && scheduleMarksCascade()) {
+            fillScheduleMultiSelect('schedule_staff', data.staff || [], keepStaff, { valueKey: 'id', labelKey: 'name' });
+        } else {
+            clearScheduleSelect('schedule_staff');
+        }
+        syncScheduleCourseStaffDisabled();
+    };
+
+    const applyScheduleFilterPayload = (payload) => {
+        if (!payload) return;
+        if (!isScheduleFilterBarActive()) return;
+        const fromFilters = payload.filters || {};
+        const period = payload.schedule_period ?? fromFilters.schedule_period ?? [];
+        const subject = payload.schedule_subject ?? fromFilters.schedule_subject ?? [];
+        const course = payload.schedule_course_name ?? fromFilters.schedule_course_name ?? [];
+        const staff = payload.schedule_staff ?? fromFilters.schedule_staff ?? [];
+        if (period?.length) setScheduleSelectValues('schedule_period', period);
+        if (subject?.length) setScheduleSelectValues('schedule_subject', subject);
+        if (course?.length) setScheduleSelectValues('schedule_course_name', course);
+        if (staff?.length) setScheduleSelectValues('schedule_staff', staff);
+        refreshScheduleFilterDropdowns({ preserveSelections: true });
+    };
+
     const getCurrentFiltersForSave = () => {
         return {
             school_year: document.getElementById('school_year')?.value,
             grade: document.getElementById('grade')?.value,
             status: document.getElementById('status')?.value,
             search: document.getElementById('search')?.value,
+            ...getScheduleFilterValues(),
             ...filters,
         };
     };
@@ -709,6 +1097,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 school_year: document.getElementById('school_year')?.value || '',
                 grade: document.getElementById('grade')?.value || '',
                 status: document.getElementById('status')?.value || '',
+                ...getScheduleFilterValues(),
                 page,
             };
             sessionStorage.setItem(stateStorageKey, JSON.stringify(payload));
@@ -750,6 +1139,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (schoolYearSelect && stored.school_year !== undefined) schoolYearSelect.value = resolveRelativeSchoolYear(stored.school_year || '');
             if (gradeSelect && stored.grade !== undefined) gradeSelect.value = stored.grade || '';
             if (statusInput && stored.status !== undefined) statusInput.value = stored.status || '';
+            if (scheduleFiltersEligible) {
+                if (stored.schedule_period !== undefined) setScheduleSelectValues('schedule_period', stored.schedule_period);
+                if (stored.schedule_subject !== undefined) setScheduleSelectValues('schedule_subject', stored.schedule_subject);
+                if (stored.schedule_course_name !== undefined) setScheduleSelectValues('schedule_course_name', stored.schedule_course_name);
+                if (stored.schedule_staff !== undefined) setScheduleSelectValues('schedule_staff', stored.schedule_staff);
+            }
         } catch (e) {
             // ignore
         } finally {
@@ -795,6 +1190,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (schoolYearSelect) url.searchParams.set('school_year', schoolYearSelect.value);
             if (gradeSelect && gradeSelect.value) url.searchParams.set('grade', gradeSelect.value);
             if (statusInput) url.searchParams.set('status', statusInput.value);
+            appendScheduleFilterParams(url);
         }
     };
 
@@ -825,6 +1221,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (filters && Object.keys(filters).length) {
              url.searchParams.set('filters', JSON.stringify(filters));
         }
+        appendScheduleFilterParams(url);
 
         try {
             const res = await fetch(url.toString(), { credentials: 'same-origin' });
@@ -839,23 +1236,52 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    const refreshColumnStructures = async () => {
-        if (!columnStructuresUrl) return;
-        const target = document.getElementById('dynamic-column-structures');
-        if (!target) return;
+    // The dynamic selector only depends on these filters. Refetching it on
+    // every loadData (pagination, sort, row selection) re-renders thousands of
+    // checkboxes for no visible change, so track the last applied signature and
+    // skip the request unless a structure-affecting filter actually changed.
+    let lastStructuresSignature = '';
 
-        const openCategories = Array.from(target.querySelectorAll('[data-category]'))
-            .filter((el) => !el.classList.contains('hidden'))
-            .map((el) => el.getAttribute('data-category'))
-            .filter(Boolean);
-
+    const buildColumnStructureFilters = () => {
         const columnFilters = {
             school_year: document.getElementById('school_year')?.value || '',
             grade: document.getElementById('grade')?.value || '',
             status: document.getElementById('status')?.value || '',
             search: document.getElementById('search')?.value || '',
-            ...filters,
         };
+        Object.keys(filters || {}).sort().forEach((k) => {
+            columnFilters[k] = filters[k];
+        });
+        // Keep marks/test column trees aligned with schedule-filtered student cohort.
+        if (scheduleFiltersEligible && isScheduleFilterBarActive()) {
+            const sf = getScheduleFilterValues();
+            SCHEDULE_MS_KEYS.forEach((key) => {
+                const vals = sf[key];
+                if (Array.isArray(vals) && vals.length) columnFilters[key] = vals;
+            });
+        }
+        return columnFilters;
+    };
+
+    const refreshColumnStructures = async (opts = {}) => {
+        if (!columnStructuresUrl) return;
+        const target = document.getElementById('dynamic-column-structures');
+        if (!target) return;
+
+        const columnFilters = buildColumnStructureFilters();
+        const signature = JSON.stringify(columnFilters);
+        if (!opts.force && target.dataset.loaded === '1' && signature === lastStructuresSignature) {
+            // Structures already reflect the current filters; just resync the
+            // selected-column UI (cheap, no network).
+            renderSelectedColumns();
+            updateYearModeButtons();
+            return;
+        }
+
+        const openCategories = Array.from(target.querySelectorAll('[data-category]'))
+            .filter((el) => !el.classList.contains('hidden'))
+            .map((el) => el.getAttribute('data-category'))
+            .filter(Boolean);
 
         const url = new URL(columnStructuresUrl, window.location.origin);
         url.searchParams.set('column_filters', JSON.stringify(columnFilters));
@@ -864,6 +1290,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch(url.toString(), { credentials: 'same-origin' });
             if (!res.ok) return;
             target.innerHTML = await res.text();
+            lastStructuresSignature = signature;
+            target.dataset.loaded = '1';
             if (window.htmx) htmx.process(target);
             if (openCategories.length) {
                 openCategories.forEach((category) => {
@@ -875,6 +1303,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             button.querySelectorAll('[data-caret="open"]').forEach((c) => c.classList.remove('hidden'));
                             button.querySelectorAll('[data-caret="closed"]').forEach((c) => c.classList.add('hidden'));
                         }
+                        if (el.dataset.lazyMarks === '1') loadLazyMarkCourse(el);
                     }
                 });
             }
@@ -911,21 +1340,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const col = checkbox.dataset.column;
         if (!col) return false;
         if (checkbox.dataset.markall === '1') {
-            const yr = (checkbox.dataset.markallYear || '').replace('-', '_');
-            const subj = (checkbox.dataset.markallSubject || '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
-            const prefix = `markall_${yr}_${subj}_`;
-            return selectedColumns.some((sc) =>
-                normaliseKey(sc) === normaliseKey(col)
-                || normaliseKey(sc).startsWith(prefix)
-                || toRelativeKey(normaliseKey(col)) === toRelativeKey(normaliseKey(sc))
+            const idx = getSelectedColumnIndex();
+            const normCol = normaliseKey(col);
+            const umbrella = markallUmbrellaKey(
+                checkbox.dataset.markallYear || '',
+                checkbox.dataset.markallSubject || '',
             );
+            return idx.normKeys.has(normCol)
+                || idx.normKeys.has(toRelativeKey(normCol))
+                || idx.markallUmbrellas.has(umbrella);
         }
         if (checkbox.dataset.apall === '1') {
             return apallUmbrellaActive(checkbox.dataset.apallYear || '');
         }
-        return selectedColumns.includes(col)
-            || selectedColumns.includes(normaliseKey(col))
-            || selectedColumns.includes(toRelativeKey(normaliseKey(col)));
+        return isNormColumnSelected(col);
     };
 
     const countSelectedColumnsInSection = (sectionEl) => {
@@ -984,40 +1412,100 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    let columnSelectorUiRaf = 0;
+    const scheduleColumnSelectorSectionUi = () => {
+        if (columnSelectorUiRaf) return;
+        columnSelectorUiRaf = window.requestAnimationFrame(() => {
+            columnSelectorUiRaf = 0;
+            updateColumnSelectorSectionUi();
+        });
+    };
+
     const syncCheckboxes = () => {
-        document.querySelectorAll('input[data-column]').forEach((checkbox) => {
+        const selectorRoot = document.getElementById('column-selector');
+        const checkboxRoot = selectorRoot || document;
+        checkboxRoot.querySelectorAll('input[data-column]').forEach((checkbox) => {
             checkbox.checked = isColumnCheckboxSelected(checkbox);
         });
-        document.querySelectorAll('input[data-action="select-topic"]').forEach((topicCb) => {
+        checkboxRoot.querySelectorAll('input[data-action="select-topic"]').forEach((topicCb) => {
             const targetCategory = topicCb.dataset.targetCategory;
             const container = document.querySelector(`[data-category="${targetCategory}"]`);
             if (!container) return;
             const cols = Array.from(container.querySelectorAll('input[data-column]'))
                 .map(cb => cb.dataset.column).filter(Boolean);
             if (cols.length === 0) { topicCb.checked = false; topicCb.indeterminate = false; return; }
-            const selectedCount = cols.filter(c => selectedColumns.includes(c)).length;
+            const selectedCount = cols.filter(c => isNormColumnSelected(c)).length;
             topicCb.checked = selectedCount === cols.length;
             topicCb.indeterminate = selectedCount > 0 && selectedCount < cols.length;
         });
         syncMarkallCourseControls();
         syncApallSubjectControls();
-        updateColumnSelectorSectionUi();
+        scheduleColumnSelectorSectionUi();
     };
 
     const renderSelectedColumns = () => {
+        invalidateSelectedColumnIndex();
         selectedColumns = pinPictureFirst(selectedColumns);
-        if (selectedCountEl) selectedCountEl.textContent = selectedColumns.length;
-        if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = String(selectedColumns.length);
-        const selectedLabels = selectedColumns
-            .map((col) => {
-                const label = getColumnLabel(col);
-                return label.includes('\n') ? label.split('\n')[0] : label;
-            })
-            .join(', ');
-        const tooltipText = selectedLabels || 'No columns selected';
+        const logicalCount = countLogicalSelectedColumns();
+        if (selectedCountEl) selectedCountEl.textContent = logicalCount;
+        if (selectedCountToolbarEl) selectedCountToolbarEl.textContent = String(logicalCount);
+        const tooltipLabels = [];
+        const seenMarkallTip = new Set();
+        const seenApallTip = new Set();
+        for (const col of selectedColumns) {
+            const key = normaliseKey(col);
+            if (key.startsWith('markall_')) {
+                const u = markallUmbrellaKeyFromColumn(key);
+                if (u && !seenMarkallTip.has(u)) {
+                    seenMarkallTip.add(u);
+                    tooltipLabels.push(getColumnLabel(u) || u);
+                }
+                continue;
+            }
+            if (key.startsWith('apall_')) {
+                const u = apallUmbrellaKeyFromColumn(key);
+                if (u && !seenApallTip.has(u)) {
+                    seenApallTip.add(u);
+                    tooltipLabels.push(getColumnLabel(u) || u);
+                }
+                continue;
+            }
+            const label = getColumnLabel(col);
+            tooltipLabels.push(label.includes('\n') ? label.split('\n')[0] : label);
+        }
+        const maxTip = 12;
+        let tooltipText = tooltipLabels.join(', ') || 'No columns selected';
+        if (tooltipLabels.length > maxTip) {
+            tooltipText = `${tooltipLabels.slice(0, maxTip).join(', ')} … +${tooltipLabels.length - maxTip} more`;
+        }
         if (selectedCountEl) selectedCountEl.setAttribute('title', tooltipText);
         if (selectedCountToolbarEl) selectedCountToolbarEl.setAttribute('title', tooltipText);
         syncCheckboxes();
+    };
+
+    // Fetch a mark course's period checkboxes the first time its section is
+    // expanded. The initial selector response intentionally omits them.
+    const loadLazyMarkCourse = async (section) => {
+        if (!section || !columnStructuresUrl) return;
+        if (section.dataset.lazyLoaded === '1') return;
+        section.dataset.lazyLoaded = '1';
+        const url = new URL(columnStructuresUrl, window.location.origin);
+        url.searchParams.set('marks_course_year', section.dataset.lazyYear || '');
+        url.searchParams.set('marks_course_subject', section.dataset.lazySubject || '');
+        url.searchParams.set('marks_course_name', section.dataset.lazyCourse || '');
+        url.searchParams.set('column_filters', JSON.stringify(buildColumnStructureFilters()));
+        try {
+            const res = await fetch(url.toString(), { credentials: 'same-origin' });
+            if (!res.ok) {
+                section.dataset.lazyLoaded = '';
+                return;
+            }
+            section.innerHTML = await res.text();
+            if (window.htmx) htmx.process(section);
+            renderSelectedColumns();
+        } catch (e) {
+            section.dataset.lazyLoaded = '';
+        }
     };
 
     const toggleCategory = (category) => {
@@ -1032,6 +1520,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const isHidden = section.classList.contains('hidden');
             if (openCaret) openCaret.classList.toggle('hidden', isHidden);
             if (closedCaret) closedCaret.classList.toggle('hidden', !isHidden);
+        }
+
+        if (!section.classList.contains('hidden') && section.dataset.lazyMarks === '1') {
+            loadLazyMarkCourse(section);
         }
     };
 
@@ -1245,11 +1737,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (Array.isArray(payload.selected_columns)) {
             selectedColumns = payload.selected_columns;
+            invalidateSelectedColumnIndex();
         }
 
         if (payload.filters) {
             filters = payload.filters;
         }
+        updateScheduleFilterChrome();
 
         if (payload.sort_by) {
             sortBy = payload.sort_by;
@@ -1272,6 +1766,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (payload.grade !== undefined && gradeSelect) gradeSelect.value = payload.grade || '';
         if (payload.status !== undefined && statusInput) statusInput.value = payload.status || '';
+        applyScheduleFilterPayload(payload);
 
         const columns = pinPictureFirst(selectedColumns || []);
         selectedColumns = columns;
@@ -1323,6 +1818,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
 
+            if (isScheduleFilterBarActive()) {
+                const sf = getScheduleFilterValues();
+                const scheduleParts = [];
+                const joinVals = (vals) => (Array.isArray(vals) ? vals.join(', ') : String(vals || ''));
+                if (sf.schedule_period?.length) scheduleParts.push(`Period ${joinVals(sf.schedule_period)}`);
+                if (sf.schedule_subject?.length) scheduleParts.push(joinVals(sf.schedule_subject));
+                if (sf.schedule_course_name?.length) scheduleParts.push(joinVals(sf.schedule_course_name));
+                if (sf.schedule_staff?.length && scheduleFilterShowStaff) {
+                    const staffRoot = getScheduleFilterRoot('schedule_staff');
+                    const staffLabels = staffRoot
+                        ? [...staffRoot.querySelectorAll('[data-schedule-ms-value]:checked')]
+                            .map((cb) => cb.closest('label')?.querySelector('span')?.textContent || cb.value)
+                        : sf.schedule_staff;
+                    scheduleParts.push(Array.isArray(staffLabels) ? staffLabels.join(', ') : staffLabels);
+                }
+                if (scheduleParts.length) {
+                    hasActiveFilters = true;
+                    const chip = document.createElement('span');
+                    chip.className = 'inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded border border-emerald-200';
+                    chip.innerHTML = `<span class="font-semibold">Schedule:</span> ${escapeHtml(scheduleParts.join(' · '))} <button type="button" data-action="clear-schedule-filters" class="ml-1 text-emerald-600 hover:text-emerald-900 font-bold focus:outline-none">×</button>`;
+                    activeFiltersListEl.appendChild(chip);
+                }
+            }
+
             if (filterSeparatorEl) {
                 filterSeparatorEl.classList.toggle('hidden', !hasActiveFilters);
             }
@@ -1365,7 +1884,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const label = getColumnLabel(col);
             const optionsForCol = Array.isArray(filterOptions[col]) ? filterOptions[col] : [];
             const hasActiveFilter = Array.isArray(filters[col]) && filters[col].length > 0;
-            const hasFilter = optionsForCol.length > 0 || hasActiveFilter;
+            // Race List is stored in add_data JSON; always offer the filter UI when the
+            // column is visible (options may load from PostgreSQL after the table renders).
+            const hasFilter = optionsForCol.length > 0 || hasActiveFilter || col === 'race_list';
             const isSorted = sortBy === col;
             const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
             const sortColorClass = isSorted ? 'text-blue-400' : 'text-slate-600 group-hover:text-slate-400';
@@ -1768,12 +2289,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.loadData = loadData;
 
-    const triggerLoadData = () => {
-        if (typeof window.loadData === 'function') {
-            window.loadData();
-        } else {
-            loadData();
+    let loadDataDebounceTimer = null;
+    const triggerLoadData = (opts = {}) => {
+        const run = () => {
+            loadDataDebounceTimer = null;
+            if (typeof window.loadData === 'function') {
+                window.loadData();
+            } else {
+                loadData();
+            }
+        };
+        if (opts.debounceMs) {
+            window.clearTimeout(loadDataDebounceTimer);
+            loadDataDebounceTimer = window.setTimeout(run, opts.debounceMs);
+            return;
         }
+        window.clearTimeout(loadDataDebounceTimer);
+        run();
     };
 
     const updateColumnSelection = (col) => {
@@ -2156,14 +2688,59 @@ document.addEventListener('DOMContentLoaded', () => {
     const schoolYearSelect = document.getElementById('school_year');
     if (schoolYearSelect) {
         schoolYearSelect.addEventListener('change', () => {
+            if (scheduleFiltersEligible) {
+                updateScheduleFilterChrome();
+                if (scheduleFilterBarOpen) {
+                    refreshScheduleFilterDropdowns({ preserveSelections: false });
+                } else {
+                    clearScheduleFilterControls();
+                }
+            }
             resetPage();
             triggerLoadData();
+        });
+    }
+
+    if (scheduleFiltersEligible) {
+        initScheduleMultiSelectDropdowns();
+        syncScheduleFilterBarDisplay();
+        syncScheduleFilterModeVisibility();
+
+        document.getElementById('schedule-filters-toggle')?.addEventListener('click', () => {
+            scheduleFilterBarOpen = !scheduleFilterBarOpen;
+            syncScheduleFilterBarDisplay();
+            if (scheduleFilterBarOpen) {
+                syncScheduleFilterModeVisibility();
+                refreshScheduleFilterDropdowns({ preserveSelections: true });
+            }
+            resetPage();
+            triggerLoadData();
+        });
+
+        const onScheduleFilterChange = (key) => {
+            syncScheduleCourseStaffDisabled();
+            refreshScheduleFilterDropdowns({ preserveSelections: true }).then(() => {
+                resetPage();
+                triggerLoadData();
+            });
+        };
+
+        const scheduleBar = document.getElementById('schedule-filters-bar');
+        scheduleBar?.addEventListener('change', (e) => {
+            if (!e.target.matches('[data-schedule-ms-value]')) return;
+            const key = e.target.closest('[data-schedule-filter]')?.dataset.scheduleFilter;
+            if (!key) return;
+            syncScheduleMsLabel(key);
+            onScheduleFilterChange(key);
         });
     }
 
     const statusSelect = document.getElementById('status');
     if (statusSelect) {
         statusSelect.addEventListener('change', () => {
+            if (scheduleFiltersEligible && scheduleFilterBarOpen) {
+                refreshScheduleFilterDropdowns({ preserveSelections: true });
+            }
             resetPage();
             triggerLoadData();
         });
@@ -2209,10 +2786,23 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const clearScheduleFiltersBtn = event.target.closest('[data-action="clear-schedule-filters"]');
+        if (clearScheduleFiltersBtn) {
+            SCHEDULE_MS_KEYS.forEach((key) => clearScheduleSelect(key));
+            syncScheduleCourseStaffDisabled();
+            refreshScheduleFilterDropdowns({ preserveSelections: false });
+            resetPage();
+            triggerLoadData();
+            return;
+        }
+
         const clearFilterBtn = event.target.closest('[data-action="clear-filter"]');
         if (clearFilterBtn) {
             const col = clearFilterBtn.dataset.column;
             delete filters[col];
+            if (scheduleFiltersEligible && (col === 'school' || col === 'school_state_id')) {
+                onSchoolColumnFilterChanged();
+            }
             triggerLoadData();
             return;
         }
@@ -2226,6 +2816,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 filters[col] = values;
             } else {
                 delete filters[col];
+            }
+            if (scheduleFiltersEligible && (col === 'school' || col === 'school_state_id')) {
+                onSchoolColumnFilterChanged();
             }
             triggerLoadData();
             return;
@@ -2263,6 +2856,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const val = quickFilterBtn.dataset.value;
             if (val) {
                 filters[col] = [val];
+            }
+            if (scheduleFiltersEligible && (col === 'school' || col === 'school_state_id')) {
+                onSchoolColumnFilterChanged();
             }
             triggerLoadData();
             return;
@@ -2428,6 +3024,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (schoolYearSelect) schoolYearSelect.value = '';
             if (gradeSelect) gradeSelect.value = '';
             if (statusInput) statusInput.value = 'Active';
+            if (scheduleFiltersEligible) {
+                updateScheduleFilterChrome();
+                refreshScheduleFilterDropdowns({ preserveSelections: false });
+            }
 
             renderSelectedColumns();
             resetPage();
@@ -2795,7 +3395,19 @@ document.addEventListener('DOMContentLoaded', () => {
         // ignore
     }
     updateYearModeButtons();
-    loadData();
+    if (scheduleFiltersEligible) {
+        const bar = document.getElementById('schedule-filters-bar');
+        if (bar) {
+            if (bar.dataset.initialPeriod) setScheduleSelectValues('schedule_period', bar.dataset.initialPeriod);
+            if (bar.dataset.initialSubject) setScheduleSelectValues('schedule_subject', bar.dataset.initialSubject);
+            if (bar.dataset.initialCourse) setScheduleSelectValues('schedule_course_name', bar.dataset.initialCourse);
+            if (bar.dataset.initialStaff) setScheduleSelectValues('schedule_staff', bar.dataset.initialStaff);
+        }
+        updateScheduleFilterChrome();
+        loadData();
+    } else {
+        loadData();
+    }
 
     // --- Folder browser helpers (the folder browser HTML is loaded via HTMX;
     // scripts inside the partial may not execute, so keep these globally available.)

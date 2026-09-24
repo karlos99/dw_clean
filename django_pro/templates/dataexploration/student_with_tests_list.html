@@ -27,7 +27,15 @@
     data-create-folder-modal-url="{% url 'dataexploration:create_folder_modal' %}"
     data-default-columns="{{ default_columns_json|escapejs }}"
     data-column-definitions="{{ column_definitions_json|escapejs }}"
-    data-year-alias-map="{{ year_alias_map_json|escapejs }}" style="display:none;"></div>
+    data-year-alias-map="{{ year_alias_map_json|escapejs }}"
+    data-schedule-filter-options-url="{% url 'dataexploration:schedule_filter_options' %}"
+    data-schedule-filters-eligible="{% if schedule_filters_eligible %}1{% else %}0{% endif %}"
+    data-show-schedule-filters="{% if show_schedule_filters %}1{% else %}0{% endif %}"
+    data-project-default-school-year="{{ project_default_school_year|default:''|escape }}"
+    data-schedule-district-requires-school="{% if schedule_district_requires_school %}1{% else %}0{% endif %}"
+    data-schedule-filter-show-staff="{% if schedule_filter_staff_eligible %}1{% else %}0{% endif %}"
+    data-schedule-filter-mode="{{ schedule_filter_ui_mode|default:'district_full' }}"
+    style="display:none;"></div>
 <div class="h-screen flex flex-col bg-slate-50" id="student-tests-app">
 
     <!-- Layout: Sidebar + Main Content -->
@@ -167,9 +175,16 @@
                     </div>
                 </div>
 
-                <!-- Dynamic Test Structures (loaded via HTMX) -->
+                <!-- Dynamic column structures. Loaded once by the client
+                     (student_tests_app.js refreshColumnStructures) for the active
+                     filters. Rendering the full selector server-side used to
+                     emit ~20k mark checkboxes (~20MB HTML) on every page load,
+                     then get replaced anyway. A skeleton keeps first paint fast
+                     and avoids the duplicate work. -->
                 <div id="dynamic-column-structures">
-                    {% include 'dataexploration/partials/column_structures.html' %}
+                    <div class="px-3 py-6 text-center text-xs text-slate-400">
+                        <span class="inline-block animate-pulse">Loading columns…</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -317,7 +332,45 @@
                         </select>
                     </div>
                 </div>
+                {% if schedule_filters_eligible %}
+                <div id="schedule-filters-toggle-wrap" class="mt-3 pt-3 border-t border-slate-100{% if not schedule_filter_toggle_visible %} hidden{% endif %}">
+                    <button type="button" id="schedule-filters-toggle" aria-expanded="false"
+                        class="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-700 bg-slate-100 border border-slate-300 rounded hover:bg-slate-200 transition-colors">
+                        Show schedule filters
+                    </button>
+                </div>
+                {% endif %}
             </div>
+
+            {% if schedule_filters_eligible %}
+            <div id="schedule-filters-bar" class="bg-slate-50 border-b border-slate-200 px-6 py-3 flex-shrink-0 hidden"
+                data-initial-period="{{ selected_schedule_period|join:',' }}"
+                data-initial-subject="{{ selected_schedule_subject|join:',' }}"
+                data-initial-course="{{ selected_schedule_course_name|join:',' }}"
+                data-initial-staff="{{ selected_schedule_staff|join:',' }}">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Schedule</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {% if schedule_filter_ui_mode == 'district_full' or schedule_filter_ui_mode == 'teacher_schedule' or schedule_filter_ui_mode == 'school_marks' %}
+                    <div id="schedule-field-period">
+                        {% include "dataexploration/partials/schedule_filter_dropdown.html" with filter_key="schedule_period" label="Period" placeholder="All periods" %}
+                    </div>
+                    {% endif %}
+                    {% if schedule_filter_ui_mode == 'district_full' or schedule_filter_ui_mode == 'school_marks' or schedule_filter_ui_mode == 'school_elementary' %}
+                    <div id="schedule-field-subject">
+                        {% include "dataexploration/partials/schedule_filter_dropdown.html" with filter_key="schedule_subject" label="Subject" placeholder="All subjects" %}
+                    </div>
+                    {% endif %}
+                    <div id="schedule-field-course">
+                        {% include "dataexploration/partials/schedule_filter_dropdown.html" with filter_key="schedule_course_name" label="Course" placeholder="All courses" %}
+                    </div>
+                    {% if schedule_filter_staff_eligible and schedule_filter_ui_mode != 'teacher_schedule' and schedule_filter_ui_mode != 'teacher_course' %}
+                    <div id="schedule-field-staff">
+                        {% include "dataexploration/partials/schedule_filter_dropdown.html" with filter_key="schedule_staff" label="Staff" placeholder="All staff" %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
 
             <!-- Status Bar: Total Count & Active Filters -->
             <div class="bg-white border-b border-slate-200 px-4 py-2 text-xs text-slate-600 flex flex-wrap gap-2 items-center min-h-[40px]"

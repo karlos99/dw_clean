@@ -28,6 +28,8 @@ def get_all_ddl():
         CREATE_ANALYTICS_AP_AWARDS,
         CREATE_ANALYTICS_SAT_RESULTS,
         CREATE_ANALYTICS_SURVEY_RESPONSES,
+        CREATE_ANALYTICS_TEST_METADATA,
+        CREATE_ANALYTICS_MARKS_METADATA,
         CREATE_ANALYTICS_SYNC_META,
     ]
 
@@ -40,6 +42,11 @@ ANALYTICS_TABLE_NAMES = (
     'analytics_ap_awards',
     'analytics_sat_results',
     'analytics_survey_responses',
+    # Small DISTINCT column-discovery tables. These back the unfiltered
+    # test/mark column tree without re-scanning the multi-million-row
+    # results/student_marks_list fact tables on every page load.
+    'analytics_test_metadata',
+    'analytics_marks_metadata',
 )
 
 
@@ -484,6 +491,31 @@ CREATE TABLE IF NOT EXISTS analytics_survey_responses (
 )
 ENGINE = MergeTree
 ORDER BY (school_year, student_id, survey_type, question_order)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_TEST_METADATA = """
+CREATE TABLE IF NOT EXISTS analytics_test_metadata (
+    school_year String,
+    test_name String,
+    subject String,
+    test_window String,
+    info_key String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, test_name, subject, test_window, info_key)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_MARKS_METADATA = """
+CREATE TABLE IF NOT EXISTS analytics_marks_metadata (
+    school_year String,
+    subject String,
+    course_name String,
+    mark_period String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, subject, course_name, mark_period)
 SETTINGS index_granularity = 8192
 """
 

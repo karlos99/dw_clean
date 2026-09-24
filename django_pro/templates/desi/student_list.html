@@ -47,9 +47,9 @@
                     <!-- School Dropdown -->
                     <div>
                         <label for="school" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">School</label>
-                        {% if active_school %}
-                            <input type="text" value="{{ active_school.short_name|default:active_school.school_name }}" disabled class="block w-full rounded border-slate-200 bg-slate-100 text-slate-500 text-xs py-1 px-2">
-                            <input type="hidden" name="school" value="{{ active_school.state_id }}">
+                        {% if school_locked %}
+                            <input type="text" value="{{ global_active_school.short_name|default:global_active_school.school_name }}" disabled class="block w-full rounded border-slate-200 bg-slate-100 text-slate-500 text-xs py-1 px-2">
+                            <input type="hidden" name="school" value="{{ global_active_school.state_id }}">
                         {% else %}
                             <select name="school" id="school" class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1 px-2">
                                 <option value="">All</option>
@@ -69,6 +69,19 @@
                             <option value="">All Teachers</option>
                             {% for teacher in teachers %}
                             <option value="{{ teacher }}" {% if teacher_filter == teacher %}selected{% endif %}>{{ teacher }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                {% endif %}
+
+                {% if show_period_filter %}
+                    <!-- Period Dropdown (non-elementary schools, once a teacher is chosen) -->
+                    <div>
+                        <label for="period" class="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Period</label>
+                        <select name="period" id="period" class="block w-full rounded border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs py-1 px-2">
+                            <option value="">All Periods</option>
+                            {% for period in periods %}
+                            <option value="{{ period }}" {% if period_filter == period %}selected{% endif %}>Period {{ period }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -150,7 +163,7 @@
             const filterForm = document.getElementById('desi-student-filter-form');
             const gradesBySchool = {{ grade_options_by_school_json|default:'{}'|safe }};
             const teachersByFilter = {{ teacher_options_by_filter_json|default:'{}'|safe }};
-            const activeSchoolId = "{{ active_school.state_id|default:''|escapejs }}";
+            const activeSchoolId = "{{ global_active_school.state_id|default:''|escapejs }}";
             const initialGrade = "{{ grade_filter|escapejs }}";
             const initialTeacher = "{{ teacher_filter|escapejs }}";
 
@@ -195,6 +208,8 @@
                 submitFilters();
             });
             if (teacherSelect) teacherSelect.addEventListener('change', submitFilters);
+            const periodSelect = document.getElementById('period');
+            if (periodSelect) periodSelect.addEventListener('change', submitFilters);
             updateGrades();
             updateTeachers();
 
@@ -209,6 +224,25 @@
                     link.classList.remove('border-transparent', 'hover:bg-slate-50');
                     link.classList.add('bg-blue-50/70', 'border-blue-600');
                 }
+            });
+
+            // 1b. Collapse/expand the supports matrix by organization section.
+            // The section header lives in a separate, always-visible <tbody>, so
+            // only the support rows are hidden and the header can be clicked
+            // again to expand.
+            document.body.addEventListener('click', (e) => {
+                const header = e.target.closest('[data-category-toggle]');
+                if (!header) return;
+                const key = header.getAttribute('data-category-target');
+                const group = key === null ? null : document.querySelector(
+                    'tbody.desi-category-group[data-category-group="' + key + '"]'
+                );
+                if (!group) return;
+                const willCollapse = group.style.display !== 'none';
+                group.style.display = willCollapse ? 'none' : '';
+                header.setAttribute('aria-expanded', String(!willCollapse));
+                const chevron = header.querySelector('.desi-category-chevron');
+                if (chevron) chevron.classList.toggle('-rotate-90', willCollapse);
             });
 
             // 2. Designated supports matrix: dependencies, synchronization, popover
@@ -265,17 +299,23 @@
                 }
             }
 
+            function isResourceModalOpen() {
+                return document.body.classList.contains('desi-resource-modal-open');
+            }
+
             function hideSupportPopover() {
                 const pop = document.getElementById('desi-support-popover');
                 if (pop) pop.classList.add('hidden');
             }
+
+            document.addEventListener('desi-hide-support-popover', hideSupportPopover);
 
             function showSupportPopover(anchor, accId) {
                 const info = supportInfoMap()[String(accId)];
                 const pop = document.getElementById('desi-support-popover');
                 if (!pop || !info) return;
 
-                document.getElementById('desi-popover-name').textContent = info.code ? `${info.name} (${info.code})` : info.name;
+                document.getElementById('desi-popover-name').textContent = info.name || '';
                 const metaParts = [];
                 if (info.section_category) metaParts.push(info.section_category);
                 if (info.category) metaParts.push(info.category);
@@ -292,8 +332,17 @@
                     btn.className = 'inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded border border-blue-100';
                     const icon = res.kind === 'youtube' ? '🎥' : res.kind === 'video' ? '📺' : res.kind === 'pdf' ? '📄' : '🔗';
                     btn.textContent = `${icon} ${res.label}`;
-                    btn.addEventListener('click', () => {
-                        window.dispatchEvent(new CustomEvent('desi-open-resource', { detail: { label: res.label, url: res.url } }));
+                    btn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (!res.url && !res.embed_url) return;
+                        hideSupportPopover();
+                        window.dispatchEvent(new CustomEvent('desi-open-resource', {
+                            detail: {
+                                label: res.label,
+                                embed_url: res.embed_url || '',
+                                url: res.url || res.embed_url || '',
+                            },
+                        }));
                     });
                     resWrap.appendChild(btn);
                 });
@@ -346,15 +395,18 @@
                     hideSupportPopover();
                     return;
                 }
+                if (isResourceModalOpen()) return;
                 const pop = document.getElementById('desi-support-popover');
                 if (pop && !pop.classList.contains('hidden') && !pop.contains(e.target)
-                    && !e.target.closest('select.acc-option-select') && !e.target.closest('input[name="student_supports"]')) {
+                    && !e.target.closest('select.acc-option-select') && !e.target.closest('input[name="student_supports"]')
+                    && !e.target.closest('[data-support-info]')) {
                     hideSupportPopover();
                 }
             });
 
             document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape') hideSupportPopover();
+                if (e.key !== 'Escape' || isResourceModalOpen()) return;
+                hideSupportPopover();
             });
 
             document.body.addEventListener('htmx:afterSwap', (e) => {
