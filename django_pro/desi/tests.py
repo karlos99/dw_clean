@@ -8,7 +8,7 @@ import csv
 import io
 from unittest import mock
 
-from studata.models import CurrentStudent, School as StudataSchool
+from studata.models import CurrentStudent, Result, School as StudataSchool, Test
 from users.models import Role
 from desi.models import (
     Accommodation,
@@ -25,11 +25,14 @@ from desi.models import (
     StudentAssessmentCompletion,
     SupportRule,
     SupportRuleCriteria,
+    SupportDefaultRule,
+    SupportDefaultRuleCriteria,
 )
 from desi.views import (
     check_criteria,
     can_edit_desi,
     hidden_support_ids,
+    default_support_locks,
     EXPORT_ENDPOINT_SIGNING_SALT,
 )
 from desi import importers
@@ -877,6 +880,44 @@ class DesiWorkflowAndViewsTests(TestCase):
         rows = list(reader)
         self.assertEqual(rows[0], ['Student', 'Assessment'])
 
+    def test_export_endpoint_uses_saved_config_id(self):
+        config = DesiExportConfiguration.objects.create(
+            owner=self.admin_user,
+            name="Endpoint cfg",
+            config={
+                "school_year": "2025-2026",
+                "assessment_ids": [self.assessment_math.id],
+                "only_with_supports": False,
+                "support_value_field": "code",
+                "column_config": [
+                    {"key": "student_name", "include": True, "header": "Student", "order": 1},
+                    {"key": "assessment_name", "include": True, "header": "Assessment", "order": 2},
+                ],
+            },
+        )
+        token = signing.dumps(
+            {"uid": self.admin_user.id, "purpose": "desi_export"},
+            salt=EXPORT_ENDPOINT_SIGNING_SALT,
+        )
+        response = self.client.get(reverse("desi:export_data_endpoint"), {
+            "auth": token,
+            "config_id": str(config.id),
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response["Content-Type"].startswith("text/csv"))
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8"))))
+        self.assertEqual(rows[0][0], "Student")
+        self.assertIn("Assessment", rows[0])
+
+    def test_export_page_endpoint_is_config_based(self):
+        self.client.force_login(self.admin_user)
+        response = self.client.get(reverse("desi:export_data"))
+        content = response.content.decode()
+        # The endpoint URL references a saved config id rather than embedding the
+        # whole form (which exceeded the server's request-line limit).
+        self.assertIn("config_id", content)
+        self.assertNotIn("new URLSearchParams(formData)", content)
+
 
 CSV_SAMPLE = """Column,Display Name,Value,Value Definition,Content Area,Program,Setting Definition,Type
 A,"Student SSID
@@ -1493,7 +1534,7 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertIn("desi-matrix-table", content)
         self.assertIn("desi-matrix-col-item", content)
 
-    def test_admin_dashboard_collapsible_sections_default_collapsed(self):
+    def test_admin_dashboard_uses_submenu_tabs(self):
         admin = User.objects.create_user(username="collapse_admin@test.com", email="collapse_admin@test.com", password="password123")
         admin.roles.add(self.project_role)
         self.client.force_login(admin)
@@ -1502,21 +1543,19 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
 
-        # Check that sections are collapsed by default in Alpine x-data
-        self.assertIn("seisOpen: false", content)
-        self.assertIn("testsOpen: false", content)
-        self.assertIn("orderOpen: false", content)
-        self.assertIn("poolOpen: false", content)
-
-        # Check Alpine collapse bindings
-        self.assertIn("x-show=\"seisOpen\"", content)
-        self.assertIn("x-show=\"testsOpen\"", content)
-        self.assertIn("x-show=\"orderOpen\"", content)
-        self.assertIn("x-show=\"poolOpen\"", content)
-
-        # Check expand/collapse all button
-        self.assertIn("Expand All", content)
-        self.assertIn("Collapse All", content)
+        # Submenu tabs with tab state (no collapsible sections anymore).
+        self.assertIn("x-data=\"{ tab: 'assessments', showSidebar: true }\"", content)
+        self.assertIn("showSidebar = !showSidebar", content)
+        self.assertIn("tab='assessments'", content)
+        self.assertIn("tab='order'", content)
+        self.assertIn("tab='supports'", content)
+        self.assertIn("tab='seis'", content)
+        self.assertIn('x-show="tab===\'assessments\'"', content)
+        self.assertIn('x-show="tab===\'order\'"', content)
+        self.assertIn('x-show="tab===\'supports\'"', content)
+        self.assertIn('x-show="tab===\'seis\'"', content)
+        # Support pool uses a wider responsive grid on large layouts.
+        self.assertIn("xl:grid-cols-4 2xl:grid-cols-5", content)
 
     def test_resource_crud_and_embed(self):
         accommodation = Accommodation.objects.create(name="TTS", code="TTS")
@@ -1964,9 +2003,9 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
         self.assertIn("Smarter math", html)
         self.assertNotIn("Smarter ELA", html)
 
-    def test_no_test_assignment_keeps_normal_editable_tests(self):
-        # "No_Test" carries no per-test SEIS settings: the normal editable list
-        # is shown instead of a read-only SEIS column.
+    def test_no_test_assignment_shows_regular_tests_but_read_only(self):
+        # "No_Test" carries no per-test SEIS settings, so the regular tests are
+        # shown — but the student is in the SEIS list, so the workspace is read-only.
         self._create_seis_row("seis-row-3", ["No_Test"])
 
         response = self.client.get(
@@ -1979,6 +2018,27 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
         math_col = next(c for c in columns if c["assessment"].name == "Smarter math")
         self.assertFalse(math_col["is_seis"])
         self.assertNotIn("Smarter ELA", names)
+
+        # Present in SEIS -> read-only even though the regular tests are shown.
+        self.assertTrue(response.context["seis_readonly"])
+        self.assertFalse(response.context["can_edit"])
+        self.assertIn("This student is listed in SEIS", response.content.decode())
+
+    def test_seis_readonly_post_is_blocked(self):
+        self._create_seis_row("seis-row-7", ["No_Test"])
+        response = self.client.post(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            {"completed_assessments": [str(self.ast_math.id)]},
+        )
+        self.assertEqual(response.status_code, 302)
+        # Nothing is saved for a SEIS-managed student.
+        self.assertFalse(
+            StudentAssessmentCompletion.objects.filter(
+                student_annual_key=self.student.stu_annual_key,
+                assessment=self.ast_math,
+                is_completed=True,
+            ).exists()
+        )
 
     def test_readonly_seis_workspace_preserves_existing_supports(self):
         # A fully SEIS-managed workspace renders no support controls, so a save
@@ -2343,6 +2403,15 @@ class DesiStudentListSchoolFilterTests(TestCase):
         self.assertNotIn('id="school"', content)
         self.assertIn('value="SCH-A"', content)
 
+    def test_student_list_shows_504_badge(self):
+        student = CurrentStudent.objects.get(stu_annual_key="sf-a")
+        student.in_504 = "Y"
+        student.save(update_fields=["in_504"])
+
+        response = self._get("SCH-A")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("504: Y", response.content.decode())
+
 
 class DesiStudentListPeriodFilterTests(TestCase):
     """Period filter for non-elementary schools, sourced from the schedule table."""
@@ -2432,3 +2501,555 @@ class DesiStudentListPeriodFilterTests(TestCase):
         self.assertEqual(args[1], "HS-1")
         self.assertEqual(args[2], "2")
         self.assertEqual(args[3], "Smith")
+
+
+class DesiSupportDefaultRuleTests(TestCase):
+    """Default assignment rules: Managed-by + criteria (demographic & results)."""
+
+    def setUp(self):
+        cache.delete('landing:project_config')
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="defrule@test.com",
+            email="defrule@test.com",
+            password="password123",
+        )
+        self.user.roles.add(role)
+        self.client.force_login(self.user)
+
+        self.assessment = Assessment.objects.create(name="Default Rule Math", subject="Math", is_active=True)
+        self.acc = Accommodation.objects.create(name="Calculator", code="CALC", managed_by="district")
+        self.opt = AccommodationOption.objects.create(accommodation=self.acc, name="Scientific", code="SCI")
+        self.assessment.supported_options.add(self.opt)
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="dr-student", ssid="dr-ssid", student_id="dr",
+            student_name="Default Rule Student", grade="05", school_year="2025-2026",
+        )
+
+    def _global_rule(self):
+        rule = SupportDefaultRule.objects.create(
+            name="Global Calc", support=self.acc, scope="all", is_active=True
+        )
+        rule.options.add(self.opt)
+        return rule
+
+    def test_global_rule_locks_option_for_every_student(self):
+        self._global_rule()
+        locks = default_support_locks(self.student)
+        self.assertIn(self.opt.id, locks["option_ids"])
+        self.assertIn(self.acc.id, locks["support_ids"])
+        self.assertEqual(locks["managers"][self.acc.id], "District")
+
+    def test_demographic_criteria_rule(self):
+        rule = SupportDefaultRule.objects.create(
+            name="Grade 5", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="demographic", field_name="grade",
+            operator="is", value="05",
+        )
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        other = CurrentStudent.objects.create(
+            stu_annual_key="dr-2", ssid="dr-2", student_id="dr2",
+            student_name="Other", grade="06", school_year="2025-2026",
+        )
+        self.assertNotIn(self.opt.id, default_support_locks(other)["option_ids"])
+
+    def test_result_criteria_rule(self):
+        Test.objects.create(
+            test_group_key="elpac-sum-2025", test_name="ELPAC",
+            subject="summative", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="r1", test_group_key="elpac-sum-2025", ssid=self.student.ssid,
+            local_student_id="dr", school_year="2025-2026", pl="2",
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="ELPAC PL12", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", test_name="ELPAC", test_subject="summative",
+            school_year="2025-2026", result_field="pl", result_operator="in", result_value="1,2",
+        )
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        other = CurrentStudent.objects.create(
+            stu_annual_key="dr-3", ssid="dr-3", student_id="dr3",
+            student_name="PL3", grade="05", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="r2", test_group_key="elpac-sum-2025", ssid="dr-3",
+            local_student_id="dr3", school_year="2025-2026", pl="3",
+        )
+        self.assertNotIn(self.opt.id, default_support_locks(other)["option_ids"])
+
+    def test_workspace_shows_locked_default_option(self):
+        self._global_rule()
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("Managed by District", content)
+        self.assertIn(f'<option value="{self.opt.id}" selected>Scientific</option>', content)
+
+    def test_admin_creates_rule_with_demographic_and_result_criteria(self):
+        response = self.client.post(reverse("desi:support_default_rule_create"), {
+            "name": "New Default",
+            "support_id": str(self.acc.id),
+            "scope": "criteria",
+            "is_active": "on",
+            "options": [str(self.opt.id)],
+            "crit_type[]": ["demographic", "result"],
+            "crit_logic_op[]": ["AND", "OR"],
+            "crit_field[]": ["grade", ""],
+            "crit_operator[]": ["is", ""],
+            "crit_value[]": ["05", ""],
+            "crit_test_name[]": ["", "ELPAC"],
+            "crit_test_subject[]": ["", "summative"],
+            "crit_test_window[]": ["", ""],
+            "crit_school_year[]": ["", "2025-2026"],
+            "crit_result_field[]": ["pl", "pl"],
+            "crit_result_operator[]": ["in", "in"],
+            "crit_result_value[]": ["", "1,2"],
+        })
+        self.assertEqual(response.status_code, 302)
+        rule = SupportDefaultRule.objects.get(name="New Default")
+        self.assertEqual(rule.options.count(), 1)
+        crits = list(rule.criteria.all())
+        self.assertEqual(len(crits), 2)
+        self.assertEqual(crits[0].criterion_type, "demographic")
+        self.assertEqual(crits[1].criterion_type, "result")
+
+    def test_edit_support_saves_managed_by(self):
+        edit_url = reverse("desi:edit_accommodation", args=[self.acc.id])
+        response = self.client.post(edit_url, {
+            "name": self.acc.name,
+            "code": self.acc.code,
+            "category": self.acc.category,
+            "managed_by": "testing_coordinator",
+            "description": "",
+            "order": "0",
+            "option_id[]": [str(self.opt.id)],
+            "option_name[]": [self.opt.name],
+            "option_code[]": [self.opt.code],
+            "supported_assessments": [str(self.assessment.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        self.acc.refresh_from_db()
+        self.assertEqual(self.acc.managed_by, "testing_coordinator")
+
+    def test_criteria_popover_partial_preselects_support(self):
+        response = self.client.get(
+            reverse("desi:support_default_rule_create"),
+            {"support": str(self.acc.id), "embed": "1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        # Rendered as a bare partial (no full page chrome).
+        self.assertNotIn("<html", content.lower())
+        self.assertIn(f'name="support_id" value="{self.acc.id}"', content)
+        self.assertIn("Options to Assign", content)
+
+    def test_admin_dashboard_has_criteria_popover(self):
+        response = self.client.get(reverse("desi:admin_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("desi-default-rule-modal", content)
+        self.assertIn("/desi/default-rules/manage/", content)
+
+    def test_manager_lists_rules_and_allows_edit(self):
+        self._global_rule()
+        support_url = reverse("desi:support_default_rule_manage", args=[self.acc.id])
+        response = self.client.get(support_url)
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("Option criteria", content)
+        self.assertIn("Global Calc", content)
+        self.assertIn(reverse("desi:support_default_rule_edit", args=[
+            SupportDefaultRule.objects.get(name="Global Calc").id,
+        ]) + "?embed=1", content)
+
+    def test_embedded_save_returns_refreshed_manager(self):
+        response = self.client.post(
+            reverse("desi:support_default_rule_create") + "?embed=1",
+            {
+                "name": "Popover Rule",
+                "support_id": str(self.acc.id),
+                "scope": "all",
+                "is_active": "on",
+                "options": [str(self.opt.id)],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("Option criteria", content)
+        self.assertIn("Popover Rule", content)
+        self.assertTrue(SupportDefaultRule.objects.filter(name="Popover Rule").exists())
+
+    def test_embedded_delete_returns_refreshed_manager(self):
+        rule = self._global_rule()
+        response = self.client.get(
+            reverse("desi:support_default_rule_delete", args=[rule.id]) + "?embed=1"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Option criteria", response.content.decode())
+        self.assertFalse(SupportDefaultRule.objects.filter(id=rule.id).exists())
+
+    def test_result_criterion_created_from_assessment_dropdown(self):
+        response = self.client.post(reverse("desi:support_default_rule_create"), {
+            "name": "ELPAC Dropdown Rule",
+            "support_id": str(self.acc.id),
+            "scope": "criteria",
+            "is_active": "on",
+            "options": [str(self.opt.id)],
+            "crit_type[]": ["result"],
+            "crit_logic_op[]": ["AND"],
+            "crit_field[]": [""], "crit_operator[]": [""], "crit_value[]": [""],
+            "crit_assessment[]": ["ELPAC_summative|"],
+            "crit_school_year[]": ["2025-2026"],
+            "crit_result_field[]": ["pl"],
+            "crit_result_operator[]": ["in"],
+            "crit_result_value[]": ["1,2"],
+            "crit_school[]": [""], "crit_staff[]": [""], "crit_period[]": [""],
+        })
+        self.assertEqual(response.status_code, 302)
+        crit = SupportDefaultRuleCriteria.objects.get(rule__name="ELPAC Dropdown Rule")
+        self.assertEqual(crit.criterion_type, "result")
+        self.assertEqual(crit.test_name, "ELPAC_summative")
+        self.assertEqual(crit.test_subject, "")
+        self.assertEqual(crit.school_year, "2025-2026")
+        self.assertEqual(crit.result_field, "pl")
+        self.assertEqual(crit.result_value, "1,2")
+
+    def test_schedule_criterion_created_from_school_class_dropdowns(self):
+        response = self.client.post(reverse("desi:support_default_rule_create"), {
+            "name": "Class Rule",
+            "support_id": str(self.acc.id),
+            "scope": "criteria",
+            "is_active": "on",
+            "options": [str(self.opt.id)],
+            "crit_type[]": ["schedule"],
+            "crit_logic_op[]": ["AND"],
+            "crit_field[]": [""], "crit_operator[]": [""], "crit_value[]": [""],
+            "crit_assessment[]": [""], "crit_school_year[]": [""],
+            "crit_result_field[]": ["pl"], "crit_result_operator[]": ["in"], "crit_result_value[]": [""],
+            "crit_school[]": ["SCH-X"], "crit_staff[]": ["Smith, Jane"], "crit_period[]": ["3"],
+        })
+        self.assertEqual(response.status_code, 302)
+        crit = SupportDefaultRuleCriteria.objects.get(rule__name="Class Rule")
+        self.assertEqual(crit.criterion_type, "schedule")
+        self.assertEqual(crit.school_state_id, "SCH-X")
+        self.assertEqual(crit.staff_name, "Smith, Jane")
+        self.assertEqual(crit.period, "3")
+
+    def test_schedule_criterion_school_level_matches_by_school(self):
+        rule = SupportDefaultRule.objects.create(
+            name="School Scope", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="schedule", school_state_id="SCH-X",
+        )
+        self.student.school_state_id = "SCH-X"
+        self.student.save(update_fields=["school_state_id"])
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        self.student.school_state_id = "SCH-Y"
+        self.student.save(update_fields=["school_state_id"])
+        self.assertNotIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+    def test_schedule_criterion_teacher_and_period_uses_schedule(self):
+        rule = SupportDefaultRule.objects.create(
+            name="Class Scope", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="schedule",
+            staff_name="Smith, Jane", period="3",
+        )
+        fake = mock.MagicMock()
+        fake.exists.return_value = True
+        fake.filter.return_value = fake
+        with mock.patch("desi.views.Schedule") as mock_schedule:
+            mock_schedule.objects.filter.return_value = fake
+            self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        fake.exists.return_value = False
+        with mock.patch("desi.views.Schedule") as mock_schedule:
+            mock_schedule.objects.filter.return_value = fake
+            self.assertNotIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+    def test_multiple_criteria_rules_first_match_then_default(self):
+        # Distinct options per rule.
+        opt_a = AccommodationOption.objects.create(accommodation=self.acc, name="Option A", code="A")
+        opt_b = AccommodationOption.objects.create(accommodation=self.acc, name="Option B", code="B")
+        opt_def = AccommodationOption.objects.create(accommodation=self.acc, name="Option D", code="D")
+
+        rule_a = SupportDefaultRule.objects.create(
+            name="Grade 5 -> A", support=self.acc, scope="criteria", priority=10, is_active=True)
+        rule_a.options.add(opt_a)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule_a, criterion_type="demographic", field_name="grade", operator="is", value="05")
+
+        rule_b = SupportDefaultRule.objects.create(
+            name="Grade 6 -> B", support=self.acc, scope="criteria", priority=20, is_active=True)
+        rule_b.options.add(opt_b)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule_b, criterion_type="demographic", field_name="grade", operator="is", value="06")
+
+        default_rule = SupportDefaultRule.objects.create(
+            name="Default -> D", support=self.acc, scope="all", priority=100, is_active=True)
+        default_rule.options.add(opt_def)
+
+        # Grade 05 matches rule A (highest priority criteria).
+        locks = default_support_locks(self.student)
+        self.assertIn(opt_a.id, locks["option_ids"])
+        self.assertNotIn(opt_b.id, locks["option_ids"])
+        self.assertNotIn(opt_def.id, locks["option_ids"])
+
+        # Grade 06 matches rule B.
+        self.student.grade = "06"
+        self.student.save(update_fields=["grade"])
+        locks = default_support_locks(self.student)
+        self.assertIn(opt_b.id, locks["option_ids"])
+        self.assertNotIn(opt_a.id, locks["option_ids"])
+        self.assertNotIn(opt_def.id, locks["option_ids"])
+
+        # Grade 07 matches nothing -> default.
+        self.student.grade = "07"
+        self.student.save(update_fields=["grade"])
+        locks = default_support_locks(self.student)
+        self.assertIn(opt_def.id, locks["option_ids"])
+        self.assertNotIn(opt_a.id, locks["option_ids"])
+        self.assertNotIn(opt_b.id, locks["option_ids"])
+
+    def test_rule_form_saves_priority(self):
+        response = self.client.post(reverse("desi:support_default_rule_create"), {
+            "name": "Prioritized Rule",
+            "support_id": str(self.acc.id),
+            "scope": "all",
+            "priority": "5",
+            "is_active": "on",
+            "options": [str(self.opt.id)],
+        })
+        self.assertEqual(response.status_code, 302)
+        rule = SupportDefaultRule.objects.get(name="Prioritized Rule")
+        self.assertEqual(rule.priority, 5)
+
+
+class Desi504AdminRoleTests(TestCase):
+    """504 students are editable only by the 504_Admin role (school-scoped)."""
+
+    def setUp(self):
+        cache.delete('landing:project_config')
+        self.project_role = Role.objects.create(name="Project Admin")
+        self.school_admin_role = Role.objects.create(name="School Admin")
+        self.teacher_role = Role.objects.create(name="Teacher")
+        self.admin504_role, _ = Role.objects.get_or_create(
+            name="504_Admin", defaults={"description": "504 editor"}
+        )
+
+        def make_user(username, role, schools):
+            user = User.objects.create_user(
+                username=username, email=username, password="password123"
+            )
+            user.roles.add(role)
+            user.schools = schools
+            user.save()
+            return user
+
+        self.project_admin = make_user("proj@test.com", self.project_role, [])
+        self.school_admin = make_user("school@test.com", self.school_admin_role, ["SCH-504"])
+        self.teacher = make_user("teacher@test.com", self.teacher_role, ["SCH-504"])
+        self.admin504 = make_user("admin504@test.com", self.admin504_role, ["SCH-504"])
+        self.admin504_other = make_user("admin504other@test.com", self.admin504_role, ["SCH-OTHER"])
+
+        self.student_504 = CurrentStudent.objects.create(
+            stu_annual_key="s504", ssid="s504", student_id="s504",
+            student_name="Student 504", grade="04", in_504="Y",
+            school_state_id="SCH-504", school_year="2025-2026",
+        )
+        self.student_ok = CurrentStudent.objects.create(
+            stu_annual_key="sok", ssid="sok", student_id="sok",
+            student_name="Student OK", grade="04", in_504="N",
+            school_state_id="SCH-504", school_year="2025-2026",
+        )
+
+    def test_role_exists(self):
+        self.assertTrue(Role.objects.filter(name="504_Admin").exists())
+
+    def test_504_student_editable_only_by_504_admin(self):
+        self.assertFalse(can_edit_desi(self.school_admin, student=self.student_504))
+        self.assertFalse(can_edit_desi(self.teacher, student=self.student_504))
+        self.assertTrue(can_edit_desi(self.admin504, student=self.student_504))
+        # Project Admin has full rights to all.
+        self.assertTrue(can_edit_desi(self.project_admin, student=self.student_504))
+
+    def test_504_admin_scoped_to_assigned_school(self):
+        self.assertFalse(can_edit_desi(self.admin504_other, student=self.student_504))
+
+    def test_non_504_student_editing_unaffected(self):
+        self.assertTrue(can_edit_desi(self.school_admin, student=self.student_ok))
+        self.assertTrue(can_edit_desi(self.teacher, student=self.student_ok))
+
+    def test_workspace_view_only_for_school_admin_on_504(self):
+        self.client.force_login(self.school_admin)
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student_504.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["can_edit"])
+
+    def test_workspace_editable_for_504_admin(self):
+        self.client.force_login(self.admin504)
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student_504.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["can_edit"])
+
+    def test_superuser_has_full_rights_on_504(self):
+        su = User.objects.create_superuser(
+            username="su504@test.com", email="su504@test.com", password="password123"
+        )
+        # Superusers have full rights to all students, including 504.
+        self.assertTrue(can_edit_desi(su, student=self.student_504))
+
+
+class DesiStateUploadExportTests(TestCase):
+    """CAASPP/ELPAC TOMS upload workbooks built from DESI + SEIS data."""
+
+    def setUp(self):
+        import io  # noqa: F401
+        cache.delete('landing:project_config')
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="stateupload@test.com",
+            email="stateupload@test.com",
+            password="password123",
+        )
+        self.user.roles.add(role)
+
+        caaspp = Accommodation.objects.create(
+            name="Abacus", code="B", column_letter="B", tag="CAASPP"
+        )
+        self.caaspp_opt = AccommodationOption.objects.create(
+            accommodation=caaspp, name="Abacus is selected.", code="NEA_Abacus"
+        )
+        elpac = Accommodation.objects.create(
+            name="Alternate Response", code="B", column_letter="B", tag="ELPAC"
+        )
+        self.elpac_opt = AccommodationOption.objects.create(
+            accommodation=elpac, name="Alternate Response is selected.", code="NEA_AR"
+        )
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="state-stu", ssid="1234567890", student_id="stu1",
+            student_name="State Student", grade="05", school_year="2025-2026",
+        )
+        record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=self.student.stu_annual_key
+        )
+        record.options.add(self.caaspp_opt)
+
+    def _load(self, payload):
+        import io
+        import openpyxl
+        return openpyxl.load_workbook(io.BytesIO(payload), data_only=True)
+
+    def test_workbook_matches_template_headers_and_places_codes(self):
+        from desi.state_upload_export import build_state_upload_workbook
+        from desi.state_upload_templates import CAASPP_HEADERS, CAASPP_SHEET_NAME
+
+        wb = build_state_upload_workbook("CAASPP", [self.student])
+        ws = wb.active
+        self.assertEqual(ws.title, CAASPP_SHEET_NAME)
+        self.assertEqual([c.value for c in ws[1]], CAASPP_HEADERS)
+        row = [c.value for c in ws[2]]
+        self.assertEqual(row[0], "1234567890")
+        # Column B (index 1) = Abacus -> DESI-selected option code.
+        self.assertEqual(row[1], "NEA_Abacus")
+
+    def test_seis_codes_are_merged(self):
+        ensure_desi_seis_table()
+        DesiSeis.objects.create(
+            id="seis-state", ssid=self.student.ssid, test_group="elpac",
+            settings={"TTS": "NEA_AR"}, assessments=["ELPAC_summative"],
+        )
+        from desi.state_upload_export import build_state_upload_workbook
+        from desi.state_upload_templates import ELPAC_SHEET_NAME
+
+        wb = build_state_upload_workbook("ELPAC", [self.student])
+        ws = wb.active
+        self.assertEqual(ws.title, ELPAC_SHEET_NAME)
+        row = [c.value for c in ws[2]]
+        # ELPAC column B (index 1) = Alternate Response -> SEIS code.
+        self.assertEqual(row[1], "NEA_AR")
+
+    def test_endpoint_returns_zip_with_two_workbooks(self):
+        import zipfile
+        self.client.force_login(self.user)
+        response = self.client.get(
+            reverse("desi:export_state_upload"), {"school_year": "2025-2026"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        archive = zipfile.ZipFile(io.BytesIO(response.content))
+        self.assertIn("CAASPP_Upload_2025-2026.xlsx", archive.namelist())
+        self.assertIn("ELPAC_Upload_2025-2026.xlsx", archive.namelist())
+
+    def test_endpoint_returns_single_workbook(self):
+        self.client.force_login(self.user)
+        response = self.client.get(
+            reverse("desi:export_state_upload_caaspp"), {"school_year": "2025-2026"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("spreadsheetml.sheet", response["Content-Type"])
+        wb = self._load(response.content)
+        self.assertEqual(wb.active.title, "CAASPP Test Settings Template")
+
+        response = self.client.get(
+            reverse("desi:export_state_upload_elpac"), {"school_year": "2025-2026"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("spreadsheetml.sheet", response["Content-Type"])
+        wb = self._load(response.content)
+        self.assertEqual(wb.active.title, "ELPAC Test Settings Template")
+
+    def test_state_upload_accessible_with_token_without_login(self):
+        token = signing.dumps(
+            {"uid": self.user.id, "purpose": "desi_export"},
+            salt=EXPORT_ENDPOINT_SIGNING_SALT,
+        )
+        # Not logged in: the signed token alone authorizes the download.
+        response = self.client.get(
+            reverse("desi:export_state_upload_caaspp"),
+            {"auth": token, "school_year": "2025-2026"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("spreadsheetml.sheet", response["Content-Type"])
+
+        response = self.client.get(
+            reverse("desi:export_state_upload"),
+            {"auth": token, "school_year": "2025-2026"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+
+    def test_state_upload_requires_auth(self):
+        response = self.client.get(reverse("desi:export_state_upload_caaspp"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_export_page_publishes_state_upload_endpoints(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("desi:export_data"))
+        content = response.content.decode()
+        self.assertIn("data-endpoint-url", content)
+        self.assertIn("/desi/admin-dashboard/export/state-upload/caaspp/", content)
+        self.assertIn("/desi/admin-dashboard/export/state-upload/elpac/", content)
+

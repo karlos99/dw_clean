@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Default Assignment Rules - DESI - DS Data{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-6 flex items-center justify-between gap-4 flex-wrap">
+        <div>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-900">Default Assignment Rules</h1>
+            <p class="mt-2 text-sm text-slate-600">Assign an option (or options) to a designated support for all students or for students matching criteria. Matching students get the option pre-selected and the support becomes read-only.</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'desi:support_rule_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">Visibility Rules</a>
+            <a href="{% url 'desi:support_default_rule_create' %}" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 transition">
+                ➕ New Rule
+            </a>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Rule</th>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Support</th>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Scope / Criteria</th>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Options</th>
+                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                    <th class="px-6 py-3 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {% for rule in rules %}
+                <tr class="hover:bg-slate-50">
+                    <td class="px-6 py-4">
+                        <p class="font-semibold text-slate-900">{{ rule.name }}</p>
+                        <p class="text-[11px] text-slate-400">Priority {{ rule.priority }}</p>
+                        {% if rule.description %}<p class="text-xs text-slate-500">{{ rule.description }}</p>{% endif %}
+                    </td>
+                    <td class="px-6 py-4 text-xs text-slate-700">
+                        <span class="font-semibold">{{ rule.support.name }}</span>
+                        {% if rule.support.managed_by %}
+                        <span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-sky-100 text-sky-800">{{ rule.support.get_managed_by_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 text-xs text-slate-600">
+                        {% if rule.scope == 'all' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100">Default / fallback</span>
+                        {% else %}
+                        <div class="font-medium text-slate-800">{{ rule.criteria_summary }}</div>
+                        <div class="text-[11px] text-slate-400 mt-0.5">{{ rule.criteria_count }} condition{{ rule.criteria_count|pluralize }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 text-xs text-slate-600">{{ rule.option_count }} option{{ rule.option_count|pluralize }}</td>
+                    <td class="px-6 py-4">
+                        {% if rule.is_active %}
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+                        {% else %}
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right">
+                        <div class="flex justify-end gap-2">
+                            <a href="{% url 'desi:support_default_rule_edit' rule.pk %}" class="inline-flex items-center px-2.5 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50">Edit</a>
+                            <a href="{% url 'desi:support_default_rule_delete' rule.pk %}" onclick="return confirm('Delete this default assignment rule?');"
+                               class="inline-flex items-center px-2.5 py-1 border border-red-200 rounded text-xs font-semibold uppercase tracking-wider text-red-700 bg-red-50 hover:bg-red-100">Delete</a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="px-6 py-12 text-center text-sm text-slate-500 italic">
+                        No default assignment rules yet. Click "New Rule" to create one.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

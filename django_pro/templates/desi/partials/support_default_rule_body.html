@@ -1,0 +1,237 @@
+<div class="{% if embed %}p-1{% else %}max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8{% endif %}"
+     x-data="{
+        scope: '{{ rule.scope|default:"criteria" }}',
+        supportId: '{% if selected_support_id %}{{ selected_support_id }}{% endif %}',
+        criteria: [
+            {% for c in criteria %}
+            {
+                type: '{{ c.criterion_type }}', logic: '{{ c.logic_operator|default:"AND" }}',
+                field: '{{ c.field_name }}', operator: '{{ c.operator }}', value: '{{ c.value|escapejs }}',
+                assessment: '{{ c.test_name|escapejs }}|{{ c.test_subject|escapejs }}',
+                year: '{{ c.school_year|escapejs }}',
+                rfield: '{{ c.result_field|default:"pl" }}', rop: '{{ c.result_operator|default:"in" }}', rvalue: '{{ c.result_value|escapejs }}',
+                school: '{{ c.school_state_id|escapejs }}', staff: '{{ c.staff_name|escapejs }}', period: '{{ c.period|escapejs }}'
+            }{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ],
+        staffBySchool: JSON.parse(document.getElementById('staff-by-school-data').textContent || '{}'),
+        addDemographic() {
+            this.criteria.push({ type: 'demographic', logic: 'AND', field: 'grade', operator: 'is', value: '',
+                assessment: '', year: '', rfield: 'pl', rop: 'in', rvalue: '', school: '', staff: '', period: '' });
+        },
+        addResult() {
+            this.criteria.push({ type: 'result', logic: 'AND', field: 'grade', operator: 'is', value: '',
+                assessment: '', year: '', rfield: 'pl', rop: 'in', rvalue: '', school: '', staff: '', period: '' });
+        },
+        addSchedule() {
+            this.criteria.push({ type: 'schedule', logic: 'AND', field: 'grade', operator: 'is', value: '',
+                assessment: '', year: '', rfield: 'pl', rop: 'in', rvalue: '', school: '', staff: '', period: '' });
+        },
+        removeCriterion(index) { this.criteria.splice(index, 1); }
+     }">
+
+    {% if not embed %}
+    <div class="mb-6">
+        <a href="{% url 'desi:support_default_rule_list' %}" class="text-sm font-semibold text-slate-500 hover:text-blue-600 transition">&larr; Back to default assignment rules</a>
+    </div>
+
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900">
+            {% if is_edit %}Edit Default Assignment Rule: {{ rule.name }}{% else %}Create Default Assignment Rule{% endif %}
+        </h1>
+        <p class="mt-2 text-sm text-slate-600">Matching students get the selected option(s) pre-selected, and the support becomes read-only in their workspace.</p>
+    </div>
+    {% endif %}
+
+    <form method="post"{% if embed %} action="{{ form_action }}" hx-post="{{ form_action }}" hx-target="#desi-default-rule-modal-body" hx-swap="innerHTML"{% endif %} class="space-y-6">
+        {% csrf_token %}
+        {% if embed %}<input type="hidden" name="embed" value="1">{% endif %}
+
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-5">
+            <h2 class="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">1. Rule Details</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div class="md:col-span-2">
+                    <label for="name" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Rule Name</label>
+                    <input type="text" name="name" id="name" required value="{% if is_edit %}{{ rule.name }}{% endif %}"
+                           placeholder="e.g. ELPAC Summative PL 1-2 default supports"
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                </div>
+                <div class="md:col-span-2">
+                    <label for="description" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Description (Optional)</label>
+                    <textarea name="description" id="description" rows="2" class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">{% if is_edit %}{{ rule.description }}{% endif %}</textarea>
+                </div>
+                <div>
+                    <label for="support_id" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Designated Support</label>
+                    {% if embed and selected_support_id %}
+                    <input type="hidden" name="support_id" value="{{ selected_support_id }}">
+                    <div class="block w-full rounded-md border border-slate-200 bg-slate-50 text-slate-700 text-sm py-2 px-3">
+                        {% for support in supports %}{% if support.id == selected_support_id %}{{ support.name }}{% endif %}{% endfor %}
+                    </div>
+                    {% else %}
+                    <select name="support_id" id="support_id" x-model="supportId" required
+                            class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                        <option value="">— Choose a support —</option>
+                        {% for support in supports %}
+                        <option value="{{ support.id }}">{{ support.name }}{% if support.managed_by %} ({{ support.get_managed_by_display }}){% endif %}</option>
+                        {% endfor %}
+                    </select>
+                    {% endif %}
+                </div>
+                <div>
+                    <label for="scope" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Applies To</label>
+                    <select name="scope" id="scope" x-model="scope" class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                        <option value="criteria">Students matching criteria</option>
+                        <option value="all">Default (all students / fallback)</option>
+                    </select>
+                    <p class="mt-1 text-[10px] text-slate-400">A default rule is used only when no criteria rule for this support matches.</p>
+                </div>
+                <div>
+                    <label for="priority" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Priority</label>
+                    <input type="number" name="priority" id="priority" value="{% if is_edit %}{{ rule.priority }}{% else %}100{% endif %}"
+                           class="block w-full rounded-md border-slate-300 shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3">
+                    <p class="mt-1 text-[10px] text-slate-400">Lower number = evaluated first. First matching rule wins.</p>
+                </div>
+            </div>
+            <label class="inline-flex items-center text-sm text-slate-700">
+                <input type="checkbox" name="is_active" {% if not is_edit or rule.is_active %}checked{% endif %}
+                       class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 mr-2">
+                Rule is Active
+            </label>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-5">
+            <div class="border-b border-slate-100 pb-2">
+                <h2 class="text-lg font-bold text-slate-900">2. Options to Assign</h2>
+                <p class="text-xs text-slate-500 mt-0.5">Options shown pre-selected for matching students. Leave empty to lock the support as a simple selected checkbox.</p>
+            </div>
+            <div x-show="!supportId" class="text-sm text-slate-400 italic">Choose a designated support above to see its options.</div>
+            <div x-show="supportId" x-cloak class="space-y-4">
+                {% for support in supports %}
+                <div x-show="supportId == '{{ support.id }}'" x-cloak>
+                    {% if support.options.all %}
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {% for opt in support.options.all %}
+                        <label class="inline-flex items-start gap-2 text-xs text-slate-700 cursor-pointer rounded border border-slate-200 bg-white p-2">
+                            <input type="checkbox" name="options" value="{{ opt.id }}"
+                                   {% if opt.id in selected_option_ids %}checked{% endif %}
+                                   class="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                            <span class="font-semibold text-slate-800">{{ opt.name }}{% if opt.code %} <span class="text-slate-400">({{ opt.code }})</span>{% endif %}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-xs text-slate-500 italic">This support has no options; matching students will get it selected and locked.</p>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-4" x-show="scope === 'criteria'" x-cloak>
+            <div class="flex justify-between items-center border-b border-slate-100 pb-2">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">3. Criteria</h2>
+                    <p class="text-xs text-slate-500 mt-0.5">Match demographics, assessment results, and/or class schedule. Use AND / OR between conditions.</p>
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                    <button type="button" @click="addDemographic" class="inline-flex items-center px-3 py-1.5 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 shadow-sm transition">➕ Demographic</button>
+                    <button type="button" @click="addResult" class="inline-flex items-center px-3 py-1.5 border border-sky-300 rounded text-xs font-semibold uppercase tracking-wider text-sky-700 bg-sky-50 hover:bg-sky-100 shadow-sm transition">➕ Result</button>
+                    <button type="button" @click="addSchedule" class="inline-flex items-center px-3 py-1.5 border border-emerald-300 rounded text-xs font-semibold uppercase tracking-wider text-emerald-700 bg-emerald-50 hover:bg-emerald-100 shadow-sm transition">➕ Class / Schedule</button>
+                </div>
+            </div>
+
+            <div class="space-y-3">
+                <template x-for="(critRow, index) in criteria" :key="index">
+                    <div class="bg-slate-50 border border-slate-200 rounded p-3 space-y-3">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider" x-text="index === 0 ? 'WHERE' : (critRow.logic || 'AND')"></span>
+                            <select x-show="index > 0" name="crit_logic_op[]" x-model="critRow.logic" class="rounded text-xs font-bold py-0.5 px-2 border-slate-300">
+                                <option value="AND">AND</option>
+                                <option value="OR">OR</option>
+                            </select>
+                            <input x-show="index === 0" type="hidden" name="crit_logic_op[]" value="AND">
+                            <select name="crit_type[]" x-model="critRow.type" class="rounded text-xs font-bold py-0.5 px-2 border-slate-300">
+                                <option value="demographic">Demographic</option>
+                                <option value="result">Assessment Result</option>
+                                <option value="schedule">Class / Schedule</option>
+                            </select>
+                            <button type="button" @click="removeCriterion(index)" class="ml-auto text-red-600 hover:text-red-800 text-xs font-bold uppercase transition">Delete</button>
+                        </div>
+
+                        <div x-show="critRow.type === 'demographic'" class="flex flex-col md:flex-row gap-2">
+                            <select name="crit_field[]" x-model="critRow.field" class="w-full md:w-1/3 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                {% for val, label in field_choices %}
+                                <option value="{{ val }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <select name="crit_operator[]" x-model="critRow.operator" class="w-full md:w-1/4 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                {% for val, label in operator_choices %}
+                                <option value="{{ val }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="text" name="crit_value[]" x-model="critRow.value" placeholder="Value (e.g. 03,04,05 or Y)"
+                                   class="w-full md:flex-1 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                        </div>
+
+                        <div x-show="critRow.type === 'result'" class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <select name="crit_school_year[]" x-model="critRow.year" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                <option value="">— Assessment year —</option>
+                                {% for year in test_school_year_options %}
+                                <option value="{{ year }}">{{ year }}</option>
+                                {% endfor %}
+                            </select>
+                            <select name="crit_assessment[]" x-model="critRow.assessment" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                <option value="">— Assessment —</option>
+                                {% for choice in result_assessment_choices %}
+                                <option value="{{ choice.value }}">{{ choice.label }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="crit_result_field[]" value="pl">
+                            <select name="crit_result_operator[]" x-model="critRow.rop" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                {% for val, label in result_operator_choices %}
+                                <option value="{{ val }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="text" name="crit_result_value[]" x-model="critRow.rvalue" placeholder="Performance level(s), e.g. 1,2"
+                                   class="md:col-span-2 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                        </div>
+
+                        <div x-show="critRow.type === 'schedule'" class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <select name="crit_school[]" x-model="critRow.school" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                <option value="">— School (optional) —</option>
+                                {% for school in school_options %}
+                                <option value="{{ school.state_id }}">{{ school.short_name|default:school.school_name }}</option>
+                                {% endfor %}
+                            </select>
+                            <select name="crit_staff[]" x-model="critRow.staff" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                <option value="">— All teachers —</option>
+                                <template x-for="teacher in (staffBySchool[critRow.school] || [])" :key="teacher">
+                                    <option :value="teacher" x-text="teacher" :selected="critRow.staff === teacher"></option>
+                                </template>
+                            </select>
+                            <select name="crit_period[]" x-model="critRow.period" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                <option value="">— Any period —</option>
+                                {% for period in period_options %}
+                                <option value="{{ period }}">Period {{ period }}</option>
+                                {% endfor %}
+                            </select>
+                            <p class="md:col-span-3 text-[10px] text-slate-400">School only = every student in the school. Add a teacher to target their students; add a period to target one class.</p>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="criteria.length === 0" class="text-center py-6 text-sm text-slate-400 italic bg-slate-50 border border-dashed border-slate-200 rounded">
+                    No conditions defined. Add a demographic, assessment-result, or class/schedule condition.
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-end gap-3 pt-4 border-t border-slate-200">
+            {% if not embed %}
+            <a href="{% url 'desi:support_default_rule_list' %}" class="inline-flex items-center px-4 py-2.5 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50">Cancel</a>
+            {% endif %}
+            <button type="submit" class="inline-flex items-center px-8 py-2.5 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700">Save Rule</button>
+        </div>
+    </form>
+
+    <script id="staff-by-school-data" type="application/json">{{ staff_by_school_json|default:"{}"|safe }}</script>
+</div>
