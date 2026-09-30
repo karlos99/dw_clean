@@ -3,81 +3,64 @@
 {% block title %}DESI Admin Dashboard - DS Data{% endblock %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
-     x-data="{
-         seisOpen: false,
-         testsOpen: false,
-         orderOpen: false,
-         poolOpen: false,
-         expandAll() {
-             this.seisOpen = true;
-             this.testsOpen = true;
-             this.orderOpen = true;
-             this.poolOpen = true;
-         },
-         collapseAll() {
-             this.seisOpen = false;
-             this.testsOpen = false;
-             this.orderOpen = false;
-             this.poolOpen = false;
-         },
-         allExpanded() {
-             return this.seisOpen && this.testsOpen && this.orderOpen && this.poolOpen;
-         }
-     }">
+<div class="w-full px-4 sm:px-6 lg:px-8 py-6"
+     x-data="{ tab: 'assessments', showSidebar: true }">
 
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-8 pb-4 border-b border-slate-200">
-        <div>
-            <h1 class="text-3xl font-bold tracking-tight text-slate-900">DESI Configurations</h1>
-            <p class="mt-2 text-sm text-slate-600">Configure tests, eligibility conditions, supports, and screening questions.</p>
+    <!-- Submenu below the main navbar -->
+    <div class="sticky top-16 z-30 bg-white/95 backdrop-blur border-b border-slate-200 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 mb-6">
+        <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0 py-3">
+                <h1 class="text-base font-bold tracking-tight text-slate-900">DESI Configurations</h1>
+                <p class="text-[11px] text-slate-500">Configure assessments, eligibility, supports, SEIS, and exports.</p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+                <button type="button" @click="showSidebar = !showSidebar"
+                        class="hidden xl:inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition"
+                        :title="showSidebar ? 'Hide side panel' : 'Show side panel'">
+                    <span x-text="showSidebar ? 'Hide Panel' : 'Show Panel'"></span>
+                </button>
+                <a href="{% url 'desi:student_list' %}" class="inline-flex shrink-0 items-center px-3 py-1.5 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">&larr; Student List</a>
+            </div>
         </div>
-        <div class="mt-4 md:mt-0 flex gap-2 flex-wrap items-center">
-            <button type="button" @click="allExpanded() ? collapseAll() : expandAll()"
-                    class="inline-flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
-                <span x-text="allExpanded() ? '⊟ Collapse All' : '⊞ Expand All'"></span>
+        <nav class="flex items-center gap-1 overflow-x-auto -mb-px">
+            <button type="button" @click="tab='assessments'"
+                    :class="tab==='assessments' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+                    class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap">
+                Assessments <span class="ml-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px]">{{ assessments|length }}</span>
             </button>
-            <a href="{% url 'desi:student_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
-                &larr; Student List
-            </a>
-            <a href="{% url 'desi:create_accommodation' %}" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 transition">
-                ➕ Add Designated Support
-            </a>
-            <a href="{% url 'desi:create_assessment' %}" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 transition">
-                ➕ Create Assessment
-            </a>
-            <a href="{% url 'desi:support_organization' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
-                🗂 Support Organization
-            </a>
-            <a href="{% url 'desi:support_rule_list' %}" class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md shadow-sm text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
-                Support Rules
-            </a>
-        </div>
+            <button type="button" @click="tab='order'"
+                    :class="tab==='order' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+                    class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap">Column Order</button>
+            <button type="button" @click="tab='supports'"
+                    :class="tab==='supports' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+                    class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap">
+                Supports Pool <span class="ml-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px]">{{ accommodations|length }}</span>
+            </button>
+            <button type="button" @click="tab='seis'"
+                    :class="tab==='seis' ? 'border-violet-600 text-violet-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+                    class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap">SEIS Display</button>
+        </nav>
     </div>
 
+    <div class="grid gap-6 items-start"
+         :class="showSidebar ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_22rem]' : 'grid-cols-1'">
+        <!-- MAIN PANEL -->
+        <div class="space-y-6 min-w-0">
+
     <!-- SEIS Display Settings -->
-    <form method="POST" action="{% url 'desi:admin_dashboard' %}" class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-8">
+    <form method="POST" action="{% url 'desi:admin_dashboard' %}" x-show="tab==='seis'" x-cloak class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
         {% csrf_token %}
         <input type="hidden" name="action" value="seis_display_settings">
-        <div @click="seisOpen = !seisOpen"
-             class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center cursor-pointer select-none hover:bg-slate-800 transition">
-            <div class="flex items-center gap-3">
-                <svg class="w-4 h-4 text-slate-400 transform transition-transform duration-200 shrink-0" :class="seisOpen ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                </svg>
-                <div>
-                    <h2 class="text-lg font-bold">SEIS Display Settings</h2>
-                    <p class="text-[11px] text-slate-300 mt-0.5">Choose which assessments show SEIS settings on the student workspace.</p>
-                </div>
+        <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center gap-3">
+            <div>
+                <h2 class="text-lg font-bold">SEIS Display Settings</h2>
+                <p class="text-[11px] text-slate-300 mt-0.5">Choose which assessments show SEIS settings on the student workspace.</p>
             </div>
-            <div class="flex items-center gap-2.5">
-                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
-                    <span id="seis-selected-count">{{ seis_selected_assessment_ids|length }}</span> / {{ assessments|length }} active
-                </span>
-                <span class="text-xs font-bold text-slate-400 hidden sm:inline" x-text="seisOpen ? 'Collapse' : 'Expand'"></span>
-            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
+                <span id="seis-selected-count">{{ seis_selected_assessment_ids|length }}</span> / {{ assessments|length }} active
+            </span>
         </div>
-        <div x-show="seisOpen" x-collapse>
+        <div>
             <div class="p-6">
                 <p class="text-sm text-slate-600 mb-1">Choose which assessments show SEIS settings on the student workspace.</p>
                 <p class="text-[11px] text-slate-400 mb-4">SEIS supports are read-only and matched to each student from the SEIS source data. Assessments selected here display their SEIS settings for students — whether or not the assessment is currently active. If you do not select anything, SEIS settings are hidden.</p>
@@ -124,27 +107,18 @@
     </form>
 
     <!-- Active Assessments List -->
-    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-8">
-        <div @click="testsOpen = !testsOpen"
-             class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center cursor-pointer select-none hover:bg-slate-800 transition">
-            <div class="flex items-center gap-3">
-                <svg class="w-4 h-4 text-slate-400 transform transition-transform duration-200 shrink-0" :class="testsOpen ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                </svg>
-                <div>
-                    <h2 class="text-lg font-bold">Configured Assessments</h2>
-                    <p class="text-[11px] text-slate-300 mt-0.5">Overview of active tests, eligibility rules, and supported options.</p>
-                </div>
+    <div x-show="tab==='assessments'" x-cloak class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center gap-3">
+            <div>
+                <h2 class="text-lg font-bold">Configured Assessments</h2>
+                <p class="text-[11px] text-slate-300 mt-0.5">Overview of active tests, eligibility rules, and supported options.</p>
             </div>
-            <div class="flex items-center gap-2.5">
-                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
-                    {{ assessments|length }} Total
-                </span>
-                <span class="text-xs font-bold text-slate-400 hidden sm:inline" x-text="testsOpen ? 'Collapse' : 'Expand'"></span>
-            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
+                {{ assessments|length }} Total
+            </span>
         </div>
 
-        <div x-show="testsOpen" x-collapse>
+        <div>
             <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-slate-200">
                     <thead class="bg-slate-50">
@@ -220,27 +194,18 @@
     </div>
 
     <!-- Assessment Column Order (Student List) -->
-    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-8">
-        <div @click="orderOpen = !orderOpen"
-             class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center cursor-pointer select-none hover:bg-slate-800 transition">
-            <div class="flex items-center gap-3">
-                <svg class="w-4 h-4 text-slate-400 transform transition-transform duration-200 shrink-0" :class="orderOpen ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                </svg>
-                <div>
-                    <h2 class="text-lg font-bold">Assessment Column Order</h2>
-                    <p class="text-[11px] text-slate-300 mt-0.5">Drag to rearrange or use arrows to organize the column order of assessments in the student list supports matrix.</p>
-                </div>
+    <div x-show="tab==='order'" x-cloak class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center gap-3">
+            <div>
+                <h2 class="text-lg font-bold">Assessment Column Order</h2>
+                <p class="text-[11px] text-slate-300 mt-0.5">Drag to rearrange or use arrows to organize the column order of assessments in the student list supports matrix.</p>
             </div>
-            <div class="flex items-center gap-2.5">
-                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
-                    {{ assessments|length }} assessments
-                </span>
-                <span class="text-xs font-bold text-slate-400 hidden sm:inline" x-text="orderOpen ? 'Collapse' : 'Expand'"></span>
-            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
+                {{ assessments|length }} assessments
+            </span>
         </div>
 
-        <div x-show="orderOpen" x-collapse>
+        <div>
             <form method="POST" action="{% url 'desi:admin_dashboard' %}" class="p-6" id="assessment-order-form">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="save_assessment_order">
@@ -311,27 +276,18 @@
     </div>
 
     <!-- Master Designated Supports Pool -->
-    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-8">
-        <div @click="poolOpen = !poolOpen"
-             class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center cursor-pointer select-none hover:bg-slate-800 transition">
-            <div class="flex items-center gap-3">
-                <svg class="w-4 h-4 text-slate-400 transform transition-transform duration-200 shrink-0" :class="poolOpen ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                </svg>
-                <div>
-                    <h2 class="text-lg font-bold">Master Designated Supports Pool</h2>
-                    <p class="text-[11px] text-slate-300 mt-0.5">Global supports catalog available to register, edit, and map across assessments.</p>
-                </div>
+    <div x-show="tab==='supports'" x-cloak class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center gap-3">
+            <div>
+                <h2 class="text-lg font-bold">Master Designated Supports Pool</h2>
+                <p class="text-[11px] text-slate-300 mt-0.5">Global supports catalog available to register, edit, and map across assessments.</p>
             </div>
-            <div class="flex items-center gap-2.5">
-                <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
-                    {{ accommodations|length }} Registered
-                </span>
-                <span class="text-xs font-bold text-slate-400 hidden sm:inline" x-text="poolOpen ? 'Collapse' : 'Expand'"></span>
-            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
+                {{ accommodations|length }} Registered
+            </span>
         </div>
 
-        <div x-show="poolOpen" x-collapse>
+        <div>
             <div class="p-6">
                 <p class="text-sm text-slate-600 mb-4">These are the global supports available. Register, edit, or delete them here. Use <span class="font-semibold">Hide</span> to remove a support from the student workspace matrix (export is unchanged).</p>
                 {% csrf_token %}
@@ -372,7 +328,7 @@
                     Showing <span id="pool-count" class="font-bold text-slate-700">0</span> of {{ accommodations|length }} supports
                 </div>
 
-                <div id="support-pool-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div id="support-pool-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
                     {% for acc in accommodations %}
                     <div class="pool-card border rounded-lg p-5 hover:shadow-sm transition flex flex-col justify-between {% if acc.hide_from_student_list %}border-amber-300 bg-amber-50/40{% else %}border-slate-200 bg-slate-50{% endif %}"
                          data-search="{{ acc.name|lower }} {{ acc.code|lower }} {{ acc.category|lower }} {{ acc.tag|lower }} {{ acc.description|lower }}"
@@ -390,6 +346,11 @@
                                     {% if acc.tag %}
                                     <span class="px-2 py-0.5 bg-slate-800 text-slate-100 text-[10px] font-bold uppercase rounded">
                                         {{ acc.tag }}
+                                    </span>
+                                    {% endif %}
+                                    {% if acc.managed_by %}
+                                    <span class="px-2 py-0.5 bg-sky-100 text-sky-800 text-[10px] font-bold uppercase rounded" title="Managed by">
+                                        {{ acc.get_managed_by_display }}
                                     </span>
                                     {% endif %}
                                 </span>
@@ -439,6 +400,14 @@
                                     <span class="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-amber-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500 peer-disabled:opacity-50"></span>
                                 </span>
                             </label>
+                            <button type="button"
+                                    class="inline-flex items-center px-2.5 py-1 border border-sky-300 rounded text-xs font-semibold uppercase tracking-wider text-sky-700 bg-sky-50 hover:bg-sky-100 transition"
+                                    hx-get="{% url 'desi:support_default_rule_manage' acc.pk %}?embed=1"
+                                    hx-target="#desi-default-rule-modal-body"
+                                    hx-swap="innerHTML"
+                                    onclick="desiOpenDefaultRuleModal()">
+                                Criteria{% if acc.default_rule_count %} ({{ acc.default_rule_count }}){% endif %}
+                            </button>
                             <a href="{% url 'desi:edit_accommodation' acc.pk %}" class="inline-flex items-center px-2.5 py-1 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
                                 Edit
                             </a>
@@ -461,6 +430,30 @@
             </div>
         </div>
     </div>
+        </div><!-- /main -->
+
+        <!-- SIDE WIDGETS -->
+        <aside x-show="showSidebar" class="space-y-6 xl:sticky xl:top-24">
+            <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
+                <h2 class="text-sm font-bold text-slate-900 mb-3">Quick Actions</h2>
+                <div class="space-y-2">
+                    <a href="{% url 'desi:create_assessment' %}" class="flex items-center justify-center w-full px-4 py-2 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-700 transition">➕ Create Assessment</a>
+                    <a href="{% url 'desi:create_accommodation' %}" class="flex items-center justify-center w-full px-4 py-2 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-emerald-600 hover:bg-emerald-700 transition">➕ Add Designated Support</a>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-5">
+                <h2 class="text-sm font-bold text-slate-900 mb-3">Configuration</h2>
+                <nav class="space-y-1 text-sm">
+                    <a href="{% url 'desi:student_list' %}" class="block rounded px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-blue-700 transition">Student List</a>
+                    <a href="{% url 'desi:support_organization' %}" class="block rounded px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-blue-700 transition">Support Organization</a>
+                    <a href="{% url 'desi:support_rule_list' %}" class="block rounded px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-blue-700 transition">Support Visibility Rules</a>
+                    <a href="{% url 'desi:support_default_rule_list' %}" class="block rounded px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-blue-700 transition">Default Assignment Rules</a>
+                    <a href="{% url 'desi:export_data' %}" class="block rounded px-3 py-2 text-slate-600 hover:bg-slate-50 hover:text-blue-700 transition">Export Builder</a>
+                </nav>
+            </div>
+        </aside>
+    </div><!-- /grid -->
 
 </div>
 <script>
@@ -638,6 +631,54 @@
         });
 
         updateOrderState();
+    });
+</script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('[data-copy-endpoint]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const input = btn.parentElement.querySelector('[data-endpoint-url]');
+                if (!input) return;
+                try {
+                    await navigator.clipboard.writeText(input.value);
+                    const original = btn.textContent;
+                    btn.textContent = 'Copied';
+                    setTimeout(() => { btn.textContent = original; }, 1200);
+                } catch (_e) {
+                    input.select();
+                }
+            });
+        });
+    });
+</script>
+
+<!-- Default assignment criteria popover (per designated support) -->
+<div id="desi-default-rule-modal" class="fixed inset-0 z-[120] hidden">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onclick="desiCloseDefaultRuleModal()"></div>
+    <div class="relative z-[121] mx-auto mt-10 w-[92vw] max-w-3xl max-h-[85vh] overflow-y-auto bg-slate-100 rounded-xl shadow-2xl">
+        <div class="sticky top-0 z-10 flex items-center justify-between px-5 py-3 bg-slate-900 text-white rounded-t-xl">
+            <h3 class="text-sm font-bold">Assign options with criteria</h3>
+            <button type="button" onclick="desiCloseDefaultRuleModal()" class="text-slate-300 hover:text-white text-2xl leading-none">&times;</button>
+        </div>
+        <div id="desi-default-rule-modal-body" class="p-4">
+            <div class="p-8 text-center text-sm text-slate-400 italic">Loading…</div>
+        </div>
+    </div>
+</div>
+<script>
+    function desiOpenDefaultRuleModal() {
+        const modal = document.getElementById('desi-default-rule-modal');
+        if (modal) modal.classList.remove('hidden');
+    }
+    function desiCloseDefaultRuleModal() {
+        const modal = document.getElementById('desi-default-rule-modal');
+        const body = document.getElementById('desi-default-rule-modal-body');
+        if (modal) modal.classList.add('hidden');
+        if (body) body.innerHTML = '<div class="p-8 text-center text-sm text-slate-400 italic">Loading…</div>';
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') desiCloseDefaultRuleModal();
     });
 </script>
 {% endblock %}

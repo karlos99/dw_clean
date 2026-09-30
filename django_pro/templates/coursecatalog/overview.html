@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Course Catalog - DS Data{% endblock %}
+
+{% block content %}
+<div class="course-catalog-fields w-full px-4 sm:px-6 lg:px-8 py-6">
+    {% include "coursecatalog/partials/subnav.html" %}
+
+    <div class="mb-8">
+        {% include "coursecatalog/partials/taxonomy_legend.html" with show_level=True example=True %}
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+        <div class="rounded-lg border border-sky-200 bg-sky-50/50 p-4 shadow-sm">
+            <p class="text-[10px] font-bold uppercase tracking-wider text-sky-700">Step 1 · Tags</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">{{ tag_count }}</p>
+        </div>
+        <div class="rounded-lg border border-violet-200 bg-violet-50/50 p-4 shadow-sm">
+            <p class="text-[10px] font-bold uppercase tracking-wider text-violet-700">Step 2 · Categories</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">{{ category_count }}</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Placements</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">{{ placement_count }}</p>
+            <p class="text-[10px] text-slate-500 mt-1">Courses linked to taxonomy</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Paths</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">{{ path_count }}</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Catalog courses</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">{{ catalog_count }}</p>
+        </div>
+    </div>
+
+    <ol class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+        <li class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <span class="text-[10px] font-bold uppercase text-sky-600">Start here</span>
+            <h3 class="mt-1 font-bold text-slate-900"><a href="{% url 'coursecatalog:categories' %}" class="hover:text-blue-700">Taxonomy</a></h3>
+            <p class="mt-2 text-slate-600 text-xs leading-relaxed">Create tags, then categories under each tag, then disciplines (Dance, Choir, …). Add district class levels once.</p>
+        </li>
+        <li class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <span class="text-[10px] font-bold uppercase text-blue-600">Then</span>
+            <h3 class="mt-1 font-bold text-slate-900"><a href="{% url 'coursecatalog:placements' %}" class="hover:text-blue-700">Placements</a></h3>
+            <p class="mt-2 text-slate-600 text-xs leading-relaxed">Search catalog courses and assign them to a full tag → category → discipline → level path.</p>
+        </li>
+        <li class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <span class="text-[10px] font-bold uppercase text-slate-500">Optional</span>
+            <h3 class="mt-1 font-bold text-slate-900"><a href="{% url 'coursecatalog:paths' %}" class="hover:text-blue-700">Paths &amp; enrollment</a></h3>
+            <p class="mt-2 text-slate-600 text-xs leading-relaxed">Define course sequences and preview which students match placements by schedule data.</p>
+        </li>
+    </ol>
+</div>
+{% endblock %}

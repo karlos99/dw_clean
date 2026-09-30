@@ -1,0 +1,459 @@
+{% extends "base.html" %}
+
+{% block title %}Placements - Course Catalog{% endblock %}
+
+{% block content %}
+<div class="course-catalog-fields w-full px-4 sm:px-6 lg:px-8 py-6" x-data="catalogPlacements()" x-init="init()">
+    {% include "coursecatalog/partials/subnav.html" %}
+
+    <div class="mb-6">
+        {% include "coursecatalog/partials/taxonomy_legend.html" with show_level=True example=True %}
+    </div>
+
+    {% if filter_discipline %}
+    <div class="mb-4">
+        {% include "coursecatalog/partials/taxonomy_breadcrumb.html" with tag=filter_discipline.category.tag category=filter_discipline.category discipline=filter_discipline %}
+    </div>
+    {% endif %}
+
+    <form method="get" class="mb-6 space-y-2">
+        {% if catalog_sort %}<input type="hidden" name="catalog_sort" value="{{ catalog_sort }}">{% endif %}
+        {% if catalog_dir %}<input type="hidden" name="catalog_dir" value="{{ catalog_dir }}">{% endif %}
+        <label for="catalog-search-q" class="block text-xs font-semibold text-slate-700">Search catalog</label>
+        <p class="text-[11px] text-slate-500">Paste a <strong>column from a spreadsheet</strong> (one district course ID per line, e.g. <code class="text-[10px] bg-slate-100 px-1 rounded">6005A</code>) or comma-separated IDs or state codes. Searching one semester ID (<code class="text-[10px] bg-slate-100 px-1 rounded">…A</code> / <code class="text-[10px] bg-slate-100 px-1 rounded">…B</code>) automatically includes its pair. A single line still searches titles too.</p>
+        <div class="flex flex-col sm:flex-row gap-2">
+            <textarea id="catalog-search-q" name="q" rows="6" placeholder="261R&#10;6005A&#10;6005B&#10;6051A"
+                      class="flex-1 min-h-[6rem] font-mono text-[13px] rounded-lg border border-slate-300 bg-white px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/25">{{ query }}</textarea>
+            <button type="submit" class="sm:self-end px-4 py-2.5 border border-slate-300 rounded-lg text-sm font-semibold bg-white hover:bg-slate-50 shadow-sm">Search</button>
+        </div>
+        {% if search_multi_id %}
+        <p class="text-[11px] text-blue-800 font-medium">
+            Found {{ search_matched_count }} of {{ search_term_count }} pasted ID(s) (exact match on course key, district course ID, or state code).
+        </p>
+        {% if search_missing_terms %}
+        <p class="text-[11px] text-amber-800">No catalog row for: {{ search_missing_terms|join:", " }}</p>
+        {% endif %}
+        {% endif %}
+    </form>
+
+    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] gap-6 items-start">
+        <section class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                    <h2 class="text-sm font-bold text-slate-800">1 · Pick catalog courses</h2>
+                    <p class="text-[10px] text-slate-500">Check rows below, then assign on the right</p>
+                </div>
+                <div class="flex gap-2 text-xs">
+                    <button type="button" @click="selectAllVisible()" class="text-blue-600 font-semibold hover:underline">All</button>
+                    <button type="button" @click="clearSelection()" class="text-slate-600 hover:underline">Clear</button>
+                </div>
+            </div>
+            <div class="grid grid-cols-[auto_minmax(4.5rem,5.5rem)_minmax(5rem,6rem)_minmax(0,1fr)_minmax(0,36%)] gap-x-3 px-3 py-2 bg-slate-50/90 border-b border-slate-100 text-[10px] font-bold uppercase tracking-wide text-slate-500 items-center">
+                <span class="w-4" aria-hidden="true"></span>
+                <a href="{% url 'coursecatalog:placements' %}?{{ catalog_sort_qs_id }}" class="hover:text-slate-800 flex items-center gap-0.5 {% if catalog_sort == 'id' %}text-slate-800{% endif %}">
+                    ID{% if catalog_sort == 'id' %}<span class="text-[9px] normal-case">{% if catalog_dir == 'asc' %}↑{% else %}↓{% endif %}</span>{% endif %}
+                </a>
+                <a href="{% url 'coursecatalog:placements' %}?{{ catalog_sort_qs_state }}" class="hover:text-slate-800 flex items-center gap-0.5 {% if catalog_sort == 'state' %}text-slate-800{% endif %}">
+                    State{% if catalog_sort == 'state' %}<span class="text-[9px] normal-case">{% if catalog_dir == 'asc' %}↑{% else %}↓{% endif %}</span>{% endif %}
+                </a>
+                <a href="{% url 'coursecatalog:placements' %}?{{ catalog_sort_qs_title }}" class="hover:text-slate-800 flex items-center gap-0.5 {% if catalog_sort == 'title' %}text-slate-800{% endif %}">
+                    Course{% if catalog_sort == 'title' %}<span class="text-[9px] normal-case">{% if catalog_dir == 'asc' %}↑{% else %}↓{% endif %}</span>{% endif %}
+                </a>
+                <a href="{% url 'coursecatalog:placements' %}?{{ catalog_sort_qs_assignments }}" class="hover:text-slate-800 flex items-center gap-0.5 {% if catalog_sort == 'assignments' %}text-slate-800{% endif %}">
+                    Assignments{% if catalog_sort == 'assignments' %}<span class="text-[9px] normal-case">{% if catalog_dir == 'asc' %}↑{% else %}↓{% endif %}</span>{% endif %}
+                </a>
+            </div>
+            <ul class="divide-y divide-slate-100 max-h-[32rem] overflow-y-auto text-sm">
+                {% for e in entries %}
+                <li class="px-3 py-2.5 hover:bg-slate-50 grid grid-cols-[auto_minmax(4.5rem,5.5rem)_minmax(5rem,6rem)_minmax(0,1fr)_minmax(0,36%)] gap-x-3 items-start">
+                    <input type="checkbox" name="course_keys" value="{{ e.course_key }}" form="bulk-placement-form"
+                           class="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                    <span class="font-mono text-[12px] text-slate-700 truncate" title="{{ e.course_id }}">{{ e.course_id|default:"—" }}</span>
+                    <span class="font-mono text-[11px] text-slate-500 truncate" title="{{ e.state_course_code }}">{{ e.state_course_code|default:"—" }}</span>
+                    <div class="min-w-0">
+                        <span class="font-medium text-slate-800 leading-snug">{{ e.display_title }}</span>
+                    </div>
+                    <div class="min-w-0 space-y-1.5">
+                        {% for p in e.placements.all %}
+                        <div>{% include "coursecatalog/partials/taxonomy_badges.html" with p=p %}</div>
+                        {% empty %}
+                        <span class="text-[11px] text-slate-400 italic">Not assigned</span>
+                        {% endfor %}
+                    </div>
+                </li>
+                {% empty %}
+                <li class="px-4 py-12 text-slate-500 text-center text-sm col-span-full">No courses match your search.</li>
+                {% endfor %}
+            </ul>
+        </section>
+
+        <section class="rounded-xl border-2 border-slate-200 bg-white shadow-md sticky top-24 overflow-hidden">
+            <header class="px-4 py-3 bg-slate-800 text-white">
+                <h2 class="text-sm font-bold">2 · Choose taxonomy path</h2>
+                <p class="text-[10px] text-slate-300 mt-0.5">Tag only, tag + category, or full path — leave steps blank when not needed</p>
+            </header>
+            <form id="bulk-placement-form" method="post" action="{% url 'coursecatalog:placement_bulk_create' %}" class="p-4 space-y-4">
+                {% csrf_token %}
+                <textarea name="q" class="hidden" aria-hidden="true" tabindex="-1">{{ query }}</textarea>
+
+                <div class="rounded-lg border border-sky-200 bg-sky-50/80 p-3">
+                    <label class="flex items-center gap-2 text-xs font-bold text-sky-900 mb-1.5">
+                        <span class="h-5 w-5 rounded-full bg-sky-600 text-white flex items-center justify-center text-[10px]">1</span>
+                        Tag
+                    </label>
+                    <select name="tag" x-model="tagId" @change="onTagChange()" required
+                            class="w-full rounded-lg border border-sky-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/25">
+                        <option value="">— Select tag —</option>
+                        <template x-for="t in taxonomy.tags" :key="t.id">
+                            <option :value="t.id" x-text="t.name"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <div class="rounded-lg border border-violet-200 bg-violet-50/80 p-3" x-show="tagId" x-collapse>
+                    <label class="flex items-center gap-2 text-xs font-bold text-violet-900 mb-1.5">
+                        <span class="h-5 w-5 rounded-full bg-violet-600 text-white flex items-center justify-center text-[10px]">2</span>
+                        Category
+                    </label>
+                    <select name="category" x-model="categoryId" @change="onCategoryChange()"
+                            class="w-full rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/25">
+                        <option value="">— Optional —</option>
+                        <template x-for="c in filteredCategories" :key="c.id">
+                            <option :value="c.id" x-text="c.name"></option>
+                        </template>
+                    </select>
+                    <p class="text-[10px] text-violet-800/80 mt-1" x-show="tagId && filteredCategories.length === 0">No categories for this tag — add them under Taxonomy.</p>
+                </div>
+
+                <div class="rounded-lg border border-amber-200 bg-amber-50/80 p-3" x-show="categoryId" x-collapse>
+                    <label class="flex items-center gap-2 text-xs font-bold text-amber-950 mb-1.5">
+                        <span class="h-5 w-5 rounded-full bg-amber-600 text-white flex items-center justify-center text-[10px]">3</span>
+                        Discipline
+                    </label>
+                    <select name="discipline" x-model="disciplineId"
+                            class="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/25">
+                        <option value="">— Optional —</option>
+                        <template x-for="d in filteredDisciplines" :key="d.id">
+                            <option :value="d.id" x-text="d.name"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <div class="rounded-lg border border-emerald-200 bg-emerald-50/80 p-3">
+                    <label class="flex items-center gap-2 text-xs font-bold text-emerald-900 mb-1.5">
+                        <span class="h-5 w-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px]">4</span>
+                        Class level
+                    </label>
+                    <select name="level" x-model="levelId" class="w-full rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/25">
+                        <option value="">— Optional —</option>
+                        <template x-for="lv in taxonomy.levels" :key="lv.id">
+                            <option :value="lv.id" x-text="lv.name"></option>
+                        </template>
+                    </select>
+                    <p class="text-[10px] text-emerald-800/80 mt-1" x-show="taxonomy.levels.length === 0">No class levels yet — <a href="{% url 'coursecatalog:categories' %}" class="underline font-semibold">add levels under Taxonomy</a>.</p>
+                    <p class="text-[10px] text-emerald-800/80 mt-1" x-show="taxonomy.levels.length > 0">Shared district-wide · <a href="{% url 'coursecatalog:categories' %}" class="underline">manage levels</a></p>
+                </div>
+
+                <div x-show="tagId" class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs" x-html="assignmentPreviewHtml"></div>
+
+                <p class="text-[10px] text-slate-500 leading-snug">If a course already has an assignment under the same tag, it will be updated to this path (other tags are left as-is).</p>
+                <button type="submit" class="w-full px-4 py-3 bg-slate-900 text-white text-sm font-bold rounded-lg hover:bg-slate-800 shadow-sm">
+                    Assign checked courses
+                </button>
+            </form>
+        </section>
+    </div>
+
+    {% if filter_discipline and discipline_placements %}
+    <section class="mt-10">
+        <h2 class="text-sm font-bold text-slate-800 mb-3">Courses in this discipline</h2>
+        <div class="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table class="min-w-full text-sm">
+                <thead class="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-500">
+                    <tr><th class="px-4 py-2">Course</th><th class="px-4 py-2">Level</th><th class="px-4 py-2"></th></tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for p in discipline_placements %}
+                    <tr>
+                        <td class="px-4 py-2 font-medium">{{ p.catalog_entry.display_title }}</td>
+                        <td class="px-4 py-2"><span class="rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">{{ p.level.name }}</span></td>
+                        <td class="px-4 py-2 text-right">
+                            <form method="post" action="{% url 'coursecatalog:placement_delete' p.pk %}" class="inline">
+                                {% csrf_token %}
+                                <textarea name="q" class="hidden" aria-hidden="true" tabindex="-1">{{ query }}</textarea>
+                                <input type="hidden" name="tag" value="{{ initial_tag_id }}">
+                                <input type="hidden" name="category" value="{{ initial_category_id }}">
+                                <input type="hidden" name="discipline" value="{{ initial_discipline_id }}">
+                                <button type="submit" class="text-xs text-red-600 font-semibold hover:underline">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="mt-10 rounded-xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5">
+        <h2 class="text-sm font-bold text-slate-800 mb-1">Find &amp; update existing assignments</h2>
+        <p class="text-[11px] text-slate-600 mb-4">Filter by taxonomy and/or course ID or title. Select rows to update the path or remove assignments.</p>
+        <form method="get" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
+            <textarea name="q" class="hidden" aria-hidden="true" tabindex="-1">{{ query }}</textarea>
+            <div class="sm:col-span-2 lg:col-span-5">
+                <label class="block text-[10px] font-bold text-slate-600 mb-1">Search courses (district ID, state code, or title)</label>
+                <textarea name="filter_assignments_q" rows="2"
+                          placeholder="e.g. 6005A or Advanced Art — paste multiple IDs separated by commas or new lines"
+                          class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/25">{{ filter_assignments_q }}</textarea>
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold text-slate-600 mb-1">Tag</label>
+                <select name="filter_tag" class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm">
+                    <option value="">Any</option>
+                    {% for t in all_tags %}
+                    <option value="{{ t.id }}" {% if filter_tag == t.id|stringformat:"s" %}selected{% endif %}>{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold text-slate-600 mb-1">Category</label>
+                <select name="filter_category" class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm">
+                    <option value="">Any</option>
+                    {% for c in all_categories %}
+                    <option value="{{ c.id }}" {% if filter_category == c.id|stringformat:"s" %}selected{% endif %}>{{ c.tag.name }} → {{ c.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold text-slate-600 mb-1">Discipline</label>
+                <select name="filter_discipline" class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm">
+                    <option value="">Any</option>
+                    {% for d in all_disciplines %}
+                    <option value="{{ d.id }}" {% if filter_discipline_id == d.id|stringformat:"s" %}selected{% endif %}>{{ d.category.name }} → {{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold text-slate-600 mb-1">Level</label>
+                <select name="filter_level" class="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm">
+                    <option value="">Any</option>
+                    {% for lv in all_levels %}
+                    <option value="{{ lv.id }}" {% if filter_level == lv.id|stringformat:"s" %}selected{% endif %}>{{ lv.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex items-end">
+                <button type="submit" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-semibold hover:bg-slate-50">Apply filters</button>
+            </div>
+        </form>
+
+        {% if assignments_filter_active %}
+        <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] gap-4 items-start">
+            <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                <div class="px-3 py-2 bg-white border-b border-slate-100 flex justify-between items-center text-xs">
+                    <span class="font-semibold text-slate-700">{{ filtered_placements|length }} assignment(s)</span>
+                    <span class="flex gap-2">
+                        <button type="button" @click="selectAllFiltered()" class="text-blue-600 font-semibold hover:underline">All</button>
+                        <button type="button" @click="clearFiltered()" class="text-slate-600 hover:underline">Clear</button>
+                    </span>
+                </div>
+                <ul class="divide-y divide-slate-100 max-h-80 overflow-y-auto text-sm">
+                    {% for p in filtered_placements %}
+                    <li class="px-3 py-2 flex items-start gap-3 hover:bg-slate-50">
+                        <input type="checkbox" name="placement_ids" value="{{ p.id }}" form="bulk-update-form"
+                               class="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                        <div class="min-w-0 flex-1">
+                            <div class="font-medium text-slate-800">{{ p.catalog_entry.display_title }}</div>
+                            <div class="text-[11px] text-slate-400 truncate">
+                                {% if p.catalog_entry.course_id %}ID {{ p.catalog_entry.course_id }}{% endif %}
+                                {% if p.catalog_entry.state_course_code %} · State {{ p.catalog_entry.state_course_code }}{% endif %}
+                            </div>
+                            <div class="mt-0.5">{% include "coursecatalog/partials/taxonomy_badges.html" with p=p %}</div>
+                        </div>
+                        <form method="post" action="{% url 'coursecatalog:placement_delete' p.pk %}" class="shrink-0"
+                              onsubmit="return confirm('Remove this assignment?');">
+                            {% csrf_token %}
+                            <textarea name="q" class="hidden" aria-hidden="true" tabindex="-1">{{ query }}</textarea>
+                            <input type="hidden" name="filter_tag" value="{{ filter_tag }}">
+                            <input type="hidden" name="filter_category" value="{{ filter_category }}">
+                            <input type="hidden" name="filter_discipline" value="{{ filter_discipline_id }}">
+                            <input type="hidden" name="filter_level" value="{{ filter_level }}">
+                            <input type="hidden" name="filter_assignments_q" value="{{ filter_assignments_q }}">
+                            <button type="submit" class="text-[11px] text-red-600 font-semibold hover:underline whitespace-nowrap">Remove</button>
+                        </form>
+                    </li>
+                    {% empty %}
+                    <li class="px-4 py-8 text-center text-slate-500 text-sm">No assignments match these filters.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            <form id="bulk-update-form" method="post" action="{% url 'coursecatalog:placement_bulk_update' %}" class="rounded-xl border-2 border-indigo-200 bg-white p-4 space-y-3">
+                {% csrf_token %}
+                <textarea name="q" class="hidden" aria-hidden="true" tabindex="-1">{{ query }}</textarea>
+                <input type="hidden" name="filter_tag" value="{{ filter_tag }}">
+                <input type="hidden" name="filter_category" value="{{ filter_category }}">
+                <input type="hidden" name="filter_discipline" value="{{ filter_discipline_id }}">
+                <input type="hidden" name="filter_level" value="{{ filter_level }}">
+                <input type="hidden" name="filter_assignments_q" value="{{ filter_assignments_q }}">
+                <h3 class="text-xs font-bold text-indigo-900">New assignment path</h3>
+                <select name="tag" x-model="reassignTagId" @change="onReassignTagChange()" required class="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm">
+                    <option value="">— Tag —</option>
+                    <template x-for="t in taxonomy.tags" :key="'r'+t.id">
+                        <option :value="t.id" x-text="t.name"></option>
+                    </template>
+                </select>
+                <select name="category" x-model="reassignCategoryId" @change="onReassignCategoryChange()" class="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm">
+                    <option value="">— Optional category —</option>
+                    <template x-for="c in filteredReassignCategories" :key="'rc'+c.id">
+                        <option :value="c.id" x-text="c.name"></option>
+                    </template>
+                </select>
+                <select name="discipline" x-model="reassignDisciplineId" class="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm">
+                    <option value="">— Optional discipline —</option>
+                    <template x-for="d in filteredReassignDisciplines" :key="'rd'+d.id">
+                        <option :value="d.id" x-text="d.name"></option>
+                    </template>
+                </select>
+                <select name="level" x-model="reassignLevelId" class="w-full rounded-lg border border-slate-300 px-2 py-2 text-sm">
+                    <option value="">— Optional level —</option>
+                    <template x-for="lv in taxonomy.levels" :key="'rl'+lv.id">
+                        <option :value="lv.id" x-text="lv.name"></option>
+                    </template>
+                </select>
+                <button type="submit" name="action" value="update" class="w-full py-2.5 bg-indigo-700 text-white text-sm font-bold rounded-lg hover:bg-indigo-800">Update selected assignments</button>
+                <button type="submit" name="action" value="delete"
+                        onclick="return confirm('Remove all selected assignments? This cannot be undone.');"
+                        class="w-full py-2.5 border-2 border-red-200 bg-white text-red-700 text-sm font-bold rounded-lg hover:bg-red-50">Remove selected assignments</button>
+            </form>
+        </div>
+        {% else %}
+        <p class="text-sm text-slate-500">Set a taxonomy filter and/or search by course ID or name, then click Apply filters.</p>
+        {% endif %}
+    </section>
+
+    <section class="mt-10">
+        <h2 class="text-sm font-bold text-slate-800 mb-3">Recent placements</h2>
+        <div class="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table class="min-w-full text-sm">
+                <thead class="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-500">
+                    <tr>
+                        <th class="px-4 py-2">Course</th>
+                        <th class="px-4 py-2">Full path</th>
+                        <th class="px-4 py-2 w-16"></th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for p in recent_placements %}
+                    <tr class="hover:bg-slate-50/80">
+                        <td class="px-4 py-3 font-medium text-slate-900 align-top">{{ p.catalog_entry.display_title }}</td>
+                        <td class="px-4 py-3">{% include "coursecatalog/partials/taxonomy_badges.html" with p=p %}</td>
+                        <td class="px-4 py-3 text-right align-top">
+                            <form method="post" action="{% url 'coursecatalog:placement_delete' p.pk %}" class="inline">
+                                {% csrf_token %}
+                                <button type="submit" class="text-xs text-red-600 font-semibold hover:underline">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="3" class="px-4 py-8 text-slate-500 text-center">No placements yet — assign courses above.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+<script>
+function catalogPlacements() {
+    const badge = (cls, label, text) => {
+        const t = text || `<span class="italic opacity-60">${label}</span>`;
+        return `<span class="rounded ${cls} px-1.5 py-0.5 text-[10px] font-semibold">${t}</span>`;
+    };
+    return {
+        taxonomy: {{ taxonomy_json|safe }},
+        tagId: '{{ initial_tag_id|escapejs }}',
+        categoryId: '{{ initial_category_id|escapejs }}',
+        disciplineId: '{{ initial_discipline_id|escapejs }}',
+        levelId: '',
+        reassignTagId: '{{ filter_tag|escapejs }}',
+        reassignCategoryId: '{{ filter_category|escapejs }}',
+        reassignDisciplineId: '{{ filter_discipline_id|escapejs }}',
+        reassignLevelId: '{{ filter_level|escapejs }}',
+        init() {},
+        pathPreviewHtml(tagId, categoryId, disciplineId, levelId) {
+            const tag = this.taxonomy.tags.find(x => String(x.id) === String(tagId));
+            if (!tag) return '<span class="text-slate-500">Select a tag to preview the path.</span>';
+            const cat = categoryId
+                ? this.taxonomy.categories.find(c => String(c.id) === String(categoryId))
+                : null;
+            const disc = disciplineId
+                ? this.taxonomy.disciplines.find(d => String(d.id) === String(disciplineId))
+                : null;
+            const lv = levelId
+                ? this.taxonomy.levels.find(l => String(l.id) === String(levelId))
+                : null;
+            const chunks = [badge('bg-sky-100 text-sky-900', 'tag', tag.name)];
+            if (cat) {
+                chunks.push('<span class="text-slate-300 mx-0.5">→</span>', badge('bg-violet-100 text-violet-900', 'category', cat.name));
+            }
+            if (disc) {
+                chunks.push('<span class="text-slate-300 mx-0.5">→</span>', badge('bg-amber-100 text-amber-950', 'discipline', disc.name));
+            }
+            if (lv) {
+                chunks.push('<span class="text-slate-300 mx-0.5">→</span>', badge('bg-emerald-100 text-emerald-900', 'level', lv.name));
+            }
+            return chunks.join('');
+        },
+        get assignmentPreviewHtml() {
+            return this.pathPreviewHtml(this.tagId, this.categoryId, this.disciplineId, this.levelId);
+        },
+        get filteredCategories() {
+            if (!this.tagId) return [];
+            return this.taxonomy.categories.filter(c => String(c.tag_id) === String(this.tagId));
+        },
+        get filteredDisciplines() {
+            if (!this.categoryId) return [];
+            return this.taxonomy.disciplines.filter(d => String(d.category_id) === String(this.categoryId));
+        },
+        get filteredReassignCategories() {
+            if (!this.reassignTagId) return [];
+            return this.taxonomy.categories.filter(c => String(c.tag_id) === String(this.reassignTagId));
+        },
+        get filteredReassignDisciplines() {
+            if (!this.reassignCategoryId) return [];
+            return this.taxonomy.disciplines.filter(d => String(d.category_id) === String(this.reassignCategoryId));
+        },
+        onTagChange() {
+            this.categoryId = '';
+            this.disciplineId = '';
+            this.levelId = '';
+        },
+        onCategoryChange() {
+            this.disciplineId = '';
+            this.levelId = '';
+        },
+        onReassignTagChange() {
+            this.reassignCategoryId = '';
+            this.reassignDisciplineId = '';
+            this.reassignLevelId = '';
+        },
+        onReassignCategoryChange() {
+            this.reassignDisciplineId = '';
+            this.reassignLevelId = '';
+        },
+        selectAllVisible() {
+            document.querySelectorAll('input[name=course_keys][form="bulk-placement-form"]').forEach(el => { el.checked = true; });
+        },
+        clearSelection() {
+            document.querySelectorAll('input[name=course_keys][form="bulk-placement-form"]').forEach(el => { el.checked = false; });
+        },
+        selectAllFiltered() {
+            document.querySelectorAll('input[name=placement_ids][form="bulk-update-form"]').forEach(el => { el.checked = true; });
+        },
+        clearFiltered() {
+            document.querySelectorAll('input[name=placement_ids][form="bulk-update-form"]').forEach(el => { el.checked = false; });
+        },
+    };
+}
+</script>
+{% endblock %}

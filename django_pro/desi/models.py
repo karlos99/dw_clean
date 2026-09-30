@@ -2,6 +2,15 @@ from django.db import models
 from django.conf import settings
 
 
+MANAGED_BY_CHOICES = [
+    ('district', 'District'),
+    ('school', 'School'),
+    ('testing_coordinator', 'Testing Coordinator'),
+    ('teacher', 'Teacher'),
+    ('other', 'Other'),
+]
+
+
 class AccommodationCategory(models.Model):
     """
     Reusable section category that groups designated supports (screening
@@ -42,6 +51,13 @@ class Accommodation(models.Model):
         help_text="Source import tag (e.g. 'CAASPP', 'ELPAC') this support came from."
     )
     category = models.CharField(max_length=100, blank=True, help_text="e.g., Presentation, Response, Setting, Timing")
+    managed_by = models.CharField(
+        max_length=32,
+        choices=MANAGED_BY_CHOICES,
+        blank=True,
+        default='',
+        help_text="Who manages/owns this support (District, School, Testing Coordinator, Teacher).",
+    )
     section_category = models.ForeignKey(
         AccommodationCategory,
         on_delete=models.SET_NULL,
@@ -414,6 +430,135 @@ class SupportRuleCriteria(models.Model):
         ordering = ['order', 'id']
 
     def __str__(self):
+        prefix = f"{self.logic_operator} " if self.order > 0 else ""
+        return f"{prefix}{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
+
+
+class SupportDefaultRule(models.Model):
+    """
+    Assigns a default option (or options) to a designated support for matching
+    students.
+
+    When a student matches (``scope='all'`` means every student), the selected
+    options are shown pre-selected and the support is locked (read-only) in the
+    student workspace. The lock reason comes from the support's ``managed_by``.
+    """
+    SCOPE_CHOICES = [
+        ('all', 'Default (all students)'),
+        ('criteria', 'Students matching criteria'),
+    ]
+
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    support = models.ForeignKey(
+        Accommodation,
+        on_delete=models.CASCADE,
+        related_name='default_rules',
+    )
+    options = models.ManyToManyField(
+        AccommodationOption,
+        blank=True,
+        related_name='default_rules',
+        help_text="Options applied to matching students. Leave empty to lock the "
+                  "support as a simple selected checkbox.",
+    )
+    scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default='criteria')
+    priority = models.IntegerField(
+        default=100,
+        db_index=True,
+        help_text="Evaluated per support in ascending order; the first matching criteria "
+                  "rule wins. A 'Default (all students)' rule is used when none match.",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['priority', '-updated_at']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def criteria_summary(self):
+        criteria = list(self.criteria.all())
+        if not criteria:
+            return "All students" if self.scope == 'all' else "No conditions"
+        parts = []
+        for idx, c in enumerate(criteria):
+            prefix = f" {c.logic_operator} " if idx > 0 else ""
+            parts.append(f"{prefix}{c}")
+        return "".join(parts)
+
+
+class SupportDefaultRuleCriteria(models.Model):
+    """One condition (demographic or assessment result) belonging to a default rule."""
+    TYPE_CHOICES = [
+        ('demographic', 'Demographic'),
+        ('result', 'Assessment Result'),
+        ('schedule', 'Schedule / Class'),
+    ]
+    LOGIC_CHOICES = [
+        ('AND', 'AND'),
+        ('OR', 'OR'),
+    ]
+    RESULT_FIELD_CHOICES = [
+        ('pl', 'Performance Level'),
+        ('ss', 'Scale Score'),
+    ]
+    RESULT_OPERATOR_CHOICES = [
+        ('in', 'In List'),
+        ('not_in', 'Not In List'),
+        ('is', 'Is'),
+        ('is_not', 'Is Not'),
+        ('between', 'Between (min-max)'),
+        ('gte', 'Greater or Equal'),
+        ('lte', 'Less or Equal'),
+    ]
+
+    rule = models.ForeignKey(SupportDefaultRule, on_delete=models.CASCADE, related_name='criteria')
+    logic_operator = models.CharField(max_length=3, choices=LOGIC_CHOICES, default='AND')
+    criterion_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='demographic')
+    order = models.IntegerField(default=0)
+
+    # Demographic condition
+    field_name = models.CharField(max_length=50, blank=True, choices=AssessmentCriteria.FIELD_CHOICES)
+    operator = models.CharField(max_length=20, blank=True, choices=AssessmentCriteria.OPERATOR_CHOICES)
+    value = models.CharField(max_length=255, blank=True)
+
+    # Assessment-result condition (matches Result joined to Test)
+    test_name = models.CharField(max_length=255, blank=True, help_text="e.g. 'ELPAC'")
+    test_subject = models.CharField(max_length=255, blank=True, help_text="e.g. 'summative'")
+    test_window = models.CharField(max_length=255, blank=True)
+    school_year = models.CharField(max_length=20, blank=True, help_text="e.g. '2025-2026'")
+    result_field = models.CharField(max_length=10, blank=True, choices=RESULT_FIELD_CHOICES, default='pl')
+    result_operator = models.CharField(max_length=20, blank=True, choices=RESULT_OPERATOR_CHOICES, default='in')
+    result_value = models.CharField(max_length=255, blank=True, help_text="e.g. '1,2' or '300-350'")
+
+    # Schedule / class condition (school scope, then teacher, then period)
+    school_state_id = models.CharField(max_length=50, blank=True, help_text="School state id scope")
+    staff_name = models.CharField(max_length=255, blank=True, help_text="Teacher/staff name scope")
+    period = models.CharField(max_length=20, blank=True, help_text="Class period scope")
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        if self.criterion_type == 'result':
+            return (
+                f"{self.test_name or 'Result'} {self.test_subject} "
+                f"{self.school_year} {self.get_result_field_display()} "
+                f"{self.get_result_operator_display()} '{self.result_value}'"
+            )
+        if self.criterion_type == 'schedule':
+            parts = []
+            if self.school_state_id:
+                parts.append(f"School {self.school_state_id}")
+            if self.staff_name:
+                parts.append(self.staff_name)
+            if self.period:
+                parts.append(f"Period {self.period}")
+            return " / ".join(parts) or "Schedule"
         prefix = f"{self.logic_operator} " if self.order > 0 else ""
         return f"{prefix}{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
 

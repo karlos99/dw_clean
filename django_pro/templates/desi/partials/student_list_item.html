@@ -21,6 +21,9 @@
             <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold {% if student.sped == 'Y' or student.sped == '1' %}bg-purple-100 text-purple-800 border border-purple-200{% else %}bg-slate-100 text-slate-500 border border-slate-200{% endif %}">
                 SPED: {{ student.sped|default:"No" }}
             </span>
+            <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold {% if student.in_504 == 'Y' or student.in_504 == '1' %}bg-teal-100 text-teal-800 border border-teal-200{% else %}bg-slate-100 text-slate-500 border border-slate-200{% endif %}">
+                504: {{ student.in_504|default:"No" }}
+            </span>
         </div>
         <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600 shrink-0">Gr {{ student.grade }}</span>
     </div>

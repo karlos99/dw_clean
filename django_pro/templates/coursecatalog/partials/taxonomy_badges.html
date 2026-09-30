@@ -1,0 +1,18 @@
+{# Inline badges for tables — pass placement p #}
+{% if p %}
+<span class="inline-flex flex-wrap items-center gap-1">
+    <span class="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-900">{{ p.tag.name }}</span>
+    {% if p.category %}
+    <span class="text-slate-300 text-[10px]">→</span>
+    <span class="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-900">{{ p.category.name }}</span>
+    {% endif %}
+    {% if p.discipline %}
+    <span class="text-slate-300 text-[10px]">→</span>
+    <span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-950">{{ p.discipline.name }}</span>
+    {% endif %}
+    {% if p.level %}
+    <span class="text-slate-300 text-[10px]">→</span>
+    <span class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-900">{{ p.level.name }}</span>
+    {% endif %}
+</span>
+{% endif %}

@@ -15,6 +15,39 @@
         </a>
     </div>
 
+    <div class="mb-6 bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+        <h2 class="text-sm font-bold text-slate-900">TOMS State Upload (CAASPP &amp; ELPAC)</h2>
+        <p class="mt-1 text-xs text-slate-500">Download the student accommodation upload workbooks in the TOMS template format. Includes every configured support (active or not) plus SEIS settings.</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+            <a href="{% url 'desi:export_state_upload' %}?school_year={{ school_year|urlencode }}"
+               class="inline-flex items-center px-4 py-2 border border-transparent rounded-md text-xs font-semibold uppercase tracking-wider text-white bg-slate-900 hover:bg-slate-800 transition">
+                ⬇ CAASPP + ELPAC (zip)
+            </a>
+            <a href="{% url 'desi:export_state_upload_caaspp' %}?school_year={{ school_year|urlencode }}"
+               class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                CAASPP (.xlsx)
+            </a>
+            <a href="{% url 'desi:export_state_upload_elpac' %}?school_year={{ school_year|urlencode }}"
+               class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 transition">
+                ELPAC (.xlsx)
+            </a>
+        </div>
+        <div class="mt-4 pt-4 border-t border-slate-100 space-y-3">
+            <p class="text-xs text-slate-500">Endpoint URLs (token auth included — no login required). Use these from external systems; keep them private.</p>
+            {% for ep in state_upload_endpoints %}
+            <div>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">{{ ep.label }}</label>
+                <div class="flex gap-2">
+                    <input type="text" readonly value="{{ ep.url }}" data-endpoint-url
+                           class="block w-full rounded border-slate-300 text-xs py-2 px-3 bg-slate-50 text-slate-700">
+                    <button type="button" data-copy-endpoint
+                            class="px-3 py-2 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 shrink-0">Copy</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
     <div class="mb-6 grid grid-cols-1 lg:grid-cols-[1.4fr_0.8fr] gap-4">
         <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
             <h2 class="text-sm font-bold text-slate-900">Saved Export Configurations</h2>
@@ -79,11 +112,12 @@
 
                 <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-6">
                     <label for="export-endpoint" class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Endpoint URL (Token Auth Included)</label>
-                    <p class="text-xs text-slate-500 mb-2">Use this URL from another application to generate this same CSV configuration. Keep it private.</p>
+                    <p class="text-xs text-slate-500 mb-2">Use this URL from another application to generate this CSV. It references a <strong>saved</strong> configuration by id (keeping the URL short). Keep it private.</p>
                     <div class="flex gap-2">
                         <input type="text" id="export-endpoint" readonly class="block w-full rounded border-slate-300 text-xs py-2 px-3 bg-slate-50 text-slate-700">
                         <button type="button" id="copy-export-endpoint" class="px-3 py-2 border border-slate-300 rounded text-xs font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50">Copy</button>
                     </div>
+                    <p id="export-endpoint-hint" class="mt-1 text-[11px] text-amber-600"></p>
                 </div>
             </div>
             <div class="mt-4">
@@ -248,6 +282,8 @@
         const copyButton = document.getElementById('copy-export-endpoint');
         const endpointBase = "{{ export_endpoint_base_url|escapejs }}";
         const endpointAuthToken = "{{ export_endpoint_auth_token|escapejs }}";
+        const selectedConfigId = "{% if selected_config_id %}{{ selected_config_id }}{% endif %}";
+        const endpointHint = document.getElementById('export-endpoint-hint');
         if (!tbody || !form || !endpointInput) return;
 
         const rows = () => Array.from(tbody.querySelectorAll('[data-column-row]'));
@@ -260,11 +296,19 @@
         };
 
         const updateEndpoint = () => {
-            const formData = new FormData(form);
-            formData.delete('csrfmiddlewaretoken');
-            formData.set('auth', endpointAuthToken);
-            const params = new URLSearchParams(formData);
-            endpointInput.value = `${endpointBase}?${params.toString()}`;
+            // Short URL: the giant column config lives in the saved configuration,
+            // not the query string (which would trip the server's request-line limit).
+            const url = new URL(endpointBase, window.location.origin);
+            url.searchParams.set('auth', endpointAuthToken);
+            if (selectedConfigId) {
+                url.searchParams.set('config_id', selectedConfigId);
+            }
+            endpointInput.value = url.toString();
+            if (endpointHint) {
+                endpointHint.textContent = selectedConfigId
+                    ? 'Tip: save the configuration again after changing columns so the endpoint uses the latest settings.'
+                    : 'Save the configuration first to get a working endpoint URL.';
+            }
         };
 
         tbody.addEventListener('click', (e) => {
@@ -342,6 +386,21 @@
                 }
             });
         }
+
+        document.querySelectorAll('[data-copy-endpoint]').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const input = btn.parentElement.querySelector('[data-endpoint-url]');
+                if (!input) return;
+                try {
+                    await navigator.clipboard.writeText(input.value);
+                    const original = btn.textContent;
+                    btn.textContent = 'Copied';
+                    setTimeout(() => { btn.textContent = original; }, 1200);
+                } catch (_err) {
+                    input.select();
+                }
+            });
+        });
 
         syncOrder();
         updateEndpoint();

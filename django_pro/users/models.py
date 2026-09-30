@@ -16,6 +16,7 @@ UNRESTRICTED_ROLE_NAMES = frozenset({
     'School Gr View',
     'School View',
     'Testing Coordinator',
+    '504_Admin',
 })
 
 class School(models.Model):

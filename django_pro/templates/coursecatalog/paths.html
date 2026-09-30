@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Paths - Course Catalog{% endblock %}
+
+{% block content %}
+<div class="course-catalog-fields w-full px-4 sm:px-6 lg:px-8 py-6">
+    {% include "coursecatalog/partials/subnav.html" %}
+
+    <div class="mb-6 max-w-3xl">
+        <p class="text-sm text-slate-600">Paths are ordered course sequences scoped to a full <strong>tag → category → discipline</strong> branch (same as placements).</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div class="space-y-6">
+            <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 class="text-sm font-bold text-slate-800">New path</h2>
+                <p class="text-[10px] text-slate-500 mt-1 mb-3">Pick tag, then category, then discipline for this sequence.</p>
+                <form method="post" action="{% url 'coursecatalog:path_create' %}" class="cc-form-as-p space-y-3 text-sm">
+                    {% csrf_token %}
+                    {{ path_form.as_p }}
+                    <button type="submit" class="px-4 py-2 bg-slate-900 text-white text-sm font-semibold rounded-lg">Create path</button>
+                </form>
+            </section>
+
+            <ul class="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white overflow-hidden">
+                {% for p in paths %}
+                <li class="px-4 py-3 hover:bg-slate-50">
+                    <a href="?path={{ p.id }}" class="font-medium text-slate-900 hover:text-blue-700 block">{{ p.name }}</a>
+                    <p class="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+                        <span class="rounded bg-sky-100 px-1.5 py-0.5 font-semibold text-sky-900">{{ p.tag.name }}</span>
+                        <span class="text-slate-300">→</span>
+                        <span class="rounded bg-violet-100 px-1.5 py-0.5 font-semibold text-violet-900">{{ p.category.name }}</span>
+                        <span class="text-slate-300">→</span>
+                        <span class="rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-950">{{ p.discipline.name }}</span>
+                        <span class="text-slate-400 ml-1">· {{ p.step_count }} steps</span>
+                    </p>
+                </li>
+                {% empty %}
+                <li class="px-4 py-8 text-sm text-slate-500 text-center">No paths yet.</li>
+                {% endfor %}
+            </ul>
+        </div>
+
+        {% if selected_path %}
+        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="mb-4">{% include "coursecatalog/partials/taxonomy_breadcrumb.html" with tag=selected_path.tag category=selected_path.category discipline=selected_path.discipline %}</div>
+            <h2 class="text-lg font-bold text-slate-900">{{ selected_path.name }}</h2>
+            <ol class="mt-4 space-y-2 list-decimal list-inside text-sm text-slate-800">
+                {% for s in steps %}
+                <li>{{ s.catalog_entry.display_title }}{% if s.label %} <span class="text-slate-400">({{ s.label }})</span>{% endif %}</li>
+                {% empty %}
+                <li class="list-none text-slate-400">No steps yet.</li>
+                {% endfor %}
+            </ol>
+            <form method="post" action="{% url 'coursecatalog:path_step_create' selected_path.id %}" class="cc-form-as-p mt-4 space-y-2 border-t border-slate-100 pt-4">
+                {% csrf_token %}
+                {{ step_form.as_p }}
+                <button type="submit" class="px-3 py-2 bg-slate-800 text-white text-xs font-semibold rounded-lg">Add step</button>
+            </form>
+        </section>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% include "coursecatalog/partials/form_field_styles.html" %}
+{% if messages %}
+<div class="mb-4 space-y-2">
+    {% for message in messages %}
+    <div class="rounded-lg border px-4 py-3 text-sm {% if message.tags == 'error' %}border-red-200 bg-red-50 text-red-900{% elif message.tags == 'success' %}border-emerald-200 bg-emerald-50 text-emerald-900{% else %}border-slate-200 bg-slate-50 text-slate-800{% endif %}" role="alert">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+<div class="sticky top-16 z-30 bg-white/95 backdrop-blur border-b border-slate-200 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 mb-6">
+    <div class="py-3">
+        <h1 class="text-base font-bold tracking-tight text-slate-900">Course Catalog</h1>
+        <p class="text-[11px] text-slate-500">Build taxonomy (tag → category → discipline), assign courses, optional paths.</p>
+    </div>
+    <nav class="flex items-center gap-1 overflow-x-auto -mb-px" aria-label="Course catalog sections">
+        <a href="{% url 'coursecatalog:overview' %}"
+           class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap {% if subnav_active == 'overview' %}border-blue-600 text-blue-700{% else %}border-transparent text-slate-500 hover:text-slate-800{% endif %}">Overview</a>
+        <a href="{% url 'coursecatalog:categories' %}"
+           class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap {% if subnav_active == 'categories' %}border-blue-600 text-blue-700{% else %}border-transparent text-slate-500 hover:text-slate-800{% endif %}">Taxonomy</a>
+        <a href="{% url 'coursecatalog:placements' %}"
+           class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap {% if subnav_active == 'placements' %}border-blue-600 text-blue-700{% else %}border-transparent text-slate-500 hover:text-slate-800{% endif %}">Placements</a>
+        <a href="{% url 'coursecatalog:paths' %}"
+           class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap {% if subnav_active == 'paths' %}border-blue-600 text-blue-700{% else %}border-transparent text-slate-500 hover:text-slate-800{% endif %}">Paths</a>
+        <a href="{% url 'coursecatalog:enrollment' %}"
+           class="shrink-0 px-3 py-2.5 border-b-2 text-xs font-bold uppercase tracking-wider whitespace-nowrap {% if subnav_active == 'enrollment' %}border-blue-600 text-blue-700{% else %}border-transparent text-slate-500 hover:text-slate-800{% endif %}">Enrollment</a>
+    </nav>
+</div>
