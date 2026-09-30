@@ -2991,6 +2991,36 @@ class DesiStateUploadExportTests(TestCase):
         # ELPAC column B (index 1) = Alternate Response -> SEIS code.
         self.assertEqual(row[1], "NEA_AR")
 
+    def test_state_uploads_filter_students_by_program_grade(self):
+        from desi.state_upload_export import build_state_upload_workbook
+
+        grades = ['K', '01', '3', '08', '9', '10', '11', '12', 'TK', 'PS']
+        students = [
+            CurrentStudent.objects.create(
+                stu_annual_key=f"grade-{index}",
+                ssid=f"90000000{index:02d}",
+                grade=grade,
+                school_year="2025-2026",
+            )
+            for index, grade in enumerate(grades, start=1)
+        ]
+
+        def exported_ssids(tag, sheet_name):
+            workbook = build_state_upload_workbook(tag, students)
+            sheet = workbook[sheet_name]
+            return [sheet.cell(row=row, column=1).value for row in range(2, sheet.max_row + 1)
+                    if sheet.cell(row=row, column=1).value]
+
+        self.assertEqual(
+            exported_ssids("CAASPP", "CAASPP Test Settings Template"),
+            ["9000000003", "9000000004", "9000000007"],
+        )
+        self.assertEqual(
+            exported_ssids("ELPAC", "ELPAC Test Settings Template"),
+            ["9000000001", "9000000002", "9000000003", "9000000004",
+             "9000000005", "9000000006", "9000000007", "9000000008"],
+        )
+
     def test_endpoint_returns_zip_with_two_workbooks(self):
         import zipfile
         self.client.force_login(self.user)
@@ -3010,6 +3040,11 @@ class DesiStateUploadExportTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("spreadsheetml.sheet", response["Content-Type"])
+        import zipfile
+        package = zipfile.ZipFile(io.BytesIO(response.content))
+        template_xml = package.read("xl/worksheets/sheet4.xml")
+        self.assertIn(b"xmlns:x14=", template_xml)
+        self.assertIn(b'r="A2"', template_xml)
         wb = self._load(response.content)
         self.assertEqual(wb.active.title, "CAASPP Test Settings Template")
 
@@ -3052,4 +3087,3 @@ class DesiStateUploadExportTests(TestCase):
         self.assertIn("data-endpoint-url", content)
         self.assertIn("/desi/admin-dashboard/export/state-upload/caaspp/", content)
         self.assertIn("/desi/admin-dashboard/export/state-upload/elpac/", content)
-

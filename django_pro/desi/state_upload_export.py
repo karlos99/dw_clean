@@ -14,6 +14,8 @@ Sources merged per student:
 """
 
 import io
+from html import escape
+import re
 import zipfile
 from pathlib import Path
 
@@ -33,6 +35,38 @@ TEMPLATE_FILES = {
     'CAASPP': TEMPLATE_DIR / 'CAASPP_Upload_Stu_Accom_Template.xlsx',
     'ELPAC': TEMPLATE_DIR / 'ELPAC_Upload_Stu_Accom_Template.xlsx',
 }
+TEMPLATE_SHEET_FILES = {
+    'CAASPP': 'xl/worksheets/sheet4.xml',
+    'ELPAC': 'xl/worksheets/sheet4.xml',
+}
+
+
+def _normalized_grade(raw_grade):
+    """Return a comparable grade value, or ``None`` when it is not a grade."""
+    value = str(raw_grade or '').strip().upper()
+    if not value:
+        return None
+    value = re.sub(r'^GRADE\s*', '', value)
+    value = re.sub(r'(ST|ND|RD|TH)$', '', value)
+    if value in {'K', 'KN', 'KINDERGARTEN'}:
+        return 'K'
+    if value.isdigit():
+        return str(int(value))
+    return None
+
+
+def _students_for_tag(tag, students):
+    """Limit export rows to grades tested by the selected state program."""
+    if tag == 'CAASPP':
+        allowed_grades = {str(grade) for grade in range(3, 9)} | {'11'}
+    elif tag == 'ELPAC':
+        allowed_grades = {'K'} | {str(grade) for grade in range(1, 13)}
+    else:
+        raise ValueError(f"Unknown program tag: {tag}")
+    return [
+        student for student in students
+        if _normalized_grade(getattr(student, 'grade', None)) in allowed_grades
+    ]
 
 
 def _excel_letters(count):
@@ -151,6 +185,8 @@ def build_state_upload_workbook(tag, students):
     else:
         raise ValueError(f"Unknown program tag: {tag}")
 
+    students = _students_for_tag(tag, students)
+
     template_path = TEMPLATE_FILES[tag]
     if not template_path.is_file():
         raise FileNotFoundError(f"Missing state upload template: {template_path}")
@@ -162,6 +198,12 @@ def build_state_upload_workbook(tag, students):
         raise ValueError(
             f"State upload template {template_path.name} has no {sheet_name!r} worksheet"
         ) from exc
+
+    # Used by _workbook_bytes to patch the original package without an
+    # openpyxl save/rewrite.
+    workbook._desi_template_path = template_path
+    workbook._desi_template_sheet_name = sheet_name
+    workbook._desi_template_sheet_path = TEMPLATE_SHEET_FILES[tag]
 
     # Keep the template's header cells exactly as supplied.  In particular,
     # do not append columns for supports that are not part of the template.
@@ -200,9 +242,88 @@ def build_state_upload_workbook(tag, students):
 
 
 def _workbook_bytes(workbook):
+    """Serialize an export without letting openpyxl rewrite the template.
+
+    TOMS templates contain Excel-specific extension XML (notably x14 data
+    validation metadata) that openpyxl does not preserve when saving.  The
+    workbook object is still useful for constructing and inspecting rows, but
+    the downloadable file is produced by patching those rows into the
+    original Windows Excel package.
+    """
+    template_path = getattr(workbook, '_desi_template_path', None)
+    sheet_name = getattr(workbook, '_desi_template_sheet_name', None)
+    if template_path and sheet_name:
+        return _template_workbook_bytes(workbook, template_path, sheet_name)
+
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+def _inline_string_cell(reference, value):
+    """Return an Excel inline-string cell, safely escaped for worksheet XML."""
+    text = escape(str(value), quote=False)
+    return f'<c r="{reference}" t="inlineStr"><is><t>{text}</t></is></c>'
+
+
+def _template_workbook_bytes(workbook, template_path, sheet_name):
+    """Patch populated rows into the original template ZIP package."""
+    sheet_path = getattr(workbook, '_desi_template_sheet_path', None)
+    if not sheet_path:
+        raise ValueError('Template workbook is missing its worksheet package path')
+
+    sheet = workbook[sheet_name]
+    column_count = sheet.max_column
+    rows = []
+    for row_number in range(2, sheet.max_row + 1):
+        cells = []
+        for column_number in range(1, column_count + 1):
+            value = sheet.cell(row=row_number, column=column_number).value
+            if value in (None, ''):
+                continue
+            reference = f'{_excel_letters(column_count)[column_number - 1]}{row_number}'
+            cells.append(_inline_string_cell(reference, value))
+        if cells:
+            rows.append(f'<row r="{row_number}">{"".join(cells)}</row>')
+
+    with zipfile.ZipFile(template_path, 'r') as source:
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, 'w') as archive:
+            for info in source.infolist():
+                data = source.read(info.filename)
+                if info.filename == sheet_path:
+                    data = _patch_template_sheet_xml(
+                        data,
+                        rows,
+                        column_count,
+                        len(rows) + 1,
+                    )
+                archive.writestr(info, data)
+        return output.getvalue()
+
+
+def _patch_template_sheet_xml(xml_bytes, rows, column_count, last_row):
+    """Replace data rows while leaving the rest of the Excel XML untouched."""
+    xml = xml_bytes.decode('utf-8')
+    sheet_data_match = re.search(r'(<sheetData(?:\s[^>]*)?>)(.*?)(</sheetData>)', xml, re.S)
+    if not sheet_data_match:
+        raise ValueError('Template worksheet has no sheetData element')
+
+    row_pattern = re.compile(
+        r'<row\b[^>]*\br="([2-9][0-9]*)"[^>]*(?:/>|>.*?</row>)', re.S
+    )
+    existing_rows = row_pattern.sub('', sheet_data_match.group(2))
+    replacement = f'{sheet_data_match.group(1)}{existing_rows}{"".join(rows)}{sheet_data_match.group(3)}'
+    xml = xml[:sheet_data_match.start()] + replacement + xml[sheet_data_match.end():]
+
+    last_column = _excel_letters(column_count)[-1]
+    xml = re.sub(
+        r'(<dimension\s+ref=")A1:[A-Z]+[0-9]+("[^>]*/>)',
+        rf'\g<1>A1:{last_column}{last_row}\g<2>',
+        xml,
+        count=1,
+    )
+    return xml.encode('utf-8')
 
 
 def build_state_upload_zip(school_year, students, programs=PROGRAM_TAGS):
