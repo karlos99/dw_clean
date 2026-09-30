@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block title %}Taxonomy - Course Catalog{% endblock %}
+
+{% block content %}
+<div class="course-catalog-fields w-full px-4 sm:px-6 lg:px-8 py-6">
+    {% include "coursecatalog/partials/subnav.html" %}
+
+    <div class="mb-6">
+        {% include "coursecatalog/partials/taxonomy_legend.html" with show_level=False example=True %}
+    </div>
+
+    {% include "coursecatalog/partials/taxonomy_breadcrumb.html" with tag=selected_tag category=selected_category %}
+
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-5 items-start mb-10">
+        {# —— Step 1: Tags —— #}
+        <section class="rounded-xl border-2 border-sky-200 bg-white shadow-sm overflow-hidden">
+            <header class="flex items-center gap-2 border-b border-sky-100 bg-sky-50 px-4 py-3">
+                <span class="flex h-7 w-7 items-center justify-center rounded-full bg-sky-600 text-xs font-bold text-white">1</span>
+                <div>
+                    <h2 class="text-sm font-bold text-sky-950">Tags</h2>
+                    <p class="text-[10px] text-sky-800/90">Broad areas (VAPA, CTE, …)</p>
+                </div>
+            </header>
+            <div class="p-4 space-y-4">
+                <form method="post" action="{% url 'coursecatalog:tag_create' %}" class="space-y-2 text-sm rounded-lg bg-sky-50/50 p-3 border border-sky-100">
+                    {% csrf_token %}
+                    <p class="text-[10px] font-semibold uppercase text-sky-800">New tag</p>
+                    {{ tag_form.name.label_tag }}
+                    {{ tag_form.name }}
+                    {{ tag_form.slug.label_tag }}
+                    {{ tag_form.slug }}
+                    <button type="submit" class="w-full px-3 py-2 bg-sky-600 text-white text-xs font-semibold rounded-lg hover:bg-sky-700">Create tag</button>
+                </form>
+                <ul class="divide-y divide-slate-100 rounded-lg border border-slate-200 overflow-hidden">
+                    {% for t in tags %}
+                    <li>
+                        <a href="?tag={{ t.id }}"
+                           class="flex items-center justify-between gap-2 px-3 py-2.5 transition-colors {% if selected_tag and selected_tag.id == t.id %}bg-sky-100 border-l-4 border-sky-600{% else %}hover:bg-slate-50 border-l-4 border-transparent{% endif %}">
+                            <span class="font-medium text-slate-900">{{ t.name }}</span>
+                            <span class="text-[10px] font-medium text-slate-500 tabular-nums">{{ t.categories.count }} cat.</span>
+                        </a>
+                    </li>
+                    {% empty %}
+                    <li class="px-3 py-6 text-sm text-slate-500 text-center">Create your first tag.</li>
+                    {% endfor %}
+                </ul>
+                {% if selected_tag and not selected_category %}
+                <div class="text-xs border-t border-slate-100 pt-3 space-y-2">
+                    <p class="font-semibold text-slate-700">Edit “{{ selected_tag.name }}”</p>
+                    <form method="post" action="{% url 'coursecatalog:tag_update' selected_tag.id %}" class="grid grid-cols-2 gap-2">
+                        {% csrf_token %}
+                        <input type="text" name="name" value="{{ selected_tag.name }}" class="col-span-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/25" placeholder="Name">
+                        <input type="text" name="slug" value="{{ selected_tag.slug }}" class="col-span-2 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/25" placeholder="Slug">
+                        <button type="submit" class="col-span-2 px-2 py-1.5 bg-slate-800 text-white rounded text-xs font-semibold">Save tag</button>
+                    </form>
+                    <form method="post" action="{% url 'coursecatalog:tag_delete' selected_tag.id %}"
+                          onsubmit="return confirm('Delete tag {{ selected_tag.name }} and everything under it?');">
+                        {% csrf_token %}
+                        <button type="submit" class="text-red-600 font-semibold hover:underline">Delete tag</button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+        </section>
+
+        {# —— Step 2: Categories —— #}
+        <section class="rounded-xl border-2 {% if selected_tag %}border-violet-300{% else %}border-slate-200 border-dashed{% endif %} bg-white shadow-sm overflow-hidden opacity-100 {% if not selected_tag %}opacity-60{% endif %}">
+            <header class="flex items-center gap-2 border-b border-violet-100 bg-violet-50 px-4 py-3">
+                <span class="flex h-7 w-7 items-center justify-center rounded-full bg-violet-600 text-xs font-bold text-white">2</span>
+                <div>
+                    <h2 class="text-sm font-bold text-violet-950">Categories</h2>
+                    <p class="text-[10px] text-violet-800/90">Programs under the tag</p>
+                </div>
+            </header>
+            <div class="p-4">
+                {% if not selected_tag %}
+                <p class="text-sm text-slate-500 text-center py-8">Select a tag on the left to add categories.</p>
+                {% elif not selected_category %}
+                <form method="post" action="{% url 'coursecatalog:category_create' selected_tag.id %}" class="mb-4 space-y-2 text-sm rounded-lg bg-violet-50/50 p-3 border border-violet-100">
+                    {% csrf_token %}
+                    <p class="text-[10px] font-semibold uppercase text-violet-800">New category in {{ selected_tag.name }}</p>
+                    {{ category_form.name.label_tag }}
+                    {{ category_form.name }}
+                    {{ category_form.slug.label_tag }}
+                    {{ category_form.slug }}
+                    <button type="submit" class="w-full px-3 py-2 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-700">Add category</button>
+                </form>
+                <ul class="space-y-2">
+                    {% for cat in selected_tag.categories.all %}
+                    <li>
+                        <a href="?tag={{ selected_tag.id }}&amp;category={{ cat.id }}"
+                           class="block px-3 py-2.5 rounded-lg border border-slate-200 bg-white hover:border-violet-400 hover:shadow-sm transition-all">
+                            <span class="font-medium text-slate-900">{{ cat.name }}</span>
+                            <span class="block text-[10px] text-slate-500 mt-0.5">{{ cat.disciplines.count }} discipline(s)</span>
+                        </a>
+                    </li>
+                    {% empty %}
+                    <li class="text-sm text-slate-600 py-4 text-center border border-dashed rounded-lg">e.g. Performing Arts, Visual Arts</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="mb-3">
+                    <a href="?tag={{ selected_tag.id }}" class="text-xs text-violet-700 font-semibold hover:underline">← All categories in {{ selected_tag.name }}</a>
+                </div>
+                <form method="post" action="{% url 'coursecatalog:category_update' selected_category.id %}" class="space-y-2 text-sm rounded-lg border border-violet-100 p-3 mb-3">
+                    {% csrf_token %}
+                    <p class="text-[10px] font-semibold uppercase text-violet-800">Edit category</p>
+                    {{ category_edit_form.name.label_tag }}
+                    {{ category_edit_form.name }}
+                    {{ category_edit_form.slug.label_tag }}
+                    {{ category_edit_form.slug }}
+                    {{ category_edit_form.order.label_tag }}
+                    {{ category_edit_form.order }}
+                    <button type="submit" class="px-3 py-1.5 bg-violet-600 text-white rounded text-xs font-semibold">Save</button>
+                </form>
+                <form method="post" action="{% url 'coursecatalog:category_delete' selected_category.id %}"
+                      onsubmit="return confirm('Delete category {{ selected_category.name }}?');">
+                    {% csrf_token %}
+                    <button type="submit" class="text-xs text-red-600 font-semibold hover:underline">Delete category</button>
+                </form>
+                {% endif %}
+            </div>
+        </section>
+
+        {# —— Step 3: Disciplines —— #}
+        <section class="rounded-xl border-2 {% if selected_category %}border-amber-300{% else %}border-slate-200 border-dashed{% endif %} bg-white shadow-sm overflow-hidden {% if not selected_category %}opacity-60{% endif %}">
+            <header class="flex items-center gap-2 border-b border-amber-100 bg-amber-50 px-4 py-3">
+                <span class="flex h-7 w-7 items-center justify-center rounded-full bg-amber-600 text-xs font-bold text-white">3</span>
+                <div>
+                    <h2 class="text-sm font-bold text-amber-950">Disciplines</h2>
+                    <p class="text-[10px] text-amber-900/90">Subjects (Dance, Choir, …)</p>
+                </div>
+            </header>
+            <div class="p-4">
+                {% if not selected_category %}
+                <p class="text-sm text-slate-500 text-center py-8">Select a category to add disciplines.</p>
+                {% else %}
+                <form method="post" action="{% url 'coursecatalog:disciplines_bulk_create' selected_category.id %}" class="mb-3 rounded-lg bg-amber-50/50 p-3 border border-amber-100">
+                    {% csrf_token %}
+                    <label class="block text-[10px] font-semibold uppercase text-amber-900 mb-1">Add several (one per line)</label>
+                    <textarea name="discipline_names" rows="2" placeholder="Dance&#10;Choir" class="block w-full min-h-[5rem] rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/25"></textarea>
+                    <button type="submit" class="mt-2 w-full px-3 py-2 bg-amber-600 text-white text-xs font-semibold rounded-lg">Add disciplines</button>
+                </form>
+                <form method="post" action="{% url 'coursecatalog:discipline_create' selected_category.id %}" class="flex flex-wrap gap-2 items-end mb-4 pb-4 border-b border-slate-100">
+                    {% csrf_token %}
+                    {{ discipline_form.name.label_tag }}
+                    {{ discipline_form.name }}
+                    <button type="submit" class="px-3 py-2 bg-amber-600 text-white text-xs font-semibold rounded-lg">Add one</button>
+                </form>
+                <div class="space-y-2 max-h-[20rem] overflow-y-auto">
+                    {% for d in discipline_rows %}
+                    <div class="rounded-lg border border-slate-200 bg-white p-3">
+                        {% if edit_discipline_id == d.id|stringformat:"s" and discipline_edit_form %}
+                        <form method="post" action="{% url 'coursecatalog:discipline_update' d.id %}" class="space-y-2 text-xs">
+                            {% csrf_token %}
+                            {{ discipline_edit_form.name }}
+                            {{ discipline_edit_form.order }}
+                            <label class="flex gap-2">{{ discipline_edit_form.is_active }} Active</label>
+                            <div class="flex gap-2">
+                                <button type="submit" class="px-2 py-1 bg-amber-600 text-white rounded font-semibold">Save</button>
+                                <a href="?tag={{ selected_tag.id }}&amp;category={{ selected_category.id }}" class="py-1">Cancel</a>
+                            </div>
+                        </form>
+                        {% else %}
+                        <div class="flex justify-between gap-2 items-start">
+                            <div>
+                                <p class="font-semibold text-slate-900">{{ d.name }}</p>
+                                <p class="text-[10px] text-slate-500">{{ d.course_count }} course(s)</p>
+                            </div>
+                            <div class="flex flex-col items-end gap-1 text-[10px] font-semibold">
+                                <a href="{% url 'coursecatalog:placements' %}?tag={{ selected_tag.id }}&amp;category={{ selected_category.id }}&amp;discipline={{ d.id }}"
+                                   class="text-blue-600 hover:underline whitespace-nowrap">Assign courses →</a>
+                                <span class="flex gap-2">
+                                    <a href="?tag={{ selected_tag.id }}&amp;category={{ selected_category.id }}&amp;edit_discipline={{ d.id }}" class="text-slate-600">Edit</a>
+                                    <form method="post" action="{% url 'coursecatalog:discipline_delete' d.id %}" class="inline" onsubmit="return confirm('Delete {{ d.name }}?');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="text-red-600">Delete</button>
+                                    </form>
+                                </span>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <p class="text-sm text-slate-600 text-center py-6 border border-dashed rounded-lg">Add disciplines for this category.</p>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </section>
+    </div>
+
+    <details class="rounded-xl border border-emerald-200 bg-emerald-50/30 shadow-sm group">
+        <summary class="cursor-pointer list-none px-4 py-3 flex items-center gap-2 font-semibold text-sm text-emerald-950">
+            <span class="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white">4</span>
+            District class levels <span class="text-[10px] font-normal text-emerald-800">(used on Placements — not tied to tags)</span>
+            <span class="ml-auto text-emerald-700 text-xs group-open:rotate-180 transition-transform">▼</span>
+        </summary>
+        <div class="px-4 pb-4 border-t border-emerald-100 pt-4">
+            <form method="post" action="{% url 'coursecatalog:level_create' %}" class="flex flex-wrap gap-2 items-end mb-4">
+                {% csrf_token %}
+                <input type="hidden" name="return_tag" value="{% if selected_tag %}{{ selected_tag.id }}{% endif %}">
+                <input type="hidden" name="return_category" value="{% if selected_category %}{{ selected_category.id }}{% endif %}">
+                {{ level_form.name.label_tag }}
+                {{ level_form.name }}
+                {{ level_form.code.label_tag }}
+                {{ level_form.code }}
+                {{ level_form.order.label_tag }}
+                {{ level_form.order }}
+                <button type="submit" class="px-4 py-2 bg-emerald-600 text-white text-xs font-semibold rounded-lg">Add level</button>
+            </form>
+            <ul class="divide-y divide-emerald-100/80 rounded-lg border border-emerald-100 bg-white">
+                {% for lv in global_levels %}
+                <li class="px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span class="font-medium">{{ lv.name }}{% if lv.code %} <span class="text-slate-400 text-xs">({{ lv.code }})</span>{% endif %}</span>
+                    <div class="flex items-center gap-2 text-xs">
+                        <form method="post" action="{% url 'coursecatalog:level_update' lv.id %}" class="flex gap-1 items-center">
+                            {% csrf_token %}
+                            <input type="hidden" name="return_tag" value="{% if selected_tag %}{{ selected_tag.id }}{% endif %}">
+                            <input type="hidden" name="return_category" value="{% if selected_category %}{{ selected_category.id }}{% endif %}">
+                            <input type="text" name="name" value="{{ lv.name }}" class="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs shadow-sm">
+                            <input type="hidden" name="is_active" value="on">
+                            <button type="submit" class="text-emerald-700 font-semibold">Save</button>
+                        </form>
+                        <form method="post" action="{% url 'coursecatalog:level_delete' lv.id %}" onsubmit="return confirm('Delete {{ lv.name }}?');">
+                            {% csrf_token %}
+                            <button type="submit" class="text-red-600">Delete</button>
+                        </form>
+                    </div>
+                </li>
+                {% empty %}
+                <li class="px-3 py-4 text-slate-500 text-sm">Intro, Advanced, AP, …</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </details>
+</div>
+{% endblock %}

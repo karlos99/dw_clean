@@ -1,0 +1,35 @@
+{# Shared color key: Tag → Category → Discipline (+ Class level on placements) #}
+<div class="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-4 sm:p-5 shadow-sm">
+    <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">How courses are grouped</p>
+    <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-1 text-sm">
+        <span class="inline-flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sky-950">
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-600 text-[10px] font-bold text-white">1</span>
+            <span><strong class="font-semibold">Tag</strong><span class="hidden sm:inline text-sky-800/80"> · broad area</span></span>
+        </span>
+        <span class="hidden sm:inline text-slate-300 font-light px-1" aria-hidden="true">→</span>
+        <span class="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-violet-950">
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">2</span>
+            <span><strong class="font-semibold">Category</strong><span class="hidden sm:inline text-violet-800/80"> · program</span></span>
+        </span>
+        <span class="hidden sm:inline text-slate-300 font-light px-1" aria-hidden="true">→</span>
+        <span class="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950">
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-600 text-[10px] font-bold text-white">3</span>
+            <span><strong class="font-semibold">Discipline</strong><span class="hidden sm:inline text-amber-900/80"> · subject</span></span>
+        </span>
+        {% if show_level %}
+        <span class="hidden sm:inline text-slate-300 font-light px-1" aria-hidden="true">→</span>
+        <span class="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-950">
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-bold text-white">4</span>
+            <span><strong class="font-semibold">Class level</strong><span class="hidden sm:inline text-emerald-900/80"> · district-wide</span></span>
+        </span>
+        {% endif %}
+    </div>
+    {% if example %}
+    <p class="mt-3 text-xs text-slate-600 border-t border-slate-100 pt-3">
+        Example: <span class="font-medium text-sky-800">VAPA</span>
+        → <span class="font-medium text-violet-800">Performing Arts</span>
+        → <span class="font-medium text-amber-900">Dance</span>{% if show_level %}
+        → <span class="font-medium text-emerald-800">Intro</span>{% endif %}
+    </p>
+    {% endif %}
+</div>

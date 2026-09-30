@@ -39,7 +39,7 @@ INSTALLED_APPS = [
     'nextyearlist.apps.NextYearListConfig',
     'placementcards',
     'mathr.apps.MathrConfig',
-    'assesments',
+    'coursecatalog.apps.CoursecatalogConfig',
     'desi.apps.DesiConfig',
     'dataviz.apps.DatavizConfig',
     'dataLoader.apps.DataloaderConfig',
