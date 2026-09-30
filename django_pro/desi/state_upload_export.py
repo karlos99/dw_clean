@@ -15,20 +15,24 @@ Sources merged per student:
 
 import io
 import zipfile
+from pathlib import Path
 
 from django.db import transaction
-from openpyxl import Workbook
+from openpyxl import load_workbook
 
 from .models import Accommodation, AccommodationOption, DesiSeis, StudentAccommodation
 from .state_upload_templates import (
-    CAASPP_HEADERS,
     CAASPP_SHEET_NAME,
-    ELPAC_HEADERS,
     ELPAC_SHEET_NAME,
 )
 
 PROGRAM_TAGS = ('CAASPP', 'ELPAC')
 TAG_TO_TEST_GROUP = {'CAASPP': 'caaspp', 'ELPAC': 'elpac'}
+TEMPLATE_DIR = Path(__file__).resolve().parent / 'templates' / 'state_upload'
+TEMPLATE_FILES = {
+    'CAASPP': TEMPLATE_DIR / 'CAASPP_Upload_Stu_Accom_Template.xlsx',
+    'ELPAC': TEMPLATE_DIR / 'ELPAC_Upload_Stu_Accom_Template.xlsx',
+}
 
 
 def _excel_letters(count):
@@ -133,44 +137,64 @@ def _student_codes_for_tag(tag, students):
 
 
 def build_state_upload_workbook(tag, students):
-    """Return an openpyxl Workbook for one program tag and the given students."""
+    """Return the supplied TOMS template populated with the given students.
+
+    The template is deliberately loaded instead of recreating a workbook.  The
+    files contain instructions, specifications, definitions, formatting, and
+    data validation that must remain intact in the download.  Only the named
+    ``* Test Settings Template`` worksheet is populated.
+    """
     if tag == 'CAASPP':
-        headers, sheet_name = CAASPP_HEADERS, CAASPP_SHEET_NAME
+        sheet_name = CAASPP_SHEET_NAME
     elif tag == 'ELPAC':
-        headers, sheet_name = ELPAC_HEADERS, ELPAC_SHEET_NAME
+        sheet_name = ELPAC_SHEET_NAME
     else:
         raise ValueError(f"Unknown program tag: {tag}")
 
-    letters = _excel_letters(len(headers))
+    template_path = TEMPLATE_FILES[tag]
+    if not template_path.is_file():
+        raise FileNotFoundError(f"Missing state upload template: {template_path}")
+
+    workbook = load_workbook(template_path)
+    try:
+        sheet = workbook[sheet_name]
+    except KeyError as exc:
+        raise ValueError(
+            f"State upload template {template_path.name} has no {sheet_name!r} worksheet"
+        ) from exc
+
+    # Keep the template's header cells exactly as supplied.  In particular,
+    # do not append columns for supports that are not part of the template.
+    template_column_count = sheet.max_column
+    letters = _excel_letters(template_column_count)
     letter_to_index = {letter: idx for idx, letter in enumerate(letters)}
 
     column_by_index = {}
-    extra_supports = []
     for support in _supports_for_tag(tag):
         idx = letter_to_index.get((support.column_letter or '').strip().upper())
         if idx is not None:
             column_by_index[idx] = support
-        else:
-            extra_supports.append(support)
 
-    all_headers = list(headers) + [
-        f"{s.name} ({s.column_letter})" if s.column_letter else s.name
-        for s in extra_supports
-    ]
+    # Remove any sample/data values while preserving the template rows,
+    # formatting, tables, comments, and validation rules.
+    for row_number in range(2, sheet.max_row + 1):
+        for column_number in range(1, template_column_count + 1):
+            sheet.cell(row=row_number, column=column_number).value = None
 
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = sheet_name
-    sheet.append(all_headers)
-
+    next_row = 2
     for student, codes in _student_codes_for_tag(tag, students):
-        row = [''] * len(all_headers)
+        row_number = next_row
+        next_row += 1
+        row = [''] * template_column_count
         row[0] = student.ssid or ''
         for idx, support in column_by_index.items():
             row[idx] = codes.get(support.id, '')
-        for offset, support in enumerate(extra_supports):
-            row[len(headers) + offset] = codes.get(support.id, '')
-        sheet.append(row)
+        for column_number, value in enumerate(row, start=1):
+            sheet.cell(row=row_number, column=column_number, value=value)
+
+    # Make the data sheet the initially selected sheet, while retaining all
+    # instructional/specification worksheets from the original template.
+    workbook.active = workbook.index(sheet)
 
     return workbook
 
