@@ -266,6 +266,14 @@ def _inline_string_cell(reference, value):
     return f'<c r="{reference}" t="inlineStr"><is><t>{text}</t></is></c>'
 
 
+def _numeric_cell(reference, value):
+    """Return an Excel numeric cell for a state identifier."""
+    text = str(value).strip()
+    if not re.fullmatch(r'\d+', text):
+        return _inline_string_cell(reference, value)
+    return f'<c r="{reference}"><v>{int(text)}</v></c>'
+
+
 def _template_workbook_bytes(workbook, template_path, sheet_name):
     """Patch populated rows into the original template ZIP package."""
     sheet_path = getattr(workbook, '_desi_template_sheet_path', None)
@@ -282,7 +290,10 @@ def _template_workbook_bytes(workbook, template_path, sheet_name):
             if value in (None, ''):
                 continue
             reference = f'{_excel_letters(column_count)[column_number - 1]}{row_number}'
-            cells.append(_inline_string_cell(reference, value))
+            if column_number == 1:
+                cells.append(_numeric_cell(reference, value))
+            else:
+                cells.append(_inline_string_cell(reference, value))
         if cells:
             rows.append(f'<row r="{row_number}">{"".join(cells)}</row>')
 

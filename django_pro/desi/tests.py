@@ -3044,7 +3044,7 @@ class DesiStateUploadExportTests(TestCase):
         package = zipfile.ZipFile(io.BytesIO(response.content))
         template_xml = package.read("xl/worksheets/sheet4.xml")
         self.assertIn(b"xmlns:x14=", template_xml)
-        self.assertIn(b'r="A2"', template_xml)
+        self.assertIn(b'<c r="A2"><v>1234567890</v></c>', template_xml)
         wb = self._load(response.content)
         self.assertEqual(wb.active.title, "CAASPP Test Settings Template")
 
