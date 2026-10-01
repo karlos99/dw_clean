@@ -9,6 +9,7 @@ from .models import (
     CatalogPlacement,
     CatalogTag,
     CourseCatalogEntry,
+    CtePathwayEntry,
 )
 
 
@@ -92,6 +93,30 @@ class CourseCatalogEntryAdmin(admin.ModelAdmin):
     readonly_fields = [f.name for f in CourseCatalogEntry._meta.fields]
 
     def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CtePathwayEntry)
+class CtePathwayEntryAdmin(admin.ModelAdmin):
+    list_display = (
+        'course_id',
+        'course_title',
+        'career_cluster',
+        'cte_pathway',
+        'cte_course_level',
+        'state_course_code',
+    )
+    list_filter = ('career_cluster', 'cte_pathway', 'cte_course_level')
+    search_fields = ('course_id', 'course_title', 'career_cluster', 'cte_pathway')
+    readonly_fields = [f.name for f in CtePathwayEntry._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return False
 
     def has_delete_permission(self, request, obj=None):

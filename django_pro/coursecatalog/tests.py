@@ -14,6 +14,7 @@ from coursecatalog.models import (
     CatalogPlacement,
     CatalogTag,
 )
+from coursecatalog.cte_pathways import pathways_for_course_ids
 from coursecatalog.placement_ops import upsert_placement_for_tag
 from coursecatalog.services.matching import match_schedule_row
 
@@ -100,6 +101,26 @@ class ScheduleMatchTests(SimpleTestCase):
             mock_model.objects.filter.return_value = qs
             result = match_schedule_row({'course_key': 'K1', 'course_code': 'C1'})
         self.assertIs(result, entry)
+
+
+class CtePathwayTests(SimpleTestCase):
+    def test_pathways_for_course_ids_groups_by_course(self):
+        from unittest.mock import MagicMock, patch
+
+        row = MagicMock(
+            course_id='6005A',
+            career_cluster='Arts, Media, and Entertainment',
+            cte_pathway='Professional Music',
+            cte_course_level='Concentration',
+        )
+        qs = MagicMock()
+        qs.order_by.return_value = [row]
+        with patch('coursecatalog.cte_pathways.CtePathwayEntry') as mock_model:
+            mock_model.objects.filter.return_value = qs
+            result = pathways_for_course_ids(['6005A'])
+        self.assertIn('6005A', result)
+        self.assertEqual(len(result['6005A']), 1)
+        self.assertEqual(result['6005A'][0].tag_name, 'CTE')
 
 
 class CatalogTaxonomyTests(TestCase):

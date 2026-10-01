@@ -28,6 +28,13 @@ from .models import (
     CatalogPlacement,
     CatalogTag,
     CourseCatalogEntry,
+    CtePathwayEntry,
+)
+from .cte_pathways import (
+    CTE_TAG_NAME,
+    attach_cte_pathways_to_entries,
+    build_cte_taxonomy_tree,
+    courses_for_cte_pathway,
 )
 from .placement_ops import upsert_placement_for_tag
 from .catalog_search import (
@@ -193,6 +200,43 @@ def overview(request):
         'catalog_count': CourseCatalogEntry.objects.count(),
     }
     return render(request, 'coursecatalog/overview.html', context)
+
+
+@login_required
+@page_access_required('coursecatalog-categories')
+def cte_taxonomy(request):
+    cte_tree = build_cte_taxonomy_tree()
+    selected_cluster = (request.GET.get('cluster') or '').strip()
+    selected_pathway = (request.GET.get('pathway') or '').strip()
+    selected_pathways = []
+    for cluster in cte_tree:
+        if cluster['name'] == selected_cluster:
+            selected_pathways = cluster['pathways']
+            break
+    pathway_courses = []
+    if selected_cluster and selected_pathway:
+        pathway_courses = list(
+            courses_for_cte_pathway(
+                career_cluster=selected_cluster,
+                cte_pathway=selected_pathway,
+            )
+        )
+    context = {
+        **_subnav_context('cte'),
+        'cte_tag_name': CTE_TAG_NAME,
+        'cte_tree': cte_tree,
+        'selected_cluster': selected_cluster,
+        'selected_pathway': selected_pathway,
+        'selected_pathways': selected_pathways,
+        'pathway_courses': pathway_courses,
+        'pathway_row_count': CtePathwayEntry.objects.count(),
+        'distinct_course_count': CtePathwayEntry.objects.exclude(course_id__isnull=True)
+        .exclude(course_id='')
+        .values('course_id')
+        .distinct()
+        .count(),
+    }
+    return render(request, 'coursecatalog/cte_taxonomy.html', context)
 
 
 @login_required
@@ -504,6 +548,7 @@ def placements(request):
         .prefetch_related(_catalog_entry_placements_prefetch())
         .order_by(*_catalog_sort_order(catalog_sort, catalog_dir))[:500]
     )
+    attach_cte_pathways_to_entries(entries)
     course_choices = [(e.course_key, e.display_title) for e in entries]
     initial_tag_id = (request.GET.get('tag') or request.GET.get('filter_tag') or '').strip()
     initial_category_id = (request.GET.get('category') or request.GET.get('filter_category') or '').strip()

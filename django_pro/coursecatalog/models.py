@@ -54,6 +54,32 @@ class CourseCatalogEntry(models.Model):
         return values
 
 
+class CtePathwayEntry(models.Model):
+    """Read-only CTE pathway rows (``coursecatalog_cte_pathways`` table, ETL-owned)."""
+
+    pathway_row_key = models.TextField(primary_key=True)
+    cte_program_key = models.TextField(blank=True, null=True)
+    cte_pathway = models.TextField(blank=True, null=True)
+    pathway_code = models.TextField(blank=True, null=True)
+    pathway_state_code = models.TextField(blank=True, null=True)
+    career_cluster_code = models.TextField(blank=True, null=True)
+    career_cluster = models.TextField(blank=True, null=True)
+    course_key = models.TextField(blank=True, null=True)
+    course_id = models.TextField(blank=True, null=True)
+    course_title = models.TextField(blank=True, null=True)
+    state_course_code = models.TextField(blank=True, null=True)
+    cte_course_level = models.TextField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'coursecatalog_cte_pathways'
+        verbose_name = 'CTE pathway row'
+        verbose_name_plural = 'CTE pathway rows'
+
+    def __str__(self):
+        return f'{self.course_id} → {self.cte_pathway}'
+
+
 class CatalogTag(models.Model):
     """Top-level grouping (e.g. VAPA)."""
 

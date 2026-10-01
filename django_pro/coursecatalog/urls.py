@@ -7,6 +7,7 @@ app_name = 'coursecatalog'
 urlpatterns = [
     path('', views.overview, name='overview'),
     path('categories/', views.categories, name='categories'),
+    path('cte/', views.cte_taxonomy, name='cte_taxonomy'),
     path('tags/create/', views.tag_create, name='tag_create'),
     path('tags/<int:tag_id>/update/', views.tag_update, name='tag_update'),
     path('tags/<int:tag_id>/delete/', views.tag_delete, name='tag_delete'),
