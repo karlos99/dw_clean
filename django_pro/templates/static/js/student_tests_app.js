@@ -1886,7 +1886,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const hasActiveFilter = Array.isArray(filters[col]) && filters[col].length > 0;
             // Race List is stored in add_data JSON; always offer the filter UI when the
             // column is visible (options may load from PostgreSQL after the table renders).
-            const hasFilter = optionsForCol.length > 0 || hasActiveFilter || col === 'race_list';
+            const hasFilter = optionsForCol.length > 0 || hasActiveFilter || col === 'race_list'
+                || col.startsWith('course_prog_');
             const isSorted = sortBy === col;
             const sortIcon = isSorted ? (sortDir === 'asc' ? '▲' : '▼') : '↕';
             const sortColorClass = isSorted ? 'text-blue-400' : 'text-slate-600 group-hover:text-slate-400';
@@ -2190,8 +2191,26 @@ document.addEventListener('DOMContentLoaded', () => {
         const closeSummaryEl = event.target.closest('[data-action="close-student-summary"]');
         if (closeSummaryEl) {
             event.preventDefault();
+            const cteOverlayEl = document.getElementById('student-cte-overlay');
+            if (cteOverlayEl) hideOverlay(cteOverlayEl);
             hideOverlay(summaryOverlayEl);
             if (summaryOverlayBodyEl) summaryOverlayBodyEl.innerHTML = '';
+            return;
+        }
+
+        const openCteEl = event.target.closest('[data-action="open-student-cte"]');
+        if (openCteEl) {
+            event.preventDefault();
+            const cteOverlayEl = document.getElementById('student-cte-overlay');
+            if (cteOverlayEl) showOverlay(cteOverlayEl);
+            return;
+        }
+
+        const closeCteEl = event.target.closest('[data-action="close-student-cte"]');
+        if (closeCteEl) {
+            event.preventDefault();
+            const cteOverlayEl = document.getElementById('student-cte-overlay');
+            if (cteOverlayEl) hideOverlay(cteOverlayEl);
             return;
         }
 
@@ -2200,6 +2219,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape') return;
+        const cteOverlayEl = document.getElementById('student-cte-overlay');
+        if (cteOverlayEl && !cteOverlayEl.classList.contains('hidden')) {
+            hideOverlay(cteOverlayEl);
+            return;
+        }
         if (summaryOverlayEl && !summaryOverlayEl.classList.contains('hidden')) {
             hideOverlay(summaryOverlayEl);
             if (summaryOverlayBodyEl) summaryOverlayBodyEl.innerHTML = '';

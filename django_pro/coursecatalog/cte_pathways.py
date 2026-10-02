@@ -9,6 +9,18 @@ from .models import CtePathwayEntry
 
 CTE_TAG_NAME = 'CTE'
 
+# CTE course progression stages, in path order. Each stage maps to a progression
+# year used by the graphical timeline on the paths page.
+CTE_STAGE_ORDER = ('Introduction', 'Concentration', 'Capstone')
+CTE_STAGE_YEARS = {'Introduction': 1, 'Concentration': 2, 'Capstone': 3}
+CTE_STAGE_BY_LOWER = {stage.lower(): stage for stage in CTE_STAGE_ORDER}
+
+
+def cte_stage_year(level: str) -> int | None:
+    """Progression year for a CTE level (Introduction → 1, …), else None."""
+    canonical = CTE_STAGE_BY_LOWER.get((level or '').strip().lower())
+    return CTE_STAGE_YEARS.get(canonical) if canonical else None
+
 
 @dataclass(frozen=True)
 class CtePathwayAssignment:
@@ -146,3 +158,111 @@ def courses_for_cte_pathway(*, career_cluster: str, cte_pathway: str, limit: int
         .order_by('course_id', 'cte_course_level')
         .values('course_id', 'course_title', 'cte_course_level', 'state_course_code')[:limit]
     )
+
+
+def _level_sort(level: str) -> tuple[int, str]:
+    canonical = CTE_STAGE_BY_LOWER.get(level.lower())
+    if canonical:
+        return (CTE_STAGE_ORDER.index(canonical), '')
+    return (len(CTE_STAGE_ORDER), level.lower())
+
+
+def group_cte_pathway_rows(rows, limit_courses: int = 100) -> list[dict]:
+    """Group raw CTE pathway rows into ordered stage columns per pathway.
+
+    ``rows`` is any iterable of mappings with ``career_cluster``, ``cte_pathway``,
+    ``cte_course_level``, ``course_id`` and ``course_title`` keys.
+    """
+    pathways: dict[tuple[str, str], dict] = {}
+    for row in rows:
+        cluster = (row.get('career_cluster') or '').strip() or '—'
+        pathway = (row.get('cte_pathway') or '').strip() or '—'
+        level = (row.get('cte_course_level') or '').strip() or 'Unassigned'
+        pnode = pathways.setdefault(
+            (cluster, pathway),
+            {'career_cluster': cluster, 'cte_pathway': pathway, 'levels': {}},
+        )
+        bucket = pnode['levels'].setdefault(level, [])
+        course_id = (row.get('course_id') or '').strip()
+        course_title = (row.get('course_title') or '').strip()
+        if not course_id:
+            continue
+        if any(c['course_id'] == course_id for c in bucket):
+            continue
+        if len(bucket) < limit_courses:
+            bucket.append({'course_id': course_id, 'course_title': course_title})
+
+    out: list[dict] = []
+    for (cluster, pathway), pnode in pathways.items():
+        columns = [
+            {
+                'level': level,
+                'year': cte_stage_year(level),
+                'courses': pnode['levels'][level],
+            }
+            for level in sorted(pnode['levels'].keys(), key=_level_sort)
+        ]
+        out.append({
+            'career_cluster': cluster,
+            'cte_pathway': pathway,
+            'columns': columns,
+            'course_count': sum(len(c['courses']) for c in columns),
+        })
+    out.sort(key=lambda p: (p['career_cluster'].lower(), p['cte_pathway'].lower()))
+    return out
+
+
+def list_cte_pathways() -> list[dict]:
+    """Flat list of every CTE pathway (career cluster → pathway), for browsing."""
+    out: list[dict] = []
+    for cluster in build_cte_taxonomy_tree():
+        for pathway in cluster['pathways']:
+            out.append({
+                'career_cluster': cluster['name'],
+                'cte_pathway': pathway['name'],
+                'course_count': pathway['course_count'],
+            })
+    return out
+
+
+def cte_pathway_detail(career_cluster: str, cte_pathway: str, limit_courses: int = 200) -> dict | None:
+    """One CTE pathway as ordered stage columns (read-only)."""
+    if not career_cluster or not cte_pathway:
+        return None
+    rows = (
+        CtePathwayEntry.objects.filter(
+            career_cluster=career_cluster,
+            cte_pathway=cte_pathway,
+        )
+        .order_by('cte_course_level', 'course_id')
+        .values('career_cluster', 'cte_pathway', 'cte_course_level', 'course_id', 'course_title')
+    )
+    grouped = group_cte_pathway_rows(rows, limit_courses)
+    return grouped[0] if grouped else None
+
+
+def cte_pathways_for_discipline(discipline_id, limit_courses: int = 100) -> list[dict]:
+    """CTE pathways covering the courses placed in one discipline.
+
+    Each pathway is returned with ordered stage columns (Introduction,
+    Concentration, Capstone, then any other observed levels) and the courses
+    matched by district ``course_id``.
+    """
+    from .models import CatalogPlacement
+
+    course_ids = list(
+        CatalogPlacement.objects.filter(discipline_id=discipline_id)
+        .exclude(catalog_entry__course_id__isnull=True)
+        .exclude(catalog_entry__course_id='')
+        .values_list('catalog_entry__course_id', flat=True)
+        .distinct()
+    )
+    if not course_ids:
+        return []
+
+    rows = (
+        CtePathwayEntry.objects.filter(course_id__in=course_ids)
+        .order_by('career_cluster', 'cte_pathway', 'cte_course_level', 'course_id')
+        .values('career_cluster', 'cte_pathway', 'cte_course_level', 'course_id', 'course_title')
+    )
+    return group_cte_pathway_rows(rows, limit_courses)

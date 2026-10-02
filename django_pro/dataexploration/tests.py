@@ -740,3 +740,83 @@ class SurveyDataResolutionTests(SimpleTestCase):
 		self.assertEqual(format_marks_cell('Active', 'status'), 'Active')
 
 
+
+
+class StudentCtePathsTests(SimpleTestCase):
+	def test_course_ids_from_course_info_parses_json(self):
+		from dataexploration.view_modules.student_data_utils import _course_ids_from_course_info
+
+		self.assertEqual(
+			_course_ids_from_course_info(
+				'[{"state_course_code":"9132","course_ids":[{"course_id":"4617A"},{"course_id":"4617B"}]}]'
+			),
+			['4617A', '4617B'],
+		)
+		self.assertEqual(_course_ids_from_course_info(''), [])
+		self.assertEqual(_course_ids_from_course_info('not json'), [])
+		self.assertEqual(_course_ids_from_course_info(None), [])
+
+	def test_fetch_student_cte_paths_groups_dedupes_and_reports_s1_s2(self):
+		from unittest.mock import MagicMock, patch
+
+		import dataexploration.view_modules.student_data_utils as mod
+
+		columns = ['school_year', 'subject', 'course_name', 'course_info', 'mark_period', 'mark']
+		rows = [
+			('2023-2024', 'Arts', 'Professional Theater I', '[{"course_ids":[{"course_id":"7460A"},{"course_id":"7460B"}]}]', 'S1', 'A'),
+			('2023-2024', 'Arts', 'Professional Theater I', '[{"course_ids":[{"course_id":"7460A"},{"course_id":"7460B"}]}]', 'S2', 'B'),
+			('2023-2024', 'Arts', 'Professional Theater II', '[{"course_ids":[{"course_id":"7461A"}]}]', 'S1', 'A-'),
+		]
+
+		cursor = MagicMock()
+		cursor.description = [MagicMock(name=n) for n in columns]
+		for col, name in zip(cursor.description, columns):
+			col.name = name
+		cursor.fetchall.return_value = rows
+
+		connections_mock = MagicMock()
+		connections_mock.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
+
+		cte_qs = MagicMock()
+		cte_qs.values.return_value = [
+			{'career_cluster': 'AME', 'cte_pathway': 'Professional Theater', 'cte_course_level': 'Concentration', 'course_id': '7460A', 'course_title': 'Professional Theater I'},
+			{'career_cluster': 'AME', 'cte_pathway': 'Professional Theater', 'cte_course_level': 'Concentration', 'course_id': '7460B', 'course_title': 'Professional Theater I'},
+			{'career_cluster': 'AME', 'cte_pathway': 'Professional Theater', 'cte_course_level': 'Capstone', 'course_id': '7461A', 'course_title': 'Professional Theater II'},
+		]
+
+		with patch.object(mod, '_resolve_ssid', return_value='123'), \
+			patch.object(mod, 'CurrentStudent') as cs, \
+			patch.object(mod, 'connections', connections_mock), \
+			patch('coursecatalog.models.CtePathwayEntry') as cte_model:
+			cs.objects.filter.return_value.order_by.return_value.first.return_value = None
+			cte_model.objects.filter.return_value = cte_qs
+			out = mod._fetch_student_cte_paths('123')
+
+		self.assertEqual(len(out), 1)
+		self.assertEqual(
+			[col['level'] for col in out[0]['columns']],
+			['Concentration', 'Capstone'],
+		)
+		concentration = out[0]['columns'][0]
+		self.assertEqual(len(concentration['courses']), 1)
+		self.assertEqual(concentration['courses'][0]['name'], 'Professional Theater I')
+		self.assertEqual(concentration['courses'][0]['grades'], {'S1': 'A', 'S2': 'B'})
+
+	def test_fetch_student_cte_paths_empty_when_no_course_ids(self):
+		from unittest.mock import MagicMock, patch
+
+		import dataexploration.view_modules.student_data_utils as mod
+
+		cursor = MagicMock()
+		cursor.description = [MagicMock()]
+		cursor.description[0].name = 'course_info'
+		cursor.fetchall.return_value = [('',)]
+
+		connections_mock = MagicMock()
+		connections_mock.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
+
+		with patch.object(mod, '_resolve_ssid', return_value='123'), \
+			patch.object(mod, 'CurrentStudent') as cs, \
+			patch.object(mod, 'connections', connections_mock):
+			cs.objects.filter.return_value.order_by.return_value.first.return_value = None
+			self.assertEqual(mod._fetch_student_cte_paths('123'), [])

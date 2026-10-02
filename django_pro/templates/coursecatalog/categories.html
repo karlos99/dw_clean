@@ -6,6 +6,8 @@
 <div class="course-catalog-fields w-full px-4 sm:px-6 lg:px-8 py-6">
     {% include "coursecatalog/partials/subnav.html" %}
 
+    {% include "coursecatalog/partials/taxonomy_toggle.html" with active='taxonomy' %}
+
     <div class="mb-6">
         {% include "coursecatalog/partials/taxonomy_legend.html" with show_level=False example=True %}
     </div>

@@ -286,11 +286,51 @@ class CatalogPath(models.Model):
             raise ValidationError('Discipline must belong to the selected category.')
 
 
+class CatalogPathColumn(models.Model):
+    """A named, ordered column/stage in a path (e.g. Introduction, Capstone).
+
+    Custom paths may define any number of columns; the CTE stage names are only
+    used to seed a new path.
+    """
+
+    path = models.ForeignKey(
+        CatalogPath,
+        on_delete=models.CASCADE,
+        related_name='columns',
+    )
+    name = models.CharField(max_length=100)
+    order = models.IntegerField(default=0)
+    year = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text='Optional progression year shown on the timeline.',
+    )
+
+    class Meta:
+        ordering = ['order', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['path', 'name'],
+                name='uniq_catalog_path_column_name',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.path.name} · {self.name}'
+
+
 class CatalogPathStep(models.Model):
     path = models.ForeignKey(
         CatalogPath,
         on_delete=models.CASCADE,
         related_name='steps',
+    )
+    column = models.ForeignKey(
+        CatalogPathColumn,
+        on_delete=models.CASCADE,
+        related_name='steps',
+        blank=True,
+        null=True,
     )
     catalog_entry = models.ForeignKey(
         CourseCatalogEntry,
@@ -302,15 +342,17 @@ class CatalogPathStep(models.Model):
     label = models.CharField(max_length=255, blank=True)
 
     class Meta:
-        ordering = ['sequence']
+        ordering = ['sequence', 'id']
         constraints = [
             models.UniqueConstraint(
-                fields=['path', 'sequence'],
+                fields=['path', 'column', 'sequence'],
                 name='uniq_catalog_path_step_sequence',
+                nulls_distinct=False,
             ),
             models.UniqueConstraint(
-                fields=['path', 'catalog_entry'],
+                fields=['path', 'column', 'catalog_entry'],
                 name='uniq_catalog_path_step_entry',
+                nulls_distinct=False,
             ),
         ]
 

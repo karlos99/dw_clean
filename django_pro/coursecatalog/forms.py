@@ -14,6 +14,7 @@ from .models import (
     CatalogDiscipline,
     CatalogLevel,
     CatalogPath,
+    CatalogPathColumn,
     CatalogPathStep,
     CatalogTag,
     CourseCatalogEntry,
@@ -266,12 +267,34 @@ class CatalogPathForm(forms.ModelForm):
         _apply_cc_field_classes(self)
 
 
-class CatalogPathStepForm(forms.ModelForm):
+class CatalogPathColumnForm(forms.ModelForm):
     class Meta:
-        model = CatalogPathStep
-        fields = ('sequence', 'catalog_entry', 'label')
+        model = CatalogPathColumn
+        fields = ('name', 'order', 'year')
+        widgets = {
+            'year': forms.NumberInput(attrs={'min': 0, 'max': 12, 'placeholder': 'Year'}),
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['year'].required = False
+        self.fields['order'].required = False
+        _apply_cc_field_classes(self)
+
+
+class CatalogPathStepForm(forms.ModelForm):
+    class Meta:
+        model = CatalogPathStep
+        fields = ('column', 'catalog_entry', 'label')
+
+    def __init__(self, *args, path=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Course choice is deliberately NOT restricted by level or discipline:
+        # custom paths may place any catalog course in any column.
         self.fields['catalog_entry'].queryset = CourseCatalogEntry.objects.all().order_by('course_title', 'course_key')
+        self.fields['label'].required = False
+        if path is not None:
+            self.fields['column'].queryset = path.columns.order_by('order', 'id')
+            if not self.fields['column'].initial and path.columns.exists():
+                self.fields['column'].initial = path.columns.first()
         _apply_cc_field_classes(self)

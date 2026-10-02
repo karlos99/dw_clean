@@ -4,6 +4,7 @@ from django.db import connections
 from django.core.cache import cache
 from django.template.loader import render_to_string
 from django.conf import settings
+import json
 import os
 
 from studata.models import CurrentStudent, StudentEnroll, School, StudentMarks
@@ -46,6 +47,7 @@ def _student_summary_cache_keys(ssid: str, user_id=None, embedded: bool = False)
         'student_info': f"dataexp:student_summary:{v}:{user_part}student_info:{ssid}",
         'test_records': f"dataexp:student_summary:{v}:{user_part}test_records:{ssid}",
         'student_marks': f"dataexp:student_summary:{v}:{user_part}student_marks:{ssid}",
+        'student_cte_paths': f"dataexp:student_summary:{v}:{user_part}student_cte_paths:{ssid}",
         'partial_html': f"dataexp:student_summary:{v}:{user_part}partial_html:{'embedded' if embedded else 'full'}:{ssid}",
     }
 
@@ -407,6 +409,167 @@ def get_student_marks_cached(ssid: str, timeout: int = 300, user_id=None):
     return marks
 
 
+_STUDENT_CTE_MARKS_SQL = """
+    SELECT
+        m.school_year,
+        m.subject,
+        m.course_name,
+        m.course_info,
+        CASE
+            WHEN (e.item ->> 'status') ILIKE 'current' THEN 'Live'
+            ELSE (e.item ->> 'period')
+        END AS mark_period,
+        (e.item ->> 'mark') AS mark
+    FROM student_marks_table_alt m,
+         LATERAL jsonb_array_elements(
+             CASE
+                 WHEN m.mark_data IS NOT NULL AND m.mark_data <> ''
+                 THEN (m.mark_data::jsonb) -> 'marks'
+                 ELSE '[]'::jsonb
+             END
+         ) WITH ORDINALITY AS e(item, ord)
+    WHERE (m.ssid = %s OR m.student_id = %s)
+"""
+
+
+def _course_ids_from_course_info(course_info):
+    """Extract district course ids from a marks ``course_info`` JSON column."""
+    if not course_info:
+        return []
+    try:
+        data = json.loads(course_info)
+    except (TypeError, ValueError):
+        return []
+    out = []
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            for entry in item.get('course_ids') or []:
+                if isinstance(entry, dict):
+                    cid = str(entry.get('course_id') or '').strip()
+                    if cid:
+                        out.append(cid)
+                elif entry:
+                    out.append(str(entry).strip())
+    return out
+
+
+def _period_grade(mark):
+    if mark is None:
+        return None
+    text = str(mark).strip()
+    return text or None
+
+
+def _fetch_student_cte_paths(ssid: str):
+    """CTE paths a student has grades for, grouped into stage columns.
+
+    Links the student's marks to CTE pathway courses through the ``course_info``
+    JSON (course ids) and reports their S1/S2 grades per course name.
+    """
+    from coursecatalog.models import CtePathwayEntry
+    from coursecatalog.cte_pathways import CTE_STAGE_BY_LOWER, CTE_STAGE_ORDER, cte_stage_year
+
+    ssid = _resolve_ssid(ssid)
+    cs = CurrentStudent.objects.filter(ssid=ssid).order_by('-school_year').first()
+    student_id = getattr(cs, 'student_id', None) if cs else None
+
+    try:
+        with connections['default'].cursor() as cursor:
+            cursor.execute(_STUDENT_CTE_MARKS_SQL, [ssid, student_id or ''])
+            cols = [c.name for c in cursor.description]
+            rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+    except Exception:
+        return []
+    if not rows:
+        return []
+
+    # course_id → {name, grades{S1,S2}}
+    course_map = {}
+    for row in rows:
+        course_ids = _course_ids_from_course_info(row.get('course_info'))
+        if not course_ids:
+            continue
+        name = (row.get('course_name') or '').strip()
+        period = (row.get('mark_period') or '').strip().upper()
+        grade = _period_grade(row.get('mark'))
+        for cid in course_ids:
+            entry = course_map.setdefault(cid, {'course_name': name, 'grades': {}})
+            if name and not entry['course_name']:
+                entry['course_name'] = name
+            if period in ('S1', 'S2') and grade:
+                entry['grades'][period] = grade
+    if not course_map:
+        return []
+
+    try:
+        cte_rows = list(
+            CtePathwayEntry.objects.filter(course_id__in=list(course_map.keys()))
+            .values('career_cluster', 'cte_pathway', 'cte_course_level', 'course_id', 'course_title')
+        )
+    except Exception:
+        return []
+
+    pathways = {}
+    for row in cte_rows:
+        cid = (row.get('course_id') or '').strip()
+        info = course_map.get(cid)
+        if not info:
+            continue
+        cluster = (row.get('career_cluster') or '').strip() or '—'
+        pathway = (row.get('cte_pathway') or '').strip() or '—'
+        level = (row.get('cte_course_level') or '').strip() or 'Unassigned'
+        bucket = pathways.setdefault((cluster, pathway), {}).setdefault(level, {})
+        name = info['course_name'] or (row.get('course_title') or '').strip() or cid
+        if name in bucket:
+            continue
+        bucket[name] = {
+            'name': name,
+            'grades': {
+                'S1': info['grades'].get('S1'),
+                'S2': info['grades'].get('S2'),
+            },
+        }
+
+    def _level_sort(level: str):
+        canonical = CTE_STAGE_BY_LOWER.get(level.lower())
+        if canonical:
+            return (CTE_STAGE_ORDER.index(canonical), '')
+        return (len(CTE_STAGE_ORDER), level.lower())
+
+    out = []
+    for (cluster, pathway), levels in pathways.items():
+        columns = []
+        for level in sorted(levels.keys(), key=_level_sort):
+            courses = sorted(levels[level].values(), key=lambda c: (c['name'] or '').lower())
+            columns.append({
+                'level': level,
+                'year': cte_stage_year(level),
+                'courses': courses,
+            })
+        out.append({
+            'career_cluster': cluster,
+            'cte_pathway': pathway,
+            'columns': columns,
+            'course_count': sum(len(c['courses']) for c in columns),
+        })
+    out.sort(key=lambda p: (p['career_cluster'].lower(), p['cte_pathway'].lower()))
+    return out
+
+
+def get_student_cte_paths_cached(ssid: str, timeout: int = 300, user_id=None):
+    """Get the student's CTE paths (with S1/S2 grades) with caching."""
+    ssid = _resolve_ssid(ssid)
+    keys = _student_summary_cache_keys(ssid, user_id=user_id)
+    cached = cache.get(keys['student_cte_paths'])
+    if cached is not None:
+        return cached
+    paths = _fetch_student_cte_paths(ssid)
+    cache.set(keys['student_cte_paths'], paths, timeout=timeout)
+    return paths
+
+
 def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 300, embedded: bool = False):
     """Get rendered HTML for student summary with caching."""
     ssid = _resolve_ssid(ssid)
@@ -425,6 +588,7 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
         'test_records': get_test_records_cached(ssid, timeout=timeout, user_id=user_id),
         'student_marks': marks,
         'student_marks_grid': pivot_student_marks(marks),
+        'student_cte_paths': get_student_cte_paths_cached(ssid, timeout=timeout, user_id=user_id),
         'embedded': embedded,
     }
     html = render_to_string('dataexploration/partials/student_test_summary_content.html', context, request=request)

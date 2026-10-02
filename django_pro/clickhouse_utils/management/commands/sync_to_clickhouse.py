@@ -10,10 +10,11 @@ Usage:
 
 import os
 import logging
+import time
 from django.core.management.base import BaseCommand
 from django.conf import settings
 from django.core.cache import cache
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 
 from clickhouse_utils.client import get_clickhouse_client
@@ -21,6 +22,20 @@ from clickhouse_utils.marks_source_sql import (
     STUDENT_MARKS_FROM_ALT_COUNT,
     STUDENT_MARKS_FROM_ALT_SELECT,
     STUDENT_MARKS_LIST_COLUMN_NAMES,
+)
+from clickhouse_utils.course_program_sync import (
+    COURSE_PROGRAM_AGG_COLUMNS,
+    COURSE_PROGRAM_AGG_FROM_TEMP,
+    COURSE_PROGRAM_CATALOG_INDEXES,
+    COURSE_PROGRAM_VALUES_COLUMNS,
+    COURSE_PROGRAM_VALUES_FROM_TEMP,
+    CREATE_MATCHED_TEMP_SQL,
+    MATCHED_TEMP_INDEX_SQL,
+)
+
+COURSE_PROGRAM_CH_TABLES = (
+    'analytics_student_course_program',
+    'analytics_course_program_values',
 )
 from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES, PROJECTION_DDL, SECONDARY_INDEX_DDL, get_all_ddl
 
@@ -92,6 +107,8 @@ ANALYTICS_DEPENDENCIES = {
     # students).
     'analytics_test_metadata': {'results_with_tests', 'current_student'},
     'analytics_marks_metadata': {'student_marks_list', 'current_student'},
+    'analytics_student_course_program': {'schedule_list'},
+    'analytics_course_program_values': {'schedule_list'},
 }
 
 
@@ -244,9 +261,21 @@ class Command(BaseCommand):
                 elif synced_sources & ANALYTICS_DEPENDENCIES.get(derived, set()):
                     derived_to_build.append(derived)
 
+        derived_to_build = [
+            t for t in derived_to_build
+            if t not in COURSE_PROGRAM_CH_TABLES or t == 'analytics_student_course_program'
+        ]
+        if any(t in COURSE_PROGRAM_CH_TABLES for t in (derived_requested if tables_arg else DERIVED_TABLES)):
+            if 'analytics_student_course_program' not in derived_to_build:
+                derived_to_build.append('analytics_student_course_program')
+
         for table in derived_to_build:
             self.stdout.write(f'Rebuilding {table}...')
             try:
+                if table == 'analytics_student_course_program':
+                    self._rebuild_course_program_tables(ch, ch_db, atomic=atomic)
+                    self.stdout.write(self.style.SUCCESS('  course program analytics rebuilt.'))
+                    continue
                 self._rebuild_derived_table(
                     ch, ch_db, table, atomic=atomic, pg_fn_kwargs=pg_fn_kwargs,
                 )
@@ -336,6 +365,59 @@ class Command(BaseCommand):
             'full',
         )
         return 'full'
+
+    def _rebuild_course_program_tables(self, ch, ch_db, atomic):
+        """Load course-program agg + facet tables from PostgreSQL (one schedule pass)."""
+        specs = (
+            ('analytics_student_course_program', COURSE_PROGRAM_AGG_FROM_TEMP, COURSE_PROGRAM_AGG_COLUMNS),
+            ('analytics_course_program_values', COURSE_PROGRAM_VALUES_FROM_TEMP, COURSE_PROGRAM_VALUES_COLUMNS),
+        )
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute('SET statement_timeout = 0')
+                for idx_sql in COURSE_PROGRAM_CATALOG_INDEXES:
+                    cursor.execute(idx_sql)
+                t0 = time.perf_counter()
+                cursor.execute(CREATE_MATCHED_TEMP_SQL)
+                cursor.execute(MATCHED_TEMP_INDEX_SQL)
+                cursor.execute('SELECT count(*) FROM _course_program_matched')
+                matched_rows = cursor.fetchone()[0]
+                self.stdout.write(
+                    f'  course program: matched {matched_rows} schedule rows in '
+                    f'{(time.perf_counter() - t0):.1f}s'
+                )
+                for table, select_sql, col_names in specs:
+                    staging = f'{table}__sync'
+                    target = staging if atomic else table
+                    if atomic:
+                        ch.command(f'CREATE TABLE IF NOT EXISTS {ch_db}.{staging} AS {ch_db}.{table}')
+                        ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+                    else:
+                        ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
+                    insert_table = f'{ch_db}.{target}'
+                    batch_size = 5_000
+                    inserted = 0
+                    t1 = time.perf_counter()
+                    cursor.execute(select_sql)
+                    while True:
+                        rows = cursor.fetchmany(batch_size)
+                        if not rows:
+                            break
+                        ch.insert(
+                            insert_table,
+                            [list(r) for r in rows],
+                            column_names=list(col_names),
+                        )
+                        inserted += len(rows)
+                    if atomic:
+                        ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
+                        ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+                    count = self._ch_count(ch, ch_db, table) or 0
+                    self._record_meta(ch, ch_db, table, count, None, 'derived-pg')
+                    self.stdout.write(
+                        f'  {table}: inserted {inserted} rows in {(time.perf_counter() - t1):.1f}s'
+                    )
+        cache.delete('analytics:course_program_ch_ready')
 
     def _rebuild_derived_table(self, ch, ch_db, table, atomic, pg_fn_kwargs=None):
         staging = f'{table}__sync'

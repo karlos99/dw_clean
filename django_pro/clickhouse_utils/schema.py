@@ -30,6 +30,8 @@ def get_all_ddl():
         CREATE_ANALYTICS_SURVEY_RESPONSES,
         CREATE_ANALYTICS_TEST_METADATA,
         CREATE_ANALYTICS_MARKS_METADATA,
+        CREATE_ANALYTICS_STUDENT_COURSE_PROGRAM,
+        CREATE_ANALYTICS_COURSE_PROGRAM_VALUES,
         CREATE_ANALYTICS_SYNC_META,
     ]
 
@@ -47,6 +49,8 @@ ANALYTICS_TABLE_NAMES = (
     # results/student_marks_list fact tables on every page load.
     'analytics_test_metadata',
     'analytics_marks_metadata',
+    'analytics_student_course_program',
+    'analytics_course_program_values',
 )
 
 
@@ -516,6 +520,32 @@ CREATE TABLE IF NOT EXISTS analytics_marks_metadata (
 )
 ENGINE = MergeTree
 ORDER BY (school_year, subject, course_name, mark_period)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_STUDENT_COURSE_PROGRAM = """
+CREATE TABLE IF NOT EXISTS analytics_student_course_program (
+    stu_annual_key String,
+    school_year String,
+    course_prog_tag String,
+    course_prog_category String,
+    course_prog_discipline String,
+    course_prog_level String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, stu_annual_key)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_COURSE_PROGRAM_VALUES = """
+CREATE TABLE IF NOT EXISTS analytics_course_program_values (
+    stu_annual_key String,
+    school_year String,
+    dimension String,
+    value String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, dimension, value, stu_annual_key)
 SETTINGS index_granularity = 8192
 """
 

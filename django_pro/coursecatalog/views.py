@@ -16,6 +16,7 @@ from .forms import (
     CatalogCategoryForm,
     CatalogDisciplineForm,
     CatalogLevelForm,
+    CatalogPathColumnForm,
     CatalogPathForm,
     CatalogPathStepForm,
     CatalogTagForm,
@@ -25,16 +26,23 @@ from .models import (
     CatalogDiscipline,
     CatalogLevel,
     CatalogPath,
+    CatalogPathColumn,
+    CatalogPathStep,
     CatalogPlacement,
     CatalogTag,
     CourseCatalogEntry,
     CtePathwayEntry,
 )
 from .cte_pathways import (
+    CTE_STAGE_ORDER,
+    CTE_STAGE_YEARS,
     CTE_TAG_NAME,
     attach_cte_pathways_to_entries,
     build_cte_taxonomy_tree,
     courses_for_cte_pathway,
+    cte_pathway_detail,
+    cte_pathways_for_discipline,
+    list_cte_pathways,
 )
 from .placement_ops import upsert_placement_for_tag
 from .catalog_search import (
@@ -205,6 +213,27 @@ def overview(request):
 @login_required
 @page_access_required('coursecatalog-categories')
 def cte_taxonomy(request):
+    """CTE hub with two read-only sub-tabs: Tagging and Paths."""
+    cte_tab = (request.GET.get('tab') or 'tagging').strip()
+    if cte_tab not in ('tagging', 'paths'):
+        cte_tab = 'tagging'
+
+    context = {
+        **_subnav_context('cte'),
+        'cte_tab': cte_tab,
+    }
+
+    if cte_tab == 'paths':
+        cte_cluster = (request.GET.get('cte_cluster') or '').strip()
+        cte_pathway = (request.GET.get('cte_pathway') or '').strip()
+        context.update({
+            'cte_paths_list': list_cte_pathways(),
+            'selected_cte': cte_pathway_detail(cte_cluster, cte_pathway),
+            'selected_cte_cluster': cte_cluster,
+            'selected_cte_pathway': cte_pathway,
+        })
+        return render(request, 'coursecatalog/cte_hub.html', context)
+
     cte_tree = build_cte_taxonomy_tree()
     selected_cluster = (request.GET.get('cluster') or '').strip()
     selected_pathway = (request.GET.get('pathway') or '').strip()
@@ -221,8 +250,7 @@ def cte_taxonomy(request):
                 cte_pathway=selected_pathway,
             )
         )
-    context = {
-        **_subnav_context('cte'),
+    context.update({
         'cte_tag_name': CTE_TAG_NAME,
         'cte_tree': cte_tree,
         'selected_cluster': selected_cluster,
@@ -235,8 +263,8 @@ def cte_taxonomy(request):
         .values('course_id')
         .distinct()
         .count(),
-    }
-    return render(request, 'coursecatalog/cte_taxonomy.html', context)
+    })
+    return render(request, 'coursecatalog/cte_hub.html', context)
 
 
 @login_required
@@ -762,6 +790,16 @@ def placement_delete(request, pk):
     )
 
 
+def seed_default_path_columns(path) -> None:
+    """Give a new path the CTE progression columns (Introduction → Capstone)."""
+    if path.columns.exists():
+        return
+    CatalogPathColumn.objects.bulk_create([
+        CatalogPathColumn(path=path, name=name, order=idx, year=CTE_STAGE_YEARS[name])
+        for idx, name in enumerate(CTE_STAGE_ORDER)
+    ])
+
+
 @login_required
 @page_access_required('coursecatalog-paths')
 def paths(request):
@@ -771,19 +809,36 @@ def paths(request):
     path_form = CatalogPathForm()
     selected_id = request.GET.get('path')
     selected = None
+    column_form = None
     step_form = None
-    steps = []
+    columns = []
+    cte_pathways = []
     if selected_id:
         selected = get_object_or_404(CatalogPath, pk=selected_id)
-        step_form = CatalogPathStepForm()
-        steps = selected.steps.select_related('catalog_entry').order_by('sequence')
+        seed_default_path_columns(selected)
+        columns = list(
+            selected.columns.prefetch_related(
+                Prefetch(
+                    'steps',
+                    queryset=CatalogPathStep.objects.select_related('catalog_entry').order_by('sequence', 'id'),
+                )
+            ).order_by('order', 'id')
+        )
+        column_form = CatalogPathColumnForm()
+        step_form = CatalogPathStepForm(path=selected)
+        cte_pathways = cte_pathways_for_discipline(selected.discipline_id)
+
     context = {
         **_subnav_context('paths'),
         'paths': paths_qs,
         'selected_path': selected,
         'path_form': path_form,
+        'column_form': column_form,
         'step_form': step_form,
-        'steps': steps,
+        'columns': columns,
+        'cte_pathways': cte_pathways,
+        'cte_stage_order': CTE_STAGE_ORDER,
+        'cte_stage_years': CTE_STAGE_YEARS,
     }
     return render(request, 'coursecatalog/paths.html', context)
 
@@ -798,6 +853,7 @@ def path_create(request):
         try:
             obj.full_clean()
             obj.save()
+            seed_default_path_columns(obj)
             messages.success(request, 'Path created.')
         except Exception as exc:
             messages.error(request, str(exc))
@@ -809,20 +865,69 @@ def path_create(request):
 @login_required
 @page_access_required('coursecatalog-paths')
 @require_POST
-def path_step_create(request, path_id):
+def path_column_create(request, path_id):
     path = get_object_or_404(CatalogPath, pk=path_id)
-    form = CatalogPathStepForm(request.POST)
+    form = CatalogPathColumnForm(request.POST)
     if form.is_valid():
-        step = form.save(commit=False)
-        step.path = path
+        column = form.save(commit=False)
+        column.path = path
+        if not column.order:
+            column.order = (path.columns.count() or 0) + 1
         try:
-            step.full_clean()
-            step.save()
-            messages.success(request, 'Path step added.')
+            column.full_clean()
+            column.save()
+            messages.success(request, f'Column "{column.name}" added.')
         except Exception as exc:
             messages.error(request, str(exc))
     else:
         messages.error(request, form.errors.as_text())
+    return redirect(f'/coursecatalog/paths/?path={path_id}')
+
+
+@login_required
+@page_access_required('coursecatalog-paths')
+@require_POST
+def path_column_delete(request, column_id):
+    column = get_object_or_404(CatalogPathColumn, pk=column_id)
+    path_id = column.path_id
+    name = column.name
+    column.delete()
+    messages.success(request, f'Column "{name}" removed.')
+    return redirect(f'/coursecatalog/paths/?path={path_id}')
+
+
+@login_required
+@page_access_required('coursecatalog-paths')
+@require_POST
+def path_step_create(request, path_id):
+    path = get_object_or_404(CatalogPath, pk=path_id)
+    form = CatalogPathStepForm(request.POST, path=path)
+    if form.is_valid():
+        step = form.save(commit=False)
+        step.path = path
+        if step.column_id is None:
+            step.column = path.columns.order_by('order', 'id').first()
+        if step.column_id is not None:
+            step.sequence = (step.column.steps.count() or 0) + 1
+        try:
+            step.full_clean()
+            step.save()
+            messages.success(request, 'Course added to path.')
+        except Exception as exc:
+            messages.error(request, str(exc))
+    else:
+        messages.error(request, form.errors.as_text())
+    return redirect(f'/coursecatalog/paths/?path={path_id}')
+
+
+@login_required
+@page_access_required('coursecatalog-paths')
+@require_POST
+def path_step_delete(request, step_id):
+    step = get_object_or_404(CatalogPathStep, pk=step_id)
+    path_id = step.path_id
+    step.delete()
+    messages.success(request, 'Course removed from path.')
     return redirect(f'/coursecatalog/paths/?path={path_id}')
 
 

@@ -13,6 +13,12 @@ from django.http import HttpResponseForbidden
 from django.views.decorators.http import require_POST
 
 from ..models import DefaultColumnSelection
+from ..catalog_columns import (
+    COURSE_PROGRAM_DEFINITIONS,
+    course_program_columns_enabled,
+    is_course_program_column,
+    merge_course_program_columns,
+)
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
 from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns
 from ..survey_utils import get_survey_columns
@@ -85,7 +91,7 @@ def get_enabled_columns():
         allowlist = None
 
     if not allowlist:
-        return COLUMN_DEFINITIONS, COLUMN_CATEGORIES
+        return merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
 
     allowed_set = set(allowlist)
     for virt, related in _JSON_VIRTUAL_AUTO_INCLUDE.items():
@@ -93,11 +99,15 @@ def get_enabled_columns():
             allowed_set.add(virt)
     if 'picture' not in allowed_set and any(c in allowed_set for c in ('ssid', 'student_id', 'student_name')):
         allowed_set.add('picture')
-
-    filtered_defs = {k: v for k, v in COLUMN_DEFINITIONS.items() if k in allowed_set}
+    if course_program_columns_enabled():
+        from ..catalog_columns import course_program_allowlist_keys
+        allowed_set.update(course_program_allowlist_keys())
 
     filtered_cats = {}
-    for cat_key, cat in COLUMN_CATEGORIES.items():
+    base_defs, base_cats = merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
+    filtered_defs = {k: v for k, v in base_defs.items() if k in allowed_set}
+
+    for cat_key, cat in base_cats.items():
         cols = [c for c in cat['columns'] if c in allowed_set]
         if cols:
             filtered_cats[cat_key] = {**cat, 'columns': cols}
@@ -422,6 +432,21 @@ def build_column_structure_scope(user, column_filters):
     return base_filters, where_clauses, params
 
 
+def strip_course_program_filters(filters):
+    """Drop course-program keys from a column-structure scope.
+
+    Course-program filters select students by course, not which assessments or
+    marks exist. The assessment/mark discovery SQL ignores them, so keeping them
+    only changes the column-tree cache key and forces a slow full rebuild.
+    """
+    if not isinstance(filters, dict):
+        return filters
+    return {
+        k: v for k, v in filters.items()
+        if not is_course_program_column(k)
+    }
+
+
 def load_column_structures(request):
     """Load dynamic column structures for the selector via HTMX."""
     import json
@@ -438,6 +463,13 @@ def load_column_structures(request):
     base_column_filters, where_clauses, params = build_column_structure_scope(
         user, column_filters,
     )
+
+    # Course-program filters select students by course, not which assessments or
+    # marks exist, and the assessment/mark discovery SQL already ignores them.
+    # Drop them from the scope/cache key so selecting a course-program filter
+    # does not invalidate the multi-MB column tree and force a slow unscoped
+    # rebuild of the assessments and marks trees.
+    base_column_filters = strip_course_program_filters(base_column_filters)
 
     # Lazy mark-course fragment: the selector renders a course's period
     # checkboxes on first expand rather than emitting every period up front.
@@ -472,9 +504,9 @@ def load_column_structures(request):
     # school scope, sync version), so reuse it across identical requests.
     _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
     _html_cache_key = (
-        "dataexp:column_structures_html:v3:"
+        "dataexp:column_structures_html:v4:"
         + hashlib.md5(json.dumps({
-            'column_filters': column_filters,
+            'column_filters': base_column_filters,
             'where': where_clauses,
             'params': [str(p) for p in params],
             'sync': _sync_v,

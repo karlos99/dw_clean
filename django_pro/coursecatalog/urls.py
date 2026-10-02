@@ -27,6 +27,9 @@ urlpatterns = [
     path('placements/<int:pk>/delete/', views.placement_delete, name='placement_delete'),
     path('paths/', views.paths, name='paths'),
     path('paths/create/', views.path_create, name='path_create'),
+    path('paths/<int:path_id>/columns/create/', views.path_column_create, name='path_column_create'),
+    path('paths/columns/<int:column_id>/delete/', views.path_column_delete, name='path_column_delete'),
     path('paths/<int:path_id>/steps/create/', views.path_step_create, name='path_step_create'),
+    path('paths/steps/<int:step_id>/delete/', views.path_step_delete, name='path_step_delete'),
     path('enrollment/', views.enrollment_preview, name='enrollment'),
 ]

@@ -422,3 +422,16 @@ class RemainingAnalyticsTests(SimpleTestCase):
         chart.config = {}
         self.assertFalse(_can_sql_paginate_drill(chart, {}, 'student_name'))
         self.assertTrue(_can_sql_paginate_drill(chart, {}, 'current_student.student_name'))
+
+
+class CourseProgramSyncTests(SimpleTestCase):
+    def test_matched_temp_includes_historical_completed_schedules(self):
+        from clickhouse_utils.course_program_sync import CREATE_MATCHED_TEMP_SQL
+
+        self.assertIn("schedule_status IN ('Active', 'Completed')", CREATE_MATCHED_TEMP_SQL)
+        self.assertNotIn("schedule_status = 'Active'", CREATE_MATCHED_TEMP_SQL)
+
+    def test_matched_temp_excludes_pending(self):
+        from clickhouse_utils.course_program_sync import CREATE_MATCHED_TEMP_SQL
+
+        self.assertNotIn('Pending', CREATE_MATCHED_TEMP_SQL)
