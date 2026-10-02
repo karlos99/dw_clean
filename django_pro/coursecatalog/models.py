@@ -80,6 +80,45 @@ class CtePathwayEntry(models.Model):
         return f'{self.course_id} → {self.cte_pathway}'
 
 
+class CteDetailEntry(models.Model):
+    """Read-only per-student CTE detail rows (``coursecatalog_cte_details``, ETL-owned)."""
+
+    detail_row_key = models.TextField(primary_key=True)
+    school_year = models.TextField(blank=True, null=True)
+    last_name = models.TextField(blank=True, null=True)
+    first_name = models.TextField(blank=True, null=True)
+    middle_name = models.TextField(blank=True, null=True)
+    sis_number = models.TextField(blank=True, null=True)
+    state_student_id = models.TextField(blank=True, null=True)
+    school = models.TextField(blank=True, null=True)
+    grade = models.TextField(blank=True, null=True)
+    cte_pathway = models.TextField(blank=True, null=True)
+    pathway_code = models.TextField(blank=True, null=True)
+    pathway_code_name = models.TextField(blank=True, null=True)
+    pathway_state_code = models.TextField(blank=True, null=True)
+    industry_sector = models.TextField(blank=True, null=True)
+    con_courses = models.TextField(blank=True, null=True)
+    con_s1_mark = models.TextField(blank=True, null=True)
+    con_s2_mark = models.TextField(blank=True, null=True)
+    con_status = models.TextField(blank=True, null=True)
+    cap_courses = models.TextField(blank=True, null=True)
+    cap_s1_mark = models.TextField(blank=True, null=True)
+    cap_s2_mark = models.TextField(blank=True, null=True)
+    cap_status = models.TextField(blank=True, null=True)
+    pathway_status = models.TextField(blank=True, null=True)
+    course_history_json = models.JSONField(blank=True, null=True)
+    completer_requirements_json = models.JSONField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'coursecatalog_cte_details'
+        verbose_name = 'CTE detail row'
+        verbose_name_plural = 'CTE detail rows'
+
+    def __str__(self):
+        return f'{self.state_student_id} · {self.school_year} · {self.cte_pathway}'
+
+
 class CatalogTag(models.Model):
     """Top-level grouping (e.g. VAPA)."""
 

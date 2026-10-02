@@ -12,7 +12,7 @@ from .student_data_utils import (
     get_student_info_cached,
     get_test_records_cached,
     get_student_marks_cached,
-    get_student_cte_paths_cached,
+    get_student_cte_details_cached,
     get_student_summary_partial_html_cached,
     pivot_student_marks,
     _resolve_ssid,
@@ -42,7 +42,10 @@ class StudentTestSummaryView(LoginRequiredMixin, ListView):
         marks = get_student_marks_cached(ssid, user_id=user_id)
         context['student_marks'] = marks
         context['student_marks_grid'] = pivot_student_marks(marks)
-        context['student_cte_paths'] = get_student_cte_paths_cached(ssid, user_id=user_id)
+        context['student_cte_details'] = get_student_cte_details_cached(
+            ssid, user_id=user_id,
+            current_school_year=context.get('student_info', {}).get('school_year') or '',
+        )
         return context
 
 
