@@ -3380,6 +3380,7 @@
     <input type="hidden" name="sort_col"       x-bind:value="sortCol">
     <input type="hidden" name="sort_dir"       x-bind:value="sortDir">
     <input type="hidden" name="limit"          x-bind:value="limit !== null ? limit : ''">
+    <input type="hidden" name="top_n"          x-bind:value="topN !== null && topN !== '' ? topN : ''">
     <input type="hidden" name="palette"        x-bind:value="palette">
     <input type="hidden" name="show_legend"       x-bind:value="showLegend ? '1' : ''">
     <input type="hidden" name="legend_pos"        x-bind:value="showLegend ? legendPos : 'hidden'">
@@ -3670,6 +3671,7 @@ function chartBuilder() {
     sortCol:      existing?.config?.sort_col ?? '',
     sortDir:      existing?.config?.sort_dir ?? 'asc',
     limit:        existing?.config?.limit ?? null,
+    topN:         existing?.config?.top_n ?? null,
     /* Visual options */
     palette:          existing?.config?.palette ?? '',
     showLegend:       existing ? (existing.config?.legend_pos !== 'hidden') : true,

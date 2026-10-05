@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}CCGI Dashboards{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold text-slate-800 mb-1">CCGI Dashboards</h1>
+  <p class="text-sm text-slate-500 mb-6">College, career, and financial-aid exploration for students.</p>
+
+  <div class="grid gap-4 sm:grid-cols-2">
+    {% for page in pages %}
+    <a href="{% url 'dataviz:page_view' page.slug %}"
+       class="block bg-white border border-slate-200 rounded-xl shadow-sm p-5 hover:border-blue-400 hover:shadow transition">
+      <h2 class="text-base font-semibold text-slate-800">{{ page.title }}</h2>
+      {% if page.description %}
+      <p class="text-sm text-slate-500 mt-1">{{ page.description }}</p>
+      {% endif %}
+      <span class="inline-block mt-3 text-xs font-medium text-blue-600">Open dashboard &rarr;</span>
+    </a>
+    {% empty %}
+    <p class="text-sm text-slate-400">No CCGI pages have been seeded yet.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -263,6 +263,18 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
             reverse=True,
         )
         ordered_values = [float(value_map.get(cat, 0) or 0) for cat in ordered_categories]
+        # Optional Top-N cap for single-series category bars (e.g. a long tail of
+        # favorite careers). Sorting is already descending above, so a plain
+        # head() keeps the highest-value categories and drops the tail.
+        _top_n = cfg.get('top_n')
+        if _top_n not in (None, '', 0, '0'):
+            try:
+                _top_n = int(_top_n)
+                if _top_n > 0:
+                    ordered_categories = ordered_categories[:_top_n]
+                    ordered_values = ordered_values[:_top_n]
+            except (TypeError, ValueError):
+                pass
         series_name = labels['y'] or 'Value'
         update_axes(
             ordered_categories,

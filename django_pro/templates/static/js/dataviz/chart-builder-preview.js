@@ -281,6 +281,8 @@ function chartBuilderPreviewMethods(urls) {
         sort_col: this.sortCol,
         sort_dir: this.sortDir,
         limit: this.limit,
+        top_n: this.topN,
+        stack_order: this.stackOrder,
         palette: this.palette,
         legend_pos: this.showLegend ? this.legendPos : 'hidden',
         legend_item_gap: this.legendItemGap,
