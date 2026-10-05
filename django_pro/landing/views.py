@@ -135,6 +135,7 @@ def project_settings(request):
     import json as _json
     from landing.models import ProjectConfig
     from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
+    from dataexploration.catalog_columns import merge_course_program_columns
 
     cfg = ProjectConfig.get()
 
@@ -187,6 +188,7 @@ def project_settings(request):
             cfg.home_max_charts = max(0, int(request.POST.get('home_max_charts') or 0))
         except (TypeError, ValueError):
             cfg.home_max_charts = 0
+        cfg.enable_course_program_columns = request.POST.get('enable_course_program_columns') == 'on'
 
         cfg.updated_by = request.user
         cfg.save()
@@ -196,7 +198,8 @@ def project_settings(request):
 
     active_default = cfg.default_columns or DEFAULT_COLUMNS
     active_enabled = cfg.enabled_columns  # None = all enabled
-    all_col_keys   = list(COLUMN_DEFINITIONS.keys())
+    settings_defs, settings_cats = merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
+    all_col_keys = list(settings_defs.keys())
 
     from dataviz.utils.compiler import get_db_tables
     db_tables = get_db_tables()
@@ -216,13 +219,14 @@ def project_settings(request):
     context = {
         'cfg': cfg,
         'school_years': school_years,
-        'column_definitions': COLUMN_DEFINITIONS,
-        'column_categories': COLUMN_CATEGORIES,
+        'column_definitions': settings_defs,
+        'column_categories': settings_cats,
+        'enable_course_program_columns': cfg.enable_course_program_columns,
         # JSON-safe strings for use in <script> blocks
         'active_default_columns_json': _json.dumps(active_default),
         'active_enabled_columns_json': _json.dumps(active_enabled),
         'all_column_keys_json':        _json.dumps(all_col_keys),
-        'column_labels_json':          _json.dumps(COLUMN_DEFINITIONS),
+        'column_labels_json':          _json.dumps(settings_defs),
         'dataset_tables':              TABLE_CHOICES,
         'enabled_dataset_tables':      cfg.enabled_dataset_tables or [],
         'enable_home_charts':          cfg.enable_home_charts,

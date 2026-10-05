@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}CTE - Course Catalog{% endblock %}
+
+{% block content %}
+<div class="course-catalog-fields w-full px-4 sm:px-6 lg:px-8 py-6">
+    {% include "coursecatalog/partials/subnav.html" %}
+    {% include "coursecatalog/partials/cte_tabs.html" %}
+
+    {% if cte_tab == 'paths' %}
+        {% include "coursecatalog/partials/cte_paths_content.html" %}
+    {% else %}
+        {% include "coursecatalog/partials/cte_tagging_content.html" %}
+    {% endif %}
+</div>
+{% endblock %}

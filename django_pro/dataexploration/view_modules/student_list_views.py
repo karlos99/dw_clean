@@ -31,6 +31,23 @@ from ..column_utils import (
     parse_sat_column_key, sat_column_db_field,
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
+from ..catalog_columns import (
+    COURSE_PROGRAM_DEFINITIONS,
+    apply_course_program_columns,
+    canonical_course_program_column,
+    course_program_columns_enabled,
+    course_program_filter_blank_check_sql,
+    course_program_filter_options_sql,
+    is_course_program_column,
+    filters_without_course_program_dimension,
+    mirror_legacy_course_program_filter_options,
+    normalize_course_program_columns,
+    split_course_program_filters,
+    apply_course_program_filters_for_clickhouse,
+    apply_course_program_filters_on_postgres_scope,
+    clickhouse_course_program_ready,
+    _apply_one_course_program_filter_clickhouse,
+)
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, VIRTUAL_COLUMNS
 from ..utils import (
     can_user_view_query,
@@ -1151,6 +1168,10 @@ def _load_students(request):
             [k for k in filter_keys if isinstance(k, str) and k.startswith('mark_') and not k.startswith('markall_')]
         ))
         selected_survey_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')]
+        selected_course_prog_cols = list(set(
+            [c for c in selected_columns if is_course_program_column(c)]
+            + [k for k in filter_keys if is_course_program_column(k)]
+        ))
         selected_ap_cols = list(set(
             [c for c in selected_columns if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_') and not c.startswith('apall_')] +
             [k for k in filter_keys if isinstance(k, str) and k.startswith('ap_') and not k.startswith('apaward_') and not k.startswith('apawards_all_') and not k.startswith('apall_')]
@@ -1178,7 +1199,7 @@ def _load_students(request):
         base_cols = [
             c for c in selected_columns
             if isinstance(c, str)
-            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
+            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
             and c in COLUMN_DEFINITIONS
             and c not in VIRTUAL_COLUMNS
         ]
@@ -1243,10 +1264,14 @@ def _load_students(request):
         # Column filters (applied to the main query)
         where_clauses = list(base_where_clauses)
         params = list(base_params)
+        cp_filters, filters_without_cp = split_course_program_filters(filters)
         apply_column_filters(
-            where_clauses, params, filters, test_col_map, mark_col_map,
+            where_clauses, params, filters_without_cp, test_col_map, mark_col_map,
             db_columns, enroll_columns, needs_enroll, needs_students, needs_eht,
             ap_exam_infos, ap_award_infos,
+        )
+        apply_course_program_filters_for_clickhouse(
+            where_clauses, params, cp_filters, base_where_clauses, base_params,
         )
 
         # Handle survey column filters (subquery since survey data is not in the main SQL table)
@@ -1459,7 +1484,7 @@ def _load_students(request):
         if (test_cols_info or selected_survey_cols or mark_cols_info) and 'student_id' not in base_cols:
             base_cols.insert(0, 'student_id')
 
-        if (mark_cols_info or 'elem_teacher_name' in base_cols) and 'stu_annual_key' not in base_cols:
+        if (mark_cols_info or 'elem_teacher_name' in base_cols or selected_course_prog_cols) and 'stu_annual_key' not in base_cols:
             base_cols.insert(0, 'stu_annual_key')
 
         # Marks "All Marks" fetch needs stu_annual_key to join marks per course
@@ -1689,10 +1714,14 @@ def _load_students(request):
         # Put blank/missing assessment values at the end for both directions.
         # Otherwise DESC on sparse columns (Initial ELPAC, AP slot N) fills the
         # first page with empty rows and looks like sorting is broken.
+        course_prog_sort = bool(
+            sort_by and course_program_columns_enabled() and is_course_program_column(sort_by)
+        )
         is_dynamic_sort = bool(sort_by) and (
             sort_by in test_col_map
             or sort_by in mark_col_map
             or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_'))
+            or course_prog_sort
         )
         order_nulls_sql = ' NULLS LAST' if is_dynamic_sort else ''
         # sort_join placeholders come before WHERE in the SQL, so they must
@@ -2009,6 +2038,25 @@ def _load_students(request):
                     for col_key in selected_survey_cols:
                         student[col_key] = student_survey_data.get(col_key, '—')
 
+        course_prog_cols_to_fill = list(selected_course_prog_cols)
+        if course_prog_sort:
+            for col in (sort_by, canonical_course_program_column(sort_by) or ''):
+                if col and is_course_program_column(col) and col not in course_prog_cols_to_fill:
+                    course_prog_cols_to_fill.append(col)
+        if course_prog_cols_to_fill and students:
+            apply_course_program_columns(students, course_prog_cols_to_fill)
+        if course_prog_sort and students:
+            _sort_canonical = canonical_course_program_column(sort_by) or sort_by
+            _reverse = sort_dir == 'desc'
+
+            def _course_prog_sort_key(row):
+                val = row.get(_sort_canonical) or row.get(sort_by) or ''
+                if val == '—':
+                    val = ''
+                return val
+
+            students.sort(key=_course_prog_sort_key, reverse=_reverse)
+
         # Fast fetch elem_teacher_name if requested but not joined
         if 'elem_teacher_name' in base_cols and not needs_eht and student_keys:
             q_eht = """
@@ -2079,6 +2127,55 @@ def _load_students(request):
                 }
                 filter_str = json.dumps(payload, sort_keys=True)
                 return f"filter_opts:{column}:{hashlib.md5(filter_str.encode()).hexdigest()}"
+
+            if course_program_columns_enabled():
+                for col_key in normalize_course_program_columns(selected_course_prog_cols):
+                    other_filters = filters_without_course_program_dimension(filters, col_key)
+                    cache_key = _get_filter_cache_key(col_key, other_filters)
+                    cached_values = cache.get(cache_key)
+                    if cached_values is not None:
+                        filter_options[col_key] = cached_values
+                        mirror_legacy_course_program_filter_options(
+                            filter_options, selected_course_prog_cols,
+                        )
+                        continue
+                    option_where = list(base_where_clauses)
+                    option_params = list(base_params)
+                    cp_other, non_cp_other = split_course_program_filters(other_filters)
+                    apply_column_filters(
+                        option_where, option_params, non_cp_other, test_col_map, mark_col_map,
+                        db_columns, enroll_columns, needs_enroll, needs_students, False,
+                        ap_exam_infos, ap_award_infos,
+                    )
+                    if clickhouse_course_program_ready():
+                        for _cp_col, _cp_vals in cp_other.items():
+                            _apply_one_course_program_filter_clickhouse(
+                                option_where, option_params, _cp_col, _cp_vals,
+                            )
+                    else:
+                        apply_course_program_filters_on_postgres_scope(
+                            option_where, option_params, cp_other,
+                        )
+                    option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+                    options_query, options_params = course_program_filter_options_sql(
+                        col_key, option_where_sql, join_sql, option_params,
+                    )
+                    if not options_query:
+                        continue
+                    blank_query, blank_params = course_program_filter_blank_check_sql(
+                        col_key, option_where_sql, join_sql, option_params,
+                    )
+                    option_tasks.append((
+                        col_key,
+                        cache_key,
+                        _make_options_with_blank_task(
+                            options_query,
+                            options_params,
+                            blank_query,
+                            blank_params,
+                            use_pg=not clickhouse_course_program_ready(),
+                        ),
+                    ))
             
             for col in base_cols:
                 if col in excluded_filters:
@@ -2613,6 +2710,10 @@ def _load_students(request):
                 if values:
                     filter_options[col_key] = values
                     cache.set(cache_key, values, _FACET_CACHE_TTL)
+            if course_program_columns_enabled():
+                mirror_legacy_course_program_filter_options(
+                    filter_options, selected_course_prog_cols,
+                )
 
     logger.info(
         'request_id=%s op=dataexp_filter_options columns=%s elapsed_ms=%.1f',
@@ -2639,6 +2740,8 @@ def _load_students(request):
 
     # Build dynamic definitions including test windows
     dynamic_definitions = COLUMN_DEFINITIONS.copy()
+    if course_program_columns_enabled():
+        dynamic_definitions.update(COURSE_PROGRAM_DEFINITIONS)
     # Always merge survey column definitions (full question text for column headers)
     dynamic_definitions.update(get_survey_columns().get('definitions', {}))
     if test_cols_info:

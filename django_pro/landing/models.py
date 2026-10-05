@@ -92,6 +92,14 @@ class ProjectConfig(models.Model):
         ),
     )
 
+    enable_course_program_columns = models.BooleanField(
+        default=False,
+        help_text=(
+            "Show Course Programs columns in the Data Explorer (catalog placements "
+            "and CTE pathways derived from student schedules)."
+        ),
+    )
+
     # ── Audit ──────────────────────────────────────────────────────────────────
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

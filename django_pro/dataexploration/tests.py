@@ -740,3 +740,97 @@ class SurveyDataResolutionTests(SimpleTestCase):
 		self.assertEqual(format_marks_cell('Active', 'status'), 'Active')
 
 
+
+
+class StudentCteDetailsTests(SimpleTestCase):
+	def test_student_year_label_normalizes(self):
+		from dataexploration.view_modules.student_data_utils import _student_year_label
+
+		self.assertEqual(_student_year_label('2026-2027'), '2026')
+		self.assertEqual(_student_year_label('2026'), '2026')
+		self.assertEqual(_student_year_label(''), '')
+
+	def test_cte_history_columns_orders_stages_and_credits(self):
+		from dataexploration.view_modules.student_data_utils import _cte_history_columns
+
+		columns = _cte_history_columns([
+			{'cte_level': 'Capstone', 'course': 'Cap', 'eff_s1': '', 'eff_s2': '', 'credits_earned': 0, 'completion_status': 'In Process'},
+			{'cte_level': 'Introduction', 'course': 'Intro', 'eff_s1': 'C-', 'eff_s2': 'A-', 'credits_earned': 15, 'completion_status': 'Completed'},
+			{'cte_level': 'Concentration', 'course': 'Conc', 'eff_s1': 'B-', 'eff_s2': 'C+', 'credits_earned': 10, 'completion_status': 'Completed'},
+		])
+		self.assertEqual([c['level'] for c in columns], ['Introduction', 'Concentration', 'Capstone'])
+		self.assertEqual([c['year'] for c in columns], [1, 2, 3])
+		self.assertEqual(columns[0]['courses'][0]['s1'], 'C-')
+		self.assertEqual(columns[0]['courses'][0]['credits'], 15.0)
+
+	def test_cte_requirements_derive_status_from_threshold(self):
+		from dataexploration.view_modules.student_data_utils import _cte_requirements
+
+		reqs = _cte_requirements({
+			'concentrator': {'status': 'Met', 'total_credits_earned': 10, 'justification': 'ok'},
+			'capstone': {'credits_threshold_met': False, 'justification': 'No capstone course found.'},
+		})
+		self.assertEqual([r['label'] for r in reqs], ['Concentrator', 'Capstone'])
+		self.assertEqual(reqs[0]['status'], 'Met')
+		self.assertEqual(reqs[1]['status'], 'Not Met')
+		self.assertEqual(_cte_requirements(None), [])
+
+	def test_fetch_student_cte_details_current_and_past_completers(self):
+		from unittest.mock import MagicMock, patch
+
+		import dataexploration.view_modules.student_data_utils as mod
+
+		class _Row:
+			def __init__(self, **kw):
+				self.__dict__.update(kw)
+
+		rows = [
+			_Row(
+				school_year='2025', cte_pathway='Professional Theater', pathway_status='CTE Completer',
+				industry_sector='Arts', pathway_code='', pathway_code_name='',
+				course_history_json=[{'cte_level': 'Concentration', 'course': 'Professional Theater I', 'eff_s1': 'A', 'eff_s2': 'B', 'credits_earned': 10, 'completion_status': 'Completed'}],
+				completer_requirements_json={'concentrator': {'status': 'Met'}},
+			),
+			_Row(
+				school_year='2026', cte_pathway='Professional Theater', pathway_status='In Progress',
+				industry_sector='Arts', pathway_code='', pathway_code_name='',
+				course_history_json=[{'cte_level': 'Capstone', 'course': 'Professional Theater II', 'credits_earned': 0, 'completion_status': 'In Process'}],
+				completer_requirements_json={'capstone': {'credits_threshold_met': False, 'justification': 'No capstone course found.'}},
+			),
+		]
+
+		detail_qs = MagicMock()
+		detail_qs.order_by.return_value = rows
+
+		with patch.object(mod, '_resolve_ssid', return_value='123'), \
+			patch.object(mod, 'CurrentStudent') as cs, \
+			patch('coursecatalog.models.CteDetailEntry') as cte_model:
+			cs.objects.filter.return_value.order_by.return_value.first.return_value = None
+			cte_model.objects.filter.return_value = detail_qs
+			out = mod._fetch_student_cte_details('123', current_school_year='2026-2027')
+
+		self.assertTrue(out['has_any'])
+		self.assertEqual(len(out['current']), 1)
+		self.assertEqual(out['current'][0]['school_year'], '2026')
+		self.assertFalse(out['current'][0]['is_completer'])
+		self.assertEqual([c['level'] for c in out['current'][0]['columns']], ['Capstone'])
+		self.assertEqual(len(out['past_completers']), 1)
+		self.assertEqual(out['past_completers'][0]['school_year'], '2025')
+		self.assertEqual(out['past_completers'][0]['pathway_status'], 'CTE Completer')
+
+	def test_fetch_student_cte_details_empty_when_no_rows(self):
+		from unittest.mock import MagicMock, patch
+
+		import dataexploration.view_modules.student_data_utils as mod
+
+		detail_qs = MagicMock()
+		detail_qs.order_by.return_value = []
+
+		with patch.object(mod, '_resolve_ssid', return_value='123'), \
+			patch.object(mod, 'CurrentStudent') as cs, \
+			patch('coursecatalog.models.CteDetailEntry') as cte_model:
+			cs.objects.filter.return_value.order_by.return_value.first.return_value = None
+			cte_model.objects.filter.return_value = detail_qs
+			out = mod._fetch_student_cte_details('123')
+
+		self.assertEqual(out, {'current': [], 'past_completers': [], 'has_any': False})

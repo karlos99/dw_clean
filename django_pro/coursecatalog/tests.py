@@ -11,11 +11,22 @@ from coursecatalog.models import (
     CatalogCategory,
     CatalogDiscipline,
     CatalogLevel,
+    CatalogPath,
+    CatalogPathColumn,
+    CatalogPathStep,
     CatalogPlacement,
     CatalogTag,
 )
+from coursecatalog.cte_pathways import (
+    cte_pathway_detail,
+    cte_stage_year,
+    group_cte_pathway_rows,
+    list_cte_pathways,
+    pathways_for_course_ids,
+)
 from coursecatalog.placement_ops import upsert_placement_for_tag
 from coursecatalog.services.matching import match_schedule_row
+from coursecatalog.views import seed_default_path_columns
 
 
 class CatalogSearchTests(SimpleTestCase):
@@ -100,6 +111,150 @@ class ScheduleMatchTests(SimpleTestCase):
             mock_model.objects.filter.return_value = qs
             result = match_schedule_row({'course_key': 'K1', 'course_code': 'C1'})
         self.assertIs(result, entry)
+
+
+class CtePathwayTests(SimpleTestCase):
+    def test_pathways_for_course_ids_groups_by_course(self):
+        from unittest.mock import MagicMock, patch
+
+        row = MagicMock(
+            course_id='6005A',
+            career_cluster='Arts, Media, and Entertainment',
+            cte_pathway='Professional Music',
+            cte_course_level='Concentration',
+        )
+        qs = MagicMock()
+        qs.order_by.return_value = [row]
+        with patch('coursecatalog.cte_pathways.CtePathwayEntry') as mock_model:
+            mock_model.objects.filter.return_value = qs
+            result = pathways_for_course_ids(['6005A'])
+        self.assertIn('6005A', result)
+        self.assertEqual(len(result['6005A']), 1)
+        self.assertEqual(result['6005A'][0].tag_name, 'CTE')
+
+
+class CteStageGroupingTests(SimpleTestCase):
+    def test_stage_year_mapping(self):
+        self.assertEqual(cte_stage_year('Introduction'), 1)
+        self.assertEqual(cte_stage_year('concentration'), 2)
+        self.assertEqual(cte_stage_year('CAPSTONE'), 3)
+        self.assertIsNone(cte_stage_year('Elective'))
+
+    def test_group_orders_stage_columns(self):
+        rows = [
+            {'career_cluster': 'AME', 'cte_pathway': 'Theater', 'cte_course_level': 'Capstone', 'course_id': '3', 'course_title': 'III'},
+            {'career_cluster': 'AME', 'cte_pathway': 'Theater', 'cte_course_level': 'Introduction', 'course_id': '1', 'course_title': 'I'},
+            {'career_cluster': 'AME', 'cte_pathway': 'Theater', 'cte_course_level': 'Concentration', 'course_id': '2', 'course_title': 'II'},
+        ]
+        out = group_cte_pathway_rows(rows)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(
+            [c['level'] for c in out[0]['columns']],
+            ['Introduction', 'Concentration', 'Capstone'],
+        )
+        self.assertEqual([c['year'] for c in out[0]['columns']], [1, 2, 3])
+        self.assertEqual(out[0]['course_count'], 3)
+
+    def test_group_dedupes_courses(self):
+        row = {'career_cluster': 'AME', 'cte_pathway': 'X', 'cte_course_level': 'Introduction', 'course_id': '1', 'course_title': 'I'}
+        out = group_cte_pathway_rows([row, dict(row)])
+        self.assertEqual(out[0]['columns'][0]['courses'], [{'course_id': '1', 'course_title': 'I'}])
+
+
+class CtePathwayBrowseTests(SimpleTestCase):
+    def test_list_cte_pathways_flattens_tree(self):
+        from unittest.mock import patch
+
+        tree = [
+            {'name': 'AME', 'pathways': [
+                {'name': 'Theater', 'course_count': 3},
+                {'name': 'Music', 'course_count': 2},
+            ]},
+        ]
+        with patch('coursecatalog.cte_pathways.build_cte_taxonomy_tree', return_value=tree):
+            out = list_cte_pathways()
+        self.assertEqual(out, [
+            {'career_cluster': 'AME', 'cte_pathway': 'Theater', 'course_count': 3},
+            {'career_cluster': 'AME', 'cte_pathway': 'Music', 'course_count': 2},
+        ])
+
+    def test_cte_pathway_detail_groups_rows_into_columns(self):
+        from unittest.mock import MagicMock, patch
+
+        qs = MagicMock()
+        qs.order_by.return_value.values.return_value = [
+            {'career_cluster': 'AME', 'cte_pathway': 'Theater', 'cte_course_level': 'Concentration', 'course_id': '2', 'course_title': 'II'},
+            {'career_cluster': 'AME', 'cte_pathway': 'Theater', 'cte_course_level': 'Introduction', 'course_id': '1', 'course_title': 'I'},
+        ]
+        with patch('coursecatalog.cte_pathways.CtePathwayEntry') as mock_model:
+            mock_model.objects.filter.return_value = qs
+            detail = cte_pathway_detail('AME', 'Theater')
+        self.assertEqual([c['level'] for c in detail['columns']], ['Introduction', 'Concentration'])
+        self.assertEqual(detail['course_count'], 2)
+
+    def test_cte_pathway_detail_requires_selection(self):
+        self.assertIsNone(cte_pathway_detail('', ''))
+
+
+class CatalogPathColumnTests(TestCase):
+    def _path(self):
+        tag = CatalogTag.objects.create(name='VAPA', slug='vapa-path')
+        cat = CatalogCategory.objects.create(tag=tag, name='Performing Arts', slug='pa-path')
+        disc = CatalogDiscipline.objects.create(category=cat, name='Theatre')
+        return CatalogPath.objects.create(tag=tag, category=cat, discipline=disc, name='Theatre Path')
+
+    def test_seed_default_columns(self):
+        path = self._path()
+        seed_default_path_columns(path)
+        self.assertEqual(
+            list(path.columns.order_by('order').values_list('name', flat=True)),
+            ['Introduction', 'Concentration', 'Capstone'],
+        )
+        self.assertEqual(
+            list(path.columns.order_by('order').values_list('year', flat=True)),
+            [1, 2, 3],
+        )
+
+    def test_seed_is_idempotent(self):
+        path = self._path()
+        seed_default_path_columns(path)
+        seed_default_path_columns(path)
+        self.assertEqual(path.columns.count(), 3)
+
+    def test_custom_columns_unlimited(self):
+        path = self._path()
+        for i in range(6):
+            CatalogPathColumn.objects.create(path=path, name=f'Column {i}', order=i)
+        self.assertEqual(path.columns.count(), 6)
+
+    def test_step_sequence_unique_per_column(self):
+        from django.db import IntegrityError
+
+        path = self._path()
+        col = CatalogPathColumn.objects.create(path=path, name='Introduction', order=0)
+        CatalogPathStep.objects.create(path=path, column=col, catalog_entry_id='k1', sequence=1)
+        CatalogPathStep.objects.create(path=path, column=col, catalog_entry_id='k2', sequence=2)
+        with self.assertRaises(IntegrityError):
+            CatalogPathStep.objects.create(path=path, column=col, catalog_entry_id='k3', sequence=1)
+
+    def test_same_course_allowed_in_different_columns(self):
+        path = self._path()
+        c1 = CatalogPathColumn.objects.create(path=path, name='A', order=0)
+        c2 = CatalogPathColumn.objects.create(path=path, name='B', order=1)
+        CatalogPathStep.objects.create(path=path, column=c1, catalog_entry_id='k1', sequence=1)
+        CatalogPathStep.objects.create(path=path, column=c2, catalog_entry_id='k1', sequence=1)
+        self.assertEqual(path.steps.count(), 2)
+
+    def test_step_form_lists_all_columns_for_path(self):
+        from coursecatalog.forms import CatalogPathStepForm
+
+        path = self._path()
+        seed_default_path_columns(path)
+        form = CatalogPathStepForm(path=path)
+        self.assertEqual(
+            list(form.fields['column'].queryset),
+            list(path.columns.order_by('order', 'id')),
+        )
 
 
 class CatalogTaxonomyTests(TestCase):

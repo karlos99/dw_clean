@@ -54,6 +54,71 @@ class CourseCatalogEntry(models.Model):
         return values
 
 
+class CtePathwayEntry(models.Model):
+    """Read-only CTE pathway rows (``coursecatalog_cte_pathways`` table, ETL-owned)."""
+
+    pathway_row_key = models.TextField(primary_key=True)
+    cte_program_key = models.TextField(blank=True, null=True)
+    cte_pathway = models.TextField(blank=True, null=True)
+    pathway_code = models.TextField(blank=True, null=True)
+    pathway_state_code = models.TextField(blank=True, null=True)
+    career_cluster_code = models.TextField(blank=True, null=True)
+    career_cluster = models.TextField(blank=True, null=True)
+    course_key = models.TextField(blank=True, null=True)
+    course_id = models.TextField(blank=True, null=True)
+    course_title = models.TextField(blank=True, null=True)
+    state_course_code = models.TextField(blank=True, null=True)
+    cte_course_level = models.TextField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'coursecatalog_cte_pathways'
+        verbose_name = 'CTE pathway row'
+        verbose_name_plural = 'CTE pathway rows'
+
+    def __str__(self):
+        return f'{self.course_id} → {self.cte_pathway}'
+
+
+class CteDetailEntry(models.Model):
+    """Read-only per-student CTE detail rows (``coursecatalog_cte_details``, ETL-owned)."""
+
+    detail_row_key = models.TextField(primary_key=True)
+    school_year = models.TextField(blank=True, null=True)
+    last_name = models.TextField(blank=True, null=True)
+    first_name = models.TextField(blank=True, null=True)
+    middle_name = models.TextField(blank=True, null=True)
+    sis_number = models.TextField(blank=True, null=True)
+    state_student_id = models.TextField(blank=True, null=True)
+    school = models.TextField(blank=True, null=True)
+    grade = models.TextField(blank=True, null=True)
+    cte_pathway = models.TextField(blank=True, null=True)
+    pathway_code = models.TextField(blank=True, null=True)
+    pathway_code_name = models.TextField(blank=True, null=True)
+    pathway_state_code = models.TextField(blank=True, null=True)
+    industry_sector = models.TextField(blank=True, null=True)
+    con_courses = models.TextField(blank=True, null=True)
+    con_s1_mark = models.TextField(blank=True, null=True)
+    con_s2_mark = models.TextField(blank=True, null=True)
+    con_status = models.TextField(blank=True, null=True)
+    cap_courses = models.TextField(blank=True, null=True)
+    cap_s1_mark = models.TextField(blank=True, null=True)
+    cap_s2_mark = models.TextField(blank=True, null=True)
+    cap_status = models.TextField(blank=True, null=True)
+    pathway_status = models.TextField(blank=True, null=True)
+    course_history_json = models.JSONField(blank=True, null=True)
+    completer_requirements_json = models.JSONField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'coursecatalog_cte_details'
+        verbose_name = 'CTE detail row'
+        verbose_name_plural = 'CTE detail rows'
+
+    def __str__(self):
+        return f'{self.state_student_id} · {self.school_year} · {self.cte_pathway}'
+
+
 class CatalogTag(models.Model):
     """Top-level grouping (e.g. VAPA)."""
 
@@ -260,11 +325,51 @@ class CatalogPath(models.Model):
             raise ValidationError('Discipline must belong to the selected category.')
 
 
+class CatalogPathColumn(models.Model):
+    """A named, ordered column/stage in a path (e.g. Introduction, Capstone).
+
+    Custom paths may define any number of columns; the CTE stage names are only
+    used to seed a new path.
+    """
+
+    path = models.ForeignKey(
+        CatalogPath,
+        on_delete=models.CASCADE,
+        related_name='columns',
+    )
+    name = models.CharField(max_length=100)
+    order = models.IntegerField(default=0)
+    year = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text='Optional progression year shown on the timeline.',
+    )
+
+    class Meta:
+        ordering = ['order', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['path', 'name'],
+                name='uniq_catalog_path_column_name',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.path.name} · {self.name}'
+
+
 class CatalogPathStep(models.Model):
     path = models.ForeignKey(
         CatalogPath,
         on_delete=models.CASCADE,
         related_name='steps',
+    )
+    column = models.ForeignKey(
+        CatalogPathColumn,
+        on_delete=models.CASCADE,
+        related_name='steps',
+        blank=True,
+        null=True,
     )
     catalog_entry = models.ForeignKey(
         CourseCatalogEntry,
@@ -276,15 +381,17 @@ class CatalogPathStep(models.Model):
     label = models.CharField(max_length=255, blank=True)
 
     class Meta:
-        ordering = ['sequence']
+        ordering = ['sequence', 'id']
         constraints = [
             models.UniqueConstraint(
-                fields=['path', 'sequence'],
+                fields=['path', 'column', 'sequence'],
                 name='uniq_catalog_path_step_sequence',
+                nulls_distinct=False,
             ),
             models.UniqueConstraint(
-                fields=['path', 'catalog_entry'],
+                fields=['path', 'column', 'catalog_entry'],
                 name='uniq_catalog_path_step_entry',
+                nulls_distinct=False,
             ),
         ]
 

@@ -8,6 +8,14 @@ import csv
 import hashlib
 
 from ..models import SavedQuery, StudentList
+from ..catalog_columns import (
+    COURSE_PROGRAM_DEFINITIONS,
+    apply_course_program_columns,
+    apply_course_program_filters_for_clickhouse,
+    course_program_columns_enabled,
+    is_course_program_column,
+    split_course_program_filters,
+)
 from ..constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
 from ..column_utils import (
     _get_display_name,
@@ -323,10 +331,14 @@ def export_students_csv(request):
     selected_survey_cols = [
         c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')
     ]
+    selected_course_prog_cols = list(set(
+        [c for c in selected_columns if is_course_program_column(c)]
+        + [k for k in filter_keys if is_course_program_column(k)]
+    ))
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
-        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
+        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
         and c in COLUMN_DEFINITIONS
         and c not in VIRTUAL_COLUMNS
     ]
@@ -588,6 +600,8 @@ def export_students_csv(request):
 
                 # Prepare Dynamic Headers
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
+                if course_program_columns_enabled():
+                    dynamic_labels.update(COURSE_PROGRAM_DEFINITIONS)
                 if test_cols_info:
                     for info in test_cols_info:
                         metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
@@ -724,10 +738,14 @@ def export_students_csv(request):
 
                 where_clauses = list(base_where_clauses)
                 params = list(base_params)
+                cp_filters, filters_without_cp = split_course_program_filters(filters_value)
                 apply_column_filters(
-                    where_clauses, params, filters_value, test_col_map, mark_col_map,
+                    where_clauses, params, filters_without_cp, test_col_map, mark_col_map,
                     db_columns, enroll_columns, needs_enroll, needs_students, needs_eht,
                     ap_exam_infos, ap_award_infos,
+                )
+                apply_course_program_filters_for_clickhouse(
+                    where_clauses, params, cp_filters, base_where_clauses, base_params,
                 )
 
                 survey_filters = {
@@ -890,7 +908,10 @@ def export_students_csv(request):
                 query_base_cols = list(base_cols)
                 if 'ssid' not in query_base_cols: query_base_cols.insert(0, 'ssid')
                 if (test_cols_info or selected_mark_cols or markall_years or selected_survey_cols) and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
-                if (selected_mark_cols or markall_years) and 'stu_annual_key' not in query_base_cols: query_base_cols.insert(0, 'stu_annual_key')
+                if (selected_mark_cols or markall_years or selected_course_prog_cols) and 'stu_annual_key' not in query_base_cols:
+                    query_base_cols.insert(0, 'stu_annual_key')
+                if selected_course_prog_cols and 'school_year' not in query_base_cols:
+                    query_base_cols.insert(0, 'school_year')
                 
                 base_col_selects = []
                 base_col_expressions = {}
@@ -957,6 +978,9 @@ def export_students_csv(request):
                                         student[col_key] = ''
                         except Exception:
                             pass
+
+                    if selected_course_prog_cols:
+                        apply_course_program_columns(chunk_students, selected_course_prog_cols)
 
                     if sat_infos:
                         try:

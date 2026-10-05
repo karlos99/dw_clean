@@ -2031,7 +2031,7 @@ def _state_upload_inputs(request, user):
 
 def _state_upload_xlsx_response(request, program):
     """Single-program .xlsx download (CAASPP or ELPAC)."""
-    from .state_upload_export import build_state_upload_workbook
+    from .state_upload_export import build_state_upload_workbook, _workbook_bytes
 
     user = _state_upload_user(request)
     if user is None:
@@ -2040,12 +2040,12 @@ def _state_upload_xlsx_response(request, program):
     school_year, students = _state_upload_inputs(request, user)
     workbook = build_state_upload_workbook(program, students)
     response = HttpResponse(
+        _workbook_bytes(workbook),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     response['Content-Disposition'] = (
         f'attachment; filename="{program}_Upload_{school_year}.xlsx"'
     )
-    workbook.save(response)
     return response
 
 
