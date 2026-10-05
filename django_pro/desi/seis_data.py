@@ -259,29 +259,55 @@ def _filtered_seis_option_map(student):
 
 def seis_support_detail_for_student(student):
     """
-    SEIS supports for one student: labels plus option/accommodation ids for
-    filtering (same rules as the student workspace).
+    SEIS supports for one student: labels plus option/accommodation ids and
+    program tags for filtering (same rules as the student workspace).
     """
     filtered = _filtered_seis_option_map(student)
     labels = []
+    labels_by_tag = {}
+    label_subjects = {}
     option_ids = set()
     accommodation_ids = set()
+    tags = set()
     seen = set()
-    for (_ast_id, acc_id), opt in filtered.items():
+
+    from .models import Assessment
+    subject_by_assessment = dict(
+        Assessment.objects.filter(id__in={ast_id for ast_id, _acc_id in filtered})
+        .values_list('id', 'subject')
+    )
+
+    for (ast_id, acc_id), opt in filtered.items():
         option_ids.add(opt.id)
         accommodation_ids.add(acc_id)
         accommodation = opt.accommodation
+        tag = (getattr(accommodation, 'tag', '') or '').strip().upper()
+        if tag:
+            tags.add(tag)
         prefix = f"{accommodation.name}: " if accommodation else ''
         label = f"{prefix}{opt.name}"
+        subject = (subject_by_assessment.get(ast_id) or '').strip()
+        if subject:
+            label_subjects.setdefault(label, set()).add(subject)
         key = label.casefold()
         if key in seen:
             continue
         seen.add(key)
         labels.append(label)
+        if tag:
+            labels_by_tag.setdefault(tag, []).append(label)
     return {
         'labels': sorted(labels, key=str.casefold),
+        'labels_by_tag': {
+            tag: sorted(vals, key=str.casefold)
+            for tag, vals in labels_by_tag.items()
+        },
+        'label_subjects': {
+            label: sorted(subs) for label, subs in label_subjects.items()
+        },
         'option_ids': option_ids,
         'accommodation_ids': accommodation_ids,
+        'tags': tags,
     }
 
 

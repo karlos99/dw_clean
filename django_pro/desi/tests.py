@@ -1620,8 +1620,10 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
 
         from desi.report_utils import build_entered_supports_report
 
-        accommodation = Accommodation.objects.create(name="Calculator", code="CALC")
+        accommodation = Accommodation.objects.create(name="Calculator", code="CALC", tag="CAASPP")
         option = AccommodationOption.objects.create(accommodation=accommodation, name="Scientific", code="SCI")
+        ela = Assessment.objects.create(name="Smarter ELA Report", subject="ELA", is_active=True)
+        ela.supported_options.add(option)
         updater = User.objects.create_user(username="up@test.com", email="up@test.com", password="password123")
         record, _ = StudentAccommodation.objects.get_or_create(
             student_annual_key=self.student.stu_annual_key,
@@ -1634,14 +1636,20 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
             "desi.report_utils.seis_support_detail_for_student",
             return_value={
                 "labels": ["Text-to-Speech: Read aloud"],
+                "labels_by_tag": {"CAASPP": ["Text-to-Speech: Read aloud"]},
+                "label_subjects": {"Text-to-Speech: Read aloud": ["ELA"]},
                 "option_ids": {999},
                 "accommodation_ids": {888},
+                "tags": {"CAASPP"},
             },
         ):
             report = build_entered_supports_report("SCH-A", "2025-2026")
         rows = {row["ssid"]: row for row in report["rows"]}
-        self.assertIn("Calculator: Scientific", rows["coordssid"]["supports"])
-        self.assertIn("Text-to-Speech: Read aloud (SEIS)", rows["coordssid"]["supports"])
+        self.assertIn("Calculator: Scientific", rows["coordssid"]["supports_caaspp_ela"])
+        self.assertIn("Text-to-Speech: Read aloud (SEIS)", rows["coordssid"]["supports_caaspp_ela"])
+        self.assertEqual(rows["coordssid"]["supports_caaspp_math"], "")
+        self.assertEqual(rows["coordssid"]["supports_caaspp_science"], "")
+        self.assertEqual(rows["coordssid"]["supports_elpac"], "")
         self.assertTrue(rows["coordssid"]["has_seis_supports"])
         self.assertEqual(rows["coordssid"]["from_seis"], "Yes")
         self.assertEqual(rows["coordssid"]["updated_by"], "up@test.com")
@@ -1675,6 +1683,51 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         ssids = {row["ssid"] for row in report["rows"]}
         self.assertEqual(ssids, {"coordssid"})
 
+    def test_entered_supports_report_program_filter_and_columns(self):
+        from desi.report_utils import build_entered_supports_report
+
+        caaspp = Accommodation.objects.create(name="CAASPP Calc", code="CCA", tag="CAASPP")
+        caaspp_opt = AccommodationOption.objects.create(accommodation=caaspp, name="Scientific", code="CCS")
+        math = Assessment.objects.create(name="Smarter Math Report", subject="Math", is_active=True)
+        math.supported_options.add(caaspp_opt)
+        elpac = Accommodation.objects.create(name="ELPAC Read", code="ELR", tag="ELPAC")
+        elpac_opt = AccommodationOption.objects.create(accommodation=elpac, name="Read aloud", code="ELRO")
+
+        record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=self.student.stu_annual_key
+        )
+        record.options.add(caaspp_opt)
+
+        other = CurrentStudent.objects.create(
+            stu_annual_key="elpac_support_student",
+            ssid="elpacssid",
+            student_id="elpac",
+            student_name="ELPAC Student",
+            grade="03",
+            school_state_id="SCH-A",
+            school_year="2025-2026",
+        )
+        other_record, _ = StudentAccommodation.objects.get_or_create(
+            student_annual_key=other.stu_annual_key
+        )
+        other_record.options.add(elpac_opt)
+
+        # CAASPP supports are split by content area; ELPAC has one column.
+        report = build_entered_supports_report("SCH-A", "2025-2026")
+        rows = {row["ssid"]: row for row in report["rows"]}
+        self.assertIn("CAASPP Calc: Scientific", rows["coordssid"]["supports_caaspp_math"])
+        self.assertEqual(rows["coordssid"]["supports_caaspp_ela"], "")
+        self.assertEqual(rows["coordssid"]["supports_caaspp_science"], "")
+        self.assertEqual(rows["coordssid"]["supports_elpac"], "")
+        self.assertIn("ELPAC Read: Read aloud", rows["elpacssid"]["supports_elpac"])
+        self.assertEqual(rows["elpacssid"]["supports_caaspp_math"], "")
+
+        # Program filter narrows to students with a support in that program.
+        report = build_entered_supports_report(
+            "SCH-A", "2025-2026", support_filter="program:ELPAC"
+        )
+        self.assertEqual({row["ssid"] for row in report["rows"]}, {"elpacssid"})
+
     def test_view_only_school_blocks_coordinator_save(self):
         DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
         coord = User.objects.create_user(username="coord2@test.com", email="coord2@test.com", password="password123")
@@ -1694,6 +1747,32 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Support Admin")
         self.assertContains(response, "Teacher Editing Access by School")
+
+    def test_coordinator_entered_tab_shows_subject_columns(self):
+        from unittest.mock import patch
+
+        StudataSchool.objects.create(
+            dw_schoolkey=99, state_id="SCH-A", short_name="Alpha", school_name="Alpha High"
+        )
+        coord = User.objects.create_user(username="entered@test.com", email="entered@test.com", password="password123")
+        coord.roles.add(self.coordinator_role)
+        coord.schools = ["SCH-A"]
+        coord.save()
+        self.client.force_login(coord)
+
+        with patch("desi.report_utils.list_school_teachers", return_value=[]), \
+             patch("desi.report_utils.teacher_options_by_school", return_value={}):
+            response = self.client.get(
+                reverse("desi:coordinator_dashboard"),
+                {"tab": "entered", "school": "SCH-A", "year": "2025-2026", "run": "1"},
+                HTTP_HOST="localhost",
+            )
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("CAASPP ELA", content)
+        self.assertIn("CAASPP Math", content)
+        self.assertIn("CAASPP Science", content)
+        self.assertIn("ELPAC Supports", content)
 
 
 class DesiMappingPreservationTests(TestCase):
@@ -2670,6 +2749,59 @@ class DesiStudentListPeriodFilterTests(TestCase):
         self.assertEqual(args[1], "HS-1")
         self.assertEqual(args[2], "2")
         self.assertEqual(args[3], "Smith")
+
+    @mock.patch("desi.views._teacher_staff_names", return_value=["Smith"])
+    @mock.patch("desi.views._schedule_periods", return_value=["1", "2"])
+    def test_teacher_single_school_shows_period_filter(self, mock_periods, mock_staff):
+        teacher_role = Role.objects.create(name="Teacher")
+        teacher = User.objects.create_user(
+            username="period-teacher@test.com",
+            email="period-teacher@test.com",
+            password="password123",
+            staff_id="EMP-1",
+        )
+        teacher.roles.add(teacher_role)
+        teacher.schools = ["HS-1"]
+        teacher.save()
+        self.client.force_login(teacher)
+
+        with mock.patch(
+            "users.models.User.get_accessible_student_keys",
+            return_value=["period-hs"],
+        ), mock.patch(
+            "users.context_processors.can_user_access_placement_cards",
+            return_value=False,
+        ):
+            response = self.client.get(
+                reverse("desi:assign_accommodations", args=["period-hs"])
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["show_period_filter"])
+        self.assertIn("Period 2", response.content.decode())
+
+    @mock.patch("desi.views._schedule_periods", return_value=["1", "2"])
+    def test_school_view_single_school_period_shows_once_teacher_selected(self, mock_periods):
+        view_role = Role.objects.create(name="School View")
+        viewer = User.objects.create_user(
+            username="period-view@test.com",
+            email="period-view@test.com",
+            password="password123",
+        )
+        viewer.roles.add(view_role)
+        viewer.schools = ["HS-1"]
+        viewer.save()
+        self.client.force_login(viewer)
+
+        url = reverse("desi:assign_accommodations", args=["period-hs"])
+        # No teacher yet -> no period filter, and no school was selected.
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["show_period_filter"])
+
+        # Choosing a teacher reveals the period filter from the single school.
+        response = self.client.get(url, {"teacher": "Smith"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["show_period_filter"])
 
 
 class DesiSupportDefaultRuleTests(TestCase):

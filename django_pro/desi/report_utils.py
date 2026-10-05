@@ -187,12 +187,19 @@ def teachers_for_students(stu_annual_keys, school_year):
 
 def build_support_filter_groups():
     """
-    Support filter dropdown: section category (or legacy category), then support
-    / option entries. Values are ``o<option_id>`` or ``a<accommodation_id>``.
+    Support filter dropdown: program (CAASPP / ELPAC), then section category (or
+    legacy category), then support / option entries. Values are
+    ``program:<TAG>``, ``o<option_id>`` or ``a<accommodation_id>``.
     """
     from desi.models import Accommodation, AccommodationCategory
 
-    groups = []
+    groups = [{
+        'label': 'Program',
+        'options': [
+            {'value': 'program:CAASPP', 'label': 'CAASPP'},
+            {'value': 'program:ELPAC', 'label': 'ELPAC'},
+        ],
+    }]
     seen_accommodation_ids = set()
 
     categories = list(AccommodationCategory.objects.order_by('order', 'name'))
@@ -249,8 +256,16 @@ def build_support_filter_groups():
 
 
 def parse_support_filter_value(raw_value):
-    """Return (kind, id) for ``o123`` / ``a456``, or (None, None) if invalid."""
+    """
+    Return (kind, id) for ``program:<TAG>`` / ``o123`` / ``a456``, or
+    (None, None) if invalid.
+    """
     raw = (raw_value or '').strip()
+    if raw.lower().startswith('program:'):
+        program = raw.split(':', 1)[1].strip().upper()
+        if program:
+            return ('program', program)
+        return None, None
     if len(raw) < 2:
         return None, None
     prefix, id_part = raw[0], raw[1:]
@@ -260,13 +275,24 @@ def parse_support_filter_value(raw_value):
 
 
 def student_has_support_filter(record, seis_detail, filter_kind, filter_id):
-    """Whether a student has the selected support (DESI entry and/or SEIS)."""
+    """Whether a student has the selected support/program (DESI entry and/or SEIS)."""
     if not filter_kind or filter_id is None:
         return True
 
     seis_detail = seis_detail or {}
     seis_option_ids = seis_detail.get('option_ids') or set()
     seis_acc_ids = seis_detail.get('accommodation_ids') or set()
+
+    if filter_kind == 'program':
+        tag = str(filter_id).strip().upper()
+        if tag in (seis_detail.get('tags') or set()):
+            return True
+        if record:
+            if record.options.filter(accommodation__tag__iexact=tag).exists():
+                return True
+            if record.selected_accommodations.filter(tag__iexact=tag).exists():
+                return True
+        return False
 
     if filter_kind == 'option':
         if filter_id in seis_option_ids:
@@ -325,7 +351,11 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
         rec.student_annual_key: rec
         for rec in StudentAccommodation.objects.filter(student_annual_key__in=keys)
         .select_related('updated_by')
-        .prefetch_related('options__accommodation', 'selected_accommodations')
+        .prefetch_related(
+            'options__accommodation',
+            'options__assessments',
+            'selected_accommodations__options__assessments',
+        )
     }
 
     completed_map = {}
@@ -338,43 +368,104 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
         ):
             completed_map.setdefault(key, []).append(assessment_name)
 
+    # Report columns: (row key, program tag, subject filter). CAASPP supports are
+    # split by content area (ELA / Math / Science); a support that applies to
+    # several areas is listed under each. ELPAC keeps a single column.
+    columns = [
+        ('supports_caaspp_ela', 'CAASPP', 'ELA'),
+        ('supports_caaspp_math', 'CAASPP', 'Math'),
+        ('supports_caaspp_science', 'CAASPP', 'Science'),
+        ('supports_elpac', 'ELPAC', None),
+    ]
+    column_tags = {tag for _key, tag, _subject in columns}
+
+    def _option_subjects(option):
+        return {
+            (ast.subject or '').strip()
+            for ast in option.assessments.all()
+            if (ast.subject or '').strip()
+        }
+
+    def _direct_support_subjects(acc):
+        subjects = set()
+        for option in acc.options.all():
+            subjects |= _option_subjects(option)
+        return subjects
+
     rows = []
     for student in students:
         record = records.get(student.stu_annual_key)
-        supports = []
+        supports_by_col = {key: [] for key, _tag, _subject in columns}
+        manual_keys_by_col = {key: set() for key, _tag, _subject in columns}
+
+        def _add_support(raw_tag, subjects, label):
+            tag = (raw_tag or '').strip().upper()
+            label_key = label.casefold()
+            subjects = {(s or '').strip() for s in (subjects or set()) if (s or '').strip()}
+            for key, col_tag, col_subject in columns:
+                if tag != col_tag:
+                    continue
+                # Unknown subject (no mapping) falls into every column for the tag.
+                if col_subject and subjects and col_subject not in subjects:
+                    continue
+                if label_key in manual_keys_by_col[key]:
+                    continue
+                supports_by_col[key].append(label)
+                manual_keys_by_col[key].add(label_key)
+
         if record:
             for option in record.options.all():
                 prefix = f"{option.accommodation.name}: " if option.accommodation else ''
-                supports.append(f"{prefix}{option.name}")
-            supports += [acc.name for acc in record.selected_accommodations.all()]
+                _add_support(
+                    getattr(option.accommodation, 'tag', '') if option.accommodation else '',
+                    _option_subjects(option),
+                    f"{prefix}{option.name}",
+                )
+            for acc in record.selected_accommodations.all():
+                _add_support(acc.tag, _direct_support_subjects(acc), acc.name)
 
         seis_detail = seis_support_detail_for_student(student)
         seis_labels = seis_detail['labels']
         if filter_kind and not student_has_support_filter(record, seis_detail, filter_kind, filter_id):
             continue
 
-        manual_keys = {label.casefold() for label in supports}
-        for label in seis_labels:
-            if label.casefold() not in manual_keys:
-                supports.append(f"{label} (SEIS)")
-                manual_keys.add(label.casefold())
+        labels_by_tag = seis_detail.get('labels_by_tag') or {}
+        label_subjects = seis_detail.get('label_subjects') or {}
+        for tag in column_tags:
+            for label in labels_by_tag.get(tag, []):
+                _add_support(
+                    tag,
+                    set(label_subjects.get(label) or []),
+                    f"{label} (SEIS)",
+                )
+
+        combined = []
+        seen_combined = set()
+        for key, _tag, _subject in columns:
+            for label in supports_by_col[key]:
+                if label.casefold() not in seen_combined:
+                    seen_combined.add(label.casefold())
+                    combined.append(label)
 
         completions = sorted(completed_map.get(student.stu_annual_key, []))
         updater = record.updated_by if record else None
         has_seis = bool(seis_labels)
         teacher_names = teacher_map.get(student.stu_annual_key, [])
-        rows.append({
+        row = {
             'stu_annual_key': student.stu_annual_key,
             'ssid': student.ssid or '',
             'student_name': student.student_name or '',
             'grade': student.grade or '',
             'teachers': ', '.join(teacher_names),
-            'supports': '; '.join(supports),
+            'supports': '; '.join(combined),
             'has_seis_supports': has_seis,
             'from_seis': 'Yes' if has_seis else 'No',
             'completions': ', '.join(completions),
             'updated_by': (updater.name or updater.email) if updater else '',
             'updated_at': record.updated_at.strftime('%Y-%m-%d %H:%M') if record and record.updated_at else '',
-        })
+        }
+        for key, _tag, _subject in columns:
+            row[key] = '; '.join(supports_by_col[key])
+        rows.append(row)
 
     return {'students': students, 'rows': rows, 'total': len(rows)}

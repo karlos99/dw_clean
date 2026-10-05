@@ -864,6 +864,51 @@ def _period_sort_key(value):
     return (0, int(text)) if text.isdigit() else (1, text)
 
 
+def _single_accessible_school(user):
+    """
+    The single school a user can access, or ``None`` when they have zero/many.
+
+    Unrestricted users (superusers, Project/District roles) are never
+    auto-scoped.
+    """
+    if user is None or getattr(user, 'is_superuser', False):
+        return None
+    if _has_role(user, 'Project Admin') or _has_district_role(user):
+        return None
+    user_schools = getattr(user, 'schools', None)
+    if not isinstance(user_schools, list) or len(user_schools) != 1:
+        return None
+    return (
+        StudataSchool.objects
+        .filter(state_id=user_schools[0])
+        .order_by('school_name', 'dw_schoolkey')
+        .first()
+    )
+
+
+def _teacher_staff_names(user, school_state_id, school_year):
+    """Staff names scheduled for this user's ``staff_id`` (for the period filter)."""
+    staff_id = getattr(user, 'staff_id', None)
+    if not staff_id:
+        return []
+    try:
+        with transaction.atomic():
+            qs = Schedule.objects.filter(
+                staff_employee_id=staff_id, school_year=school_year
+            )
+            if school_state_id:
+                qs = qs.filter(state_school_id=school_state_id)
+            names = {
+                str(name).strip()
+                for name in qs.exclude(staff_name__isnull=True).exclude(staff_name='')
+                .values_list('staff_name', flat=True)
+                if str(name).strip()
+            }
+    except Exception:
+        return []
+    return sorted(names, key=str.casefold)
+
+
 def _schedule_periods(school_year, school_state_id, staff_name, student_keys=None):
     """
     Distinct periods from ``schedule_list`` for one school + staff member.
@@ -998,14 +1043,28 @@ def _get_student_list_context(request):
         if teacher_filter:
             students_qs = students_qs.none()
 
-    # Non-elementary schools schedule by period. When a school and teacher are
-    # chosen, offer a period filter sourced from the schedule table (the periods
-    # for that staff member's students), then narrow the student list to it.
-    selected_school_id = school_filter_id or getattr(active_school, 'state_id', '') or ''
+    # Non-elementary schools schedule by period. The period filter is offered
+    # when both the school and teacher are known:
+    #   * a teacher with a single accessible school uses their own schedule,
+    #     without having to pick a teacher or a school;
+    #   * a school-view user with a single accessible school gets it applied
+    #     automatically once a teacher is chosen (no school selection needed).
+    period_school = active_school
+    if period_school is None and school_filter_id:
+        period_school = StudataSchool.objects.filter(state_id=school_filter_id).first()
+    if period_school is None:
+        period_school = _single_accessible_school(request.user)
+    selected_school_id = school_filter_id or getattr(period_school, 'state_id', '') or ''
+
+    effective_teacher_name = teacher_filter
+    if not effective_teacher_name and _is_teacher(request.user):
+        staff_names = _teacher_staff_names(request.user, selected_school_id, school_year)
+        effective_teacher_name = staff_names[0] if staff_names else ''
+
     periods = []
-    if selected_school_id and teacher_filter and not _is_elementary_school(active_school):
+    if selected_school_id and effective_teacher_name and not _is_elementary_school(period_school):
         periods = _schedule_periods(
-            school_year, selected_school_id, teacher_filter, teacher_student_keys
+            school_year, selected_school_id, effective_teacher_name, teacher_student_keys or None
         )
     show_period_filter = bool(periods)
 
@@ -1013,7 +1072,7 @@ def _get_student_list_context(request):
         period_filter = ''
     if period_filter:
         period_keys = _schedule_student_keys(
-            school_year, selected_school_id, period_filter, teacher_filter, teacher_student_keys
+            school_year, selected_school_id, period_filter, effective_teacher_name, teacher_student_keys or None
         )
         students_qs = students_qs.filter(stu_annual_key__in=period_keys)
 
@@ -1633,7 +1692,10 @@ def coordinator_entered_csv(request):
         'Student Name',
         'Grade',
         'Teachers',
-        'Supports Entered',
+        'CAASPP ELA',
+        'CAASPP Math',
+        'CAASPP Science',
+        'ELPAC Supports',
         'From SEIS',
         'Assigned Assessments',
         'Updated By',
@@ -1645,7 +1707,10 @@ def coordinator_entered_csv(request):
             row['student_name'],
             row['grade'],
             row['teachers'],
-            row['supports'],
+            row['supports_caaspp_ela'],
+            row['supports_caaspp_math'],
+            row['supports_caaspp_science'],
+            row['supports_elpac'],
             row['from_seis'],
             row['completions'],
             row['updated_by'],
