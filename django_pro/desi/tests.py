@@ -33,6 +33,7 @@ from desi.views import (
     can_edit_desi,
     hidden_support_ids,
     default_support_locks,
+    build_effective_assessment_criteria,
     EXPORT_ENDPOINT_SIGNING_SALT,
 )
 from desi import importers
@@ -2117,6 +2118,174 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
         self.assertTrue(columns[0]["is_seis"])
         self.assertTrue(columns[1]["is_seis"])
 
+    def test_seis_assigned_test_over_grade_limit_is_hidden(self):
+        # Smarter math is only for grades 03-08 and 11.
+        AssessmentCriteria.objects.create(
+            assessment=self.ast_math,
+            field_name="grade",
+            operator="in",
+            value="03,04,05,06,07,08,11",
+        )
+        grade12 = CurrentStudent.objects.create(
+            stu_annual_key="seis_grade12",
+            ssid="seisg12",
+            student_id="seisg12",
+            student_name="SEIS Grade 12",
+            grade="12",
+            school_year="2025-2026",
+        )
+        DesiSeis.objects.create(
+            id="seis-row-g12",
+            ssid=grade12.ssid,
+            test_group="caaspp",
+            settings={"TTS": "TTS"},
+            assessments=["Smarter math"],
+        )
+
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[grade12.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+        names = [c["assessment"].name for c in response.context["matrix_columns"]]
+        self.assertNotIn("Smarter math", names)
+        # Still in SEIS -> read-only even though no SEIS test survives the filter.
+        self.assertTrue(response.context["seis_readonly"])
+
+        # A grade-eligible SEIS student still sees the SEIS-assigned test.
+        self._create_seis_row("seis-row-g4", ["Smarter math"])
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        columns = response.context["matrix_columns"]
+        names = [c["assessment"].name for c in columns]
+        self.assertIn("Smarter math", names)
+        self.assertTrue(next(c for c in columns if c["assessment"] == self.ast_math)["is_seis"])
+
+
+class DesiSpedReadonlyAndCaaGradeTests(TestCase):
+    """SPED=Y students are read-only; CAA tests follow CAASPP grade rules."""
+
+    def setUp(self):
+        cache.delete('landing:project_config')
+        ensure_desi_seis_table()
+
+        role = Role.objects.create(name="Project Admin")
+        self.user = User.objects.create_user(
+            username="sped-caa@test.com",
+            email="sped-caa@test.com",
+            password="password123",
+        )
+        self.user.roles.add(role)
+        self.user.is_superuser = True
+        self.user.save()
+        self.client.force_login(self.user)
+
+        self.acc = Accommodation.objects.create(name="Text-to-Speech", code="TTS")
+        self.opt = AccommodationOption.objects.create(
+            accommodation=self.acc, name="Standard", code="TTS"
+        )
+
+        self.smarter_math = Assessment.objects.create(
+            name="Smarter Math", subject="Math", is_active=True
+        )
+        self.caa_math = Assessment.objects.create(
+            name="CAA math", subject="Math", is_active=True
+        )
+        self.smarter_math.supported_options.add(self.opt)
+        self.caa_math.supported_options.add(self.opt)
+
+        # CAASPP grade rule is 03,04,05. CAA carries SPED=Y plus its own (now
+        # overridden) grade rule of 06.
+        AssessmentCriteria.objects.create(
+            assessment=self.smarter_math, field_name="grade", operator="in", value="03,04,05"
+        )
+        AssessmentCriteria.objects.create(
+            assessment=self.caa_math, field_name="sped", operator="is", value="Y"
+        )
+        AssessmentCriteria.objects.create(
+            assessment=self.caa_math, field_name="grade", operator="in", value="06"
+        )
+
+        self.student = CurrentStudent.objects.create(
+            stu_annual_key="sped_caa_student",
+            ssid="spedcaassid",
+            student_id="spedcaa",
+            student_name="SPED CAA",
+            grade="04",
+            sped="Y",
+            school_year="2025-2026",
+        )
+
+    def test_sped_student_workspace_is_readonly_with_normal_tests(self):
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["sped_readonly"])
+        self.assertFalse(response.context["can_edit"])
+
+        names = [c["assessment"].name for c in response.context["matrix_columns"]]
+        self.assertIn("Smarter Math", names)
+        self.assertIn("CAA math", names)
+        self.assertIn("marked SPED", response.content.decode())
+
+    def test_sped_student_sidebar_not_pending(self):
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key])
+        )
+        self.assertEqual(response.status_code, 200)
+        row = next(
+            s for s in response.context["page_obj"]
+            if s.stu_annual_key == self.student.stu_annual_key
+        )
+        self.assertTrue(row.is_sped)
+        self.assertTrue(row.assessment_statuses)
+        self.assertTrue(all(st["is_sped"] for st in row.assessment_statuses))
+        # Read-only marker replaces the (uneditable) Pending status.
+        self.assertIn(">SPED</span>", response.content.decode())
+
+    def test_sped_student_post_is_blocked(self):
+        response = self.client.post(
+            reverse("desi:assign_accommodations", args=[self.student.stu_annual_key]),
+            {"completed_assessments": [str(self.smarter_math.id)]},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            StudentAssessmentCompletion.objects.filter(
+                student_annual_key=self.student.stu_annual_key,
+                assessment=self.smarter_math,
+                is_completed=True,
+            ).exists()
+        )
+
+    def test_caa_inherits_caaspp_grade_rules(self):
+        all_assessments = [self.smarter_math, self.caa_math]
+
+        # Grade 04: the CAASPP source passes, so CAA is eligible even though its
+        # own grade rule (06) would fail.
+        eligible, _ = check_criteria(
+            build_effective_assessment_criteria(self.caa_math, all_assessments),
+            self.student,
+        )
+        self.assertTrue(eligible)
+
+        # Grade 06: CAA's own grade rule would pass, but the inherited CAASPP
+        # grade rule fails, so CAA is not eligible.
+        grade6 = CurrentStudent.objects.create(
+            stu_annual_key="caa_grade6",
+            ssid="caa6",
+            student_id="caa6",
+            student_name="Grade6 SPD",
+            grade="06",
+            sped="Y",
+            school_year="2025-2026",
+        )
+        eligible, _ = check_criteria(
+            build_effective_assessment_criteria(self.caa_math, all_assessments),
+            grade6,
+        )
+        self.assertFalse(eligible)
+
 
 class DesiSectionCategoryTests(TestCase):
     """Section categories coexist with the original free-text category."""
@@ -2539,7 +2708,7 @@ class DesiSupportDefaultRuleTests(TestCase):
         locks = default_support_locks(self.student)
         self.assertIn(self.opt.id, locks["option_ids"])
         self.assertIn(self.acc.id, locks["support_ids"])
-        self.assertEqual(locks["managers"][self.acc.id], "District")
+        self.assertEqual(locks["managers"][self.acc.id], "Global Calc")
 
     def test_demographic_criteria_rule(self):
         rule = SupportDefaultRule.objects.create(
@@ -2594,7 +2763,7 @@ class DesiSupportDefaultRuleTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn("Managed by District", content)
+        self.assertIn("Managed by Global Calc", content)
         self.assertIn(f'<option value="{self.opt.id}" selected>Scientific</option>', content)
 
     def test_admin_creates_rule_with_demographic_and_result_criteria(self):

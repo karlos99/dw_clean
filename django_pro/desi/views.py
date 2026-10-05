@@ -112,6 +112,13 @@ def _is_504_student(student):
     return str(getattr(student, 'in_504', '') or '').strip() in ('Y', '1')
 
 
+def _is_sped_student(student):
+    """Whether a student is in special education (sped = 'Y'/'1')."""
+    if student is None:
+        return False
+    return str(getattr(student, 'sped', '') or '').strip() in ('Y', '1')
+
+
 def _is_504_admin(user):
     return _has_role(user, '504_Admin')
 
@@ -479,6 +486,88 @@ def check_criteria(criteria_list, student):
     return False, flattened_reasons
 
 
+def _is_caa_assessment(assessment):
+    """Whether ``assessment`` is an alternate (CAA) assessment."""
+    name = (getattr(assessment, 'name', '') or '').strip().lower()
+    return name == 'caa' or name.startswith('caa ') or name.startswith('caa-')
+
+
+def _caaspp_source_assessment(caa_assessment, all_assessments):
+    """
+    The CAASPP (non-CAA) assessment whose grade rules a CAA test follows.
+
+    Matched by subject (e.g. CAA math -> Smarter Math, CAA science -> CAST),
+    preferring the variant that matches the CAA name's "(nonwriting)" suffix,
+    then active assessments, then the simplest name.
+    """
+    subject = (getattr(caa_assessment, 'subject', '') or '').strip().lower()
+    wants_nonwriting = 'nonwriting' in (getattr(caa_assessment, 'name', '') or '').lower()
+    candidates = [
+        ast for ast in all_assessments
+        if not _is_caa_assessment(ast)
+        and (getattr(ast, 'subject', '') or '').strip().lower() == subject
+    ]
+    if not candidates:
+        return None
+
+    def sort_key(ast):
+        name = (getattr(ast, 'name', '') or '').strip().lower()
+        is_nonwriting = 'nonwriting' in name
+        return (
+            is_nonwriting == wants_nonwriting,
+            bool(getattr(ast, 'is_active', False)),
+            -len(name),
+        )
+
+    return max(candidates, key=sort_key)
+
+
+def build_effective_assessment_criteria(assessment, all_assessments):
+    """
+    Criteria to evaluate for an assessment's eligibility.
+
+    CAA (alternate) assessments follow the same grade rules as their
+    corresponding CAASPP assessment: the CAA's own grade criteria are dropped
+    and replaced with the matching CAASPP assessment's grade criteria, while
+    every non-grade CAA criterion (e.g. SPED = 'Y') is preserved.
+    """
+    criteria = list(assessment.criteria.all())
+    if not _is_caa_assessment(assessment):
+        return criteria
+
+    source = _caaspp_source_assessment(assessment, all_assessments)
+    if source is None:
+        return criteria
+
+    source_grade = [c for c in source.criteria.all() if c.field_name == 'grade']
+    if not source_grade:
+        return criteria
+
+    own_non_grade = [c for c in criteria if c.field_name != 'grade']
+    return own_non_grade + source_grade
+
+
+def filter_assessments_by_grade(assessments, all_assessments, student):
+    """
+    Drop assessments whose (effective) grade rules the student fails.
+
+    SEIS-assigned tests are authoritative, but must still respect the same
+    grade restrictions applied to non-SEIS test assignments. Assessments with
+    no grade rule are always kept.
+    """
+    kept = []
+    for ast in assessments:
+        criteria = build_effective_assessment_criteria(ast, all_assessments)
+        grade_criteria = [c for c in criteria if c.field_name == 'grade']
+        if not grade_criteria:
+            kept.append(ast)
+            continue
+        eligible, _ = check_criteria(grade_criteria, student)
+        if eligible:
+            kept.append(ast)
+    return kept
+
+
 def hidden_from_student_list_ids():
     """Designated supports hidden from the student workspace by project admin."""
     return set(
@@ -529,7 +618,7 @@ def default_support_locks(student):
           'option_ids': set(...),          # option ids to show pre-selected
           'support_ids': set(...),         # support ids that become read-only
           'direct_support_ids': set(...),  # locked supports with no options
-          'managers': {support_id: label}, # lock reason (managed-by label)
+          'managers': {support_id: label}, # lock reason (matched rule name)
         }
     """
     locks = {
@@ -577,8 +666,11 @@ def default_support_locks(student):
         if support is None:
             continue
         locks['support_ids'].add(support.id)
+        # The lock tag in the student workspace shows the rule that assigned
+        # the option(s), falling back to the support's managed-by label.
         locks['managers'].setdefault(
-            support.id, support.get_managed_by_display() or 'Managed'
+            support.id,
+            chosen.name or support.get_managed_by_display() or 'Managed',
         )
         options = list(chosen.options.all())
         if options:
@@ -969,8 +1061,15 @@ def _get_student_list_context(request):
 
     for student in page_obj:
         seis_assigned = seis_assigned_by_ssid.get(student.ssid, []) if student.ssid else []
+        # SEIS names the tests, but they must also satisfy the same grade rules
+        # used for non-SEIS test assignments.
+        if seis_assigned:
+            seis_assigned = filter_assessments_by_grade(
+                seis_assigned, all_assessments, student
+            )
         if seis_assigned:
             student.is_seis = True
+            student.is_sped = False
             student.eligible_count = 0
             student.completed_count = 0
             student.assessment_statuses = [
@@ -978,17 +1077,22 @@ def _get_student_list_context(request):
                     'assessment': ast,
                     'is_completed': False,
                     'is_seis': True,
+                    'is_sped': False,
                 }
                 for ast in seis_assigned
             ]
         else:
             eligible_ids = []
             for ast in all_year_assessments:
-                eligible, _ = check_criteria(ast.criteria.all(), student)
+                eligible, _ = check_criteria(
+                    build_effective_assessment_criteria(ast, all_assessments), student
+                )
                 if eligible:
                     eligible_ids.append(ast.id)
 
+            is_sped = _is_sped_student(student)
             student.is_seis = False
+            student.is_sped = is_sped
             student.eligible_count = len(eligible_ids)
             student_completed_ids = completions_map.get(student.stu_annual_key, set())
             student.completed_count = len(student_completed_ids.intersection(set(eligible_ids)))
@@ -997,6 +1101,7 @@ def _get_student_list_context(request):
                     'assessment': ast,
                     'is_completed': ast.id in student_completed_ids,
                     'is_seis': False,
+                    'is_sped': is_sped,
                 }
                 for ast in all_year_assessments
                 if ast.id in eligible_ids
@@ -1530,7 +1635,7 @@ def coordinator_entered_csv(request):
         'Teachers',
         'Supports Entered',
         'From SEIS',
-        'Completed Assessments',
+        'Assigned Assessments',
         'Updated By',
         'Updated At',
     ])
@@ -3178,7 +3283,7 @@ def clone_assessment(request, id):
     return redirect('desi:admin_dashboard')
 
 
-def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True, seis_option_map=None, seis_managed_assessments=None, default_locks=None, seis_readonly=False):
+def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True, seis_option_map=None, seis_managed_assessments=None, default_locks=None, seis_readonly=False, sped_readonly=False):
     """
     Build workspace context for the DESI accommodation editor.
 
@@ -3434,6 +3539,7 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
         'has_seis': bool(seis_count),
         'seis_count': seis_count,
         'seis_readonly': bool(seis_readonly),
+        'sped_readonly': bool(sped_readonly),
     }
 
 
@@ -3489,14 +3595,25 @@ def assign_accommodations(request, stu_annual_key):
     # Any student present in the SEIS source is read-only. When the SEIS rows
     # name specific tests, only those tests show (SEIS-authoritative); when they
     # name no test (``No_Test``), the regular tests show but remain read-only.
+    #
+    # A student marked SPED (``sped`` = 'Y'/'1') is treated the same way even
+    # when they have no SEIS rows: they keep their normal test assignments but
+    # the workspace is read-only.
     student_in_seis = bool(student.ssid and fetch_seis_rows(student.ssid))
-    effective_can_edit = can_edit and not student_in_seis
+    is_sped = _is_sped_student(student)
+    student_readonly = student_in_seis or is_sped
+    effective_can_edit = can_edit and not student_readonly
 
     if request.method == 'POST' and not effective_can_edit:
         if student_in_seis:
             messages.error(
                 request,
                 "This student's supports are managed in SEIS and are read-only.",
+            )
+        elif is_sped:
+            messages.error(
+                request,
+                "This student is marked SPED; supports are read-only.",
             )
         else:
             messages.error(
@@ -3505,13 +3622,16 @@ def assign_accommodations(request, stu_annual_key):
             )
         return redirect(reverse('desi:assign_accommodations', args=[stu_annual_key]))
 
-    # Pull active assessments (color-coded consistently per assessment)
-    assessments = list(Assessment.objects.filter(is_active=True).prefetch_related(
+    # Pull active assessments (color-coded consistently per assessment). The
+    # full list (including inactive) is kept so CAA tests can resolve their
+    # CAASPP grade-rule source.
+    all_assessments = list(Assessment.objects.prefetch_related(
         'criteria',
         'supported_options__accommodation__depends_on_option',
         'supported_options__accommodation__dependency_assessments',
         'supported_options__accommodation__resources',
     ).order_by('order', 'name', 'id'))
+    assessments = [ast for ast in all_assessments if ast.is_active]
     for index, ast in enumerate(assessments):
         ast.card_color = ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)]
 
@@ -3519,7 +3639,9 @@ def assign_accommodations(request, stu_annual_key):
     eligible_assessments = []
     failed_rules_map = {}
     for ast in assessments:
-        eligible, failed_rules = check_criteria(ast.criteria.all(), student)
+        eligible, failed_rules = check_criteria(
+            build_effective_assessment_criteria(ast, all_assessments), student
+        )
         failed_rules_map[ast.id] = failed_rules
         if eligible:
             eligible_assessments.append(ast)
@@ -3538,10 +3660,10 @@ def assign_accommodations(request, stu_annual_key):
     seis_managed_assessments = []
     seis_assigned = []
     if student.ssid:
-        all_assessments = list(
-            Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation').order_by('order', 'name', 'id')
-        )
         seis_assigned = seis_assigned_assessments(student.ssid, all_assessments)
+        # SEIS names the tests, but they must still respect the same grade
+        # restrictions applied to non-SEIS test assignments.
+        seis_assigned = filter_assessments_by_grade(seis_assigned, all_assessments, student)
         if seis_assigned:
             seis_managed_assessments = list(seis_assigned)
             raw_map, _ = build_seis_option_map(student.ssid, seis_assigned)
@@ -3691,6 +3813,7 @@ def assign_accommodations(request, stu_annual_key):
                 seis_managed_assessments=seis_managed_assessments,
                 default_locks=default_locks,
                 seis_readonly=student_in_seis,
+                sped_readonly=is_sped,
             )
             list_context.update(context)
 
@@ -3772,6 +3895,7 @@ def assign_accommodations(request, stu_annual_key):
         seis_managed_assessments=seis_managed_assessments,
         default_locks=default_locks,
         seis_readonly=student_in_seis,
+        sped_readonly=is_sped,
     )
 
     if is_htmx:

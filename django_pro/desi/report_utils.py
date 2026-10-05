@@ -14,7 +14,7 @@ def build_school_report(school_state_id, school_year):
     pending_by_assessment: {assessment_id: [student, ...]} (eligible, not completed)
     """
     from desi.models import Assessment, StudentAssessmentCompletion
-    from desi.views import check_criteria
+    from desi.views import check_criteria, build_effective_assessment_criteria
     from studata.models import CurrentStudent
 
     students = list(
@@ -22,7 +22,8 @@ def build_school_report(school_state_id, school_year):
         .filter(school_year=school_year, school_state_id=school_state_id)
         .order_by('student_name', 'stu_annual_key')
     )
-    assessments = list(Assessment.objects.filter(is_active=True).order_by('name'))
+    all_assessments = list(Assessment.objects.prefetch_related('criteria').order_by('name'))
+    assessments = [a for a in all_assessments if a.is_active]
 
     student_keys = [s.stu_annual_key for s in students]
     completed_pairs = set()
@@ -46,7 +47,9 @@ def build_school_report(school_state_id, school_year):
     for student in students:
         statuses = []
         for assessment in assessments:
-            eligible, _failed = check_criteria(assessment.criteria.all(), student)
+            eligible, _failed = check_criteria(
+                build_effective_assessment_criteria(assessment, all_assessments), student
+            )
             is_completed = (student.stu_annual_key, assessment.id) in completed_pairs
             statuses.append({
                 'assessment': assessment,

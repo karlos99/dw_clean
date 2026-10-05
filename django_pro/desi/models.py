@@ -441,7 +441,8 @@ class SupportDefaultRule(models.Model):
 
     When a student matches (``scope='all'`` means every student), the selected
     options are shown pre-selected and the support is locked (read-only) in the
-    student workspace. The lock reason comes from the support's ``managed_by``.
+    student workspace. The lock tag shows the matched rule's ``name`` (falling
+    back to the support's ``managed_by``).
     """
     SCOPE_CHOICES = [
         ('all', 'Default (all students)'),

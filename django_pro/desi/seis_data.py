@@ -246,6 +246,13 @@ def _filtered_seis_option_map(student):
     if not assigned:
         return {}
 
+    # SEIS names the tests, but they must still satisfy the same grade rules
+    # used for non-SEIS test assignments.
+    from .views import filter_assessments_by_grade
+    assigned = filter_assessments_by_grade(assigned, all_assessments, student)
+    if not assigned:
+        return {}
+
     raw_map, _locked = build_seis_option_map(ssid, assigned)
     return raw_map
 
