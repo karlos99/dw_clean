@@ -1,5 +1,5 @@
 from django.test import SimpleTestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from clickhouse_utils.translator import translate_pg_to_clickhouse
 from clickhouse_utils.executor import QueryExecutor
 
@@ -91,6 +91,34 @@ class ThreadPoolSizingTests(SimpleTestCase):
     def test_ch_io_pool_stays_under_clickhouse_concurrency_cap(self):
         from clickhouse_utils.thread_pool import get_io_pool
         self.assertEqual(get_io_pool()._max_workers, 8)
+
+
+class ClickHouseClientHealthTests(SimpleTestCase):
+    def tearDown(self):
+        from clickhouse_utils import client as ch_client
+        for name in ('client', 'last_ping'):
+            if hasattr(ch_client._local, name):
+                delattr(ch_client._local, name)
+
+    def test_reuses_recent_client_without_network_ping(self):
+        from clickhouse_utils import client as ch_client
+
+        fake = Mock()
+        ch_client._local.client = fake
+        ch_client._local.last_ping = 100.0
+        with patch.object(ch_client.time, 'monotonic', return_value=110.0):
+            self.assertIs(ch_client.get_clickhouse_client(), fake)
+        fake.ping.assert_not_called()
+
+    def test_revalidates_stale_client(self):
+        from clickhouse_utils import client as ch_client
+
+        fake = Mock()
+        ch_client._local.client = fake
+        ch_client._local.last_ping = 100.0
+        with patch.object(ch_client.time, 'monotonic', return_value=140.0):
+            self.assertIs(ch_client.get_clickhouse_client(), fake)
+        fake.ping.assert_called_once_with()
 
 class SQLTranslatorTests(SimpleTestCase):
     def test_translate_cross_join_lateral_jsonb_object_keys(self):
@@ -394,3 +422,16 @@ class RemainingAnalyticsTests(SimpleTestCase):
         chart.config = {}
         self.assertFalse(_can_sql_paginate_drill(chart, {}, 'student_name'))
         self.assertTrue(_can_sql_paginate_drill(chart, {}, 'current_student.student_name'))
+
+
+class CourseProgramSyncTests(SimpleTestCase):
+    def test_matched_temp_includes_historical_completed_schedules(self):
+        from clickhouse_utils.course_program_sync import CREATE_MATCHED_TEMP_SQL
+
+        self.assertIn("schedule_status IN ('Active', 'Completed')", CREATE_MATCHED_TEMP_SQL)
+        self.assertNotIn("schedule_status = 'Active'", CREATE_MATCHED_TEMP_SQL)
+
+    def test_matched_temp_excludes_pending(self):
+        from clickhouse_utils.course_program_sync import CREATE_MATCHED_TEMP_SQL
+
+        self.assertNotIn('Pending', CREATE_MATCHED_TEMP_SQL)

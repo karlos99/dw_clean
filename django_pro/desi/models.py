@@ -2,6 +2,15 @@ from django.db import models
 from django.conf import settings
 
 
+MANAGED_BY_CHOICES = [
+    ('district', 'District'),
+    ('school', 'School'),
+    ('testing_coordinator', 'Testing Coordinator'),
+    ('teacher', 'Teacher'),
+    ('other', 'Other'),
+]
+
+
 class AccommodationCategory(models.Model):
     """
     Reusable section category that groups designated supports (screening
@@ -42,6 +51,13 @@ class Accommodation(models.Model):
         help_text="Source import tag (e.g. 'CAASPP', 'ELPAC') this support came from."
     )
     category = models.CharField(max_length=100, blank=True, help_text="e.g., Presentation, Response, Setting, Timing")
+    managed_by = models.CharField(
+        max_length=32,
+        choices=MANAGED_BY_CHOICES,
+        blank=True,
+        default='',
+        help_text="Who manages/owns this support (District, School, Testing Coordinator, Teacher).",
+    )
     section_category = models.ForeignKey(
         AccommodationCategory,
         on_delete=models.SET_NULL,
@@ -63,6 +79,10 @@ class Accommodation(models.Model):
         help_text="YouTube video link explaining this support/question"
     )
     order = models.IntegerField(default=0, help_text="Order in which this accommodation is displayed")
+    hide_from_student_list = models.BooleanField(
+        default=False,
+        help_text="Hide this support on the student workspace matrix; export still includes it.",
+    )
     depends_on_accommodation = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -157,11 +177,16 @@ class Assessment(models.Model):
         help_text="Accommodation options allowed for this assessment"
     )
     is_active = models.BooleanField(default=True)
+    order = models.IntegerField(
+        default=0,
+        db_index=True,
+        help_text="Display order of assessment column in student list"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['name']
+        ordering = ['order', 'name', 'id']
         unique_together = ('name', 'subject')
 
     def __str__(self):
@@ -369,16 +394,173 @@ class SupportRule(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def criteria_summary(self):
+        """Human-readable string representation of this rule's criteria logic."""
+        criteria = list(self.criteria.all())
+        if not criteria:
+            return "No conditions"
+        parts = []
+        for idx, c in enumerate(criteria):
+            prefix = f" {c.logic_operator} " if idx > 0 else ""
+            parts.append(f"{prefix}{c.get_field_name_display()} {c.get_operator_display()} '{c.value}'")
+        return "".join(parts)
+
 
 class SupportRuleCriteria(models.Model):
-    """One demographic condition belonging to a SupportRule (all conditions AND together)."""
+    """One demographic condition belonging to a SupportRule with AND/OR logic connectors."""
+    LOGIC_CHOICES = [
+        ('AND', 'AND'),
+        ('OR', 'OR'),
+    ]
+
     rule = models.ForeignKey(SupportRule, on_delete=models.CASCADE, related_name='criteria')
+    logic_operator = models.CharField(
+        max_length=3,
+        choices=LOGIC_CHOICES,
+        default='AND',
+        help_text="Logical connector to this condition ('AND' or 'OR').",
+    )
     field_name = models.CharField(max_length=50, choices=AssessmentCriteria.FIELD_CHOICES)
     operator = models.CharField(max_length=20, choices=AssessmentCriteria.OPERATOR_CHOICES)
     value = models.CharField(max_length=255, help_text="Comparison value (e.g. '03,04,05' or 'Y')")
+    order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ['order', 'id']
 
     def __str__(self):
-        return f"{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
+        prefix = f"{self.logic_operator} " if self.order > 0 else ""
+        return f"{prefix}{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
+
+
+class SupportDefaultRule(models.Model):
+    """
+    Assigns a default option (or options) to a designated support for matching
+    students.
+
+    When a student matches (``scope='all'`` means every student), the selected
+    options are shown pre-selected and the support is locked (read-only) in the
+    student workspace. The lock reason comes from the support's ``managed_by``.
+    """
+    SCOPE_CHOICES = [
+        ('all', 'Default (all students)'),
+        ('criteria', 'Students matching criteria'),
+    ]
+
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    support = models.ForeignKey(
+        Accommodation,
+        on_delete=models.CASCADE,
+        related_name='default_rules',
+    )
+    options = models.ManyToManyField(
+        AccommodationOption,
+        blank=True,
+        related_name='default_rules',
+        help_text="Options applied to matching students. Leave empty to lock the "
+                  "support as a simple selected checkbox.",
+    )
+    scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default='criteria')
+    priority = models.IntegerField(
+        default=100,
+        db_index=True,
+        help_text="Evaluated per support in ascending order; the first matching criteria "
+                  "rule wins. A 'Default (all students)' rule is used when none match.",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['priority', '-updated_at']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def criteria_summary(self):
+        criteria = list(self.criteria.all())
+        if not criteria:
+            return "All students" if self.scope == 'all' else "No conditions"
+        parts = []
+        for idx, c in enumerate(criteria):
+            prefix = f" {c.logic_operator} " if idx > 0 else ""
+            parts.append(f"{prefix}{c}")
+        return "".join(parts)
+
+
+class SupportDefaultRuleCriteria(models.Model):
+    """One condition (demographic or assessment result) belonging to a default rule."""
+    TYPE_CHOICES = [
+        ('demographic', 'Demographic'),
+        ('result', 'Assessment Result'),
+        ('schedule', 'Schedule / Class'),
+    ]
+    LOGIC_CHOICES = [
+        ('AND', 'AND'),
+        ('OR', 'OR'),
+    ]
+    RESULT_FIELD_CHOICES = [
+        ('pl', 'Performance Level'),
+        ('ss', 'Scale Score'),
+    ]
+    RESULT_OPERATOR_CHOICES = [
+        ('in', 'In List'),
+        ('not_in', 'Not In List'),
+        ('is', 'Is'),
+        ('is_not', 'Is Not'),
+        ('between', 'Between (min-max)'),
+        ('gte', 'Greater or Equal'),
+        ('lte', 'Less or Equal'),
+    ]
+
+    rule = models.ForeignKey(SupportDefaultRule, on_delete=models.CASCADE, related_name='criteria')
+    logic_operator = models.CharField(max_length=3, choices=LOGIC_CHOICES, default='AND')
+    criterion_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='demographic')
+    order = models.IntegerField(default=0)
+
+    # Demographic condition
+    field_name = models.CharField(max_length=50, blank=True, choices=AssessmentCriteria.FIELD_CHOICES)
+    operator = models.CharField(max_length=20, blank=True, choices=AssessmentCriteria.OPERATOR_CHOICES)
+    value = models.CharField(max_length=255, blank=True)
+
+    # Assessment-result condition (matches Result joined to Test)
+    test_name = models.CharField(max_length=255, blank=True, help_text="e.g. 'ELPAC'")
+    test_subject = models.CharField(max_length=255, blank=True, help_text="e.g. 'summative'")
+    test_window = models.CharField(max_length=255, blank=True)
+    school_year = models.CharField(max_length=20, blank=True, help_text="e.g. '2025-2026'")
+    result_field = models.CharField(max_length=10, blank=True, choices=RESULT_FIELD_CHOICES, default='pl')
+    result_operator = models.CharField(max_length=20, blank=True, choices=RESULT_OPERATOR_CHOICES, default='in')
+    result_value = models.CharField(max_length=255, blank=True, help_text="e.g. '1,2' or '300-350'")
+
+    # Schedule / class condition (school scope, then teacher, then period)
+    school_state_id = models.CharField(max_length=50, blank=True, help_text="School state id scope")
+    staff_name = models.CharField(max_length=255, blank=True, help_text="Teacher/staff name scope")
+    period = models.CharField(max_length=20, blank=True, help_text="Class period scope")
+
+    class Meta:
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        if self.criterion_type == 'result':
+            return (
+                f"{self.test_name or 'Result'} {self.test_subject} "
+                f"{self.school_year} {self.get_result_field_display()} "
+                f"{self.get_result_operator_display()} '{self.result_value}'"
+            )
+        if self.criterion_type == 'schedule':
+            parts = []
+            if self.school_state_id:
+                parts.append(f"School {self.school_state_id}")
+            if self.staff_name:
+                parts.append(self.staff_name)
+            if self.period:
+                parts.append(f"Period {self.period}")
+            return " / ".join(parts) or "Schedule"
+        prefix = f"{self.logic_operator} " if self.order > 0 else ""
+        return f"{prefix}{self.get_field_name_display()} {self.get_operator_display()} '{self.value}'"
 
 
 class AccommodationResource(models.Model):
@@ -408,18 +590,34 @@ class AccommodationResource(models.Model):
         label = self.label or self.url
         return f"{label} ({self.get_kind_display()})"
 
-    def get_embed_url(self):
-        """Return an embeddable URL for youtube; other types embed as-is when possible."""
-        if self.kind == 'youtube':
-            import re
-            patterns = [
-                r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&\s]+)',
-                r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^\?\s]+)',
-                r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^\?\s]+)',
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, self.url)
-                if match:
-                    return f"https://www.youtube.com/embed/{match.group(1)}"
+    def _youtube_embed_url(self):
+        import re
+        url = (self.url or '').strip()
+        if not url:
             return None
-        return self.url
+        patterns = [
+            r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([^&\s]+)',
+            r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([^\?\s]+)',
+            r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([^\?\s]+)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return f"https://www.youtube.com/embed/{match.group(1)}"
+        return None
+
+    def get_embed_url(self):
+        """
+        Return a URL safe to load in an iframe, or None.
+
+        Most external sites (including CAASPP) send X-Frame-Options and cannot
+        be embedded; those open in a new browser tab instead.
+        """
+        if self.kind in ('youtube', 'video'):
+            return self._youtube_embed_url()
+        if self.kind == 'pdf':
+            return (self.url or '').strip() or None
+        return None
+
+    def opens_in_new_tab(self):
+        return self.get_embed_url() is None

@@ -5,8 +5,10 @@ The ``desi_seis`` table is populated outside of Django and stores, per student
 (``ssid``) and per test program (``test_group``: caaspp / elpac), the set of
 assessment settings already configured in the SEIS system. Each row carries:
 
-* ``assessments``: JSON array of DESI assessment names the settings apply to
-  (``"No_Test"`` placeholders and empty arrays mean "no specific DESI test").
+* ``assessments``: JSON array naming the DESI assessments the student is
+  assigned to (the tests the settings apply to). ``"No_Test"`` placeholders
+  and empty arrays mean the row names no specific test and therefore carries
+  no per-test settings.
 * ``settings``: JSON object mapping a setting label to an option code (or
   ``None`` when the setting is not enabled).
 
@@ -34,10 +36,12 @@ def selected_seis_display_assessment_ids():
     """
     Return the set of Assessment ids the admin selected for SEIS display.
 
-    ``None`` means no explicit selection has been saved yet - the default is to
-    show SEIS settings wherever the source data references an assessment.  An
-    empty set means the admin deliberately selected no assessments (SEIS
-    settings are hidden).  Returns ``None`` if the settings table is not
+    Legacy hook for the DESI admin "SEIS Display Settings" selection. The
+    ``desi_seis`` source table is now authoritative for the workspace, so this
+    no longer gates SEIS data; it is kept for the admin dashboard.
+
+    ``None`` means no settings row exists yet; otherwise the set of selected
+    ids (possibly empty). Returns ``None`` if the settings table is not
     available (e.g. tests / early migrations).
     """
     try:
@@ -81,7 +85,11 @@ def _tag_for(row):
 
 
 def _row_assessment_names(row):
-    """Lower-cased DESI assessment names this SEIS row applies to (empty = all)."""
+    """Lower-cased DESI assessment names this SEIS row applies to.
+
+    An empty result means the row names no specific test (``No_Test`` or an
+    empty list). Such a row carries no per-test SEIS settings.
+    """
     names = set()
     for name in row.get('assessments') or []:
         clean = str(name).strip().lower()
@@ -90,19 +98,85 @@ def _row_assessment_names(row):
     return names
 
 
+def _assigned_names_from_rows(rows):
+    """Union of the specific assessment names named across ``rows``."""
+    names = set()
+    for row in rows:
+        names |= _row_assessment_names(row)
+    return names
+
+
+def seis_assigned_assessments(ssid, assessments):
+    """
+    Assessment objects the SEIS source assigns to a student.
+
+    The ``assessments`` JSON on each ``desi_seis`` row is the authoritative
+    list of tests the student is taking. This matches every named test to an
+    existing ``Assessment`` by name (case-insensitively), across all of the
+    student's rows, **including inactive assessments**. ``No_Test``/empty
+    entries are ignored.
+
+    Returns the matching ``Assessment`` objects in the incoming ``assessments``
+    order. An empty list means the student has no SEIS test assignment.
+    """
+    names = _assigned_names_from_rows(fetch_seis_rows(ssid))
+    if not names:
+        return []
+    return [
+        ast for ast in assessments
+        if (ast.name or '').strip().lower() in names
+    ]
+
+
+def seis_assigned_assessments_by_ssid(ssids, assessments):
+    """
+    Bulk variant of :func:`seis_assigned_assessments` for the student list.
+
+    Returns ``{ssid: [Assessment, ...]}`` for every ssid that has a SEIS test
+    assignment, using a single query for the whole page. A missing ``desi_seis``
+    table yields an empty mapping.
+    """
+    unique = [s for s in dict.fromkeys(ssids or []) if s]
+    if not unique or not assessments:
+        return {}
+
+    names_by_ssid = {}
+    try:
+        with transaction.atomic():
+            for row in DesiSeis.objects.filter(ssid__in=unique):
+                row_names = _row_assessment_names(
+                    {'assessments': list(row.assessments or [])}
+                )
+                if row_names:
+                    names_by_ssid.setdefault(row.ssid, set()).update(row_names)
+    except (db_utils.ProgrammingError, db_utils.OperationalError, db_utils.DatabaseError):
+        return {}
+
+    result = {}
+    for ssid, names in names_by_ssid.items():
+        matched = [
+            ast for ast in assessments
+            if (ast.name or '').strip().lower() in names
+        ]
+        if matched:
+            result[ssid] = matched
+    return result
+
+
 def build_seis_option_map(ssid, assessments):
     """
     Map SEIS settings onto the DESI configuration for one student.
 
     ``assessments`` is the list of ``Assessment`` objects that will actually be
-    rendered on the workspace (active + eligible).  Returns a dict keyed by
-    ``(assessment_id, accommodation_id)`` whose values are the
+    rendered on the workspace (the SEIS-assigned tests).  Returns a dict keyed
+    by ``(assessment_id, accommodation_id)`` whose values are the
     ``AccommodationOption`` the SEIS system has selected for that
     assessment/support, and a set of locked accommodation ids.
 
     Matching is by option code within the program tag.  An option only locks a
-    given assessment when that assessment both (a) appears in the SEIS row's
-    ``assessments`` list (or the list is empty) and (b) supports the option.
+    given assessment when that assessment both (a) is named in the SEIS row's
+    ``assessments`` list and (b) supports the option. Rows that name no
+    specific test (``No_Test``/empty) carry no per-test settings.
     """
     rows = fetch_seis_rows(ssid)
     if not rows or not assessments:
@@ -118,9 +192,13 @@ def build_seis_option_map(ssid, assessments):
         if not tag:
             continue
         row_names = _row_assessment_names(row)
+        if not row_names:
+            # "No_Test"/empty rows name no specific test, so they carry no
+            # per-test settings (they must not apply to every assessment).
+            continue
         candidate_asts = [
             ast for ast in assessments
-            if (not row_names or ast.name.strip().lower() in row_names)
+            if (ast.name or '').strip().lower() in row_names
         ]
         candidate_ids = {ast.id for ast in candidate_asts}
         if not candidate_ids:
@@ -148,42 +226,28 @@ def build_seis_option_map(ssid, assessments):
 
 
 def _filtered_seis_option_map(student):
-    """SEIS options for a student after display-settings and grade-only gating."""
+    """SEIS options for a student, driven by the SEIS source table only.
+
+    The SEIS source is authoritative: a test shows SEIS settings only when it
+    is assigned to the student in the ``desi_seis`` table. The admin SEIS
+    display selection and demographic criteria no longer gate this.
+    """
     ssid = getattr(student, 'ssid', None)
     if not ssid:
         return {}
 
     from .models import Assessment
-    from .views import check_criteria
-
-    selected_ids = selected_seis_display_assessment_ids()
-    if selected_ids is not None and not selected_ids:
-        return {}
 
     all_assessments = list(Assessment.objects.prefetch_related('criteria'))
     if not all_assessments:
         return {}
 
-    assessment_by_id = {ast.id: ast for ast in all_assessments}
+    assigned = seis_assigned_assessments(ssid, all_assessments)
+    if not assigned:
+        return {}
 
-    def grade_eligible(ast):
-        grade_criteria = [c for c in ast.criteria.all() if c.field_name == 'grade']
-        if not grade_criteria:
-            return True
-        ok, _failed = check_criteria(grade_criteria, student)
-        return ok
-
-    raw_map, _locked = build_seis_option_map(ssid, all_assessments)
-    filtered = {}
-    for key, opt in raw_map.items():
-        ast_id, _acc_id = key
-        if selected_ids is not None and ast_id not in selected_ids:
-            continue
-        ast = assessment_by_id.get(ast_id)
-        if not ast or not grade_eligible(ast):
-            continue
-        filtered[key] = opt
-    return filtered
+    raw_map, _locked = build_seis_option_map(ssid, assigned)
+    return raw_map
 
 
 def seis_support_detail_for_student(student):

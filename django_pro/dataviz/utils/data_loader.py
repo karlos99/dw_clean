@@ -961,13 +961,21 @@ def _norm_col_key(c: str) -> str:
 
 
 def _row_col_keys_norm(row: dict) -> set:
-    return {_norm_col_key(k) for k in row}
+    keys = set()
+    for k in row:
+        norm = _norm_col_key(k)
+        keys.add(norm)
+        if '.' in norm:
+            keys.add(norm.split('.')[-1])
+    return keys
 
 
 def _get_row_val(row: dict, col: str):
     norm = _norm_col_key(col)
+    norm_bare = norm.split('.')[-1]
     for k, v in row.items():
-        if _norm_col_key(k) == norm:
+        k_norm = _norm_col_key(k)
+        if k_norm == norm or ('.' in k_norm and k_norm.split('.')[-1] == norm_bare):
             return v
     return None
 

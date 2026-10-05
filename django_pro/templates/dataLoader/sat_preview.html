@@ -23,6 +23,9 @@
         </div>
     </div>
 
+    <form method="post" id="preview-form">
+    {% csrf_token %}
+
     <!-- Diagnostics -->
     {% if diagnostics %}
     <div class="bg-slate-50 border border-slate-200 rounded-md p-3 mb-6">
@@ -119,8 +122,6 @@
                 <span class="text-sm font-normal text-slate-500 ml-2">Enter SSIDs manually for students that could not be auto-matched</span>
             </h2>
         </div>
-        <form method="post" id="preview-form">
-            {% csrf_token %}
             <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-slate-200">
                     <thead class="bg-slate-50">
@@ -167,7 +168,6 @@
                     </tbody>
                 </table>
             </div>
-        </form>
     </div>
     {% else %}
     <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-6 mb-8">
@@ -207,6 +207,7 @@
             Confirm &amp; Start Import
         </button>
     </div>
+    </form>
 </div>
 
 <script>

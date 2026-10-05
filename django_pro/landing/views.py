@@ -30,28 +30,41 @@ def index(request):
             slots = list(home_dashboard.chart_slots.select_related('chart').order_by('position'))
 
             # Pre-render each chart via the shared (cached) pipeline so the home
-            # page renders charts exactly like the dataviz pages do. The user's
-            # saved school (if any) narrows the visuals to that school.
+            # page renders charts exactly like the dataviz pages do. Parallelized across
+            # worker threads so homepage latency is max(single_chart) rather than sum.
+            from clickhouse_utils.thread_pool import get_io_pool
             from dataviz.views.api.chart_api import _render_saved_chart
+
             for slot in slots:
                 slot.rendered_html = ''
                 slot.render_error = None
-                if slot.element_type != 'chart' or not slot.chart_id:
-                    continue
+
+            def _render_slot(s):
+                if s.element_type != 'chart' or not s.chart_id:
+                    return
                 try:
                     res = _render_saved_chart(
-                        slot.chart_id, {},
+                        s.chart_id, {},
                         drill_source='dashboard',
-                        drill_source_id=slot.dashboard_id,
+                        drill_source_id=s.dashboard_id,
                         drill_source_name='My Charts',
                         is_embed=True,
                         request=request,
                         school_id=active_school_id,
                     )
-                    slot.rendered_html = res.get('html', '')
-                    slot.render_error = res.get('error')
+                    s.rendered_html = res.get('html', '')
+                    s.render_error = res.get('error')
                 except Exception as exc:
-                    slot.render_error = str(exc)
+                    s.render_error = str(exc)
+
+            render_targets = [s for s in slots if s.element_type == 'chart' and s.chart_id]
+            if len(render_targets) > 1:
+                pool = get_io_pool()
+                futures = [pool.submit(_render_slot, s) for s in render_targets]
+                for f in futures:
+                    f.result()
+            elif len(render_targets) == 1:
+                _render_slot(render_targets[0])
             home_dashboard_json = json.dumps(home_dashboard.to_dict())
             home_slots_json = json.dumps([s.to_dict() for s in slots])
 
@@ -122,6 +135,7 @@ def project_settings(request):
     import json as _json
     from landing.models import ProjectConfig
     from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
+    from dataexploration.catalog_columns import merge_course_program_columns
 
     cfg = ProjectConfig.get()
 
@@ -174,6 +188,7 @@ def project_settings(request):
             cfg.home_max_charts = max(0, int(request.POST.get('home_max_charts') or 0))
         except (TypeError, ValueError):
             cfg.home_max_charts = 0
+        cfg.enable_course_program_columns = request.POST.get('enable_course_program_columns') == 'on'
 
         cfg.updated_by = request.user
         cfg.save()
@@ -183,7 +198,8 @@ def project_settings(request):
 
     active_default = cfg.default_columns or DEFAULT_COLUMNS
     active_enabled = cfg.enabled_columns  # None = all enabled
-    all_col_keys   = list(COLUMN_DEFINITIONS.keys())
+    settings_defs, settings_cats = merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
+    all_col_keys = list(settings_defs.keys())
 
     from dataviz.utils.compiler import get_db_tables
     db_tables = get_db_tables()
@@ -203,13 +219,14 @@ def project_settings(request):
     context = {
         'cfg': cfg,
         'school_years': school_years,
-        'column_definitions': COLUMN_DEFINITIONS,
-        'column_categories': COLUMN_CATEGORIES,
+        'column_definitions': settings_defs,
+        'column_categories': settings_cats,
+        'enable_course_program_columns': cfg.enable_course_program_columns,
         # JSON-safe strings for use in <script> blocks
         'active_default_columns_json': _json.dumps(active_default),
         'active_enabled_columns_json': _json.dumps(active_enabled),
         'all_column_keys_json':        _json.dumps(all_col_keys),
-        'column_labels_json':          _json.dumps(COLUMN_DEFINITIONS),
+        'column_labels_json':          _json.dumps(settings_defs),
         'dataset_tables':              TABLE_CHOICES,
         'enabled_dataset_tables':      cfg.enabled_dataset_tables or [],
         'enable_home_charts':          cfg.enable_home_charts,

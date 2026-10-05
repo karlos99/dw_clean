@@ -33,7 +33,8 @@
                         {% if rule.description %}<p class="text-xs text-slate-500">{{ rule.description }}</p>{% endif %}
                     </td>
                     <td class="px-6 py-4 text-xs text-slate-600">
-                        {{ rule.criteria_count }} condition{{ rule.criteria_count|pluralize }}
+                        <div class="font-medium text-slate-800">{{ rule.criteria_summary }}</div>
+                        <div class="text-[11px] text-slate-400 mt-0.5">{{ rule.criteria_count }} condition{{ rule.criteria_count|pluralize }}</div>
                     </td>
                     <td class="px-6 py-4 text-xs text-slate-600">
                         {{ rule.support_count }} support{{ rule.support_count|pluralize }}

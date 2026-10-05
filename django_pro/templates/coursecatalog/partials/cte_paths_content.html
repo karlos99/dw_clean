@@ -1,0 +1,49 @@
+<div class="mb-6 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-700">
+    <p class="font-semibold text-slate-900">CTE paths (read-only)</p>
+    <p class="text-[11px] mt-1">Browse the district CTE pathways, grouped into Introduction → Concentration → Capstone with a progression-year timeline.</p>
+</div>
+
+<div class="grid grid-cols-1 xl:grid-cols-[22rem_1fr] gap-6 items-start">
+    <section class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+            <h2 class="text-sm font-bold text-slate-800">All CTE paths</h2>
+            <span class="text-[10px] uppercase tracking-wider text-slate-400">{{ cte_paths_list|length }}</span>
+        </div>
+        <ul class="divide-y divide-slate-100 max-h-[36rem] overflow-y-auto">
+            {% for cp in cte_paths_list %}
+            <li class="px-4 py-2.5 hover:bg-slate-50 {% if selected_cte_cluster == cp.career_cluster and selected_cte_pathway == cp.cte_pathway %}bg-blue-50{% endif %}">
+                <a href="?tab=paths&amp;cte_cluster={{ cp.career_cluster|urlencode }}&amp;cte_pathway={{ cp.cte_pathway|urlencode }}" class="block">
+                    <span class="text-[11px] font-medium text-slate-500">{{ cp.career_cluster }}</span>
+                    <span class="text-slate-300 mx-0.5">→</span>
+                    <span class="text-xs font-semibold text-slate-900">{{ cp.cte_pathway }}</span>
+                    <span class="text-[10px] text-slate-400 ml-1">· {{ cp.course_count }} courses</span>
+                </a>
+            </li>
+            {% empty %}
+            <li class="px-4 py-8 text-sm text-slate-500 text-center">No CTE paths available.</li>
+            {% endfor %}
+        </ul>
+    </section>
+
+    <div>
+        {% if selected_cte %}
+        <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between mb-1">
+                <h3 class="text-sm font-bold text-slate-800">{{ selected_cte.cte_pathway }}</h3>
+                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] uppercase tracking-wider font-semibold text-slate-500">Read-only</span>
+            </div>
+            <p class="flex flex-wrap items-center gap-1 text-[11px] mb-4">
+                <span class="rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-700">{{ selected_cte.career_cluster }}</span>
+                <span class="text-slate-300">→</span>
+                <span class="font-semibold text-slate-900">{{ selected_cte.cte_pathway }}</span>
+                <span class="text-slate-400">· {{ selected_cte.course_count }} courses</span>
+            </p>
+            {% include "coursecatalog/partials/cte_pathway_columns.html" with pathway=selected_cte %}
+        </section>
+        {% else %}
+        <section class="rounded-xl border border-dashed border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
+            Select a CTE path to view its courses.
+        </section>
+        {% endif %}
+    </div>
+</div>

@@ -1,0 +1,96 @@
+{# Student CTE pathways from coursecatalog_cte_details. Expects `student_cte_details`. #}
+{% if student_cte_details.current %}
+<div class="space-y-5">
+    {% for pathway in student_cte_details.current %}
+    <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div class="px-4 py-3 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-1 text-[11px]">
+                {% if pathway.industry_sector %}<span class="rounded bg-slate-200/70 px-1.5 py-0.5 font-semibold text-slate-700">{{ pathway.industry_sector }}</span><span class="text-slate-300">→</span>{% endif %}
+                <span class="font-semibold text-slate-900">{{ pathway.cte_pathway }}</span>
+                <span class="text-slate-400">· {{ pathway.course_count }} course(s) · {{ pathway.total_credits|floatformat:"-2" }} credits</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+                <span class="text-[10px] font-medium text-slate-500">{{ pathway.school_year }}</span>
+                <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold
+                    {% if pathway.is_completer %}bg-emerald-100 text-emerald-800
+                    {% elif pathway.pathway_status == 'In Progress' %}bg-sky-100 text-sky-800
+                    {% elif pathway.pathway_status %}bg-amber-100 text-amber-900
+                    {% else %}bg-slate-100 text-slate-600{% endif %}">{{ pathway.pathway_status|default:"—" }}</span>
+            </div>
+        </div>
+
+        <div class="p-4">
+            {% if pathway.columns %}
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {% for col in pathway.columns %}
+                <div class="rounded-lg border border-slate-200 overflow-hidden">
+                    <div class="px-3 py-2
+                        {% if col.year == 1 %}bg-emerald-50 text-emerald-900
+                        {% elif col.year == 2 %}bg-sky-50 text-sky-900
+                        {% elif col.year == 3 %}bg-violet-50 text-violet-900
+                        {% else %}bg-slate-50 text-slate-700{% endif %}">
+                        <span class="text-xs font-bold">{{ col.level }}</span>
+                    </div>
+                    <ul class="divide-y divide-slate-100">
+                        {% for course in col.courses %}
+                        <li class="px-3 py-2">
+                            <p class="text-xs font-medium text-slate-800">{{ course.name|default:"—" }}</p>
+                            <div class="mt-1 flex flex-wrap items-center gap-1.5">
+                                <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">S1: <span class="font-bold text-slate-800">{{ course.s1|default:"—" }}</span></span>
+                                <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">S2: <span class="font-bold text-slate-800">{{ course.s2|default:"—" }}</span></span>
+                                <span class="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-800">{{ course.credits|floatformat:"-2" }} cr</span>
+                            </div>
+                            {% if course.status %}<p class="mt-1 text-[10px] text-slate-400">{{ course.status }}</p>{% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-xs text-slate-500">No course history recorded.</p>
+            {% endif %}
+
+            {% if pathway.requirements %}
+            <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {% for req in pathway.requirements %}
+                <div class="rounded-lg border border-slate-200 p-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-slate-800">{{ req.label }}</span>
+                        <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold
+                            {% if req.status == 'Met' %}bg-emerald-100 text-emerald-800
+                            {% elif req.status == 'Not Met' %}bg-rose-100 text-rose-800
+                            {% else %}bg-slate-100 text-slate-600{% endif %}">{{ req.status|default:"—" }}</span>
+                    </div>
+                    {% if req.total_credits is not None %}<p class="mt-1 text-[10px] text-slate-500">Credits earned: <span class="font-semibold text-slate-700">{{ req.total_credits|floatformat:"-2" }}</span></p>{% endif %}
+                    {% if req.justification %}<p class="mt-1 text-[10px] text-slate-500">{{ req.justification }}</p>{% endif %}
+                    {% if req.requirement %}<p class="mt-1 text-[10px] text-slate-400">Requirement: {{ req.requirement }}</p>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-sm text-slate-500">No current-year CTE pathway on record.</p>
+{% endif %}
+
+{% if student_cte_details.past_completers %}
+<div class="mt-6">
+    <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Past CTE Completers</h4>
+    <ul class="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white overflow-hidden">
+        {% for p in student_cte_details.past_completers %}
+        <li class="px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-1 text-[11px]">
+                {% if p.industry_sector %}<span class="rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-600">{{ p.industry_sector }}</span><span class="text-slate-300">→</span>{% endif %}
+                <span class="font-semibold text-slate-900">{{ p.cte_pathway }}</span>
+                <span class="text-slate-400">· {{ p.school_year }}</span>
+            </div>
+            <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">{{ p.pathway_status }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}

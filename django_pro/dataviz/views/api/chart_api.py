@@ -21,7 +21,7 @@ from clickhouse_utils.timing import timed_fn
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '14'
+_CHART_PIPELINE_VERSION = '16'
 _timing_log = logging.getLogger('analytics.timing')
 
 # One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
@@ -35,99 +35,658 @@ _CLICKHOUSE_AGGREGATE_CHARTS = frozenset({
 })
 
 
-def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings):
-    """Return compact chart rows for simple visual datasets.
+# Chart aggregations ClickHouse can compute over the complete filtered
+# population. ``build_option`` applies ``count`` when a row count is requested.
+_AGGREGATION_PUSH_DOWN = frozenset({
+    'count', 'sum', 'avg', 'min', 'max', 'median',
+    'count_unique', 'count_occurrence',
+})
+
+
+def _resolve_dataset_col(value, ds, index):
+    """Map a chart-config column reference to its ``table.column`` dataset name."""
+    if not value:
+        return None
+    if value in (ds.columns or []):
+        return value
+    return index.get(value)
+
+
+def _measure_display_label(y_col, agg, column_defs=None, col_mappings=None) -> str:
+    """Reproduce ``build_option``'s value label for the original measure.
+
+    The pushdown rewrites the config so the pre-computed measure is read from a
+    synthetic column and is not re-aggregated. The display label has to be
+    resolved here, from the original config, or ``build_option`` sees only the
+    placeholder column name and renders that as the series name.
+    """
+    if not y_col:
+        return 'Count' if str(agg or 'count').lower() == 'count' else ''
+    key = y_col
+    if col_mappings and key not in (column_defs or {}):
+        key = col_mappings.get(key, key)
+    return str((column_defs or {}).get(key, key)).replace('\n', ' \u2014 ').replace('\r', '')
+
+
+def _clickhouse_aggregate_dataset(ds, cfg, filters, column_mappings, *,
+                                  allow_limit=False, column_defs=None):
+    """Return compact chart rows for visual datasets ClickHouse can aggregate.
 
     Chart builders historically received every matching row and aggregated it
-    in Polars. For the common dimension/count or dimension/value charts, let
+    in Polars. For dimension/measure charts — including grouped and stacked
+    bars with a group column and composite multi-column category axes — let
     ClickHouse perform the aggregation and send only grouped rows to Django.
-    Complex charts continue through the existing raw-row path so their exact
-    semantics and drill metadata remain unchanged.
+
+    The returned rows are then rendered by the same ``build_option`` path as
+    the raw-row case, so chart semantics, ordering, formatting and colour
+    handling stay identical. Only the population scan moves into SQL.
+
+    Chart families that still need per-row data (progress growth, date series,
+    scatter/bubble, box/histogram, assessment compare, summary tables, dynamic
+    calculations) keep the existing raw-row path until each has its own
+    equivalence-tested pushdown.
     """
     chart_type = cfg.get('chart_type', 'bar')
     if chart_type not in _CLICKHOUSE_AGGREGATE_CHARTS:
-        return None
-    if cfg.get('group_col'):
-        return None
-    # Dataset status handling has additional semantics (including the
-    # interactive status sentinel); keep it on the established compiler path
-    # until those predicates are represented directly in this aggregate SQL.
-    if any(str(k).split('.')[-1] == 'status' for k in (filters or {})):
-        return None
-    if any(str(f.get('column', '')).split('.')[-1] == 'status' for f in (ds.filters or [])):
         return None
 
     x_cols = cfg.get('x_cols') or []
     if not isinstance(x_cols, list):
         x_cols = []
-    x_col = cfg.get('x_col') or (x_cols[0] if len(x_cols) == 1 else '')
-    if not x_col or (x_cols and len(x_cols) != 1):
+    x_cols = [c for c in x_cols if isinstance(c, str) and c.strip()]
+
+    x_col = cfg.get('x_col') or ''
+    if len(x_cols) > 1:
+        # Composite category axis: every x column participates in the grouping.
+        group_cols = list(x_cols)
+    elif len(x_cols) == 1:
+        group_cols = [x_cols[0]]
+    else:
+        group_cols = [x_col] if x_col else []
+    if not group_cols or any(not c for c in group_cols):
         return None
+
+    group_col = cfg.get('group_col') or ''
     series_col = cfg.get('stack_col') or cfg.get('series_col') or ''
+    if series_col and series_col in group_cols:
+        series_col = ''
+
+    # Multiple value columns build one series each from separate aggregations;
+    # that shape needs its own dedicated pushdown, not this single-measure one.
+    y_cols = cfg.get('y_cols') or []
+    if isinstance(y_cols, list) and len([c for c in y_cols if c]) > 1:
+        return None
+
     y_col = cfg.get('y_col') or None
-    aggregation = cfg.get('agg', 'count')
-    if aggregation not in {'count', 'sum', 'avg', 'min', 'max', 'median'}:
+    aggregation = str(cfg.get('agg', 'count') or 'count').lower()
+    if aggregation not in _AGGREGATION_PUSH_DOWN:
         return None
     # Same rule as the Python chart builder: stacking by the value column
     # (e.g. PL stacked + PL avg) must count rows, not average the labels.
     if series_col and y_col and series_col == y_col and aggregation != 'count':
         aggregation = 'count'
         y_col = None
+    # ``count_occurrence`` is a non-null row count of the value column; without
+    # a value column it is indistinguishable from a plain row count.
+    if aggregation == 'count_occurrence' and not y_col:
+        aggregation = 'count'
 
     from dataviz.utils.compiler import (
         build_dataset_col_index, compile_aggregated_dataset_to_sql,
-        execute_compiled_query, SQLCompilationError, resolve_dataset_filters,
+        execute_compiled_query, SQLCompilationError,
     )
+    from dataviz.utils.status_filter import prepare_interactive_filters
+
     index = build_dataset_col_index(ds)
 
-    def resolve(value):
-        if not value:
-            return None
-        if value in (ds.columns or []):
-            return value
-        return index.get(value)
-
-    x_full = resolve(x_col)
-    series_full = resolve(series_col) if series_col else None
-    y_full = resolve(y_col) if y_col else None
-    if not x_full or (series_col and not series_full) or (y_col and not y_full):
+    x_full_list = [_resolve_dataset_col(c, ds, index) for c in group_cols]
+    group_full = _resolve_dataset_col(group_col, ds, index)
+    series_full = _resolve_dataset_col(series_col, ds, index) if series_col else None
+    y_full = _resolve_dataset_col(y_col, ds, index) if y_col else None
+    if any(not c for c in x_full_list):
+        return None
+    if group_col and not group_full:
+        return None
+    if series_col and not series_full:
+        return None
+    if y_col and not y_full:
         return None
 
     active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
-    resolved_interactive = resolve_dataset_filters(filters or {}, ds, active_tables)
+    resolved_interactive, status_val = prepare_interactive_filters(filters or {}, ds, active_tables)
+    # Saved chart rendering is an aggregate_full operation: a row limit would
+    # change the values represented by the chart.  Limits are only valid for
+    # explicitly bounded builder previews.
+    limit_val = _parse_chart_row_limit(cfg) if allow_limit else None
+
+    # ``build_option`` drops null/blank group values before aggregating, so the
+    # pushdown must drop the same rows. Only safe when the measure cannot itself
+    # be a group column, otherwise the drop would remove valid measure values.
+    blank_measure = {y_full, series_full, group_full} - {None}
+    filter_blank_group_cols = not (blank_measure & set(x_full_list))
+
+    # Extra dimensions beyond the primary x: the remaining composite-x columns,
+    # the bar group column, and the series column. Each becomes its own output
+    # column so ``build_option`` can rebuild the exact same categories.
+    extra_group_cols = []
+    for col_full in x_full_list[1:] + [group_full, series_full]:
+        if col_full and col_full not in x_full_list[:1] and col_full not in extra_group_cols:
+            extra_group_cols.append(col_full)
+
     try:
         sql, params = compile_aggregated_dataset_to_sql(
-            ds, [x_full], y_full, aggregation, series_col=series_full,
-            user=None, limit=None, interactive_filters=resolved_interactive,
+            ds, x_full_list[:1], y_full, aggregation, series_col=series_full,
+            user=None, limit=limit_val, interactive_filters=resolved_interactive,
             one_row_per_stu_annual_key=bool(cfg.get('one_row_per_stu_annual_key')),
             date_bucket=(cfg.get('x_date_bucket') or '').strip().lower() or None,
+            status_filter=status_val,
+            extra_group_cols=extra_group_cols,
+            filter_blank_group_cols=filter_blank_group_cols,
+            # The raw-row chart path compiles with SELECT DISTINCT over the
+            # dataset columns (Dataset.distinct defaults to True). Aggregating
+            # over anything wider would count join fan-out rows the chart never
+            # saw, so the same projection has to feed the aggregation — unless
+            # that projection already carries a per-row unique key, in which
+            # case the DISTINCT cannot collapse anything and aggregating the
+            # base tables directly selects the same rows for far less work.
+            distinct_over_cols=(
+                None if _projection_has_unique_key(ds)
+                else (list(ds.columns or []) if getattr(ds, 'distinct', True) else None)
+            ),
         )
     except SQLCompilationError:
         return None
-    result = execute_compiled_query(sql, params)
+    if _sql_needs_postgres(sql):
+        # ClickHouse-only aggregates cannot run through the PostgreSQL route.
+        return None
+    try:
+        result = execute_compiled_query(sql, params)
+    except Exception:
+        # The compiled query may be refused by the ClickHouse translator or by
+        # the executor itself. The pushdown is an optimization, so any failure
+        # falls back to the raw-row path rather than failing the chart.
+        _timing_log.warning(
+            'op=chart_pushdown fallback=execution chart_type=%s', chart_type,
+            exc_info=True,
+        )
+        return None
     if result.get('error'):
         return None
 
     alias_for = dict(column_mappings or {})
-    x_alias = alias_for.get(x_full, x_col)
-    series_alias = alias_for.get(series_full, series_col) if series_full else ''
+
+    def _alias(full_name, fallback):
+        return alias_for.get(full_name, fallback)
+
+    x_aliases = [_alias(full, orig) for full, orig in zip(x_full_list, group_cols)]
+
+    # Map every projected SQL dimension back to the output key the chart config
+    # addresses. Only these keys (plus the measure) end up on the row: a
+    # ``table.column``-style key would be read by ``build_option`` as another
+    # column, which both widens the frame and duplicates the dimension.
+    key_by_sql_alias = {
+        full.replace('.', '_'): alias
+        for full, alias in zip(x_full_list, x_aliases)
+    }
+    if group_full:
+        key_by_sql_alias[group_full.replace('.', '_')] = _alias(group_full, group_col)
+    if series_full:
+        key_by_sql_alias[series_full.replace('.', '_')] = _alias(series_full, series_col)
+    series_alias = _alias(series_full, series_col) if series_full else ''
+
     compact_rows = []
     for row in result.get('rows', []):
-        compact = {alias_for.get(k, k): v for k, v in row.items()}
-        if x_alias not in compact:
-            compact[x_alias] = row.get(x_full.replace('.', '_'))
-        if series_full and series_alias not in compact:
-            compact[series_alias] = row.get(series_full.replace('.', '_'))
+        compact = {}
+        for sql_alias, value in row.items():
+            if sql_alias == '__dv_value':
+                compact['__dv_value'] = value
+            elif sql_alias in key_by_sql_alias:
+                compact[key_by_sql_alias[sql_alias]] = value
         compact_rows.append(compact)
 
+    # Sort the aggregate rows on their dimensions. The chart builder re-orders
+    # categories itself (alphabetically, by value, or manually), but tied
+    # categories fall back to the incoming row order — sorting here keeps that
+    # tie-break identical to the raw-row path, which sorts its own grouping.
+    if compact_rows:
+        _dim_keys = [k for k in compact_rows[0] if k != '__dv_value']
+        if _dim_keys:
+            compact_rows.sort(key=lambda row: tuple(str(row.get(k, '')) for k in _dim_keys))
+
     compact_cfg = dict(cfg)
-    compact_cfg['x_col'] = x_alias
-    compact_cfg['x_cols'] = [x_alias]
+    if len(x_aliases) > 1:
+        # Keep the composite axis in the config; ``build_option`` rebuilds the
+        # " \u00b7 "-joined dimension from these columns exactly as it does for raw
+        # rows. The joined value is never emitted by SQL.
+        compact_cfg['x_cols'] = x_aliases
+        compact_cfg['x_col'] = ''
+    else:
+        compact_cfg['x_col'] = x_aliases[0]
+        compact_cfg['x_cols'] = [x_aliases[0]]
+    # The measure has already been aggregated by ClickHouse, so the compact rows
+    # carry pre-computed values and must not be re-aggregated as a measure.
+    # ``__measure_label__`` carries the display name the original config would
+    # have produced, so the series and value axis keep their real label.
     compact_cfg['y_col'] = '__dv_value'
     compact_cfg['agg'] = 'sum'
+    compact_cfg['__measure_label__'] = _measure_display_label(
+        y_col, aggregation, column_defs, column_mappings,
+    )
+    if group_full:
+        compact_cfg['group_col'] = _alias(group_full, group_col)
     if series_full:
         compact_cfg['stack_col'] = series_alias
         compact_cfg['series_col'] = series_alias
+    return {'rows': compact_rows, 'columns': list(result.get('columns', [])),
+            'row_count': len(compact_rows)}, compact_cfg
+
+
+def _projection_has_unique_key(ds) -> bool:
+    """True when the dataset's own projection carries a per-row unique key.
+
+    The raw-row path fetches ``SELECT DISTINCT`` over ``ds.columns``. When that
+    projection includes a student identifier the deduplication cannot collapse
+    any rows, so a pushdown can aggregate the base tables directly and skip a
+    wide, expensive DISTINCT pass over every column.
+    """
+    columns = set(ds.columns or [])
+    if not columns:
+        return False
+    return any(
+        col in columns
+        for col in ('current_student.ssid', 'current_student.student_id',
+                    'current_student.stu_annual_key')
+    )
+
+
+_TABLE_AGG_PUSH_DOWN = frozenset({'count', 'sum', 'avg', 'min', 'max', 'median'})
+
+
+def _dataset_needs_postgres(ds) -> bool:
+    """Deprecated: prefer checking the compiled SQL, which is precise.
+
+    Kept for callers that only have the dataset; the pushdowns use
+    ``_sql_needs_postgres`` on the statement they are about to run.
+    """
+    from clickhouse_utils.executor import _sql_uses_pg_add_data_key
+
+    return _sql_uses_pg_add_data_key(' '.join(ds.columns or []))
+
+
+def _sql_needs_postgres(sql: str) -> bool:
+    """True when the executor would route *this statement* to PostgreSQL.
+
+    The pushdown emits ClickHouse-only aggregates, so a statement that
+    references a Postgres-only ``add_data`` key (or a table absent from the
+    ClickHouse mirror) must keep the raw-row path.
+    """
+    from clickhouse_utils.executor import (
+        _sql_requires_postgres, _sql_uses_pg_add_data_key,
+    )
+
+    return _sql_uses_pg_add_data_key(sql) or _sql_requires_postgres(sql)
+
+
+def _is_pivot_summary_chart(cfg: dict, fallback_type: str = '') -> bool:
+    """True for the cross-tab chart families the cell pushdown can serve.
+
+    ``chart_type`` normally lives on the chart model and is merged into the
+    config by ``_effective_chart_cfg``; callers that have not merged it yet can
+    pass the model value as *fallback_type*.
+    """
+    chart_type = cfg.get('chart_type') or fallback_type
+    return chart_type in ('summary_table', 'dynamic_summary_table')
+
+
+def _table_row_cols(cfg: dict, ds) -> list:
+    """Row dimensions the summary-table builder would use, in config order."""
+    if cfg.get('chart_type') == 'dynamic_summary_table':
+        cols = cfg.get('dyn_row_cols')
+        if cols is None:
+            cols = cfg.get('st_row_cols', [])
+    else:
+        cols = [cfg.get('st_row_col')] if cfg.get('st_row_col') else []
+    return [c for c in (cols if isinstance(cols, list) else []) if isinstance(c, str) and c.strip()]
+
+
+def _table_col_col(cfg: dict, ds) -> str:
+    """The single column dimension these pivot cells are computed against."""
+    if cfg.get('chart_type') == 'dynamic_summary_table':
+        if str(cfg.get('dyn_col_mode', 'pivot')) != 'pivot':
+            return ''
+        cols = cfg.get('dyn_col_cols')
+        if cols is None:
+            cols = cfg.get('st_col_cols', [])
+        cols = [c for c in (cols if isinstance(cols, list) else []) if isinstance(c, str) and c.strip()]
+        # Multi-column mode pivots each column independently; that needs one
+        # query per column and is not covered by this single-pivot pushdown.
+        return cols[0] if len(cols) == 1 else ''
+    if str(cfg.get('st_col_mode', 'values')) != 'values':
+        return ''
+    return cfg.get('st_col_col') or ''
+
+
+def _calc_threshold_sql(resolved_filters) -> str:
+    """ClickHouse predicate for a calculation's threshold filters.
+
+    Mirrors ``_dyn_filter_expr``: numeric comparisons cast the column to float so
+    non-numeric and null values compare as null and drop out, while equality
+    compares the stripped string so categorical columns work too.
+    """
+    _NUMERIC_OPS = {'lt': '<', 'lte': '<=', 'gt': '>', 'gte': '>='}
+    # ``logic: 'or'`` folds the filter into the running expression with OR;
+    # anything else (including the first filter) combines with AND. That is the
+    # same left-to-right fold ``_dynamic_summary_table_option`` performs.
+    combined = None
+    for f in resolved_filters or []:
+        if not isinstance(f, dict):
+            continue
+        op = f.get('op')
+        expr = f.get('__sql_col__')
+        if not expr:
+            return ''
+        predicate = None
+        if op in _NUMERIC_OPS:
+            try:
+                num = float(f.get('val'))
+            except (TypeError, ValueError):
+                return ''
+            predicate = f'({expr} {_NUMERIC_OPS[op]} {num})'
+        elif op in ('eq', 'neq'):
+            val = f.get('val')
+            if val is None or str(val).strip() == '':
+                continue
+            literal = "'" + str(val).strip().replace("'", "''") + "'"
+            stripped = f'trimBoth(toString({expr}))'
+            predicate = (f'({stripped} = {literal})' if op == 'eq'
+                         else f'({stripped} != {literal})')
+        elif op in ('in', 'nin'):
+            vals = f.get('val')
+            if isinstance(vals, str):
+                vals = [v for v in vals.split(',')]
+            if not isinstance(vals, (list, tuple, set)):
+                return ''
+            vals = [str(v).strip() for v in vals if str(v).strip()]
+            if not vals:
+                # Polars returns none-of / all for empty lists.
+                predicate = '0' if op == 'in' else '1'
+            else:
+                joined = ', '.join("'" + v.replace("'", "''") + "'" for v in vals)
+                stripped = f'trimBoth(toString({expr}))'
+                predicate = (f'({stripped} IN ({joined}))' if op == 'in'
+                             else f'({stripped} NOT IN ({joined}))')
+        if predicate is None:
+            continue
+        if combined is None:
+            combined = predicate
+        elif str(f.get('logic', 'and')).lower() == 'or':
+            combined = f'({combined} OR {predicate})'
+        else:
+            combined = f'({combined} AND {predicate})'
+    return combined or ''
+
+
+def _calc_measures(cfg, ds, index):
+    """SQL measure specs for a dynamic table's base calculation columns.
+
+    Returns ``(measures, row_cols, calc_ids)`` or ``None`` when any calculation
+    cannot be expressed as a single ClickHouse aggregate. Derived calculations
+    stay in the builder: they are arithmetic over these base columns.
+    """
+    row_cols = [c for c in (cfg.get('dyn_row_cols') or []) if isinstance(c, str) and c.strip()]
+    calcs = [c for c in (cfg.get('dyn_calculations') or []) if isinstance(c, dict)]
+    if not calcs:
+        return None
+
+    measures = []
+    calc_ids = []
+    for idx, calc in enumerate(calcs):
+        cid = str(calc.get('id') or f'c{idx}')
+        calc_ids.append(cid)
+        # Classify exactly as ``_dynamic_summary_table_option`` does: an explicit
+        # ``calc_type`` wins, and the op/reference heuristic only applies when it
+        # is absent. A base column can legitimately carry a stray ``op`` field.
+        ctype = calc.get('calc_type')
+        if ctype not in ('base', 'derived'):
+            ctype = ('derived'
+                     if calc.get('op') and (calc.get('ref_a') is not None
+                                            or calc.get('ref_b') is not None)
+                     else 'base')
+        if ctype != 'base':
+            continue
+        agg = str(calc.get('agg_func') or cfg.get('dyn_agg_func') or 'count').lower()
+        if agg not in _TABLE_AGG_PUSH_DOWN:
+            return None
+        value_col = str(calc.get('value_col') or '')
+        value_full = _resolve_dataset_col(value_col, ds, index) if value_col else None
+        if agg != 'count' and not value_full:
+            return None
+
+        resolved_filters = []
+        raw_filters = calc.get('filters')
+        if not isinstance(raw_filters, list):
+            raw_filters = [calc['filter']] if calc.get('filter') else []
+        for f in raw_filters:
+            if not isinstance(f, dict):
+                continue
+            fcol = _resolve_dataset_col(f.get('col'), ds, index)
+            if not fcol:
+                return None
+            ff = dict(f)
+            ff['__sql_col__'] = '"' + fcol.replace('.', '"."') + '"'
+            resolved_filters.append(ff)
+        measures.append({
+            'name': cid,
+            'aggregation': agg,
+            'y_col': value_full,
+            'filter_sql': _calc_threshold_sql(resolved_filters),
+        })
+
+    if not measures:
+        # Only derived columns: nothing to aggregate, nothing to save.
+        return None
+    return measures, row_cols, calc_ids
+
+
+def _clickhouse_aggregate_table_cells(ds, cfg, filters, column_mappings, *, column_defs=None):
+    """Return pre-aggregated pivot cells for a summary table or dynamic pivot.
+
+    The table builders cross-tabulate raw rows in Polars. This computes the
+    same cells in ClickHouse and hands the builder a compact frame it can read
+    directly, so the table is assembled from aggregates instead of the full
+    population.
+
+    Three shapes are supported: a ``values``-mode summary table (one measure per
+    row/column cell), a dynamic ``pivot`` (same, with multiple row dimensions),
+    and a dynamic ``calculations`` table (one column per base calculation, with
+    its threshold filters applied as conditional aggregates).
+
+    Returns ``(result, compact_cfg)`` or ``None`` to fall back to the raw-row
+    path.
+    """
+    from dataviz.utils.compiler import (
+        build_dataset_col_index, compile_aggregated_dataset_to_sql,
+        execute_compiled_query, SQLCompilationError,
+    )
+    from dataviz.utils.status_filter import prepare_interactive_filters
+
+    chart_type = cfg.get('chart_type', '')
+    if chart_type not in ('summary_table', 'dynamic_summary_table'):
+        return None
+
+    index = build_dataset_col_index(ds)
+    is_calc_mode = (
+        chart_type == 'dynamic_summary_table'
+        and str(cfg.get('dyn_col_mode', 'pivot')) == 'calculations'
+    )
+
+    measures = None
+    calc_ids = None
+    if is_calc_mode:
+        parsed = _calc_measures(cfg, ds, index)
+        if parsed is None:
+            return None
+        measures, row_cols, calc_ids = parsed
+        if not row_cols:
+            # Totals-only tables have no grouping dimension to push down.
+            return None
+        row_full = [_resolve_dataset_col(c, ds, index) for c in row_cols]
+        if any(not c for c in row_full):
+            return None
+        col_full = None
+        col_col = ''
+        aggregation = 'count'
+        y_full = None
+        sql_aggregation = 'count'
+    else:
+        if chart_type == 'summary_table':
+            cfg_agg = cfg.get('st_agg_func', 'count')
+            cfg_value_col = cfg.get('st_value_col', '')
+        else:
+            cfg_agg = cfg.get('dyn_agg_func') or cfg.get('st_agg_func', 'count')
+            cfg_value_col = cfg.get('dyn_value_col') or cfg.get('st_value_col', '')
+
+        aggregation = str(cfg_agg or 'count').lower()
+        if aggregation not in _TABLE_AGG_PUSH_DOWN:
+            return None
+
+        row_cols = _table_row_cols(cfg, ds)
+        col_col = _table_col_col(cfg, ds)
+        if not row_cols or not col_col:
+            return None
+
+        row_full = [_resolve_dataset_col(c, ds, index) for c in row_cols]
+        col_full = _resolve_dataset_col(col_col, ds, index)
+        if any(not c for c in row_full) or not col_full:
+            return None
+
+        # Mirror the builders' dedupe key selection, restricted to columns the
+        # dataset actually exposes.
+        dedupe_key = ''
+        if aggregation == 'count':
+            for candidate in ('ssid', 'student_id', 'stu_annual_key'):
+                if _resolve_dataset_col(candidate, ds, index):
+                    dedupe_key = candidate
+                    break
+        dedupe_full = _resolve_dataset_col(dedupe_key, ds, index) if dedupe_key else None
+
+        value_col = ''
+        value_full = None
+        if aggregation != 'count':
+            value_col = str(cfg_value_col or '')
+            value_full = _resolve_dataset_col(value_col, ds, index) if value_col else None
+            if not value_full:
+                # Without a usable value column the builder falls back to
+                # counting rows, so the pushdown has to as well.
+                aggregation = 'count'
+                value_col = ''
+        # ``avg``/``median`` etc. must run over the numeric projection, and a
+        # count counts non-null dedupe keys. Either way the measure is the y
+        # column.
+        y_full = dedupe_full if aggregation == 'count' else value_full
+        sql_aggregation = (
+            'count_non_null' if (aggregation == 'count' and dedupe_full) else aggregation
+        )
+
+    active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
+    resolved_interactive, status_val = prepare_interactive_filters(filters or {}, ds, active_tables)
+
+    # The raw path fetches SELECT DISTINCT over every dataset column, but when
+    # that projection carries a per-row unique key the DISTINCT cannot collapse
+    # anything, so aggregating the base tables directly selects the same rows
+    # for far less work.
+    distinct_over_cols = (
+        None if _projection_has_unique_key(ds)
+        else (list(ds.columns or []) if getattr(ds, 'distinct', True) else None)
+    )
+
+    try:
+        sql, params = compile_aggregated_dataset_to_sql(
+            ds, row_full[:1], y_full, sql_aggregation, series_col=col_full,
+            user=None, limit=None, interactive_filters=resolved_interactive,
+            one_row_per_stu_annual_key=bool(cfg.get('one_row_per_stu_annual_key')),
+            status_filter=status_val,
+            extra_group_cols=row_full[1:],
+            filter_blank_group_cols=True,
+            distinct_over_cols=distinct_over_cols,
+            measure_specs=measures,
+        )
+    except SQLCompilationError:
+        return None
+    if _sql_needs_postgres(sql):
+        # ClickHouse-only aggregates cannot run through the PostgreSQL route.
+        return None
+    try:
+        result = execute_compiled_query(sql, params)
+    except Exception:
+        _timing_log.warning(
+            'op=chart_pushdown fallback=execution chart_type=%s', chart_type,
+            exc_info=True,
+        )
+        return None
+    if result.get('error'):
+        return None
+    if not result.get('rows'):
+        # Let the raw-row path produce its own "no data" table.
+        return None
+
+    row_sql_aliases = [full.replace('.', '_') for full in row_full]
+
+    if is_calc_mode:
+        # One column per base calculation, keyed by its stable id. The row
+        # dimensions travel on the frame too, because the builder re-derives its
+        # row values and blank mask from the dataframe columns.
+        compact_rows = []
+        for row in result.get('rows', []):
+            compact = {out_key: row.get(sql_alias)
+                       for sql_alias, out_key in zip(row_sql_aliases, row_cols)}
+            for cid in calc_ids:
+                compact[cid] = row.get(cid)
+            compact_rows.append(compact)
+
+        lookup = {}
+        for row in compact_rows:
+            row_key = tuple(row.get(c) for c in row_cols)
+            if len(row_key) == 1:
+                row_key = row_key[0]
+            lookup[row_key] = {cid: row.get(cid) for cid in calc_ids}
+
+        compact_cfg = dict(cfg)
+        compact_cfg['__compact_calc_cells__'] = lookup
+        compact_cfg['dyn_row_cols'] = row_cols
+        return {'rows': compact_rows,
+                'columns': list(result.get('columns', [])),
+                'row_count': len(compact_rows)}, compact_cfg
+
+    # Output keys match the config's own column references, so the builder finds
+    # the dimensions it asked for and the compact lookup can key on them.
+    key_by_sql_alias = {
+        full.replace('.', '_'): out_key
+        for full, out_key in zip(row_full + [col_full], row_cols + [col_col])
+    }
+    compact_rows = []
+    for row in result.get('rows', []):
+        compact = {}
+        for sql_alias, value in row.items():
+            if sql_alias == '__dv_value':
+                compact['__dv_value'] = value
+            elif sql_alias in key_by_sql_alias:
+                compact[key_by_sql_alias[sql_alias]] = value
+        compact_rows.append(compact)
+
+    if compact_rows:
+        dim_cols = [k for k in compact_rows[0] if k != '__dv_value']
+        if dim_cols:
+            compact_rows.sort(key=lambda r: tuple(str(r.get(k, '')) for k in dim_cols))
+
+    compact_cfg = dict(cfg)
+    compact_cfg['__compact_cells__'] = True
+    if chart_type == 'dynamic_summary_table':
+        compact_cfg['dyn_row_cols'] = row_cols
+        compact_cfg['dyn_col_cols'] = [col_col]
+    else:
+        compact_cfg['st_row_col'] = row_cols[0]
+        compact_cfg['st_col_col'] = col_col
     return {'rows': compact_rows, 'columns': list(result.get('columns', [])),
             'row_count': len(compact_rows)}, compact_cfg
 
@@ -661,7 +1220,10 @@ def chart_preview_api(request):
         else:
             active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
             resolved_filters, status_val = prepare_interactive_filters(source_filters or {}, ds, active_tables)
-            aggregated = _clickhouse_aggregate_dataset(ds, cfg, source_filters or {}, col_mappings)
+            aggregated = _clickhouse_aggregate_dataset(
+                ds, cfg, source_filters or {}, col_mappings,
+                allow_limit=True,
+            )
             if aggregated is not None:
                 res, cfg = aggregated
             else:
@@ -1101,9 +1663,38 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     pf_hash = hashlib.md5(str(pf_params).encode()).hexdigest()[:12]
     # updated_at as an int-second timestamp busts the key on every chart save
     updated_ts = int(chart.updated_at.timestamp())
+    config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
+    embed_suffix = 'e' if is_embed else 's'
+    render_cache_key = (
+        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
+        f'{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}'
+    )
+    etag = f'W/"{render_cache_key[-16:]}"'
 
-    # ── Two-layer cache: data cache (5 min) + render cache (1 hour) ──
-    # Layer 1 – Data cache: raw rows keyed by source + filters
+    if if_none_match == etag:
+        return {'not_modified': True, 'etag': etag}
+
+    # ── Check Layer 2 Render Cache first (<5ms hit, avoids deserializing raw rows) ──
+    cached_html = cache.get(render_cache_key)
+    if cached_html is not None:
+        return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
+
+    lock_key, done_key = _chart_flight_keys(
+        chart_id, updated_ts, pf_hash, embed_suffix, sync_version,
+    )
+    done = cache.get(done_key)
+    if done is not None:
+        payload = dict(done)
+        payload['cache_status'] = 'HIT'
+        return payload
+
+    got_lock = cache.add(lock_key, 1, timeout=_FLIGHT_LOCK_TTL)
+    if not got_lock:
+        waited = _wait_chart_flight(done_key)
+        if waited is not None:
+            return waited
+
+    # ── Layer 1 – Data cache: raw rows keyed by source + filters ──
     sel_cols_hash = ""
     if chart.source_type == SavedChart.SOURCE_COLUMNS:
         _sel_for_hash = list(chart.config.get('selected_columns', []))
@@ -1124,42 +1715,6 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     data_cache_key = f'chart_data:{source_part}'
     data_cached = cache.get(data_cache_key)
     result = data_cached if data_cached is not None else None
-
-    # Layer 2 – Render cache: rendered HTML keyed by chart config + data hash
-    if result is not None:
-        data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True, cls=DjangoJSONEncoder).encode()).hexdigest()[:12]
-    else:
-        data_hash = 'raw'
-    config_hash = hashlib.md5(json.dumps(chart.config, sort_keys=True).encode()).hexdigest()[:12]
-    embed_suffix = 'e' if is_embed else 's'
-    render_cache_key = (
-        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
-        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}:'
-        f'{sync_version}'
-    )
-    etag = f'W/"{render_cache_key[-16:]}"'
-
-    if if_none_match == etag:
-        return {'not_modified': True, 'etag': etag}
-
-    cached_html = cache.get(render_cache_key)
-    if cached_html is not None:
-        return {'html': cached_html, 'error': None, 'cache_status': 'HIT', 'etag': etag}
-
-    lock_key, done_key = _chart_flight_keys(
-        chart_id, updated_ts, pf_hash, embed_suffix, sync_version,
-    )
-    done = cache.get(done_key)
-    if done is not None:
-        payload = dict(done)
-        payload['cache_status'] = 'HIT'
-        return payload
-
-    got_lock = cache.add(lock_key, 1, timeout=_FLIGHT_LOCK_TTL)
-    if not got_lock:
-        waited = _wait_chart_flight(done_key)
-        if waited is not None:
-            return waited
 
     # ── Cache miss: run the full pipeline ─────────────────────────
     chart_cfg = _effective_chart_cfg(chart)
@@ -1233,9 +1788,16 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
                     else:
                         active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
                         resolved_filters, status_val = prepare_interactive_filters(raw_filters, ds, active_tables)
-                        aggregated = _clickhouse_aggregate_dataset(
-                            ds, chart_cfg, raw_filters, col_mappings,
-                        )
+                        if _is_pivot_summary_chart(chart_cfg, chart.chart_type):
+                            aggregated = _clickhouse_aggregate_table_cells(
+                                ds, chart_cfg, raw_filters, col_mappings,
+                                column_defs=chart.column_defs,
+                            )
+                        else:
+                            aggregated = _clickhouse_aggregate_dataset(
+                                ds, chart_cfg, raw_filters, col_mappings,
+                                column_defs=chart.column_defs,
+                            )
                         if aggregated is not None:
                             res, chart_cfg = aggregated
                             used_aggregate = True
@@ -1323,12 +1885,6 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # *is* warm will compute the real data_hash on its lookup, so storing
     # under that same real-data key (not 'raw') is what makes it a HIT.
     if not error:
-        data_hash = hashlib.md5(json.dumps(result.get('rows',[])[:1], sort_keys=True, cls=DjangoJSONEncoder).encode()).hexdigest()[:12]
-        render_cache_key = (
-        f'chart_render:{_CHART_PIPELINE_VERSION}:{chart_id}:{updated_ts}:'
-        f'{data_hash}:{config_hash}:{pf_hash}:{embed_suffix}:{sync_version}'
-    )
-        etag = f'W/"{render_cache_key[-16:]}"'
         cache.set(render_cache_key, html, timeout=3600)
 
     payload = {'html': html, 'error': error, 'cache_status': 'MISS', 'etag': etag}

@@ -235,10 +235,21 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
                 _alias_seen.add(_av)
                 x_alias_keys.append(_av)
 
+    # ``__measure_label__`` is set by the ClickHouse aggregation pushdown, whose
+    # rows carry the pre-computed measure in ``__dv_value``. It holds the label
+    # the original measure column would have produced, so the pushed-down chart
+    # matches the raw-row chart instead of showing the placeholder name.
+    if '__measure_label__' in cfg:
+        _y_label = cfg['__measure_label__']
+    elif y_col:
+        _y_label = _META_LABEL_MAP.get(y_col) or _label(y_col, col_defs)
+    else:
+        _y_label = 'Count' if agg == 'count' else ''
+
     labels = {
         'x': (' · '.join([_label(c, col_defs) for c in x_cols]) if len(x_cols) > 1
               else (_META_LABEL_MAP.get(x_col) or _label(x_col, col_defs)) if x_col else ''),
-        'y': (_META_LABEL_MAP.get(y_col) or _label(y_col, col_defs)) if y_col else ('Count' if agg == 'count' else ''),
+        'y': _y_label,
         's': (_META_LABEL_MAP.get(stack_col) or _label(stack_col, col_defs)) if stack_col else '',
     }
 

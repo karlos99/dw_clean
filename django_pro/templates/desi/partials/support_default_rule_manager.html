@@ -1,0 +1,75 @@
+<div class="p-4 space-y-4">
+    <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+            <h4 class="text-sm font-bold text-slate-900">Option criteria — {{ support.name }}</h4>
+            <p class="text-[11px] text-slate-500 mt-0.5">Rules run by priority; the first match sets the options. The default rule applies when nothing matches.</p>
+        </div>
+        <button type="button"
+                class="inline-flex items-center px-3 py-1.5 border border-emerald-300 rounded text-xs font-semibold uppercase tracking-wider text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition"
+                hx-get="{% url 'desi:support_default_rule_create' %}?support={{ support.id }}&embed=1"
+                hx-target="#desi-rule-form-slot"
+                hx-swap="innerHTML">
+            ➕ Add Rule
+        </button>
+    </div>
+
+    <div id="desi-rule-form-slot"></div>
+
+    <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+        <table class="min-w-full divide-y divide-slate-200 text-xs">
+            <thead class="bg-slate-50">
+                <tr>
+                    <th class="px-3 py-2 text-left font-bold text-slate-500 uppercase tracking-wider">Rule</th>
+                    <th class="px-3 py-2 text-left font-bold text-slate-500 uppercase tracking-wider">Priority</th>
+                    <th class="px-3 py-2 text-left font-bold text-slate-500 uppercase tracking-wider">Scope</th>
+                    <th class="px-3 py-2 text-left font-bold text-slate-500 uppercase tracking-wider">Options</th>
+                    <th class="px-3 py-2 text-right font-bold text-slate-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {% for rule in rules %}
+                <tr class="hover:bg-slate-50">
+                    <td class="px-3 py-2">
+                        <p class="font-semibold text-slate-800">{{ rule.name }}</p>
+                        {% if not rule.is_active %}
+                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-100 text-slate-500">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-3 py-2 text-slate-600">{{ rule.priority }}</td>
+                    <td class="px-3 py-2 text-slate-600">
+                        {% if rule.scope == 'all' %}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100">Default</span>
+                        {% else %}
+                        <div class="text-slate-700">{{ rule.criteria_summary }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="px-3 py-2 text-slate-600">
+                        {% for opt in rule.options.all %}{{ opt.name }}{% if not forloop.last %}, {% endif %}{% empty %}<span class="italic text-slate-400">(checkbox)</span>{% endfor %}
+                    </td>
+                    <td class="px-3 py-2 text-right whitespace-nowrap">
+                        <button type="button"
+                                class="inline-flex items-center px-2 py-1 border border-slate-300 rounded text-[10px] font-semibold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50"
+                                hx-get="{% url 'desi:support_default_rule_edit' rule.pk %}?embed=1"
+                                hx-target="#desi-rule-form-slot"
+                                hx-swap="innerHTML">
+                            Edit
+                        </button>
+                        <a href="#"
+                           class="inline-flex items-center px-2 py-1 border border-red-200 rounded text-[10px] font-semibold uppercase tracking-wider text-red-700 bg-red-50 hover:bg-red-100"
+                           hx-get="{% url 'desi:support_default_rule_delete' rule.pk %}?embed=1"
+                           hx-target="#desi-default-rule-modal-body"
+                           hx-swap="innerHTML"
+                           hx-confirm="Delete this rule?">
+                            Delete
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="px-3 py-8 text-center text-slate-400 italic">No rules yet. Click "Add Rule" to create one.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>

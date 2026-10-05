@@ -454,10 +454,18 @@
   // batch call is about to fill (keeping the "reload" trigger used
   // elsewhere to force-refresh a section on filter change). Anything that
   // fails, or isn't in the eager batch, falls back to the normal lazy path.
-  const EAGER_BATCH_LIMIT = 8;
+  // Keep the first request focused on what a visitor can actually see. Eight
+  // simultaneous full-data renders can saturate ClickHouse and make the
+  // entire page wait for the slowest chart. Remaining charts retain the
+  // existing intersection-triggered lazy path below.
+  const EAGER_BATCH_LIMIT = 4;
   const slots = Array.from(document.querySelectorAll('.page-chart-slot')).filter(el => el.dataset.chartBaseUrl);
   if (!slots.length) return;
-  const eager = slots.slice(0, EAGER_BATCH_LIMIT);
+  const viewportBottom = window.innerHeight + Math.max(window.innerHeight, 600);
+  const eager = slots.filter(el => {
+    const rect = el.getBoundingClientRect();
+    return rect.bottom >= -600 && rect.top <= viewportBottom;
+  }).slice(0, EAGER_BATCH_LIMIT);
 
   const firstUrl = new URL(eager[0].dataset.chartBaseUrl, window.location.origin);
   const source = firstUrl.searchParams.get('source') || '';
@@ -560,6 +568,115 @@
   const _PAGE_FILTER_COLS = {{ page_filter_cols_json|safe }};  // columns that exist on this page
   const _DEFAULT_FILTER_TAGS = {{ default_filter_tags_json|safe }};  // admin-configured defaults from the page builder
   const _HIDDEN_FILTER_COLS = new Set({{ hidden_filter_cols_json|safe }});
+
+  // Filter changes use one bounded batch for charts near the viewport. Older
+  // requests are aborted and their responses cannot replace a newer filter
+  // generation. Offscreen slots only receive the new URL and remain lazy.
+  let _pageChartRefreshTimer = null;
+  let _pageChartRefreshController = null;
+  let _pageChartRefreshGeneration = 0;
+
+  function _pageChartSkeleton() {
+    return '<div class="flex flex-col gap-2 p-3 h-full w-full"><div class="chart-skeleton h-3 rounded w-2/5"></div><div class="flex-1 flex items-end gap-1.5 pt-2"><div class="chart-skeleton rounded-t flex-1" style="height:55%"></div><div class="chart-skeleton rounded-t flex-1" style="height:80%"></div><div class="chart-skeleton rounded-t flex-1" style="height:40%"></div><div class="chart-skeleton rounded-t flex-1" style="height:70%"></div><div class="chart-skeleton rounded-t flex-1" style="height:60%"></div><div class="chart-skeleton rounded-t flex-1" style="height:90%"></div></div><div class="chart-skeleton h-2 rounded w-3/4 mx-auto"></div></div>';
+  }
+
+  function _pageChartFiltersFromQS(qs) {
+    const filters = {};
+    const params = new URLSearchParams(qs || '');
+    for (const [key, value] of params.entries()) {
+      if (!key.startsWith('pf_') || !value) continue;
+      const col = key.slice(3);
+      if (filters[col] === undefined) filters[col] = value;
+      else if (Array.isArray(filters[col])) filters[col].push(value);
+      else filters[col] = [filters[col], value];
+    }
+    return filters;
+  }
+
+  function _pageChartNearViewport(el) {
+    const rect = el.getBoundingClientRect();
+    return rect.bottom >= -600 && rect.top <= window.innerHeight + 600;
+  }
+
+  function _pageChartUsesChangedFilter(el, affectedCols) {
+    if (!Array.isArray(affectedCols) || !affectedCols.length) return true;
+    const declared = String(el.dataset.filterCols || '')
+      .split(',').map(value => value.trim()).filter(Boolean);
+    // An empty declaration means the server could not infer dependencies;
+    // refresh conservatively rather than risk stale chart data.
+    if (!declared.length) return true;
+    const normalized = new Set(declared.map(value => value.split('.').pop()));
+    return affectedCols.some(col => normalized.has(String(col).split('.').pop()));
+  }
+
+  function _refreshPageChartsBatch(qs, affectedCols) {
+    const generation = ++_pageChartRefreshGeneration;
+    if (_pageChartRefreshController) _pageChartRefreshController.abort();
+    _pageChartRefreshController = new AbortController();
+
+    const slots = Array.from(document.querySelectorAll('.page-chart-slot'))
+      .filter(el => el.dataset.chartBaseUrl);
+    const filters = _pageChartFiltersFromQS(qs);
+    const visible = [];
+    const slotByChartId = {};
+
+    slots.forEach(el => {
+      const base = el.dataset.chartBaseUrl;
+      const url = qs ? base + '&' + qs : base;
+      el.setAttribute('hx-get', url);
+      const match = base.match(/\/charts\/(\d+)\/render\//);
+      if (!match || !_pageChartNearViewport(el) || !_pageChartUsesChangedFilter(el, affectedCols)) return;
+      const cid = match[1];
+      if (!slotByChartId[cid]) visible.push(cid);
+      (slotByChartId[cid] ||= []).push(el);
+      el.setAttribute('hx-trigger', 'reload');
+      el.innerHTML = _pageChartSkeleton();
+    });
+
+    if (!visible.length) return;
+    const firstUrl = new URL(slotByChartId[visible[0]][0].getAttribute('hx-get'), window.location.origin);
+    const csrf = "{{ csrf_token }}";
+
+    fetch('/dataviz/api/charts/batch-render/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+      credentials: 'same-origin',
+      signal: _pageChartRefreshController.signal,
+      body: JSON.stringify({
+        chart_ids: visible,
+        source: firstUrl.searchParams.get('source') || '',
+        source_id: firstUrl.searchParams.get('source_id') || '',
+        source_name: firstUrl.searchParams.get('source_name') || '',
+        school_id: firstUrl.searchParams.get('school_id') || '',
+        filters,
+      }),
+    })
+      .then(response => {
+        if (!response.ok) throw new Error('Chart batch failed: HTTP ' + response.status);
+        return response.json();
+      })
+      .then(payload => {
+        if (generation !== _pageChartRefreshGeneration) return;
+        let needsInit = false;
+        const charts = payload.charts || {};
+        visible.forEach(cid => {
+          const item = charts[cid];
+          if (!item || !item.html) return;
+          slotByChartId[cid].forEach(slot => { slot.innerHTML = item.html; });
+          needsInit = true;
+        });
+        if (needsInit && window.initAllCharts) window.initAllCharts();
+      })
+      .catch(error => {
+        if (error.name === 'AbortError' || generation !== _pageChartRefreshGeneration) return;
+        console.error('Chart filter refresh failed:', error);
+        visible.forEach(cid => {
+          if (window.htmx) {
+            slotByChartId[cid].forEach(slot => htmx.trigger(slot, 'reload'));
+          }
+        });
+      });
+  }
 
   function pageFilters() {
     return {
@@ -702,30 +819,18 @@
 
       _applyUrlsToSlots() {
         const qs = this.buildFilterQS();
-        document.querySelectorAll('.page-chart-slot').forEach(el => {
-          const base = el.getAttribute('data-chart-base-url');
-          if (!base || !qs) return;
-          el.setAttribute('hx-get', base + '&' + qs);
-          htmx.process(el);
-          if (!el.querySelector('.chart-skeleton')) {
-            htmx.trigger(el, 'reload');
-          }
-        });
+        if (!qs) return;
+        window._pageFilterQS = qs;
+        _refreshPageChartsBatch(qs);
       },
 
       refreshCharts(affectedCols) {
         const qs = this.buildFilterQS();
         window._pageFilterQS = qs;
-        const allSlots = document.querySelectorAll('.page-chart-slot');
-        allSlots.forEach(el => {
-          const base = el.getAttribute('data-chart-base-url');
-          if (!base) return;
-          const url = qs ? base + '&' + qs : base;
-          el.setAttribute('hx-get', url);
-          el.innerHTML = '<div class="flex flex-col gap-2 p-3 h-full w-full"><div class="chart-skeleton h-3 rounded w-2/5"></div><div class="flex-1 flex items-end gap-1.5 pt-2"><div class="chart-skeleton rounded-t flex-1" style="height:55%"></div><div class="chart-skeleton rounded-t flex-1" style="height:80%"></div><div class="chart-skeleton rounded-t flex-1" style="height:40%"></div><div class="chart-skeleton rounded-t flex-1" style="height:70%"></div><div class="chart-skeleton rounded-t flex-1" style="height:60%"></div><div class="chart-skeleton rounded-t flex-1" style="height:90%"></div></div><div class="chart-skeleton h-2 rounded w-3/4 mx-auto"></div></div>';
-          htmx.process(el);
-          htmx.trigger(el, 'reload');
-        });
+        clearTimeout(_pageChartRefreshTimer);
+        _pageChartRefreshTimer = setTimeout(
+          () => _refreshPageChartsBatch(qs, affectedCols), 120,
+        );
       },
     };
   }

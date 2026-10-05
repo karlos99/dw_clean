@@ -31,8 +31,43 @@ from ..column_utils import (
     parse_sat_column_key, sat_column_db_field,
 )
 from ..survey_utils import get_survey_columns, get_survey_data_for_students
+from ..catalog_columns import (
+    COURSE_PROGRAM_DEFINITIONS,
+    apply_course_program_columns,
+    canonical_course_program_column,
+    course_program_columns_enabled,
+    course_program_filter_blank_check_sql,
+    course_program_filter_options_sql,
+    is_course_program_column,
+    filters_without_course_program_dimension,
+    mirror_legacy_course_program_filter_options,
+    normalize_course_program_columns,
+    split_course_program_filters,
+    apply_course_program_filters_for_clickhouse,
+    apply_course_program_filters_on_postgres_scope,
+    clickhouse_course_program_ready,
+    _apply_one_course_program_filter_clickhouse,
+)
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, VIRTUAL_COLUMNS
-from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
+from ..utils import (
+    can_user_view_query,
+    get_user_folders,
+    is_unrestricted as _is_user_unrestricted,
+    _apply_de_school_filter,
+    schedule_filters_eligible,
+    schedule_filter_bar_visible,
+    schedule_filter_staff_eligible,
+    schedule_filter_show_staff,
+    schedule_filter_toggle_visible,
+    schedule_filter_unrestricted_requires_school,
+    schedule_filter_ui_mode,
+    get_project_default_school_year,
+)
+from .schedule_filter_sql import (
+    _read_multi_param,
+    parse_schedule_marks_filters,
+    apply_schedule_marks_filters,
+)
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -49,11 +84,21 @@ from ..school_year_utils import get_school_year_choices, get_year_labels_map, ge
 from .filter_sql import (
     apply_column_filters,
     normalize_filter_param as _normalize_filter_param,
-    extract_markall_course_excludes,
+    extract_markall_course_picker,
 )
 from landing.utils import get_project_config
 
 logger = logging.getLogger(__name__)
+
+# Cache lifetimes (seconds). These results are deterministic for a given filter
+# specification plus ClickHouse sync version, and every key embeds the sync
+# version, so a longer TTL does not serve stale data after a re-sync — it just
+# avoids re-running the expensive facet fan-out / count / page-id query on every
+# visit or filter toggle.
+_COUNT_CACHE_TTL = 900
+_FACET_CACHE_TTL = 1800
+_PAGE_IDS_CACHE_TTL = 900
+_MAX_SPAN_CACHE_TTL = 1800
 
 
 def _fetchall_ch_or_pg(sql, params, pg_sql=None):
@@ -221,14 +266,20 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         """Add additional context for filters and column selection."""
         context = super().get_context_data(**kwargs)
-        
-        # Get dynamic test columns
-        test_structure = get_test_columns()
-        marks_structure = get_mark_columns()
-        survey_structure = get_survey_columns()
-        ap_structure = get_ap_columns()
-        sat_structure = get_sat_columns()
-        
+
+        # Dynamic column structures (tests/marks/AP/SAT/survey) are rendered
+        # client-side by load_column_structures for the active filters. Building
+        # them here too produced ~20k mark checkboxes (~20 MB HTML) that the
+        # client immediately replaced via its AJAX refresh — a large duplicate
+        # cost on every page load. Keep the context keys for template
+        # compatibility but leave them empty; #dynamic-column-structures is
+        # filled by student_tests_app.js.
+        test_structure = {}
+        marks_structure = {}
+        survey_structure = {}
+        ap_structure = {}
+        sat_structure = {}
+
         # Get unique values for filters using cache
         school_years_key = "dataexp:school_years"
         school_years = cache.get(school_years_key)
@@ -299,7 +350,7 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         
         context['school_years'] = school_years
         context['school_year_choices'] = get_school_year_choices(school_years)
-        all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys())
+        all_years = list(school_years)
         context['year_labels'] = get_year_labels_map(all_years)
         year_to_alias = get_year_alias_map()
         context['year_to_alias'] = year_to_alias
@@ -369,6 +420,39 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['selected_school_year'] = selected_year
         context['selected_grade'] = get_param('grade')
         context['selected_status'] = get_param('status', 'Active')
+        visibility_filters = dict(filters) if isinstance(filters, dict) else {}
+        if not _project_default_year:
+            _project_default_year = get_project_default_school_year()
+        context['project_default_school_year'] = _project_default_year
+        context['schedule_filters_eligible'] = schedule_filters_eligible(self.request.user)
+        context['schedule_district_requires_school'] = schedule_filter_unrestricted_requires_school(
+            self.request.user,
+        )
+        context['schedule_filter_toggle_visible'] = schedule_filter_toggle_visible(
+            self.request.user, visibility_filters, selected_year,
+        )
+        context['show_schedule_filters'] = context['schedule_filter_toggle_visible']
+        context['schedule_filter_staff_eligible'] = schedule_filter_staff_eligible(
+            self.request.user,
+        )
+        context['schedule_filter_show_staff'] = schedule_filter_show_staff(
+            self.request.user, visibility_filters, selected_year,
+        )
+        context['schedule_filter_ui_mode'] = schedule_filter_ui_mode(
+            self.request.user, visibility_filters,
+        )
+        context['selected_schedule_period'] = _read_multi_param(
+            self.request, 'schedule_period', filters,
+        )
+        context['selected_schedule_subject'] = _read_multi_param(
+            self.request, 'schedule_subject', filters,
+        )
+        context['selected_schedule_course_name'] = _read_multi_param(
+            self.request, 'schedule_course_name', filters,
+        )
+        context['selected_schedule_staff'] = _read_multi_param(
+            self.request, 'schedule_staff', filters,
+        )
         
         return context
 
@@ -466,11 +550,15 @@ def _load_students(request):
     # Selecting it also unselects the individual mark_<year>_<subject>_* columns.
     from dataexploration.column_utils import parse_markall_key, markall_key as _markall_key
 
+    _marks_struct_for_markall = None
+
     def _markall_subject_actual(year, subject_norm):
         """Resolve the normalized subject name back to its real spelling."""
+        nonlocal _marks_struct_for_markall
         try:
-            marks_struct = get_mark_columns()
-            subjects = marks_struct.get(year, {})
+            if _marks_struct_for_markall is None:
+                _marks_struct_for_markall = get_mark_columns()
+            subjects = _marks_struct_for_markall.get(year, {})
             for s in subjects:
                 if _markall_key(year, s) == _markall_key(year, subject_norm):
                     return s
@@ -645,7 +733,17 @@ def _load_students(request):
             filters = saved_filters.copy()
     else:
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
-        filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
+        filters = {
+            k: v for k, v in saved_filters.items()
+            if k not in [
+                'search', 'school_year', 'grade', 'status',
+                'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
+            ]
+        }
+
+    schedule_marks_filters = parse_schedule_marks_filters(
+        request, saved_filters, column_filters=filters, user=request.user,
+    )
     
     # Resolve any relative column keys in sort_by and filters keys
     if sort_by:
@@ -668,16 +766,14 @@ def _load_students(request):
             if not (isinstance(k, str) and k.startswith('mark_') and not k.startswith('markall_'))
         }
 
-    # Courses the user deselected from an "All Marks" umbrella. Stored under the
-    # umbrella key as 'exclude:<course>' values; read before SQL filtering since
-    # these entries only shape the wide-pair columns, never the row population.
-    markall_excludes = extract_markall_course_excludes(filters)
+    # All Marks course picker (exclude list in "all" mode, include list in "only" mode).
+    markall_pickers = extract_markall_course_picker(filters)
 
-    def _markall_course_excludes(year, subject):
+    def _markall_course_picker(year, subject):
         umbrella = markall_years.get((year, subject))
-        if umbrella:
-            return markall_excludes.get(umbrella, set())
-        return set()
+        if umbrella and umbrella in markall_pickers:
+            return markall_pickers[umbrella]
+        return {'mode': 'all', 'courses': set()}
 
     # Subjects the user unchecked from an "All Results" umbrella. Stored under
     # the umbrella key as 'exclude:<subject>' values; like the marks course
@@ -1034,6 +1130,15 @@ def _load_students(request):
         # Apply active school context or enforce school permissions
         _apply_de_school_filter(base_where_clauses, base_params, request.user)
 
+        apply_schedule_marks_filters(
+            base_where_clauses,
+            base_params,
+            request.user,
+            schedule_marks_filters,
+            school_year,
+            filters,
+        )
+
         active_role_name = getattr(getattr(request.user, 'active_role', None), 'name', None)
         if active_role_name == 'School Gr View':
             delegated_grades = getattr(request.user, 'grade_levels', None)
@@ -1063,6 +1168,10 @@ def _load_students(request):
             [k for k in filter_keys if isinstance(k, str) and k.startswith('mark_') and not k.startswith('markall_')]
         ))
         selected_survey_cols = [c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')]
+        selected_course_prog_cols = list(set(
+            [c for c in selected_columns if is_course_program_column(c)]
+            + [k for k in filter_keys if is_course_program_column(k)]
+        ))
         selected_ap_cols = list(set(
             [c for c in selected_columns if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_') and not c.startswith('apall_')] +
             [k for k in filter_keys if isinstance(k, str) and k.startswith('ap_') and not k.startswith('apaward_') and not k.startswith('apawards_all_') and not k.startswith('apall_')]
@@ -1090,14 +1199,15 @@ def _load_students(request):
         base_cols = [
             c for c in selected_columns
             if isinstance(c, str)
-            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_')))
+            and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
             and c in COLUMN_DEFINITIONS
             and c not in VIRTUAL_COLUMNS
         ]
 
         # Build test column metadata from DB to avoid parsing issues (e.g. multi-word subjects)
-        test_cols_info, test_col_map = _build_test_columns_from_db(selected_test_cols)
-        mark_cols_info, mark_col_map = _build_mark_columns_from_db(selected_mark_cols)
+        with timed('dataexp_metadata'):
+            test_cols_info, test_col_map = _build_test_columns_from_db(selected_test_cols)
+            mark_cols_info, mark_col_map = _build_mark_columns_from_db(selected_mark_cols)
         ap_exam_infos = ap_award_infos = []
         if selected_ap_cols or selected_award_cols:
             try:
@@ -1154,10 +1264,14 @@ def _load_students(request):
         # Column filters (applied to the main query)
         where_clauses = list(base_where_clauses)
         params = list(base_params)
+        cp_filters, filters_without_cp = split_course_program_filters(filters)
         apply_column_filters(
-            where_clauses, params, filters, test_col_map, mark_col_map,
+            where_clauses, params, filters_without_cp, test_col_map, mark_col_map,
             db_columns, enroll_columns, needs_enroll, needs_students, needs_eht,
             ap_exam_infos, ap_award_infos,
+        )
+        apply_course_program_filters_for_clickhouse(
+            where_clauses, params, cp_filters, base_where_clauses, base_params,
         )
 
         # Handle survey column filters (subquery since survey data is not in the main SQL table)
@@ -1216,7 +1330,7 @@ def _load_students(request):
                 """
                 cursor.execute(count_query, params)
                 total = cursor.fetchone()[0]
-                cache.set(count_cache_key, total, 300)  # Cache for 5 minutes
+                cache.set(count_cache_key, total, _COUNT_CACHE_TTL)
 
         # ── Marks "All Marks" expansion (filtered population) ──────────────
         # Only emit course/marks wide pairs up to the max number of courses the
@@ -1225,7 +1339,7 @@ def _load_students(request):
         if markall_years:
             for (year, subject), umbrella in markall_years.items():
                 course_filter_sql, course_extra_params = _markall_course_sql_parts(
-                    subject, _markall_course_excludes(year, subject)
+                    subject, _markall_course_picker(year, subject)
                 )
                 markall_cache_key = (
                     f"dataexp:markall_max:{_sync_v}:"
@@ -1261,7 +1375,7 @@ def _load_students(request):
                         pg_sql=pg_query,
                     )
                     max_val = min(int(res[0][0] or 0), 10) if res else 0
-                    cache.set(markall_cache_key, max_val, 300)
+                    cache.set(markall_cache_key, max_val, _MAX_SPAN_CACHE_TTL)
                 markall_max[(year, subject)] = max_val
 
             new_selected = []
@@ -1341,7 +1455,7 @@ def _load_students(request):
                         pg_sql=pg_query,
                     )
                     max_val = min(int(res[0][0] or 0), 10) if res else 0
-                    cache.set(apall_cache_key, max_val, 300)
+                    cache.set(apall_cache_key, max_val, _MAX_SPAN_CACHE_TTL)
                 apall_max[year] = max_val
 
             new_selected = []
@@ -1370,7 +1484,7 @@ def _load_students(request):
         if (test_cols_info or selected_survey_cols or mark_cols_info) and 'student_id' not in base_cols:
             base_cols.insert(0, 'student_id')
 
-        if (mark_cols_info or 'elem_teacher_name' in base_cols) and 'stu_annual_key' not in base_cols:
+        if (mark_cols_info or 'elem_teacher_name' in base_cols or selected_course_prog_cols) and 'stu_annual_key' not in base_cols:
             base_cols.insert(0, 'stu_annual_key')
 
         # Marks "All Marks" fetch needs stu_annual_key to join marks per course
@@ -1600,10 +1714,14 @@ def _load_students(request):
         # Put blank/missing assessment values at the end for both directions.
         # Otherwise DESC on sparse columns (Initial ELPAC, AP slot N) fills the
         # first page with empty rows and looks like sorting is broken.
+        course_prog_sort = bool(
+            sort_by and course_program_columns_enabled() and is_course_program_column(sort_by)
+        )
         is_dynamic_sort = bool(sort_by) and (
             sort_by in test_col_map
             or sort_by in mark_col_map
             or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_'))
+            or course_prog_sort
         )
         order_nulls_sql = ' NULLS LAST' if is_dynamic_sort else ''
         # sort_join placeholders come before WHERE in the SQL, so they must
@@ -1745,13 +1863,14 @@ def _load_students(request):
             # Cache the SSIDs of this result page
             result_ssids = [s.get('ssid') for s in students if s.get('ssid')]
             if result_ssids:
-                cache.set(page_cache_key, result_ssids, 300)
+                cache.set(page_cache_key, result_ssids, _PAGE_IDS_CACHE_TTL)
 
         # Proceed with Detail Fetching (Test/Marks) for the identified students
         student_ids = [s.get('student_id') for s in students if s.get('student_id')]
         student_keys = [s.get('stu_annual_key') for s in students if s.get('stu_annual_key')]
 
-        enrich_students_tests_marks(students, test_cols_info, mark_cols_info)
+        with timed('dataexp_enrich'):
+            enrich_students_tests_marks(students, test_cols_info, mark_cols_info)
 
         # Fetch Marks "All Marks" wide-pair data (markall_<year>_<subject>_<i>_COURSE / _MARKS)
         if markall_years and students:
@@ -1759,12 +1878,18 @@ def _load_students(request):
                 student_ssids_all = [str(s.get('ssid') or '').strip() for s in students if str(s.get('ssid') or '').strip()]
                 student_ids_all = [str(s.get('student_id') or '').strip() for s in students if str(s.get('student_id') or '').strip()]
                 if student_ssids_all or student_ids_all:
+                    # One live-marks fetch per year, reused across that year's
+                    # "All Marks" subjects. Previously each subject re-fetched
+                    # every mark row for the year and filtered in Python.
+                    _live_marks_by_year = {}
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
-                        excludes = _markall_course_excludes(year, subject)
-                        live_rows = _fetch_marks_live_from_alt(
-                            student_ssids_all, student_ids_all, [year],
-                        )
+                        excludes = _markall_course_picker(year, subject)
+                        if year not in _live_marks_by_year:
+                            _live_marks_by_year[year] = _fetch_marks_live_from_alt(
+                                student_ssids_all, student_ids_all, [year],
+                            )
+                        live_rows = _live_marks_by_year[year]
                         by_ssid, by_student_id = group_marks_by_ssid_course(
                             live_rows,
                             subject=subject,
@@ -1913,6 +2038,25 @@ def _load_students(request):
                     for col_key in selected_survey_cols:
                         student[col_key] = student_survey_data.get(col_key, '—')
 
+        course_prog_cols_to_fill = list(selected_course_prog_cols)
+        if course_prog_sort:
+            for col in (sort_by, canonical_course_program_column(sort_by) or ''):
+                if col and is_course_program_column(col) and col not in course_prog_cols_to_fill:
+                    course_prog_cols_to_fill.append(col)
+        if course_prog_cols_to_fill and students:
+            apply_course_program_columns(students, course_prog_cols_to_fill)
+        if course_prog_sort and students:
+            _sort_canonical = canonical_course_program_column(sort_by) or sort_by
+            _reverse = sort_dir == 'desc'
+
+            def _course_prog_sort_key(row):
+                val = row.get(_sort_canonical) or row.get(sort_by) or ''
+                if val == '—':
+                    val = ''
+                return val
+
+            students.sort(key=_course_prog_sort_key, reverse=_reverse)
+
         # Fast fetch elem_teacher_name if requested but not joined
         if 'elem_teacher_name' in base_cols and not needs_eht and student_keys:
             q_eht = """
@@ -1983,6 +2127,55 @@ def _load_students(request):
                 }
                 filter_str = json.dumps(payload, sort_keys=True)
                 return f"filter_opts:{column}:{hashlib.md5(filter_str.encode()).hexdigest()}"
+
+            if course_program_columns_enabled():
+                for col_key in normalize_course_program_columns(selected_course_prog_cols):
+                    other_filters = filters_without_course_program_dimension(filters, col_key)
+                    cache_key = _get_filter_cache_key(col_key, other_filters)
+                    cached_values = cache.get(cache_key)
+                    if cached_values is not None:
+                        filter_options[col_key] = cached_values
+                        mirror_legacy_course_program_filter_options(
+                            filter_options, selected_course_prog_cols,
+                        )
+                        continue
+                    option_where = list(base_where_clauses)
+                    option_params = list(base_params)
+                    cp_other, non_cp_other = split_course_program_filters(other_filters)
+                    apply_column_filters(
+                        option_where, option_params, non_cp_other, test_col_map, mark_col_map,
+                        db_columns, enroll_columns, needs_enroll, needs_students, False,
+                        ap_exam_infos, ap_award_infos,
+                    )
+                    if clickhouse_course_program_ready():
+                        for _cp_col, _cp_vals in cp_other.items():
+                            _apply_one_course_program_filter_clickhouse(
+                                option_where, option_params, _cp_col, _cp_vals,
+                            )
+                    else:
+                        apply_course_program_filters_on_postgres_scope(
+                            option_where, option_params, cp_other,
+                        )
+                    option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+                    options_query, options_params = course_program_filter_options_sql(
+                        col_key, option_where_sql, join_sql, option_params,
+                    )
+                    if not options_query:
+                        continue
+                    blank_query, blank_params = course_program_filter_blank_check_sql(
+                        col_key, option_where_sql, join_sql, option_params,
+                    )
+                    option_tasks.append((
+                        col_key,
+                        cache_key,
+                        _make_options_with_blank_task(
+                            options_query,
+                            options_params,
+                            blank_query,
+                            blank_params,
+                            use_pg=not clickhouse_course_program_ready(),
+                        ),
+                    ))
             
             for col in base_cols:
                 if col in excluded_filters:
@@ -2216,7 +2409,7 @@ def _load_students(request):
             for (year, subject), umbrella in markall_years.items():
                 n = markall_max.get((year, subject), 0)
                 course_filter_sql, course_extra_params = _markall_course_sql_parts(
-                    subject, _markall_course_excludes(year, subject)
+                    subject, _markall_course_picker(year, subject)
                 )
                 for i in range(1, n + 1):
                     course_col = f"{umbrella}_{i}_COURSE"
@@ -2516,7 +2709,11 @@ def _load_students(request):
             for col_key, cache_key, values in _run_option_tasks(option_tasks):
                 if values:
                     filter_options[col_key] = values
-                    cache.set(cache_key, values, 300)
+                    cache.set(cache_key, values, _FACET_CACHE_TTL)
+            if course_program_columns_enabled():
+                mirror_legacy_course_program_filter_options(
+                    filter_options, selected_course_prog_cols,
+                )
 
     logger.info(
         'request_id=%s op=dataexp_filter_options columns=%s elapsed_ms=%.1f',
@@ -2543,6 +2740,8 @@ def _load_students(request):
 
     # Build dynamic definitions including test windows
     dynamic_definitions = COLUMN_DEFINITIONS.copy()
+    if course_program_columns_enabled():
+        dynamic_definitions.update(COURSE_PROGRAM_DEFINITIONS)
     # Always merge survey column definitions (full question text for column headers)
     dynamic_definitions.update(get_survey_columns().get('definitions', {}))
     if test_cols_info:
@@ -2589,6 +2788,10 @@ def _load_students(request):
             'students': students,
             'selected_columns': selected_columns,
             'total': total,
+            # Additive metadata: `total` is always an integer for compatibility.
+            # `total_state` lets future clients distinguish a served-from-cache
+            # exact total from one computed for this request.
+            'total_state': 'exact',
             'page': page,
             'total_pages': total_pages,
             'column_definitions': dynamic_definitions,
@@ -2602,6 +2805,10 @@ def _load_students(request):
             'sort_dir': sort_dir,
             'next_cursor': next_cursor,
             'survey_colors': survey_colors,
+            'schedule_period': schedule_marks_filters.get('schedule_period') or [],
+            'schedule_subject': schedule_marks_filters.get('schedule_subject') or [],
+            'schedule_course_name': schedule_marks_filters.get('schedule_course_name') or [],
+            'schedule_staff': schedule_marks_filters.get('schedule_staff') or [],
         })
 
     context = {

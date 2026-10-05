@@ -3,6 +3,46 @@ from django.test import SimpleTestCase
 from django.template.loader import get_template
 
 
+class ScheduleFilterScopeTests(SimpleTestCase):
+	def test_district_admin_elementary_school_uses_elementary_schedule_mode(self):
+		from unittest.mock import MagicMock, patch
+		from dataexploration.utils import (
+			SCHEDULE_FILTER_MODE_SCHOOL_ELEM,
+			schedule_filter_ui_mode,
+		)
+
+		user = MagicMock()
+		with patch('dataexploration.utils.is_unrestricted', return_value=True):
+			with patch(
+				'dataexploration.utils.single_school_state_id_from_column_filters',
+				return_value='ELEM123',
+			):
+				school = MagicMock()
+				school.school_group = 'Elementary School'
+				with patch(
+					'dataexploration.utils._resolve_schedule_filter_school',
+					return_value=school,
+				):
+					mode = schedule_filter_ui_mode(user, {'school_state_id': ['ELEM123']})
+		self.assertEqual(mode, SCHEDULE_FILTER_MODE_SCHOOL_ELEM)
+
+	def test_column_filter_school_overrides_active_school_for_schedule_scope(self):
+		from dataexploration.view_modules.schedule_filter_sql import _resolve_scope_state_school_id
+
+		class _School:
+			state_id = 'ACTIVE_SCHOOL'
+
+		class _User:
+			active_school = _School()
+
+		user = _User()
+		column_filters = {'school_state_id': ['FILTER_SCHOOL']}
+		self.assertEqual(
+			_resolve_scope_state_school_id(user, column_filters),
+			'FILTER_SCHOOL',
+		)
+
+
 class TemplateCompilationTests(SimpleTestCase):
 	def test_folder_browser_template_compiles(self):
 		# This template is rendered via HTMX at /dataexploration/api/folders/.
@@ -11,6 +51,9 @@ class TemplateCompilationTests(SimpleTestCase):
 
 	def test_student_with_tests_list_template_compiles(self):
 		get_template("dataexploration/student_with_tests_list.html")
+
+	def test_student_test_summary_content_compiles(self):
+		get_template("dataexploration/partials/student_test_summary_content.html")
 
 	def test_dataexploration_manage_default_columns_compiles(self):
 		get_template("dataexploration/manage_default_columns.html")
@@ -23,6 +66,37 @@ class TemplateCompilationTests(SimpleTestCase):
 
 	def test_users_column_structures_compiles(self):
 		get_template("users/partials/column_structures.html")
+
+	def test_split_schedule_column_filters(self):
+		from dataexploration.view_modules.column_management import split_schedule_column_filters
+
+		base, sched = split_schedule_column_filters({
+			'school_year': '2024-2025',
+			'grade': '10',
+			'schedule_period': ['1', '2'],
+			'schedule_subject': 'Math',
+		})
+		self.assertEqual(base, {'school_year': '2024-2025', 'grade': '10'})
+		self.assertEqual(sched['schedule_period'], ['1', '2'])
+		self.assertEqual(sched['schedule_subject'], ['Math'])
+
+	def test_dataexploration_column_structures_strips_django_comments(self):
+		from django.template.loader import render_to_string
+
+		html = render_to_string(
+			"dataexploration/partials/column_structures.html",
+			{
+				"test_structure": {},
+				"marks_structure": {"2024": {"Math": {"Algebra I": {}}}},
+				"survey_structure": {},
+				"ap_structure": {},
+				"sat_structure": {},
+				"column_definitions": {},
+				"year_labels": {"2024": "2024"},
+				"year_to_alias": {},
+			},
+		)
+		self.assertNotIn("{#", html)
 
 	def test_dataexploration_manage_default_assessment_tree_compiles(self):
 		get_template("dataexploration/partials/manage_default_assessment_tree.html")
@@ -125,6 +199,37 @@ class StudentSummaryDedupeTests(SimpleTestCase):
 		self.assertEqual(_dedupe_test_records([]), [])
 
 
+class StudentMarksGridTests(SimpleTestCase):
+	def test_pivot_groups_class_rows_and_period_columns(self):
+		from dataexploration.view_modules.student_data_utils import pivot_student_marks
+
+		marks = [
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Q2', 'mark': 'B+', 'staff_name': 'Smith'},
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Q1', 'mark': 'B', 'staff_name': 'Smith'},
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Live', 'mark': 'A-', 'staff_name': 'Smith'},
+			{'school_year': '2025-2026', 'subject': 'English', 'course_name': 'ELA 8',
+			 'mark_period': 'Q1', 'mark': 'A', 'staff_name': 'Jones'},
+			{'school_year': '2024-2025', 'subject': 'Math', 'course_name': 'Math 7',
+			 'mark_period': 'Q4', 'mark': 'C', 'staff_name': 'Lee'},
+		]
+		grid = pivot_student_marks(marks)
+		self.assertEqual([y['school_year'] for y in grid], ['2025-2026', '2024-2025'])
+		self.assertEqual(grid[0]['periods'], ['Q1', 'Q2', 'Live'])
+		self.assertEqual(len(grid[0]['courses']), 2)
+		alg = next(c for c in grid[0]['courses'] if c['course_name'] == 'Algebra I')
+		self.assertEqual(alg['subject'], 'Math')
+		self.assertEqual(alg['staff_name'], 'Smith')
+		self.assertEqual([c['mark'] for c in alg['cells']], ['B', 'B+', 'A-'])
+		self.assertEqual(alg['cells'][2]['tone'], 'green')
+
+	def test_pivot_empty(self):
+		from dataexploration.view_modules.student_data_utils import pivot_student_marks
+		self.assertEqual(pivot_student_marks([]), [])
+
+
 class TestMetadataMatchesTests(SimpleTestCase):
 	def test_caa_does_not_match_caaspp(self):
 		info = {'test_name': 'CAA', 'subject': 'ELA', 'test_window': None}
@@ -224,6 +329,12 @@ class ResultsStudentMatchTests(SimpleTestCase):
 		by_id, by_ssid = assign_result_value_maps(rows, valid_ssids={'8442970229'})
 		self.assertEqual(by_id['20250161'], '3')
 		self.assertNotIn('NaN', by_ssid)
+
+	def test_export_csv_cell_uses_empty_blank(self):
+		from dataexploration.column_utils import export_csv_cell
+		self.assertEqual(export_csv_cell(None), '')
+		self.assertEqual(export_csv_cell('NaN'), '')
+		self.assertEqual(export_csv_cell('3'), '3')
 
 	def test_export_cell_uses_blank_marker_consistently(self):
 		from dataexploration.column_utils import export_cell
@@ -441,6 +552,15 @@ class CsFilterClauseTests(SimpleTestCase):
 		self.assertEqual(params, [['Y']])
 
 
+class ClickHouseExecutorTests(SimpleTestCase):
+	def test_l_race_sql_routes_to_postgres(self):
+		from clickhouse_utils.executor import _sql_uses_pg_add_data_key
+		from dataexploration.view_modules.column_management import race_list_overlap_sql
+
+		sql = f"SELECT 1 FROM current_student cs WHERE {race_list_overlap_sql('cs')}"
+		self.assertTrue(_sql_uses_pg_add_data_key(sql))
+
+
 class ApplyColumnFilterTests(SimpleTestCase):
 	def test_grade_column_filter_applies_to_cs_grade(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
@@ -455,6 +575,21 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('cs.grade', where_clauses[0])
 		self.assertEqual(params, [['03']])
+
+	def test_race_list_filter_uses_l_race_json_overlap(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+
+		where_clauses = []
+		params = []
+		apply_column_filters(
+			where_clauses, params,
+			{'race_list': ['White', 'Asian']},
+			{}, {}, set(), {}, False,
+		)
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn('l_race', where_clauses[0])
+		self.assertIn('&&', where_clauses[0])
+		self.assertEqual(params, [['White', 'Asian']])
 
 	def test_mark_column_filter_uses_ssid_subquery(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
@@ -580,10 +715,13 @@ class SurveyDataResolutionTests(SimpleTestCase):
 		mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
 		mock_cursor.__exit__ = MagicMock(return_value=False)
 
-		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=mock_cursor):
-			with patch('django.core.cache.cache.get', return_value=None):
-				with patch('django.core.cache.cache.set'):
-					cols = get_mark_columns()
+		# Force the SQL path (the metadata fast path is exercised separately);
+		# this test verifies period ordering from cursor rows.
+		with patch('dataexploration.column_utils._build_mark_columns_from_metadata', return_value=None):
+			with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=mock_cursor):
+				with patch('django.core.cache.cache.get', return_value=None):
+					with patch('django.core.cache.cache.set'):
+						cols = get_mark_columns()
 
 		periods = list(cols['2026-2027']['English']['English 10'].keys())
 		self.assertEqual(periods, ['P1', 'P2', 'Q1', 'Live'])
@@ -602,3 +740,97 @@ class SurveyDataResolutionTests(SimpleTestCase):
 		self.assertEqual(format_marks_cell('Active', 'status'), 'Active')
 
 
+
+
+class StudentCteDetailsTests(SimpleTestCase):
+	def test_student_year_label_normalizes(self):
+		from dataexploration.view_modules.student_data_utils import _student_year_label
+
+		self.assertEqual(_student_year_label('2026-2027'), '2026')
+		self.assertEqual(_student_year_label('2026'), '2026')
+		self.assertEqual(_student_year_label(''), '')
+
+	def test_cte_history_columns_orders_stages_and_credits(self):
+		from dataexploration.view_modules.student_data_utils import _cte_history_columns
+
+		columns = _cte_history_columns([
+			{'cte_level': 'Capstone', 'course': 'Cap', 'eff_s1': '', 'eff_s2': '', 'credits_earned': 0, 'completion_status': 'In Process'},
+			{'cte_level': 'Introduction', 'course': 'Intro', 'eff_s1': 'C-', 'eff_s2': 'A-', 'credits_earned': 15, 'completion_status': 'Completed'},
+			{'cte_level': 'Concentration', 'course': 'Conc', 'eff_s1': 'B-', 'eff_s2': 'C+', 'credits_earned': 10, 'completion_status': 'Completed'},
+		])
+		self.assertEqual([c['level'] for c in columns], ['Introduction', 'Concentration', 'Capstone'])
+		self.assertEqual([c['year'] for c in columns], [1, 2, 3])
+		self.assertEqual(columns[0]['courses'][0]['s1'], 'C-')
+		self.assertEqual(columns[0]['courses'][0]['credits'], 15.0)
+
+	def test_cte_requirements_derive_status_from_threshold(self):
+		from dataexploration.view_modules.student_data_utils import _cte_requirements
+
+		reqs = _cte_requirements({
+			'concentrator': {'status': 'Met', 'total_credits_earned': 10, 'justification': 'ok'},
+			'capstone': {'credits_threshold_met': False, 'justification': 'No capstone course found.'},
+		})
+		self.assertEqual([r['label'] for r in reqs], ['Concentrator', 'Capstone'])
+		self.assertEqual(reqs[0]['status'], 'Met')
+		self.assertEqual(reqs[1]['status'], 'Not Met')
+		self.assertEqual(_cte_requirements(None), [])
+
+	def test_fetch_student_cte_details_current_and_past_completers(self):
+		from unittest.mock import MagicMock, patch
+
+		import dataexploration.view_modules.student_data_utils as mod
+
+		class _Row:
+			def __init__(self, **kw):
+				self.__dict__.update(kw)
+
+		rows = [
+			_Row(
+				school_year='2025', cte_pathway='Professional Theater', pathway_status='CTE Completer',
+				industry_sector='Arts', pathway_code='', pathway_code_name='',
+				course_history_json=[{'cte_level': 'Concentration', 'course': 'Professional Theater I', 'eff_s1': 'A', 'eff_s2': 'B', 'credits_earned': 10, 'completion_status': 'Completed'}],
+				completer_requirements_json={'concentrator': {'status': 'Met'}},
+			),
+			_Row(
+				school_year='2026', cte_pathway='Professional Theater', pathway_status='In Progress',
+				industry_sector='Arts', pathway_code='', pathway_code_name='',
+				course_history_json=[{'cte_level': 'Capstone', 'course': 'Professional Theater II', 'credits_earned': 0, 'completion_status': 'In Process'}],
+				completer_requirements_json={'capstone': {'credits_threshold_met': False, 'justification': 'No capstone course found.'}},
+			),
+		]
+
+		detail_qs = MagicMock()
+		detail_qs.order_by.return_value = rows
+
+		with patch.object(mod, '_resolve_ssid', return_value='123'), \
+			patch.object(mod, 'CurrentStudent') as cs, \
+			patch('coursecatalog.models.CteDetailEntry') as cte_model:
+			cs.objects.filter.return_value.order_by.return_value.first.return_value = None
+			cte_model.objects.filter.return_value = detail_qs
+			out = mod._fetch_student_cte_details('123', current_school_year='2026-2027')
+
+		self.assertTrue(out['has_any'])
+		self.assertEqual(len(out['current']), 1)
+		self.assertEqual(out['current'][0]['school_year'], '2026')
+		self.assertFalse(out['current'][0]['is_completer'])
+		self.assertEqual([c['level'] for c in out['current'][0]['columns']], ['Capstone'])
+		self.assertEqual(len(out['past_completers']), 1)
+		self.assertEqual(out['past_completers'][0]['school_year'], '2025')
+		self.assertEqual(out['past_completers'][0]['pathway_status'], 'CTE Completer')
+
+	def test_fetch_student_cte_details_empty_when_no_rows(self):
+		from unittest.mock import MagicMock, patch
+
+		import dataexploration.view_modules.student_data_utils as mod
+
+		detail_qs = MagicMock()
+		detail_qs.order_by.return_value = []
+
+		with patch.object(mod, '_resolve_ssid', return_value='123'), \
+			patch.object(mod, 'CurrentStudent') as cs, \
+			patch('coursecatalog.models.CteDetailEntry') as cte_model:
+			cs.objects.filter.return_value.order_by.return_value.first.return_value = None
+			cte_model.objects.filter.return_value = detail_qs
+			out = mod._fetch_student_cte_details('123')
+
+		self.assertEqual(out, {'current': [], 'past_completers': [], 'has_any': False})

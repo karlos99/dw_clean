@@ -1,0 +1,46 @@
+{# Fallback for {{ form.as_p }} and raw inputs without widget classes #}
+<style>
+  .course-catalog-fields input[type="text"],
+  .course-catalog-fields input[type="search"],
+  .course-catalog-fields input[type="number"],
+  .course-catalog-fields input[type="email"],
+  .course-catalog-fields input[type="url"],
+  .course-catalog-fields textarea,
+  .course-catalog-fields select {
+    border: 1px solid rgb(203 213 225);
+    border-radius: 0.5rem;
+    background-color: #fff;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    color: rgb(15 23 42);
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  }
+  .course-catalog-fields textarea {
+    min-height: 5rem;
+    resize: vertical;
+  }
+  .course-catalog-fields input[type="text"]:focus,
+  .course-catalog-fields input[type="search"]:focus,
+  .course-catalog-fields input[type="number"]:focus,
+  .course-catalog-fields textarea:focus,
+  .course-catalog-fields select:focus {
+    outline: none;
+    border-color: rgb(59 130 246);
+    box-shadow: 0 0 0 3px rgb(59 130 246 / 0.2);
+  }
+  .course-catalog-fields input[type="checkbox"] {
+    border: 1px solid rgb(203 213 225);
+    border-radius: 0.25rem;
+  }
+  .course-catalog-fields .cc-form-as-p p {
+    margin-bottom: 0.75rem;
+  }
+  .course-catalog-fields .cc-form-as-p label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: rgb(71 85 105);
+    margin-bottom: 0.25rem;
+  }
+</style>

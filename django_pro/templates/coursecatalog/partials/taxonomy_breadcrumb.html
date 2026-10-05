@@ -1,0 +1,26 @@
+{# Optional: tag, category, discipline, level (model instances with .name) #}
+<nav aria-label="Taxonomy path" class="flex flex-wrap items-center gap-1.5 text-sm mb-4">
+    {% if tag %}
+    <span class="inline-flex items-center rounded-md bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-900 ring-1 ring-inset ring-sky-200">Tag: {{ tag.name }}</span>
+    {% else %}
+    <span class="text-xs text-slate-400 italic">Pick a tag</span>
+    {% endif %}
+    {% if category %}
+    <span class="text-slate-300" aria-hidden="true">→</span>
+    <span class="inline-flex items-center rounded-md bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-900 ring-1 ring-inset ring-violet-200">Category: {{ category.name }}</span>
+    {% elif tag %}
+    <span class="text-slate-300" aria-hidden="true">→</span>
+    <span class="text-xs text-slate-400 italic">Pick a category</span>
+    {% endif %}
+    {% if discipline %}
+    <span class="text-slate-300" aria-hidden="true">→</span>
+    <span class="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-950 ring-1 ring-inset ring-amber-200">Discipline: {{ discipline.name }}</span>
+    {% elif category %}
+    <span class="text-slate-300" aria-hidden="true">→</span>
+    <span class="text-xs text-slate-400 italic">Pick a discipline</span>
+    {% endif %}
+    {% if level %}
+    <span class="text-slate-300" aria-hidden="true">→</span>
+    <span class="inline-flex items-center rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900 ring-1 ring-inset ring-emerald-200">Level: {{ level.name }}</span>
+    {% endif %}
+</nav>

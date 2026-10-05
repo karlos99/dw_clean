@@ -18,9 +18,6 @@
             <span class="flex-1 min-w-0">
                 <span class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <span class="font-semibold text-sm text-slate-900">{{ acc.name }}</span>
-                    {% if acc.code %}
-                    <span class="font-mono text-[10px] text-slate-400 uppercase">{{ acc.code }}</span>
-                    {% endif %}
                     {% if seis_option %}
                     <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-violet-100 text-violet-700 border border-violet-200">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-2.5 w-2.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
@@ -79,7 +76,7 @@
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 shrink-0 mt-0.5"><path fill-rule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clip-rule="evenodd"/></svg>
                 <div>
                     <p class="font-bold">Imported from SEIS — read only</p>
-                    <p class="text-[10px] text-violet-600 mt-0.5">This setting was configured in SEIS and cannot be edited here. Selected option: <strong>{{ seis_option.name }}{% if seis_option.code %} ({{ seis_option.code }}){% endif %}</strong>.</p>
+                    <p class="text-[10px] text-violet-600 mt-0.5">This setting was configured in SEIS and cannot be edited here. Selected option: <strong>{{ seis_option.name }}</strong>.</p>
                 </div>
             </div>
             {% endif %}
@@ -92,7 +89,7 @@
             <div class="flex flex-wrap gap-1.5">
                 {% for res in acc.resources.all %}
                 <button type="button"
-                        @click="openEmbed('{{ res.label|default:res.get_kind_display|escapejs }}', '{{ res.get_embed_url|escapejs }}')"
+                        @click.stop="openEmbed('{{ res.label|default:res.get_kind_display|escapejs }}', '{% if res.get_embed_url %}{{ res.get_embed_url|escapejs }}{% endif %}', '{{ res.url|escapejs }}')"
                         class="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 hover:underline bg-blue-50 px-2 py-1 rounded border border-blue-100">
                     {% if res.kind == 'youtube' %}🎥{% elif res.kind == 'video' %}📺{% elif res.kind == 'pdf' %}📄{% else %}🔗{% endif %}
                     {{ res.label|default:res.get_kind_display }}
@@ -111,7 +108,7 @@
                     <option value="">-- Not selected --</option>
                     {% for opt in opts %}
                     <option value="{{ opt.id }}" {% if opt.id == seis_option.id %}selected{% elif opt.id in student_option_ids %}selected{% endif %}>
-                        {{ opt.name }}{% if opt.code %} ({{ opt.code }}){% endif %}
+                        {{ opt.name }}
                     </option>
                     {% endfor %}
                 </select>

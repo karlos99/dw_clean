@@ -272,8 +272,14 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
     if not col_col or col_col not in df.columns:
         return _message_option('Summary Table: select a Column column', cfg)
 
+    # ``__compact_cells__`` marks a frame ClickHouse pre-aggregated: the cells
+    # are already final values, so the frame is only used for its dimensions.
+    compact = bool(cfg.get('__compact_cells__')) and '__dv_value' in df.columns
+
     mask = blank_filter_expr([row_col, col_col], _BLANK)
     keep_cols = [row_col, col_col] + ([_dup_key] if _dup_key else [])
+    if compact:
+        keep_cols.append('__dv_value')
     if (st_agg_func != 'count' or (show_tooltips and st_value_col)) and st_value_col and st_value_col in df.columns:
         keep_cols.append(st_value_col)
     work = df.filter(mask).select(keep_cols)
@@ -309,7 +315,7 @@ def _summary_table_option(df, row_col, col_col, cfg, col_defs):
             for row in grouped.iter_rows(named=True):
                 ct_alt_lookup[(row[row_col], row[col_col])] = float(row['_value'] or 0)
 
-    ct_lookup = pivot_lookup(
+    ct_lookup = _compact_cell_lookup(work, [row_col], col_col, _agg_map) if compact else pivot_lookup(
         work, [row_col], col_col,
         st_agg_func if st_agg_func != 'count' else 'count',
         st_value_col if st_agg_func != 'count' else '',
@@ -544,7 +550,14 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 if rc:
                     filter_cols.append(rc)
             c['filters'] = resolved_filters
+        # A compact frame already carries one column per calculation, so the
+        # builder only needs the row dimensions plus those columns.
+        compact_calc = bool(cfg.get('__compact_calc_cells__'))
         keep_cols = list(dict.fromkeys(valid_row + calc_value_cols + filter_cols + ([_dup_key] if _dup_key else [])))
+        if compact_calc:
+            keep_cols = list(dict.fromkeys(
+                valid_row + [c['id'] for c in parsed_calcs if c.get('id')]
+            ))
         work = df.filter(blank_filter_expr(valid_row, _BLANK)).select(keep_cols) if valid_row else df.select(keep_cols)
         work = strip_str_cols(work, list(dict.fromkeys(c for c in (valid_row + filter_cols) if c in work.columns)))
 
@@ -578,8 +591,67 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
 
         rows_data = []
         col_totals = {cid: 0.0 for cid in base_ids}
+        # ClickHouse already computed every calculation column when the frame is
+        # compact; the per-row loop only has to look the values up.
+        compact_lookup = cfg.get('__compact_calc_cells__') if compact_calc else None
 
         for combo in row_combos:
+            if compact_lookup is not None:
+                row_key = tuple(combo) if len(valid_row) > 1 else combo[0]
+                base_raw = {}
+                base_display = {}
+                for cid in base_ids:
+                    raw = float((compact_lookup.get(row_key) or {}).get(cid, 0.0) or 0.0)
+                    calc = next(c for c in parsed_calcs if c['id'] == cid)
+                    dec = _calc_decimals(calc)
+                    if dec is not None:
+                        raw = round(raw, dec)
+                    base_raw[cid] = raw
+                    col_totals[cid] += raw
+                    base_display[cid] = _format_cell_with_tooltip(
+                        raw, None, calc.get('agg_func', 'count'), show_tooltips, dec,
+                    )
+                derived_vals = {}
+                pending = {c['id']: c for c in parsed_calcs if c['calc_type'] == 'derived'}
+                for _ in range(len(pending) + 1):
+                    if not pending:
+                        break
+                    progressed = False
+                    pool = {**base_raw, **derived_vals}
+                    for cid, calc in list(pending.items()):
+                        ra = str(calc.get('ref_a') or '')
+                        rb = str(calc.get('ref_b') or '')
+                        if ra in pool and rb in pool:
+                            fn = _DYN_CALC_OPS.get(calc.get('op', 'add'), _DYN_CALC_OPS['add'])
+                            v = fn(pool[ra], pool[rb])
+                            if calc.get('as_percent'):
+                                v = v * 100
+                            derived_vals[cid] = v
+                            del pending[cid]
+                            progressed = True
+                    if not progressed:
+                        break
+                for cid in pending:
+                    derived_vals[cid] = 0.0
+
+                row_cells = []
+                for calc in output_calcs:
+                    if calc['calc_type'] == 'base':
+                        row_cells.append(base_display[calc['id']])
+                    else:
+                        v = derived_vals.get(calc['id'], 0.0)
+                        dec = _calc_decimals(calc)
+                        if dec is not None:
+                            v = round(v, dec)
+                        row_cells.append(v)
+                if st_show_row_totals and not totals_only:
+                    rows_data.append(list(combo) + row_cells + [sum(base_raw.values())])
+                elif not totals_only:
+                    rows_data.append(list(combo) + row_cells)
+                elif cfg.get('dyn_display_type', 'table') != 'table':
+                    rows_data.append(['Total'] + row_cells)
+                continue
+
             sub = work
             for r_col, r_val in zip(valid_row, combo):
                 sub = sub.filter(pl.col(r_col) == r_val)
@@ -966,8 +1038,14 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     _COMP_COL = valid_col[0]
     col_col = _COMP_COL
 
+    # Pre-aggregated cells: the frame carries only dimensions and the final
+    # values, so it must be read through ``_compact_cell_lookup``.
+    compact = bool(cfg.get('__compact_cells__')) and '__dv_value' in df.columns
+
     mask = blank_filter_expr(valid_row + [col_col], _BLANK)
     keep_cols = list(dict.fromkeys(valid_row + [col_col] + ([_dup_key] if _dup_key else [])))
+    if compact:
+        keep_cols.append('__dv_value')
     if (agg_func != 'count' or (show_tooltips and value_col)) and value_col and value_col in df.columns:
         keep_cols.append(value_col)
     work = df.filter(mask).select(keep_cols)
@@ -1012,7 +1090,7 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
                 row_key = tuple(row[c] for c in valid_row) if len(valid_row) > 1 else row[valid_row[0]]
                 ct_alt_lookup[(row_key, row[col_col])] = float(row['_value'] or 0)
 
-    ct_lookup = pivot_lookup(
+    ct_lookup = _compact_cell_lookup(work, valid_row, col_col, _agg_map) if compact else pivot_lookup(
         work, valid_row, col_col,
         agg_func if agg_func != 'count' else 'count',
         value_col if agg_func != 'count' else '',
@@ -1095,6 +1173,26 @@ def _dynamic_summary_table_option(df, row_cols, col_cols, agg_func, value_col, a
     if cfg.get('dyn_display_type', 'table') != 'table':
         return _convert_table_to_echarts(result, cfg, valid_row)
     return result
+
+
+def _compact_cell_lookup(df, row_cols, col_col, agg_map=None):
+    """Return ``{(row_key, col_val): value}`` from pre-aggregated cells.
+
+    ``__compact_cells__`` marks a frame that ClickHouse already aggregated: the
+    row includes the row dimensions, the column dimension, and ``__dv_value``.
+    Every cell is already the final value, so no further aggregation is
+    performed here.
+    """
+    if '__dv_value' not in df.columns:
+        return {}
+    lookup = {}
+    for row in df.iter_rows(named=True):
+        if len(row_cols) > 1:
+            row_key = tuple(row.get(c) for c in row_cols)
+        else:
+            row_key = row.get(row_cols[0])
+        lookup[(row_key, row.get(col_col))] = float(row.get('__dv_value') or 0)
+    return lookup
 
 
 def _build_row_combos(val_lists, cols):

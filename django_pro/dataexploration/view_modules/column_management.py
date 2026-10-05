@@ -13,6 +13,12 @@ from django.http import HttpResponseForbidden
 from django.views.decorators.http import require_POST
 
 from ..models import DefaultColumnSelection
+from ..catalog_columns import (
+    COURSE_PROGRAM_DEFINITIONS,
+    course_program_columns_enabled,
+    is_course_program_column,
+    merge_course_program_columns,
+)
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
 from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns
 from ..survey_utils import get_survey_columns
@@ -85,7 +91,7 @@ def get_enabled_columns():
         allowlist = None
 
     if not allowlist:
-        return COLUMN_DEFINITIONS, COLUMN_CATEGORIES
+        return merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
 
     allowed_set = set(allowlist)
     for virt, related in _JSON_VIRTUAL_AUTO_INCLUDE.items():
@@ -93,11 +99,15 @@ def get_enabled_columns():
             allowed_set.add(virt)
     if 'picture' not in allowed_set and any(c in allowed_set for c in ('ssid', 'student_id', 'student_name')):
         allowed_set.add('picture')
-
-    filtered_defs = {k: v for k, v in COLUMN_DEFINITIONS.items() if k in allowed_set}
+    if course_program_columns_enabled():
+        from ..catalog_columns import course_program_allowlist_keys
+        allowed_set.update(course_program_allowlist_keys())
 
     filtered_cats = {}
-    for cat_key, cat in COLUMN_CATEGORIES.items():
+    base_defs, base_cats = merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
+    filtered_defs = {k: v for k, v in base_defs.items() if k in allowed_set}
+
+    for cat_key, cat in base_cats.items():
         cols = [c for c in cat['columns'] if c in allowed_set]
         if cols:
             filtered_cats[cat_key] = {**cat, 'columns': cols}
@@ -351,6 +361,92 @@ def manage_default_columns(request):
     return render(request, 'dataexploration/manage_default_columns.html', context)
 
 
+SCHEDULE_COLUMN_FILTER_KEYS = frozenset({
+    'schedule_period',
+    'schedule_subject',
+    'schedule_course_name',
+    'schedule_staff',
+})
+
+
+def _normalize_schedule_filter_values(val):
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return [str(v).strip() for v in val if v is not None and str(v).strip()]
+    s = str(val).strip()
+    return [s] if s else []
+
+
+def split_schedule_column_filters(column_filters):
+    """Split schedule filter keys out of column_filters JSON (mirrors student list GET params)."""
+    if not isinstance(column_filters, dict):
+        return {}, {}
+    base = {}
+    schedule = {
+        'schedule_period': [],
+        'schedule_subject': [],
+        'schedule_course_name': [],
+        'schedule_staff': [],
+    }
+    for key, val in column_filters.items():
+        if key in SCHEDULE_COLUMN_FILTER_KEYS:
+            schedule[key] = _normalize_schedule_filter_values(val)
+        else:
+            base[key] = val
+    return base, schedule
+
+
+def build_column_structure_scope(user, column_filters):
+    """Cohort scope for test/mark column discovery (school role + schedule filters)."""
+    from .schedule_filter_sql import apply_schedule_marks_filters, _restrict_schedule_filters
+
+    base_filters, schedule_filters = split_schedule_column_filters(column_filters)
+    where_clauses = []
+    params = []
+    _apply_de_school_filter(where_clauses, params, user)
+
+    school_year = ''
+    if isinstance(base_filters, dict):
+        sy = base_filters.get('school_year') or ''
+        if isinstance(sy, list):
+            sy = sy[0] if sy else ''
+        school_year = str(sy or '').strip()
+    if school_year:
+        try:
+            from dataexploration.school_year_utils import resolve_school_year
+            school_year = resolve_school_year(school_year)
+        except Exception:
+            pass
+
+    if user and user.is_authenticated:
+        _restrict_schedule_filters(user, schedule_filters, base_filters)
+    apply_schedule_marks_filters(
+        where_clauses,
+        params,
+        user,
+        schedule_filters,
+        school_year,
+        base_filters,
+    )
+    return base_filters, where_clauses, params
+
+
+def strip_course_program_filters(filters):
+    """Drop course-program keys from a column-structure scope.
+
+    Course-program filters select students by course, not which assessments or
+    marks exist. The assessment/mark discovery SQL ignores them, so keeping them
+    only changes the column-tree cache key and forces a slow full rebuild.
+    """
+    if not isinstance(filters, dict):
+        return filters
+    return {
+        k: v for k, v in filters.items()
+        if not is_course_program_column(k)
+    }
+
+
 def load_column_structures(request):
     """Load dynamic column structures for the selector via HTMX."""
     import json
@@ -363,22 +459,54 @@ def load_column_structures(request):
         except json.JSONDecodeError:
             pass
 
-    # Build school filtering based on user permissions
-    where_clauses = []
-    params = []
     user = request.user
-    
-    _apply_de_school_filter(where_clauses, params, user)
+    base_column_filters, where_clauses, params = build_column_structure_scope(
+        user, column_filters,
+    )
+
+    # Course-program filters select students by course, not which assessments or
+    # marks exist, and the assessment/mark discovery SQL already ignores them.
+    # Drop them from the scope/cache key so selecting a course-program filter
+    # does not invalidate the multi-MB column tree and force a slow unscoped
+    # rebuild of the assessments and marks trees.
+    base_column_filters = strip_course_program_filters(base_column_filters)
+
+    # Lazy mark-course fragment: the selector renders a course's period
+    # checkboxes on first expand rather than emitting every period up front.
+    # This keeps the initial selector response small instead of shipping ~20k
+    # period labels (~14 MB) that are usually collapsed anyway.
+    lazy_course = request.GET.get('marks_course_name')
+    if lazy_course is not None:
+        lazy_year = request.GET.get('marks_course_year', '')
+        lazy_subject = request.GET.get('marks_course_subject', '')
+        try:
+            marks_structure = get_mark_columns(
+                column_filters=base_column_filters,
+                extra_where_clauses=where_clauses,
+                extra_params=params,
+            )
+            periods = (
+                marks_structure.get(lazy_year, {})
+                .get(lazy_subject, {})
+                .get(lazy_course, {})
+            ) or {}
+        except Exception:
+            periods = {}
+        fragment = render_to_string(
+            'dataexploration/partials/column_structures_marks_course.html',
+            {'periods': periods},
+        )
+        return HttpResponse(fragment)
 
     # Cache the fully rendered selector HTML — the underlying column structure
-    # queries are fast, but rendering ~12k mark columns to HTML takes ~1s and
-    # produces a multi-MB response. The result is deterministic per (filter,
+    # queries are fast, but rendering the mark column tree to HTML is expensive
+    # and produces a multi-MB response. The result is deterministic per (filter,
     # school scope, sync version), so reuse it across identical requests.
     _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
     _html_cache_key = (
-        "dataexp:column_structures_html:"
+        "dataexp:column_structures_html:v4:"
         + hashlib.md5(json.dumps({
-            'column_filters': column_filters,
+            'column_filters': base_column_filters,
             'where': where_clauses,
             'params': [str(p) for p in params],
             'sync': _sync_v,
@@ -389,14 +517,14 @@ def load_column_structures(request):
         return HttpResponse(cached_html)
 
     test_structure = get_test_columns(
-        column_filters=column_filters,
+        column_filters=base_column_filters,
         extra_where_clauses=where_clauses,
         extra_params=params
     )
     marks_structure = get_mark_columns(
-        column_filters=column_filters,
+        column_filters=base_column_filters,
         extra_where_clauses=where_clauses,
-        extra_params=params
+        extra_params=params,
     )
     survey_structure = get_survey_columns()
     ap_structure = get_ap_columns()

@@ -254,7 +254,14 @@ def _bar_option(df, x_col, y_col, y_cols, stack_col, agg, cfg, labels, stacked, 
     else:
         adf = sort_df(_agg(df, x_col, y_col, agg, cfg=cfg), '_value', descending=True)
         value_map = agg_to_dict(adf, x_col)
-        ordered_categories = _ordered_categories(adf[x_col].cast(pl.Utf8).to_list(), cfg, value_map)
+        # Include the category itself as a tie-break so categories with equal
+        # values always render in the same order, regardless of which query
+        # path produced the underlying rows (compiled SQL vs raw rows).
+        ordered_categories = sorted(
+            (str(c) for c in adf[x_col].cast(pl.Utf8).to_list()),
+            key=lambda c: (float(value_map.get(c, 0) or 0), c),
+            reverse=True,
+        )
         ordered_values = [float(value_map.get(cat, 0) or 0) for cat in ordered_categories]
         series_name = labels['y'] or 'Value'
         update_axes(

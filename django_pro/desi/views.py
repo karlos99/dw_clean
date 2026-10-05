@@ -4,15 +4,15 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.core import signing
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Count, Prefetch, Q
-from django.http import HttpResponse, HttpResponseForbidden
+from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.template.loader import render_to_string
 from django.urls import reverse
 import csv
 import json
 
-from studata.models import CurrentStudent, School as StudataSchool, TeacherAccess
+from studata.models import CurrentStudent, Result, School as StudataSchool, Schedule, TeacherAccess, Test
 from landing.utils import get_project_config
 from .models import (
     Accommodation,
@@ -23,12 +23,20 @@ from .models import (
     AssessmentCriteria,
     DesiExportConfiguration,
     DesiSchoolAccess,
+    MANAGED_BY_CHOICES,
     StudentAccommodation,
     StudentAssessmentCompletion,
     SupportRule,
     SupportRuleCriteria,
+    SupportDefaultRule,
+    SupportDefaultRuleCriteria,
 )
-from .seis_data import build_seis_option_map
+from .seis_data import (
+    build_seis_option_map,
+    fetch_seis_rows,
+    seis_assigned_assessments,
+    seis_assigned_assessments_by_ssid,
+)
 
 
 BASE_EXPORT_COLUMNS = [
@@ -97,6 +105,17 @@ def _coordinator_school_ids(user):
     return list(schools) if isinstance(schools, list) and schools else []
 
 
+def _is_504_student(student):
+    """Whether a student has a 504 plan (in_504 = 'Y'/'1')."""
+    if student is None:
+        return False
+    return str(getattr(student, 'in_504', '') or '').strip() in ('Y', '1')
+
+
+def _is_504_admin(user):
+    return _has_role(user, '504_Admin')
+
+
 def can_edit_desi(user, student=None, school_state_id=None):
     """
     Whether the user may save designated supports/completions for a student.
@@ -105,9 +124,30 @@ def can_edit_desi(user, student=None, school_state_id=None):
     holds an add-on Testing Coordinator role) edits their own students unless
     the school's DesiSchoolAccess.teachers_can_edit is False. Non-teacher
     viewers (School View / School Gr View / Testing Coordinator) are read-only.
+
+    Students with a 504 plan (``in_504 = Y``) are editable only by users holding
+    the ``504_Admin`` role (scoped to the schools they are assigned to).
+    Project/District admins and superusers retain full rights to all students.
     """
     if not user or not user.is_authenticated:
         return False
+
+    if school_state_id is None and student is not None:
+        school_state_id = getattr(student, 'school_state_id', None)
+
+    # 504 students are editable only by the 504_Admin role (scoped to assigned
+    # schools). Project/District admins and superusers retain full rights to all.
+    if _is_504_student(student):
+        if user.is_superuser or _has_role(user, 'Project Admin') or _has_district_role(user):
+            return True
+        if not _is_504_admin(user):
+            return False
+        assigned_schools = getattr(user, 'schools', None)
+        if isinstance(assigned_schools, list) and assigned_schools:
+            if not school_state_id or school_state_id not in assigned_schools:
+                return False
+        return True
+
     if user.is_superuser or _has_role(user, 'Project Admin') or _has_district_role(user):
         return True
 
@@ -191,27 +231,185 @@ def get_visible_students(user, active_school=None):
     return CurrentStudent.objects.all()
 
 
+def _normalize_demographic_value(field_name, raw_value):
+    """Normalize student/rule values for consistent comparisons (e.g. grade 4 vs 04)."""
+    if raw_value is None:
+        return ""
+    text = str(raw_value).strip().lower()
+    if field_name == 'grade' and text.isdigit():
+        return text.zfill(2)
+    return text
+
+
+def _normalize_result_value(value):
+    """Normalize a stored result value (PL / scale score) for comparison."""
+    if value is None:
+        return ''
+    return str(value).strip()
+
+
+def _result_to_float(value):
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _eval_result_criterion(criterion, student):
+    """
+    Evaluate an assessment-result criterion against a student's results.
+
+    The criterion names a test (program/subject/window/school year) and compares
+    the student's performance level or scale score. Returns ``(match, reason)``.
+    """
+    ssid = getattr(student, 'ssid', None)
+    label = f"{criterion.test_name or 'Result'}"
+    if criterion.test_subject:
+        label += f" {criterion.test_subject}"
+    if not ssid:
+        return False, f"{label}: no SSID on student"
+
+    tests = Test.objects.all()
+    if criterion.test_name:
+        tests = tests.filter(test_name__iexact=criterion.test_name.strip())
+    if criterion.test_subject:
+        tests = tests.filter(subject__iexact=criterion.test_subject.strip())
+    if criterion.test_window:
+        tests = tests.filter(test_window__iexact=criterion.test_window.strip())
+    if criterion.school_year:
+        tests = tests.filter(school_year=criterion.school_year.strip())
+    test_keys = list(tests.values_list('test_group_key', flat=True))
+
+    field = criterion.result_field or 'pl'
+    values = []
+    if test_keys:
+        results = Result.objects.filter(ssid=ssid, test_group_key__in=test_keys)
+        if criterion.school_year:
+            results = results.filter(school_year=criterion.school_year.strip())
+        values = [
+            _normalize_result_value(v)
+            for v in results.values_list(field, flat=True)
+            if _normalize_result_value(v) != ''
+        ]
+
+    op = criterion.result_operator or 'in'
+    raw = (criterion.result_value or '').strip()
+    match = False
+    if op == 'in':
+        wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
+        match = any(v in wanted for v in values)
+    elif op == 'not_in':
+        wanted = {_normalize_result_value(v) for v in raw.split(',') if v.strip()}
+        # "not in" only holds when the student actually has a result.
+        match = bool(values) and all(v not in wanted for v in values)
+    elif op == 'is':
+        match = any(v == _normalize_result_value(raw) for v in values)
+    elif op == 'is_not':
+        match = bool(values) and all(v != _normalize_result_value(raw) for v in values)
+    elif op == 'between':
+        low, _, high = raw.partition('-')
+        low_f, high_f = _result_to_float(low), _result_to_float(high)
+        if low_f is not None and high_f is not None:
+            match = any(
+                f is not None and low_f <= f <= high_f
+                for f in (_result_to_float(v) for v in values)
+            )
+    elif op == 'gte':
+        threshold = _result_to_float(raw)
+        match = threshold is not None and any(
+            f is not None and f >= threshold for f in (_result_to_float(v) for v in values)
+        )
+    elif op == 'lte':
+        threshold = _result_to_float(raw)
+        match = threshold is not None and any(
+            f is not None and f <= threshold for f in (_result_to_float(v) for v in values)
+        )
+
+    reason = None if match else (
+        f"{label} {criterion.get_result_field_display()} must be "
+        f"{criterion.get_result_operator_display()} '{raw}' "
+        f"(found: {', '.join(values) if values else '(none)'})"
+    )
+    return match, reason
+
+
+def _eval_schedule_criterion(criterion, student):
+    """
+    Evaluate a schedule/class criterion: school scope, teacher, and/or period.
+
+    School-only matches every student in the school. Adding a teacher matches
+    that teacher's students; adding a period narrows to that class period.
+    Returns ``(match, reason)``.
+    """
+    school = (criterion.school_state_id or '').strip()
+    staff = (criterion.staff_name or '').strip()
+    period = (criterion.period or '').strip()
+    if not (school or staff or period):
+        return True, None
+    if school and (getattr(student, 'school_state_id', '') or '').strip() != school:
+        return False, f"Student's school is not {school}"
+    if not staff and not period:
+        # School-level scope: everyone in the school matches.
+        return True, None
+
+    stu_key = getattr(student, 'stu_annual_key', None)
+    if not stu_key:
+        return False, "Student has no schedule identity"
+    try:
+        with transaction.atomic():
+            scheduled = Schedule.objects.filter(stu_annual_key=stu_key)
+            year = (getattr(student, 'school_year', '') or '').strip()
+            if year:
+                scheduled = scheduled.filter(school_year=year)
+            if school:
+                scheduled = scheduled.filter(state_school_id=school)
+            if staff:
+                scheduled = scheduled.filter(staff_name__iexact=staff)
+            if period:
+                scheduled = scheduled.filter(period=period)
+            match = scheduled.exists()
+    except Exception:
+        return False, "Schedule data unavailable"
+
+    label = staff or 'the teacher'
+    if period:
+        label = f"{label} period {period}"
+    reason = None if match else f"Student is not scheduled with {label}"
+    return match, reason
+
+
 def check_criteria(criteria_list, student):
     """
-    Dynamically evaluates a list of AssessmentCriteria against a student's current demographics.
+    Dynamically evaluates a list of AssessmentCriteria, SupportRuleCriteria or
+    SupportDefaultRuleCriteria against a student, supporting 'AND' and 'OR'
+    connectors. Result-type criteria compare assessment results; schedule-type
+    criteria match the student's class schedule.
     Returns (is_eligible: bool, failed_reasons: list of str).
     """
-    failed_reasons = []
-    for criterion in criteria_list:
+    def _eval_criterion(criterion, stu):
+        criterion_type = getattr(criterion, 'criterion_type', '')
+        if criterion_type == 'result':
+            return _eval_result_criterion(criterion, stu)
+        if criterion_type == 'schedule':
+            return _eval_schedule_criterion(criterion, stu)
+
         field_name = criterion.field_name
-        
+
         # Resolve value from student attributes or add_data dict
-        if hasattr(student, field_name):
-            student_value = getattr(student, field_name)
-        elif student.add_data and isinstance(student.add_data, dict) and field_name in student.add_data:
-            student_value = student.add_data.get(field_name)
+        if hasattr(stu, field_name):
+            student_value = getattr(stu, field_name)
+        elif stu.add_data and isinstance(stu.add_data, dict) and field_name in stu.add_data:
+            student_value = stu.add_data.get(field_name)
         else:
             student_value = None
 
-        # Normalize values to string for case-insensitive comparison
-        stu_val_str = str(student_value).strip().lower() if student_value is not None else ""
-        crit_val_str = criterion.value.strip().lower()
-        crit_list_vals = [v.strip().lower() for v in criterion.value.split(',') if v.strip()]
+        stu_val_str = _normalize_demographic_value(field_name, student_value)
+        crit_val_str = _normalize_demographic_value(field_name, criterion.value)
+        crit_list_vals = [
+            _normalize_demographic_value(field_name, v)
+            for v in criterion.value.split(',')
+            if v.strip()
+        ]
 
         match = False
         op = criterion.operator
@@ -224,16 +422,68 @@ def check_criteria(criteria_list, student):
         elif op == 'not_in':
             match = (stu_val_str not in crit_list_vals)
 
+        failure_reason = None
         if not match:
-            # Generate descriptive error message
             display_field = criterion.get_field_name_display()
             display_operator = criterion.get_operator_display()
             current_display = f"'{student_value}'" if student_value is not None else "(Not Set)"
-            failed_reasons.append(
-                f"{display_field} must be {display_operator} '{criterion.value}' (current value: {current_display})"
-            )
-            
-    return len(failed_reasons) == 0, failed_reasons
+            failure_reason = f"{display_field} must be {display_operator} '{criterion.value}' (current value: {current_display})"
+
+        return match, failure_reason
+
+    # Group criteria into conjunction groups separated by OR (Disjunctive Normal Form)
+    groups = []
+    current_group = []
+    for idx, criterion in enumerate(criteria_list):
+        logic_op = getattr(criterion, 'logic_operator', 'AND') or 'AND'
+        if idx > 0 and logic_op == 'OR':
+            if current_group:
+                groups.append(current_group)
+            current_group = [criterion]
+        else:
+            current_group.append(criterion)
+    if current_group:
+        groups.append(current_group)
+
+    if not groups:
+        return True, []
+
+    # If all criteria are connected by AND (only 1 group), preserve exact existing behavior:
+    if len(groups) == 1:
+        failed_reasons = []
+        for crit in groups[0]:
+            match, reason = _eval_criterion(crit, student)
+            if not match and reason:
+                failed_reasons.append(reason)
+        return len(failed_reasons) == 0, failed_reasons
+
+    # When OR is used, the student is eligible if ANY conjunction group passes
+    all_group_failed_reasons = []
+    for group in groups:
+        group_failed = []
+        for crit in group:
+            match, reason = _eval_criterion(crit, student)
+            if not match and reason:
+                group_failed.append(reason)
+        if not group_failed:
+            # This entire AND-group matched, so the rule is satisfied!
+            return True, []
+        all_group_failed_reasons.append(group_failed)
+
+    # If we reached here, NO group matched. Collect failure reasons across groups.
+    flattened_reasons = []
+    for group_failed in all_group_failed_reasons:
+        for r in group_failed:
+            if r not in flattened_reasons:
+                flattened_reasons.append(r)
+    return False, flattened_reasons
+
+
+def hidden_from_student_list_ids():
+    """Designated supports hidden from the student workspace by project admin."""
+    return set(
+        Accommodation.objects.filter(hide_from_student_list=True).values_list('id', flat=True)
+    )
 
 
 def hidden_support_ids(student):
@@ -245,11 +495,13 @@ def hidden_support_ids(student):
     Accommodation ids.
     """
     hidden = set()
+    criteria_qs = SupportRuleCriteria.objects.order_by('order', 'id')
     rules = (
         SupportRule.objects.filter(is_active=True)
-        .exclude(supports__isnull=True)
-        .prefetch_related('criteria', 'supports')
-        .distinct()
+        .prefetch_related(
+            Prefetch('criteria', queryset=criteria_qs),
+            'supports',
+        )
     )
     for rule in rules:
         criteria = list(rule.criteria.all())
@@ -259,6 +511,81 @@ def hidden_support_ids(student):
         if not eligible:
             hidden.update(rule.supports.values_list('id', flat=True))
     return hidden
+
+
+def default_support_locks(student):
+    """
+    Default options assigned to a student by active ``SupportDefaultRule`` rows.
+
+    Rules are grouped per support and evaluated in ascending ``priority``:
+    the **first criteria rule that matches wins** and determines that support's
+    option(s). When no criteria rule matches, the support's "Default (all
+    students)" rule is used instead. Supports with no matching rule and no
+    default are left untouched.
+
+    Returns::
+
+        {
+          'option_ids': set(...),          # option ids to show pre-selected
+          'support_ids': set(...),         # support ids that become read-only
+          'direct_support_ids': set(...),  # locked supports with no options
+          'managers': {support_id: label}, # lock reason (managed-by label)
+        }
+    """
+    locks = {
+        'option_ids': set(),
+        'support_ids': set(),
+        'direct_support_ids': set(),
+        'managers': {},
+    }
+    criteria_qs = SupportDefaultRuleCriteria.objects.order_by('order', 'id')
+    rules = (
+        SupportDefaultRule.objects.filter(is_active=True)
+        .select_related('support')
+        .prefetch_related(Prefetch('criteria', queryset=criteria_qs), 'options')
+        .order_by('priority', 'id')
+    )
+
+    rules_by_support = {}
+    for rule in rules:
+        rules_by_support.setdefault(rule.support_id, []).append(rule)
+
+    def _matches(rule):
+        if rule.scope == 'all':
+            return True
+        criteria = list(rule.criteria.all())
+        if not criteria:
+            return False
+        matched, _failed = check_criteria(criteria, student)
+        return matched
+
+    for support_rules in rules_by_support.values():
+        default_rule = next((r for r in support_rules if r.scope == 'all'), None)
+        chosen = None
+        for rule in support_rules:
+            if rule.scope == 'all':
+                continue
+            if _matches(rule):
+                chosen = rule
+                break
+        if chosen is None:
+            chosen = default_rule
+        if chosen is None:
+            continue
+
+        support = chosen.support
+        if support is None:
+            continue
+        locks['support_ids'].add(support.id)
+        locks['managers'].setdefault(
+            support.id, support.get_managed_by_display() or 'Managed'
+        )
+        options = list(chosen.options.all())
+        if options:
+            locks['option_ids'].update(opt.id for opt in options)
+        else:
+            locks['direct_support_ids'].add(support.id)
+    return locks
 
 
 def _parse_dependency_fields(post_data):
@@ -381,6 +708,122 @@ def _apply_dependency_rules(selected_option_ids, option_to_accommodation, suppor
         selected = next_selected
 
 
+def _desi_display_school_name(school):
+    return (school.short_name or school.school_name or '').strip()
+
+
+def _desi_schools_for_dropdown(available_schools):
+    """School choices for DESI filters: A–Z by displayed name, no Unknown placeholders."""
+    rows = list(available_schools) if available_schools else []
+    filtered = []
+    for school in rows:
+        short = (school.short_name or '').strip()
+        name = (school.school_name or '').strip()
+        if short.casefold() == 'unknown' or name.casefold() == 'unknown':
+            continue
+        filtered.append(school)
+    filtered.sort(
+        key=lambda s: (_desi_display_school_name(s).casefold(), getattr(s, 'dw_schoolkey', 0)),
+    )
+    return filtered
+
+
+def _teacher_option_rows(school_year, student_keys):
+    """
+    Distinct ``(staff_name, school_state_id, grade)`` triples for a set of
+    students.
+
+    Computed server-side (one query) instead of pulling every teacher-access row
+    into Python, which dominated load time for district-wide views. Returns an
+    empty list when the teacher-access view is not available.
+    """
+    keys = list(student_keys or [])
+    if not keys:
+        return []
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT ta.staff_name, cs.school_state_id, cs.grade
+                    FROM teacher_access_list ta
+                    JOIN current_student cs ON cs.stu_annual_key = ta.stu_annual_key
+                    WHERE ta.school_year = %s
+                      AND cs.school_year = %s
+                      AND ta.staff_name IS NOT NULL AND ta.staff_name <> ''
+                      AND ta.stu_annual_key = ANY(%s)
+                    """,
+                    [school_year, school_year, keys],
+                )
+                return cursor.fetchall()
+    except Exception:
+        return []
+
+
+def _is_elementary_school(school):
+    """True when the school's group is an elementary school."""
+    group = (getattr(school, 'school_group', '') or '').strip().casefold()
+    return 'elementary' in group
+
+
+def _period_sort_key(value):
+    """Sort periods numerically when possible ('1' < '2' < '10'), else by text."""
+    text = str(value).strip()
+    return (0, int(text)) if text.isdigit() else (1, text)
+
+
+def _schedule_periods(school_year, school_state_id, staff_name, student_keys=None):
+    """
+    Distinct periods from ``schedule_list`` for one school + staff member.
+
+    Used to populate the DESI period filter for non-elementary schools. When
+    ``student_keys`` is given the lookup is restricted to those students and can
+    use the ``stu_annual_key`` index. Returns an empty list when the input is
+    incomplete or the schedule table is not available (some deployments/tests).
+    """
+    if not school_state_id or not staff_name:
+        return []
+    try:
+        with transaction.atomic():
+            qs = Schedule.objects.filter(
+                school_year=school_year,
+                state_school_id=school_state_id,
+                staff_name__iexact=staff_name,
+            )
+            if student_keys:
+                qs = qs.filter(stu_annual_key__in=student_keys)
+            values = {
+                str(p).strip()
+                for p in qs.exclude(period__isnull=True).exclude(period='')
+                .values_list('period', flat=True)
+                .distinct()
+                if str(p).strip()
+            }
+    except Exception:
+        return []
+    return sorted(values, key=_period_sort_key)
+
+
+def _schedule_student_keys(school_year, school_state_id, period, staff_name='', student_keys=None):
+    """Student annual keys scheduled for ``period`` with the given staff."""
+    if not school_state_id or not period:
+        return []
+    try:
+        with transaction.atomic():
+            qs = Schedule.objects.filter(
+                school_year=school_year,
+                state_school_id=school_state_id,
+                period=period,
+            )
+            if student_keys:
+                qs = qs.filter(stu_annual_key__in=student_keys)
+            if staff_name:
+                qs = qs.filter(staff_name__iexact=staff_name)
+            return list(qs.values_list('stu_annual_key', flat=True).distinct())
+    except Exception:
+        return []
+
+
 def _get_student_list_context(request):
     try:
         default_year = get_project_config().default_school_year
@@ -394,10 +837,12 @@ def _get_student_list_context(request):
     search_query = request.GET.get('search', '').strip()
     grade_filter = request.GET.get('grade', '').strip()
     teacher_filter = request.GET.get('teacher', '').strip()
+    period_filter = request.GET.get('period', '').strip()
     
-    active_school = getattr(request.user, 'active_school', None)
+    global_active_school = getattr(request.user, 'active_school', None)
+    active_school = global_active_school
     school_filter_id = request.GET.get('school', '')
-    
+
     if school_filter_id and not active_school:
         user_schools = getattr(request.user, 'schools', None)
         if not user_schools or school_filter_id in user_schools:
@@ -415,26 +860,19 @@ def _get_student_list_context(request):
     # then optionally narrow the student list to that teacher's students.
     teacher_names = []
     teacher_options_by_filter = {}
+    teacher_student_keys = []
     try:
         # Wrap in a savepoint: some deployments do not have the teacher-access
         # view/table, and a swallowed DB error would otherwise abort the whole
         # surrounding transaction (PostgreSQL) and break every later query.
         with transaction.atomic():
-            teacher_access_qs = TeacherAccess.objects.filter(
-                school_year=school_year,
-                stu_annual_key__in=students_qs.values('stu_annual_key'),
-            )
-            student_details = {
-                row['stu_annual_key']: row
-                for row in students_qs.values('stu_annual_key', 'school_state_id', 'grade')
-            }
-            for access in teacher_access_qs.values('staff_name', 'stu_annual_key'):
-                name = (access['staff_name'] or '').strip()
-                student_detail = student_details.get(access['stu_annual_key'])
-                if not name or not student_detail:
+            student_keys = list(students_qs.values_list('stu_annual_key', flat=True))
+            for staff_name, school_key, grade_key in _teacher_option_rows(school_year, student_keys):
+                name = (staff_name or '').strip()
+                if not name:
                     continue
-                school_key = student_detail['school_state_id'] or ''
-                grade_key = student_detail['grade'] or ''
+                school_key = (school_key or '').strip()
+                grade_key = (grade_key or '').strip()
                 for key in ('::', f'{school_key}::', f'::{grade_key}', f'{school_key}::{grade_key}'):
                     teacher_options_by_filter.setdefault(key, set()).add(name)
 
@@ -449,16 +887,43 @@ def _get_student_list_context(request):
                 else teacher_options_by_filter.get(f'::{grade_filter}', teacher_options_by_filter.get('::', [])),
             )
             if teacher_filter:
-                students_qs = students_qs.filter(
-                    stu_annual_key__in=teacher_access_qs.filter(
-                        staff_name__iexact=teacher_filter
-                    ).values('stu_annual_key')
+                # Resolve the teacher's student keys to a plain list. Using a
+                # nested teacher_access subquery here made the paginator's
+                # COUNT/SELECT (combined with the period IN list) fall back to a
+                # very slow plan.
+                teacher_student_keys = list(
+                    TeacherAccess.objects.filter(
+                        school_year=school_year,
+                        staff_name__iexact=teacher_filter,
+                        stu_annual_key__in=students_qs.values('stu_annual_key'),
+                    ).values_list('stu_annual_key', flat=True).distinct()
                 )
+                students_qs = students_qs.filter(stu_annual_key__in=teacher_student_keys)
     except Exception:
         # Some deployments do not have the teacher-access view available.
         teacher_names = []
+        teacher_student_keys = []
         if teacher_filter:
             students_qs = students_qs.none()
+
+    # Non-elementary schools schedule by period. When a school and teacher are
+    # chosen, offer a period filter sourced from the schedule table (the periods
+    # for that staff member's students), then narrow the student list to it.
+    selected_school_id = school_filter_id or getattr(active_school, 'state_id', '') or ''
+    periods = []
+    if selected_school_id and teacher_filter and not _is_elementary_school(active_school):
+        periods = _schedule_periods(
+            school_year, selected_school_id, teacher_filter, teacher_student_keys
+        )
+    show_period_filter = bool(periods)
+
+    if period_filter and period_filter not in periods:
+        period_filter = ''
+    if period_filter:
+        period_keys = _schedule_student_keys(
+            school_year, selected_school_id, period_filter, teacher_filter, teacher_student_keys
+        )
+        students_qs = students_qs.filter(stu_annual_key__in=period_keys)
 
     if search_query:
         students_qs = students_qs.filter(
@@ -493,26 +958,49 @@ def _get_student_list_context(request):
                 completions_map[c.student_annual_key] = set()
             completions_map[c.student_annual_key].add(c.assessment_id)
 
-    all_year_assessments = list(Assessment.objects.filter(is_active=True).prefetch_related('criteria'))
+    all_assessments = list(Assessment.objects.prefetch_related('criteria'))
+    all_year_assessments = [ast for ast in all_assessments if ast.is_active]
+
+    # Students with a SEIS test assignment show only their SEIS-assigned tests
+    # (incl. inactive), matching the workspace, instead of the editable list.
+    seis_assigned_by_ssid = seis_assigned_assessments_by_ssid(
+        [s.ssid for s in page_obj], all_assessments
+    )
 
     for student in page_obj:
-        eligible_ids = []
-        for ast in all_year_assessments:
-            eligible, _ = check_criteria(ast.criteria.all(), student)
-            if eligible:
-                eligible_ids.append(ast.id)
-        
-        student.eligible_count = len(eligible_ids)
-        student_completed_ids = completions_map.get(student.stu_annual_key, set())
-        student.completed_count = len(student_completed_ids.intersection(set(eligible_ids)))
-        student.assessment_statuses = [
-            {
-                'assessment': ast,
-                'is_completed': ast.id in student_completed_ids,
-            }
-            for ast in all_year_assessments
-            if ast.id in eligible_ids
-        ]
+        seis_assigned = seis_assigned_by_ssid.get(student.ssid, []) if student.ssid else []
+        if seis_assigned:
+            student.is_seis = True
+            student.eligible_count = 0
+            student.completed_count = 0
+            student.assessment_statuses = [
+                {
+                    'assessment': ast,
+                    'is_completed': False,
+                    'is_seis': True,
+                }
+                for ast in seis_assigned
+            ]
+        else:
+            eligible_ids = []
+            for ast in all_year_assessments:
+                eligible, _ = check_criteria(ast.criteria.all(), student)
+                if eligible:
+                    eligible_ids.append(ast.id)
+
+            student.is_seis = False
+            student.eligible_count = len(eligible_ids)
+            student_completed_ids = completions_map.get(student.stu_annual_key, set())
+            student.completed_count = len(student_completed_ids.intersection(set(eligible_ids)))
+            student.assessment_statuses = [
+                {
+                    'assessment': ast,
+                    'is_completed': ast.id in student_completed_ids,
+                    'is_seis': False,
+                }
+                for ast in all_year_assessments
+                if ast.id in eligible_ids
+            ]
         student.global_accommodations = global_acc_map.get(student.stu_annual_key, [])
 
     grade_base = CurrentStudent.objects.filter(school_year=school_year)
@@ -525,15 +1013,13 @@ def _get_student_list_context(request):
 
     available_schools = getattr(request.user, 'available_schools', [])
     if not available_schools and request.user.is_superuser:
-        available_schools = StudataSchool.objects.all().order_by('school_name')
+        available_schools = StudataSchool.objects.all()
+    available_schools = _desi_schools_for_dropdown(available_schools)
 
-    if hasattr(available_schools, 'exists'):
-        has_multiple_schools = available_schools.count() > 1
-    else:
-        has_multiple_schools = len(available_schools) > 1
+    has_multiple_schools = len(available_schools) > 1
 
     grade_options_by_school = {}
-    school_ids = [s.state_id for s in available_schools if getattr(s, 'state_id', None)] if not hasattr(available_schools, 'values_list') else list(available_schools.values_list('state_id', flat=True))
+    school_ids = [s.state_id for s in available_schools if getattr(s, 'state_id', None)]
     for school_id in school_ids:
         grade_options_by_school[school_id] = list(
             CurrentStudent.objects.filter(school_year=school_year, school_state_id=school_id)
@@ -542,8 +1028,7 @@ def _get_student_list_context(request):
         )
 
     school_names = {}
-    school_rows = available_schools if hasattr(available_schools, '__iter__') else available_schools
-    for school in school_rows:
+    for school in available_schools:
         school_names[school.state_id] = school.short_name or school.school_name
     for student in page_obj:
         student.school_display = school_names.get(student.school_state_id) or student.school or student.school_state_id
@@ -553,6 +1038,9 @@ def _get_student_list_context(request):
         'search_query': search_query,
         'grade_filter': grade_filter,
         'teacher_filter': teacher_filter,
+        'period_filter': period_filter,
+        'periods': periods,
+        'show_period_filter': show_period_filter,
         'teachers': teacher_names,
         'teacher_options_by_filter_json': json.dumps(teacher_options_by_filter),
         'school_filter': school_filter_id,
@@ -560,6 +1048,8 @@ def _get_student_list_context(request):
         'grades': grades,
         'schools': available_schools,
         'active_school': active_school,
+        'global_active_school': global_active_school,
+        'school_locked': bool(global_active_school),
         'is_project_admin': _is_project_admin(request.user),
         'show_teacher_filter': not _is_teacher(request.user),
         'students_qs_raw': students_qs,
@@ -595,34 +1085,67 @@ def admin_dashboard(request):
     except Exception:
         default_year = "2025-2026"
 
-    assessments = list(Assessment.objects.prefetch_related('criteria', 'supported_options').order_by('name'))
+    assessments = list(Assessment.objects.prefetch_related('criteria', 'supported_options').order_by('order', 'name', 'id'))
 
     # SEIS display settings: which assessments surface SEIS settings for
     # students, independent of each assessment's is_active flag.
     from .models import DesiSeisDisplaySettings
     seis_settings = DesiSeisDisplaySettings.objects.first()
     if request.method == 'POST':
-        seis_settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
-        selected_assessment_ids = {
-            int(x) for x in request.POST.getlist('seis_display_assessments') if x.isdigit()
-        }
-        seis_settings.assessments.set(
-            Assessment.objects.filter(id__in=selected_assessment_ids)
-        )
-        seis_settings.updated_by = request.user
-        seis_settings.save()
-        messages.success(
-            request,
-            "SEIS display settings saved. "
-            f"{len(selected_assessment_ids)} assessment(s) will display SEIS settings.",
-        )
-        return redirect('desi:admin_dashboard')
+        action = request.POST.get('action', '').strip()
+        if action == 'save_assessment_order' or 'assessment_order' in request.POST:
+            assessment_ids = [
+                int(x) for x in request.POST.getlist('assessment_order') if str(x).isdigit()
+            ]
+            for index, ast_id in enumerate(assessment_ids, start=1):
+                Assessment.objects.filter(id=ast_id).update(order=index)
+            messages.success(
+                request,
+                f"Assessment column order updated successfully ({len(assessment_ids)} assessments)."
+            )
+            return redirect('desi:admin_dashboard')
+
+        if action == 'save_student_list_hidden_supports':
+            hidden_ids = {
+                int(x) for x in request.POST.getlist('hidden_from_student_list') if str(x).isdigit()
+            }
+            Accommodation.objects.all().update(hide_from_student_list=False)
+            if hidden_ids:
+                Accommodation.objects.filter(id__in=hidden_ids).update(hide_from_student_list=True)
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'ok': True, 'hidden_count': len(hidden_ids)})
+            messages.success(
+                request,
+                f"Student list visibility saved. {len(hidden_ids)} support(s) hidden from the student workspace.",
+            )
+            return redirect('desi:admin_dashboard')
+
+        if action == 'seis_display_settings' or 'seis_display_assessments' in request.POST:
+            seis_settings, _ = DesiSeisDisplaySettings.objects.get_or_create(pk=1)
+            selected_assessment_ids = {
+                int(x) for x in request.POST.getlist('seis_display_assessments') if x.isdigit()
+            }
+            seis_settings.assessments.set(
+                Assessment.objects.filter(id__in=selected_assessment_ids)
+            )
+            seis_settings.updated_by = request.user
+            seis_settings.save()
+            messages.success(
+                request,
+                "SEIS display settings saved. "
+                f"{len(selected_assessment_ids)} assessment(s) will display SEIS settings.",
+            )
+            return redirect('desi:admin_dashboard')
 
     seis_selected_assessment_ids = (
         set(seis_settings.assessments.values_list('id', flat=True))
         if seis_settings else set()
     )
-    accommodations = list(Accommodation.objects.all().prefetch_related('options'))
+    accommodations = list(
+        Accommodation.objects.all().prefetch_related('options')
+        .annotate(default_rule_count=Count('default_rules'))
+        .order_by('name', 'id')
+    )
 
     # Map each accommodation to the assessments connected through its options.
     accommodation_assessments = {}
@@ -1349,6 +1872,18 @@ def export_data(request):
         selected_support_ids = {
             c['support_id'] for c in column_config if c.get('support_id') and c.get('include')
         }
+        export_token = _generate_export_endpoint_auth_token(request.user)
+        state_school_year = school_year
+
+        def _state_url(view_name):
+            base = request.build_absolute_uri(reverse(view_name))
+            return f'{base}?auth={export_token}&school_year={state_school_year}'
+
+        state_upload_endpoints = [
+            {'label': 'CAASPP + ELPAC (zip)', 'url': _state_url('desi:export_state_upload')},
+            {'label': 'CAASPP (.xlsx)', 'url': _state_url('desi:export_state_upload_caaspp')},
+            {'label': 'ELPAC (.xlsx)', 'url': _state_url('desi:export_state_upload_elpac')},
+        ]
         context = {
             'school_year': school_year,
             'assessments': assessments,
@@ -1359,7 +1894,8 @@ def export_data(request):
             'only_with_supports': only_with_supports,
             'support_value_field': support_value_field,
             'export_endpoint_base_url': request.build_absolute_uri(reverse('desi:export_data_endpoint')),
-            'export_endpoint_auth_token': _generate_export_endpoint_auth_token(request.user),
+            'export_endpoint_auth_token': export_token,
+            'state_upload_endpoints': state_upload_endpoints,
             'saved_configs': saved_configs,
             'selected_config_id': selected_config_id,
         }
@@ -1460,17 +1996,24 @@ def export_data(request):
     return _render_export_page(column_config)
 
 
-def export_data_endpoint(request):
+def _state_upload_user(request):
     """
-    Token-authenticated GET endpoint for external systems to generate DESI export CSV.
+    Authenticate a state-upload request via the signed ``auth`` token (no login
+    required, for external callers) or an authenticated project-admin session.
+    Returns the acting user, or ``None`` when unauthorized.
     """
-    auth_token = request.GET.get('auth', '').strip()
-    token_user = _resolve_export_endpoint_user(auth_token)
-    if not token_user:
-        return HttpResponseForbidden("Invalid or expired export auth token.")
-    if not _is_project_admin(token_user):
-        return HttpResponseForbidden("Permission denied.")
+    token = request.GET.get('auth', '').strip()
+    if token:
+        user = _resolve_export_endpoint_user(token)
+        return user if (user is not None and _is_project_admin(user)) else None
+    user = getattr(request, 'user', None)
+    if user is not None and user.is_authenticated and _is_project_admin(user):
+        return user
+    return None
 
+
+def _state_upload_inputs(request, user):
+    """Shared ``(school_year, students)`` setup for the state-upload exports."""
     school_year = request.GET.get('school_year', '').strip()
     if not school_year:
         try:
@@ -1478,24 +2021,158 @@ def export_data_endpoint(request):
         except Exception:
             school_year = "2025-2026"
 
+    students = list(
+        get_visible_students(user)
+        .filter(school_year=school_year)
+        .order_by('student_name')
+    )
+    return school_year, students
+
+
+def _state_upload_xlsx_response(request, program):
+    """Single-program .xlsx download (CAASPP or ELPAC)."""
+    from .state_upload_export import build_state_upload_workbook, _workbook_bytes
+
+    user = _state_upload_user(request)
+    if user is None:
+        return HttpResponseForbidden("Invalid or expired export auth token.")
+
+    school_year, students = _state_upload_inputs(request, user)
+    workbook = build_state_upload_workbook(program, students)
+    response = HttpResponse(
+        _workbook_bytes(workbook),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = (
+        f'attachment; filename="{program}_Upload_{school_year}.xlsx"'
+    )
+    return response
+
+
+def export_state_upload_caaspp(request):
+    """CAASPP TOMS upload workbook (.xlsx). Token via ?auth= or an admin session."""
+    return _state_upload_xlsx_response(request, 'CAASPP')
+
+
+def export_state_upload_elpac(request):
+    """ELPAC TOMS upload workbook (.xlsx). Token via ?auth= or an admin session."""
+    return _state_upload_xlsx_response(request, 'ELPAC')
+
+
+def export_state_upload(request):
+    """
+    Both TOMS student-accommodation upload workbooks in one ZIP.
+
+    Supports come from all configured supports tagged for the program (whether
+    or not the underlying assessment is active); DESI-entered options and SEIS
+    settings are merged per student. Token via ?auth= or an admin session.
+    """
+    from .state_upload_export import build_state_upload_zip
+
+    user = _state_upload_user(request)
+    if user is None:
+        return HttpResponseForbidden("Invalid or expired export auth token.")
+
+    school_year, students = _state_upload_inputs(request, user)
+    payload = build_state_upload_zip(school_year, students)
+    response = HttpResponse(payload, content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="DESI_State_Upload_{school_year}.zip"'
+    return response
+
+
+def _export_columns_from_saved_config(saved_config):
+    """Derive (available_columns, included_columns) from a saved export config."""
     assessments = list(
         Assessment.objects.filter(is_active=True)
         .prefetch_related('supported_options__accommodation')
         .order_by('name')
     )
-    selected_assessment_ids = {int(x) for x in request.GET.getlist('assessment_ids') if x.isdigit()}
+    selected_assessment_ids = {
+        int(x) for x in saved_config.get('assessment_ids', []) if str(x).isdigit()
+    }
+    selected_assessments = [a for a in assessments if a.id in selected_assessment_ids]
+    available_columns = _build_export_columns(selected_assessments)
+    configured = _build_column_config_from_saved_config(
+        available_columns, saved_config.get('column_config', []) or []
+    )
+    col_index = {c['key']: i for i, c in enumerate(available_columns)}
+    included_columns = [c for c in configured if c['include']]
+    included_columns.sort(key=lambda c: (c['order'], col_index.get(c['key'], 9999)))
+    return selected_assessment_ids, selected_assessments, available_columns, included_columns
+
+
+def export_data_endpoint(request):
+    """
+    Token-authenticated endpoint for external systems to generate the DESI export CSV.
+
+    Accepts the configuration either as a saved ``config_id`` (short URL) or as
+    inline parameters via GET/POST. Prefer ``config_id`` — an inline column
+    configuration can exceed the web server's request-line limit.
+    """
+    request_data = request.POST if request.method == 'POST' else request.GET
+
+    auth_token = request_data.get('auth', '').strip()
+    token_user = _resolve_export_endpoint_user(auth_token)
+    if not token_user:
+        return HttpResponseForbidden("Invalid or expired export auth token.")
+    if not _is_project_admin(token_user):
+        return HttpResponseForbidden("Permission denied.")
+
+    school_year = request_data.get('school_year', '').strip()
+    if not school_year:
+        try:
+            school_year = get_project_config().default_school_year or "2025-2026"
+        except Exception:
+            school_year = "2025-2026"
+
+    # Preferred path: reference a saved configuration by id (keeps the URL short).
+    config_id = request_data.get('config_id', '').strip()
+    if config_id.isdigit():
+        config = DesiExportConfiguration.objects.filter(
+            id=int(config_id), owner=token_user
+        ).first()
+        if config is None:
+            return HttpResponseForbidden("Export configuration not found.")
+        saved_config = config.config or {}
+        selected_assessment_ids, selected_assessments, available_columns, included_columns = (
+            _export_columns_from_saved_config(saved_config)
+        )
+        if not selected_assessments:
+            return HttpResponseForbidden("Select at least one assessment.")
+        if not included_columns:
+            return HttpResponseForbidden("Select at least one column.")
+        support_value_field = str(saved_config.get('support_value_field', 'code')).strip().lower()
+        if support_value_field not in {'name', 'code'}:
+            support_value_field = 'code'
+        return _build_export_csv_response(
+            token_user,
+            saved_config.get('school_year') or school_year,
+            selected_assessments,
+            selected_assessment_ids,
+            available_columns,
+            included_columns,
+            bool(saved_config.get('only_with_supports', False)),
+            support_value_field,
+        )
+
+    assessments = list(
+        Assessment.objects.filter(is_active=True)
+        .prefetch_related('supported_options__accommodation')
+        .order_by('name')
+    )
+    selected_assessment_ids = {int(x) for x in request_data.getlist('assessment_ids') if x.isdigit()}
     selected_assessments = [a for a in assessments if a.id in selected_assessment_ids]
     if not selected_assessments:
         return HttpResponseForbidden("Select at least one assessment.")
 
     available_columns = _build_export_columns(selected_assessments)
-    _column_config, included_columns = _parse_export_column_config(request.GET, available_columns)
+    _column_config, included_columns = _parse_export_column_config(request_data, available_columns)
     if not included_columns:
         return HttpResponseForbidden("Select at least one column.")
 
-    only_with_supports_raw = request.GET.get('only_with_supports', '').strip().lower()
+    only_with_supports_raw = request_data.get('only_with_supports', '').strip().lower()
     only_with_supports = only_with_supports_raw in {'on', '1', 'true', 'yes'}
-    support_value_field = request.GET.get('support_value_field', 'name').strip().lower()
+    support_value_field = request_data.get('support_value_field', 'name').strip().lower()
     if support_value_field not in {'name', 'code'}:
         support_value_field = 'name'
 
@@ -1548,6 +2225,7 @@ def create_accommodation(request):
         name = request.POST.get('name', '').strip()
         code = request.POST.get('code', '').strip()
         category = request.POST.get('category', '').strip()
+        managed_by = request.POST.get('managed_by', '').strip()
         section_category = _resolve_section_category(request)
         description = request.POST.get('description', '').strip()
         
@@ -1579,6 +2257,7 @@ def create_accommodation(request):
             name=name,
             code=code,
             category=category,
+            managed_by=managed_by,
             section_category=section_category,
             description=description,
             order=order,
@@ -1663,6 +2342,7 @@ def create_accommodation(request):
         'is_edit': False,
         'assessments': assessments,
         'section_categories': AccommodationCategory.objects.all(),
+        'managed_by_choices': MANAGED_BY_CHOICES,
         'dependency_supports': Accommodation.objects.all().prefetch_related('options'),
         'selected_dependency_support_id': None,
         'selected_dependency_option_id': None,
@@ -1684,6 +2364,7 @@ def edit_accommodation(request, id):
         accommodation.name = request.POST.get('name', '').strip()
         accommodation.code = request.POST.get('code', '').strip()
         accommodation.category = request.POST.get('category', '').strip()
+        accommodation.managed_by = request.POST.get('managed_by', '').strip()
         accommodation.section_category = _resolve_section_category(request)
         accommodation.description = request.POST.get('description', '').strip()
         
@@ -1743,8 +2424,9 @@ def edit_accommodation(request, id):
         if not all_names_to_create:
             all_names_to_create.add("Standard")
 
-        # Capture mappings to NON-ACTIVE assessments so they are never lost,
-        # regardless of how the edit is submitted.
+        # Capture mappings to NON-ACTIVE assessments so existing (non-deleted)
+        # options keep their mappings even though those assessments are not
+        # shown in the form.
         mapped_pairs_pre = list(
             Assessment.supported_options.through.objects
             .filter(accommodationoption__accommodation=accommodation)
@@ -1753,9 +2435,6 @@ def edit_accommodation(request, id):
         inactive_assessment_ids = set(
             Assessment.objects.filter(is_active=False).values_list('id', flat=True)
         )
-        protected_option_ids = {
-            opt_id for ast_id, opt_id in mapped_pairs_pre if ast_id in inactive_assessment_ids
-        }
 
         # ID-preserving option updates with editable name/code
         existing_opts = {str(opt.id): opt for opt in accommodation.options.all()}
@@ -1794,12 +2473,9 @@ def edit_accommodation(request, id):
             keep_opt_ids.append(new_opt.id)
             existing_names.add(name)
 
-        # Options still mapped to non-active assessments must never be deleted.
-        for opt_id in protected_option_ids:
-            if opt_id not in keep_opt_ids:
-                keep_opt_ids.append(opt_id)
-
-        # Remove any options not in the new set
+        # Remove any options the admin removed from the list (and their
+        # assessment mappings). Options still in the list keep their mappings,
+        # including those on assessments not shown in the form.
         accommodation.options.exclude(id__in=keep_opt_ids).delete()
 
         # ---- Assessment support mapping update ----
@@ -1906,6 +2582,7 @@ def edit_accommodation(request, id):
         'options': accommodation.options.all(),
         'assessments': assessments,
         'section_categories': AccommodationCategory.objects.all(),
+        'managed_by_choices': MANAGED_BY_CHOICES,
         'assigned_assessment_opts': assigned_assessment_opts,
         'assigned_custom_opts': assigned_custom_opts,
         'is_edit': True,
@@ -1989,9 +2666,20 @@ def support_rule_form(request, id=None):
         crit_fields = request.POST.getlist('crit_field[]')
         crit_operators = request.POST.getlist('crit_operator[]')
         crit_values = request.POST.getlist('crit_value[]')
-        for field, op, val in zip(crit_fields, crit_operators, crit_values):
+        crit_logics = request.POST.getlist('crit_logic_op[]')
+        for idx, (field, op, val) in enumerate(zip(crit_fields, crit_operators, crit_values)):
             if field and op and val:
-                SupportRuleCriteria.objects.create(rule=rule, field_name=field, operator=op, value=val)
+                logic = crit_logics[idx].strip().upper() if idx < len(crit_logics) else 'AND'
+                if logic not in ('AND', 'OR'):
+                    logic = 'AND'
+                SupportRuleCriteria.objects.create(
+                    rule=rule,
+                    field_name=field,
+                    operator=op,
+                    value=val,
+                    logic_operator=logic,
+                    order=idx,
+                )
 
         messages.success(request, f"Support rule '{rule.name}' saved.")
         return redirect('desi:support_rule_list')
@@ -2027,6 +2715,316 @@ def delete_support_rule(request, id):
     rule.delete()
     messages.success(request, f"Support rule '{name}' deleted successfully.")
     return redirect('desi:support_rule_list')
+
+
+@login_required
+def support_default_rule_list(request):
+    """List default-assignment rules (options assigned + locked for students)."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rules = (
+        SupportDefaultRule.objects.select_related('support')
+        .annotate(criteria_count=Count('criteria'), option_count=Count('options'))
+        .order_by('-is_active', '-updated_at')
+    )
+    return render(request, 'desi/support_default_rule_list.html', {'rules': rules})
+
+
+def _default_rule_manager_context(support):
+    """Context for the in-overlay rules manager of one support."""
+    return {
+        'support': support,
+        'rules': (
+            support.default_rules.select_related('support')
+            .prefetch_related('criteria', 'options')
+            .order_by('priority', 'id')
+        ),
+        'embed': True,
+    }
+
+
+@login_required
+def support_default_rule_manage(request, support_id):
+    """Return the in-overlay rules manager (list + add/edit/delete) for a support."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    support = get_object_or_404(Accommodation, id=support_id)
+    return render(
+        request, 'desi/partials/support_default_rule_manager.html',
+        _default_rule_manager_context(support),
+    )
+
+
+def _get_test_option_values():
+    """Distinct test program / subject / year values for the result-criteria form."""
+    def _distinct(field, limit, order):
+        try:
+            return list(
+                Test.objects.exclude(**{f'{field}__isnull': True}).exclude(**{field: ''})
+                .values_list(field, flat=True).distinct().order_by(order)[:limit]
+            )
+        except Exception:
+            return []
+    return {
+        'test_name_options': _distinct('test_name', 300, 'test_name'),
+        'test_subject_options': _distinct('subject', 300, 'subject'),
+        'test_school_year_options': _distinct('school_year', 50, '-school_year'),
+    }
+
+
+# Result assessments offered in the criteria builder (PL comparison).
+# Values map to (Test.test_name | Test.subject); an empty subject matches all.
+RESULT_ASSESSMENT_CHOICES = [
+    {'value': 'CAASPP|', 'label': 'CAASPP'},
+    {'value': 'ELPAC_summative|', 'label': 'ELPAC Summative'},
+]
+
+
+def _schedule_criteria_options():
+    """School dropdown, teachers-by-school, and period options for class criteria."""
+    try:
+        schools = list(
+            StudataSchool.objects.exclude(school_name__iexact='Unknown').order_by('school_name')
+        )
+    except Exception:
+        schools = []
+
+    staff_by_school = {}
+    try:
+        with transaction.atomic():
+            for school_id, staff in (
+                TeacherAccess.objects.exclude(staff_name__isnull=True).exclude(staff_name='')
+                .values_list('state_school_id', 'staff_name').distinct()
+            ):
+                name = (staff or '').strip()
+                if name:
+                    staff_by_school.setdefault(school_id or '', set()).add(name)
+        staff_by_school = {k: sorted(v, key=str.casefold) for k, v in staff_by_school.items()}
+    except Exception:
+        staff_by_school = {}
+
+    periods = []
+    try:
+        with transaction.atomic():
+            periods = sorted(
+                {
+                    str(p).strip()
+                    for p in Schedule.objects.exclude(period__isnull=True).exclude(period='')
+                    .values_list('period', flat=True).distinct()
+                    if str(p).strip()
+                },
+                key=_period_sort_key,
+            )
+    except Exception:
+        periods = []
+
+    return schools, staff_by_school, periods
+
+
+@login_required
+def support_default_rule_form(request, id=None):
+    """Create/edit a SupportDefaultRule and its criteria (demographic + results)."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rule = None
+    criteria = []
+    if id:
+        rule = get_object_or_404(SupportDefaultRule, id=id)
+        criteria = list(rule.criteria.all())
+
+    embed = request.GET.get('embed') == '1'
+    preset_support_id = None
+    if not rule:
+        support_param = request.GET.get('support', '').strip()
+        if support_param.isdigit():
+            preset_support_id = int(support_param)
+
+    if request.method == 'POST':
+        name = request.POST.get('name', '').strip()
+        support_id = request.POST.get('support_id', '').strip()
+        if not name or not support_id.isdigit():
+            messages.error(request, "Rule name and designated support are required.")
+            url = (reverse('desi:support_default_rule_edit', args=[rule.id]) if rule
+                   else reverse('desi:support_default_rule_create'))
+            return redirect(url)
+
+        support = get_object_or_404(Accommodation, id=int(support_id))
+        description = request.POST.get('description', '').strip()
+        scope = request.POST.get('scope', 'criteria')
+        if scope not in ('all', 'criteria'):
+            scope = 'criteria'
+        try:
+            priority = int(request.POST.get('priority', '').strip() or 100)
+        except ValueError:
+            priority = 100
+        is_active = request.POST.get('is_active') == 'on'
+
+        if rule:
+            rule.name = name
+            rule.description = description
+            rule.support = support
+            rule.scope = scope
+            rule.priority = priority
+            rule.is_active = is_active
+            rule.save()
+        else:
+            rule = SupportDefaultRule.objects.create(
+                name=name, description=description, support=support,
+                scope=scope, priority=priority, is_active=is_active,
+            )
+
+        option_ids = {int(x) for x in request.POST.getlist('options') if x.isdigit()}
+        rule.options.set(
+            AccommodationOption.objects.filter(id__in=option_ids, accommodation=support)
+        )
+
+        rule.criteria.all().delete()
+        crit_types = request.POST.getlist('crit_type[]')
+        crit_logics = request.POST.getlist('crit_logic_op[]')
+        crit_fields = request.POST.getlist('crit_field[]')
+        crit_ops = request.POST.getlist('crit_operator[]')
+        crit_vals = request.POST.getlist('crit_value[]')
+        r_assessments = request.POST.getlist('crit_assessment[]')
+        r_names = request.POST.getlist('crit_test_name[]')
+        r_subjects = request.POST.getlist('crit_test_subject[]')
+        r_years = request.POST.getlist('crit_school_year[]')
+        r_fields = request.POST.getlist('crit_result_field[]')
+        r_ops = request.POST.getlist('crit_result_operator[]')
+        r_vals = request.POST.getlist('crit_result_value[]')
+        s_schools = request.POST.getlist('crit_school[]')
+        s_staffs = request.POST.getlist('crit_staff[]')
+        s_periods = request.POST.getlist('crit_period[]')
+
+        def _at(values, idx):
+            return values[idx] if idx < len(values) else ''
+
+        def _assessment_parts(idx):
+            """Resolve (test_name, subject) from the assessment dropdown or legacy fields."""
+            raw = _at(r_assessments, idx).strip()
+            if raw and '|' in raw:
+                name, _, subject = raw.partition('|')
+                return name.strip(), subject.strip()
+            if raw:
+                return raw, _at(r_subjects, idx).strip()
+            return _at(r_names, idx).strip(), _at(r_subjects, idx).strip()
+
+        db_index = 0
+        for idx, ctype in enumerate(crit_types):
+            logic = (_at(crit_logics, idx) or 'AND').upper()
+            if logic not in ('AND', 'OR'):
+                logic = 'AND'
+            if ctype == 'result':
+                test_name, test_subject = _assessment_parts(idx)
+                if not (test_name and _at(r_vals, idx).strip()):
+                    continue
+                SupportDefaultRuleCriteria.objects.create(
+                    rule=rule, criterion_type='result', logic_operator=logic, order=db_index,
+                    test_name=test_name,
+                    test_subject=test_subject,
+                    school_year=_at(r_years, idx).strip(),
+                    result_field=_at(r_fields, idx).strip() or 'pl',
+                    result_operator=_at(r_ops, idx).strip() or 'in',
+                    result_value=_at(r_vals, idx).strip(),
+                )
+                db_index += 1
+            elif ctype == 'schedule':
+                school = _at(s_schools, idx).strip()
+                staff = _at(s_staffs, idx).strip()
+                period = _at(s_periods, idx).strip()
+                if not (school or staff or period):
+                    continue
+                SupportDefaultRuleCriteria.objects.create(
+                    rule=rule, criterion_type='schedule', logic_operator=logic, order=db_index,
+                    school_state_id=school, staff_name=staff, period=period,
+                )
+                db_index += 1
+            else:
+                field = _at(crit_fields, idx).strip()
+                op = _at(crit_ops, idx).strip()
+                val = _at(crit_vals, idx).strip()
+                if not (field and op and val):
+                    continue
+                SupportDefaultRuleCriteria.objects.create(
+                    rule=rule, criterion_type='demographic', logic_operator=logic, order=db_index,
+                    field_name=field, operator=op, value=val,
+                )
+                db_index += 1
+
+        messages.success(request, f"Default assignment rule '{rule.name}' saved.")
+        if embed:
+            # In-overlay save: refresh the rules manager for this support.
+            return render(
+                request, 'desi/partials/support_default_rule_manager.html',
+                _default_rule_manager_context(rule.support),
+            )
+        return redirect('desi:support_default_rule_list')
+
+    supports = list(
+        Accommodation.objects.prefetch_related('options').order_by('tag', 'category', 'name')
+    )
+    resolved_support_id = rule.support_id if rule else preset_support_id
+    if embed:
+        if rule:
+            form_action = reverse('desi:support_default_rule_edit', args=[rule.id]) + '?embed=1'
+        else:
+            form_action = (
+                reverse('desi:support_default_rule_create')
+                + f'?support={resolved_support_id or ""}&embed=1'
+            )
+    else:
+        form_action = ''
+    context = {
+        'rule': rule,
+        'criteria': criteria,
+        'supports': supports,
+        'selected_support_id': resolved_support_id,
+        'selected_option_ids': set(rule.options.values_list('id', flat=True)) if rule else set(),
+        'field_choices': AssessmentCriteria.FIELD_CHOICES,
+        'operator_choices': AssessmentCriteria.OPERATOR_CHOICES,
+        'result_field_choices': SupportDefaultRuleCriteria.RESULT_FIELD_CHOICES,
+        'result_operator_choices': SupportDefaultRuleCriteria.RESULT_OPERATOR_CHOICES,
+        'student_field_options_json': _get_student_field_options(),
+        'is_edit': bool(rule),
+        'embed': embed,
+        'form_action': form_action,
+        'result_assessment_choices': RESULT_ASSESSMENT_CHOICES,
+    }
+    context.update(_get_test_option_values())
+    schools, staff_by_school, periods = _schedule_criteria_options()
+    context.update({
+        'school_options': schools,
+        'staff_by_school_json': json.dumps(staff_by_school),
+        'period_options': periods,
+    })
+    template = ('desi/partials/support_default_rule_body.html' if embed
+                else 'desi/support_default_rule_form.html')
+    return render(request, template, context)
+
+
+@login_required
+def delete_support_default_rule(request, id):
+    """Delete a default-assignment rule."""
+    if not _is_project_admin(request.user):
+        messages.error(request, "Permission denied.")
+        return redirect('landing:index')
+
+    rule = get_object_or_404(SupportDefaultRule, id=id)
+    name = rule.name
+    support = rule.support
+    rule.delete()
+    messages.success(request, f"Default assignment rule '{name}' deleted successfully.")
+    if request.GET.get('embed') == '1':
+        return render(
+            request, 'desi/partials/support_default_rule_manager.html',
+            _default_rule_manager_context(support),
+        )
+    return redirect('desi:support_default_rule_list')
 
 
 @login_required
@@ -2180,32 +3178,46 @@ def clone_assessment(request, id):
     return redirect('desi:admin_dashboard')
 
 
-def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True, seis_option_map=None, seis_managed_assessments=None):
+def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True, seis_option_map=None, seis_managed_assessments=None, default_locks=None, seis_readonly=False):
     """
     Build workspace context for the DESI accommodation editor.
 
     ``eligible_assessments`` are the tests that remain editable for this
-    student (active + criteria-eligible, and NOT fully SEIS-managed).
+    student (active + criteria-eligible, and NOT SEIS-managed). When the SEIS
+    source assigns the student any test, this list is empty and the workspace is
+    read-only.
 
     ``seis_option_map`` is an optional dict keyed by ``(assessment_id,
     accommodation_id)`` -> ``AccommodationOption`` produced from the read-only
     SEIS source table.
 
-    ``seis_managed_assessments`` lists every assessment for which this student
-    has matched SEIS data.  These tests are fully read-only: they render as a
-    separate SEIS section that lists ONLY the SEIS supports (never the rest of
-    the editable test), and the user cannot edit any part of them.
+    ``seis_managed_assessments`` lists every assessment the SEIS source assigns
+    to this student (including inactive ones). These tests are fully read-only:
+    they render as a separate SEIS section that lists ONLY the SEIS supports
+    (never the rest of the editable test), and the user cannot edit any part of
+    them.
+
+    ``default_locks`` (from ``default_support_locks``) locks supports that are
+    assigned by default rules; their options are shown pre-selected and the
+    cells are read-only.
     """
     seis_option_map = seis_option_map or {}
+    default_locks = default_locks or {}
+    locked_support_ids = set(default_locks.get('support_ids') or [])
+    default_direct_ids = set(default_locks.get('direct_support_ids') or [])
+    lock_managers = default_locks.get('managers') or {}
     selected_support_ids = set(selected_support_ids or [])
     student_option_ids = set(student_option_ids or [])
-    hidden_ids = hidden_support_ids(student)
+    hidden_ids = hidden_support_ids(student) | hidden_from_student_list_ids()
 
     eligible_assessments = list(eligible_assessments)
     seis_managed_assessments = list(seis_managed_assessments or [])
     eligible_ids = {ast.id for ast in eligible_assessments}
 
-    # ---- Columns: editable tests first, then SEIS-managed tests ----
+    # ---- Columns: editable + SEIS-managed, in the configured column order ----
+    # Both editable tests and SEIS-managed tests (which may be inactive) are
+    # positioned by the same Assessment Column Order configured in the admin
+    # dashboard, rather than always appending SEIS columns to the end.
     columns = []
     for ast in eligible_assessments:
         columns.append({
@@ -2225,6 +3237,9 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
             'is_seis': True,
             'is_active': ast.is_active,
         })
+    columns.sort(
+        key=lambda c: (c['assessment'].order, c['assessment'].name, c['assessment'].id)
+    )
 
     # ---- Gather support -> test -> options, including SEIS ----
     # acc_ast_opts: accommodation_id -> { assessment_id: {options, is_seis, seis_option} }
@@ -2300,6 +3315,7 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
             options = representative['options']
             is_seis = representative['is_seis']
             seis_option = representative['seis_option']
+            is_locked = acc.id in locked_support_ids
             if is_seis:
                 selected_option = seis_option
             else:
@@ -2315,10 +3331,12 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
                 'is_multichoice': is_multichoice,
                 'selected_option': selected_option,
                 'dependency_option_id': acc.depends_on_option_id if dependency_applies(run[0]['assessment_id']) else None,
-                'selected_direct': acc.id in selected_support_ids,
+                'selected_direct': (acc.id in selected_support_ids) or (acc.id in default_direct_ids),
                 'is_seis': is_seis,
                 'seis_option': seis_option,
-                'readonly': (not can_edit) or is_seis,
+                'readonly': (not can_edit) or is_seis or is_locked,
+                'is_locked': is_locked,
+                'locked_label': lock_managers.get(acc.id, 'Managed') if is_locked else '',
             }
 
         # Walk the columns in order, emitting merged cells and filler spans so
@@ -2397,7 +3415,8 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
             'resources': [
                 {
                     'label': res.label or res.get_kind_display(),
-                    'url': res.get_embed_url() or res.url,
+                    'url': res.url,
+                    'embed_url': res.get_embed_url(),
                     'kind': res.kind,
                 }
                 for res in acc.resources.all()
@@ -2414,6 +3433,7 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
         'can_edit': can_edit,
         'has_seis': bool(seis_count),
         'seis_count': seis_count,
+        'seis_readonly': bool(seis_readonly),
     }
 
 
@@ -2462,11 +3482,27 @@ def assign_accommodations(request, stu_annual_key):
 
     can_edit = can_edit_desi(request.user, student=student)
 
-    if request.method == 'POST' and not can_edit:
-        messages.error(
-            request,
-            "DESI is view-only for this school. You can review supports but cannot save or enter changes.",
-        )
+    # Options/supports assigned by active default rules (global or criteria).
+    # These are shown pre-selected and locked (read-only) in the workspace.
+    default_locks = default_support_locks(student)
+
+    # Any student present in the SEIS source is read-only. When the SEIS rows
+    # name specific tests, only those tests show (SEIS-authoritative); when they
+    # name no test (``No_Test``), the regular tests show but remain read-only.
+    student_in_seis = bool(student.ssid and fetch_seis_rows(student.ssid))
+    effective_can_edit = can_edit and not student_in_seis
+
+    if request.method == 'POST' and not effective_can_edit:
+        if student_in_seis:
+            messages.error(
+                request,
+                "This student's supports are managed in SEIS and are read-only.",
+            )
+        else:
+            messages.error(
+                request,
+                "DESI is view-only for this school. You can review supports but cannot save or enter changes.",
+            )
         return redirect(reverse('desi:assign_accommodations', args=[stu_annual_key]))
 
     # Pull active assessments (color-coded consistently per assessment)
@@ -2475,7 +3511,7 @@ def assign_accommodations(request, stu_annual_key):
         'supported_options__accommodation__depends_on_option',
         'supported_options__accommodation__dependency_assessments',
         'supported_options__accommodation__resources',
-    ))
+    ).order_by('order', 'name', 'id'))
     for index, ast in enumerate(assessments):
         ast.card_color = ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)]
 
@@ -2490,70 +3526,49 @@ def assign_accommodations(request, stu_annual_key):
 
     # Read-only SEIS settings already configured for this student.
     #
-    # SEIS data is authoritative and read-only: if a student has any matched
-    # SEIS support on an assessment, that assessment is shown read-only and
-    # lists ONLY the SEIS supports (the rest of the test is not editable).
-    # SEIS eligibility ignores every demographic criteria except grade.
-    #
-    # Project admins can restrict which assessments surface SEIS data via the
-    # "SEIS display settings" section of the DESI admin dashboard.  When a
-    # selection is saved, only the chosen assessments show SEIS settings;
-    # otherwise (no selection yet) SEIS settings are shown for every referenced
-    # assessment.
+    # The SEIS source table is authoritative. The ``assessments`` JSON on each
+    # ``desi_seis`` row lists the tests the student is assigned to; those tests
+    # become read-only columns that show ONLY the SEIS supports, regardless of
+    # the assessment's ``is_active`` flag, DESI eligibility criteria, or the
+    # admin "SEIS display settings" selection. A student whose SEIS rows name
+    # no specific test (``No_Test``) has no SEIS assignment and keeps the normal
+    # editable test list.
     seis_option_map = {}
     seis_locked_accommodation_ids = set()
     seis_managed_assessments = []
+    seis_assigned = []
     if student.ssid:
-        from .seis_data import selected_seis_display_assessment_ids
-        selected_ids = selected_seis_display_assessment_ids()
         all_assessments = list(
-            Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation')
+            Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation').order_by('order', 'name', 'id')
         )
-        _assessment_by_id = {ast.id: ast for ast in all_assessments}
+        seis_assigned = seis_assigned_assessments(student.ssid, all_assessments)
+        if seis_assigned:
+            seis_managed_assessments = list(seis_assigned)
+            raw_map, _ = build_seis_option_map(student.ssid, seis_assigned)
+            seis_option_map = dict(raw_map)
+            seis_locked_accommodation_ids = {acc_id for _ast_id, acc_id in seis_option_map}
 
-        def grade_eligible(ast):
-            """Only 'grade' criteria gate SEIS display; all others are ignored."""
-            grade_criteria = [c for c in ast.criteria.all() if c.field_name == 'grade']
-            if not grade_criteria:
-                return True
-            ok, _ = check_criteria(grade_criteria, student)
-            return ok
+            # Color code managed assessments (incl. inactive ones) so read-only
+            # sections render with a stable accent.
+            active_color = {
+                ast.id: ast.card_color for ast in assessments if hasattr(ast, 'card_color')
+            }
+            for index, ast in enumerate(seis_managed_assessments):
+                ast.card_color = active_color.get(
+                    ast.id,
+                    ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)],
+                )
 
-        # Build the map across every assessment.  The mapping itself scopes each
-        # SEIS setting to the assessments that support the matched option (and,
-        # when a SEIS row names specific tests, to exactly those).  We then keep
-        # only entries that are admin-selected (when a selection exists) and
-        # grade-eligible.
-        raw_map, _ = build_seis_option_map(student.ssid, all_assessments)
-        seis_option_map = {
-            (ast_id, acc_id): opt
-            for (ast_id, acc_id), opt in raw_map.items()
-            if (selected_ids is None or ast_id in selected_ids)
-            and grade_eligible(_assessment_by_id[ast_id])
-        }
-        seis_locked_accommodation_ids = {acc_id for _ast_id, acc_id in seis_option_map}
-
-        managed_ids = {ast_id for ast_id, _acc_id in seis_option_map}
-        seis_managed_assessments = [
-            ast for ast in all_assessments if ast.id in managed_ids
+    # SEIS is authoritative: when the student has SEIS-assigned tests, the
+    # workspace shows only those read-only columns and nothing is editable.
+    # Otherwise, the teacher gets the normal active + criteria-eligible tests.
+    if seis_assigned:
+        editable_assessments = []
+    else:
+        managed_ids = {ast.id for ast in seis_managed_assessments}
+        editable_assessments = [
+            ast for ast in eligible_assessments if ast.id not in managed_ids
         ]
-        # Color code managed assessments (incl. inactive ones) so read-only
-        # sections render with a stable accent.
-        active_color = {
-            ast.id: ast.card_color for ast in assessments if hasattr(ast, 'card_color')
-        }
-        for index, ast in enumerate(seis_managed_assessments):
-            ast.card_color = active_color.get(
-                ast.id,
-                ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)],
-            )
-
-    # Assessments available for teacher entry = active + eligible by the
-    # configured criteria, EXCLUDING tests that are fully SEIS-managed.
-    managed_ids = {ast.id for ast in seis_managed_assessments}
-    editable_assessments = [
-        ast for ast in eligible_assessments if ast.id not in managed_ids
-    ]
 
     is_htmx = request.headers.get('HX-Request') == 'true' or request.META.get('HTTP_HX_REQUEST') == 'true'
 
@@ -2595,6 +3610,16 @@ def assign_accommodations(request, stu_annual_key):
             support_contexts,
             dependency_rules,
         )
+        rule_hidden_ids = hidden_support_ids(student) | hidden_from_student_list_ids()
+        if rule_hidden_ids:
+            selected_opt_ids = [
+                opt_id for opt_id in selected_opt_ids
+                if option_to_accommodation.get(opt_id) not in rule_hidden_ids
+            ]
+            selected_support_ids = [
+                sid for sid in selected_support_ids
+                if sid not in rule_hidden_ids
+            ]
         # SEIS supports are read-only: their controls are disabled so they never
         # post. Keep any option previously stored under a SEIS-locked support so
         # an unrelated save does not silently erase it.
@@ -2605,6 +3630,24 @@ def assign_accommodations(request, stu_annual_key):
                 .values_list('id', flat=True)
             )
             selected_opt_ids = list(set(selected_opt_ids) | preserved_locked_opt_ids)
+        # A fully SEIS-managed workspace is read-only: no support controls are
+        # rendered, so nothing is posted. Preserve every existing selection
+        # rather than clearing the student's stored DESI data.
+        if not editable_assessments:
+            selected_opt_ids = list(
+                student_acc.options.values_list('id', flat=True)
+            )
+            selected_support_ids = list(
+                student_acc.selected_accommodations.values_list('id', flat=True)
+            )
+        # Default-rule options are locked/disabled controls, so they never post.
+        # Keep them selected, and keep option-less locked supports checked.
+        if default_locks['option_ids']:
+            selected_opt_ids = list(set(selected_opt_ids) | default_locks['option_ids'])
+        if default_locks['direct_support_ids']:
+            selected_support_ids = list(
+                set(selected_support_ids) | default_locks['direct_support_ids']
+            )
         student_acc.options.set(AccommodationOption.objects.filter(id__in=selected_opt_ids))
         student_acc.selected_accommodations.set(Accommodation.objects.filter(id__in=selected_support_ids))
         student_acc.updated_by = request.user
@@ -2643,9 +3686,11 @@ def assign_accommodations(request, stu_annual_key):
                 failed_rules_map,
                 selected_opt_ids,
                 selected_support_ids,
-                can_edit=can_edit,
+                can_edit=effective_can_edit,
                 seis_option_map=seis_option_map,
                 seis_managed_assessments=seis_managed_assessments,
+                default_locks=default_locks,
+                seis_readonly=student_in_seis,
             )
             list_context.update(context)
 
@@ -2705,6 +3750,10 @@ def assign_accommodations(request, stu_annual_key):
             .values_list('id', flat=True)
         )
         student_option_ids = list(set(student_option_ids) | preserved_locked_opt_ids)
+    # Default-rule options are shown pre-selected (and locked) in the workspace.
+    if default_locks['option_ids']:
+        student_option_ids = list(set(student_option_ids) | default_locks['option_ids'])
+    selected_support_ids = set(selected_support_ids) | default_locks['direct_support_ids']
     if set(o.id for o in student_options) != student_option_ids:
         student_acc.options.set(AccommodationOption.objects.filter(id__in=student_option_ids))
         student_acc.updated_by = request.user
@@ -2718,9 +3767,11 @@ def assign_accommodations(request, stu_annual_key):
         failed_rules_map,
         student_option_ids,
         selected_support_ids,
-        can_edit=can_edit,
+        can_edit=effective_can_edit,
         seis_option_map=seis_option_map,
         seis_managed_assessments=seis_managed_assessments,
+        default_locks=default_locks,
+        seis_readonly=student_in_seis,
     )
 
     if is_htmx:

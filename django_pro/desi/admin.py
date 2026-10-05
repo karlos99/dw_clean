@@ -14,6 +14,8 @@ from .models import (
     StudentAssessmentCompletion,
     SupportRule,
     SupportRuleCriteria,
+    SupportDefaultRule,
+    SupportDefaultRuleCriteria,
 )
 
 
@@ -34,7 +36,30 @@ class AccommodationResourceInline(admin.TabularInline):
 
 class SupportRuleCriteriaInline(admin.TabularInline):
     model = SupportRuleCriteria
+    fields = ('order', 'logic_operator', 'field_name', 'operator', 'value')
     extra = 1
+
+
+class SupportDefaultRuleCriteriaInline(admin.TabularInline):
+    model = SupportDefaultRuleCriteria
+    fields = (
+        'order', 'logic_operator', 'criterion_type',
+        'field_name', 'operator', 'value',
+        'test_name', 'test_subject', 'test_window', 'school_year',
+        'result_field', 'result_operator', 'result_value',
+        'school_state_id', 'staff_name', 'period',
+    )
+    extra = 1
+
+
+@admin.register(SupportDefaultRule)
+class SupportDefaultRuleAdmin(admin.ModelAdmin):
+    list_display = ('name', 'support', 'scope', 'priority', 'is_active', 'updated_at')
+    list_filter = ('scope', 'is_active')
+    list_editable = ('priority',)
+    search_fields = ('name', 'support__name')
+    filter_horizontal = ('options',)
+    inlines = [SupportDefaultRuleCriteriaInline]
 
 
 @admin.register(AccommodationCategory)
@@ -46,15 +71,17 @@ class AccommodationCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(Accommodation)
 class AccommodationAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code', 'tag', 'column_letter', 'category', 'section_category', 'description', 'question_text', 'order')
-    list_filter = ('category', 'section_category', 'tag')
+    list_display = ('name', 'code', 'tag', 'column_letter', 'category', 'managed_by', 'section_category', 'description', 'question_text', 'order')
+    list_filter = ('category', 'managed_by', 'section_category', 'tag')
     search_fields = ('name', 'code', 'tag', 'column_letter', 'category', 'section_category__name', 'description')
     inlines = [AccommodationOptionInline, AccommodationResourceInline]
 
 
 @admin.register(Assessment)
 class AssessmentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'subject', 'tag', 'is_active', 'created_at')
+    list_display = ('order', 'name', 'subject', 'tag', 'is_active', 'created_at')
+    list_display_links = ('name',)
+    list_editable = ('order',)
     list_filter = ('subject', 'tag', 'is_active')
     search_fields = ('name', 'subject', 'tag')
     filter_horizontal = ('supported_options',)
@@ -63,7 +90,7 @@ class AssessmentAdmin(admin.ModelAdmin):
 
 @admin.register(SupportRule)
 class SupportRuleAdmin(admin.ModelAdmin):
-    list_display = ('name', 'is_active', 'updated_at')
+    list_display = ('name', 'criteria_summary', 'is_active', 'updated_at')
     list_filter = ('is_active',)
     search_fields = ('name',)
     filter_horizontal = ('supports',)

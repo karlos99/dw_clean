@@ -28,6 +28,10 @@ def get_all_ddl():
         CREATE_ANALYTICS_AP_AWARDS,
         CREATE_ANALYTICS_SAT_RESULTS,
         CREATE_ANALYTICS_SURVEY_RESPONSES,
+        CREATE_ANALYTICS_TEST_METADATA,
+        CREATE_ANALYTICS_MARKS_METADATA,
+        CREATE_ANALYTICS_STUDENT_COURSE_PROGRAM,
+        CREATE_ANALYTICS_COURSE_PROGRAM_VALUES,
         CREATE_ANALYTICS_SYNC_META,
     ]
 
@@ -40,6 +44,13 @@ ANALYTICS_TABLE_NAMES = (
     'analytics_ap_awards',
     'analytics_sat_results',
     'analytics_survey_responses',
+    # Small DISTINCT column-discovery tables. These back the unfiltered
+    # test/mark column tree without re-scanning the multi-million-row
+    # results/student_marks_list fact tables on every page load.
+    'analytics_test_metadata',
+    'analytics_marks_metadata',
+    'analytics_student_course_program',
+    'analytics_course_program_values',
 )
 
 
@@ -67,7 +78,10 @@ CREATE TABLE IF NOT EXISTS current_student (
     ltel Nullable(String),
     status Nullable(String),
     school_year String,
-    add_data Nullable(String)
+    add_data Nullable(String),
+    INDEX idx_cs_school school_state_id TYPE set(100) GRANULARITY 4,
+    INDEX idx_cs_grade grade TYPE set(20) GRANULARITY 4,
+    INDEX idx_cs_status status TYPE set(10) GRANULARITY 4
 )
 ENGINE = MergeTree
 ORDER BY (school_year, ssid, stu_annual_key)
@@ -484,6 +498,57 @@ ORDER BY (school_year, student_id, survey_type, question_order)
 SETTINGS index_granularity = 8192
 """
 
+CREATE_ANALYTICS_TEST_METADATA = """
+CREATE TABLE IF NOT EXISTS analytics_test_metadata (
+    school_year String,
+    test_name String,
+    subject String,
+    test_window String,
+    info_key String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, test_name, subject, test_window, info_key)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_MARKS_METADATA = """
+CREATE TABLE IF NOT EXISTS analytics_marks_metadata (
+    school_year String,
+    subject String,
+    course_name String,
+    mark_period String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, subject, course_name, mark_period)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_STUDENT_COURSE_PROGRAM = """
+CREATE TABLE IF NOT EXISTS analytics_student_course_program (
+    stu_annual_key String,
+    school_year String,
+    course_prog_tag String,
+    course_prog_category String,
+    course_prog_discipline String,
+    course_prog_level String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, stu_annual_key)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_COURSE_PROGRAM_VALUES = """
+CREATE TABLE IF NOT EXISTS analytics_course_program_values (
+    stu_annual_key String,
+    school_year String,
+    dimension String,
+    value String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, dimension, value, stu_annual_key)
+SETTINGS index_granularity = 8192
+"""
+
 CREATE_ANALYTICS_SYNC_META = """
 CREATE TABLE IF NOT EXISTS analytics_sync_meta (
     table_name String,
@@ -506,3 +571,10 @@ PROJECTION_DDL = (
     "ALTER TABLE analytics_student_marks ADD PROJECTION IF NOT EXISTS p_mark_lookup "
     "(SELECT * ORDER BY stu_annual_key, school_year, subject)",
 )
+
+SECONDARY_INDEX_DDL = (
+    "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_school school_state_id TYPE set(100) GRANULARITY 4",
+    "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_grade grade TYPE set(20) GRANULARITY 4",
+    "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_status status TYPE set(10) GRANULARITY 4",
+)
+

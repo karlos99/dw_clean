@@ -68,6 +68,10 @@ from .view_modules.statistics_views import (
     get_column_statistics,
 )
 
+from .view_modules.schedule_filter_views import (
+    schedule_filter_options,
+)
+
 # Export all public views
 __all__ = [
     # Statistics
@@ -82,6 +86,7 @@ __all__ = [
     'warm_student_test_summary_cache',
     # Column management
     'load_column_structures',
+    'schedule_filter_options',
     # Folder and query management
     'folder_browser',
     'save_query_modal',

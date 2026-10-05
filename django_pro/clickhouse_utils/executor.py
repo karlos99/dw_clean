@@ -28,7 +28,11 @@ logger = logging.getLogger(__name__)
 # (256KiB, the parser buffer — not a data/row limit) and fail as a confusing
 # "Syntax error" at the truncation point. Raised generously since it only
 # affects parse-buffer size, not query performance.
-_CH_QUERY_SETTINGS = {'max_query_size': 50_000_000}
+_CH_QUERY_SETTINGS = {
+    'max_query_size': 50_000_000,
+    'max_threads': 4,
+    'max_execution_time': 30,
+}
 
 # Tables mirrored into ClickHouse by `sync_to_clickhouse` (see
 # clickhouse_utils/schema.py for the DDL). Keep in sync with both.
@@ -38,15 +42,16 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'school', 'schedule_list', 'relative_year', 'mathr_recommendation',
     'student_attendance', 'student_incidents',
     'analytics_student_profile', 'analytics_student_results',
-    'analytics_student_marks', 'analytics_ap_results', 'analytics_ap_awards',
+    'analytics_student_marks',     'analytics_ap_results', 'analytics_ap_awards',
     'analytics_sat_results',
     'analytics_survey_responses',
+    'analytics_test_metadata', 'analytics_marks_metadata',
+    'analytics_student_course_program', 'analytics_course_program_values',
 })
 
-# Keys newly written to Postgres add_data can be missing from the ClickHouse
-# mirror. JSONExtract on stale CH returns empty strings without error, so we
-# keep those extracts on Postgres until CH is re-synced.
-_PG_ADD_DATA_KEYS = ('dsusd_fep', 'DSUSD_FEP')
+# add_data JSON keys that may be missing or stale in the ClickHouse mirror.
+# JSONExtract on stale CH returns empty without error, so keep these on Postgres.
+_PG_ADD_DATA_KEYS = ('dsusd_fep', 'DSUSD_FEP', 'l_race')
 
 # Application tables that are NOT part of the ClickHouse read model (they are
 # intentionally absent from CLICKHOUSE_SYNCED_TABLES). Queries that reference

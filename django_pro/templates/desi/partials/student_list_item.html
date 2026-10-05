@@ -21,6 +21,9 @@
             <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold {% if student.sped == 'Y' or student.sped == '1' %}bg-purple-100 text-purple-800 border border-purple-200{% else %}bg-slate-100 text-slate-500 border border-slate-200{% endif %}">
                 SPED: {{ student.sped|default:"No" }}
             </span>
+            <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-semibold {% if student.in_504 == 'Y' or student.in_504 == '1' %}bg-teal-100 text-teal-800 border border-teal-200{% else %}bg-slate-100 text-slate-500 border border-slate-200{% endif %}">
+                504: {{ student.in_504|default:"No" }}
+            </span>
         </div>
         <span class="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600 shrink-0">Gr {{ student.grade }}</span>
     </div>
@@ -29,11 +32,13 @@
             {% for status in student.assessment_statuses %}
                 {% cycle 'bg-blue-700' 'bg-emerald-700' 'bg-violet-700' 'bg-amber-700' 'bg-rose-700' 'bg-cyan-700' as assessment_color silent %}
                 <div class="flex items-center gap-1.5 min-w-0 text-[10px]">
-                    <span class="{{ assessment_color }} w-1.5 h-3.5 rounded-sm shrink-0" aria-hidden="true"></span>
+                    <span class="{% if status.is_seis %}bg-violet-700{% else %}{{ assessment_color }}{% endif %} w-1.5 h-3.5 rounded-sm shrink-0" aria-hidden="true"></span>
                     <span class="truncate text-slate-600" title="{{ status.assessment.name }}{% if status.assessment.subject %} — {{ status.assessment.subject }}{% endif %}">
                         {{ status.assessment.name }}{% if status.assessment.subject %} — {{ status.assessment.subject }}{% endif %}
                     </span>
-                    {% if status.is_completed %}
+                    {% if status.is_seis %}
+                    <span class="ml-auto text-[9px] font-semibold text-violet-700 shrink-0">SEIS</span>
+                    {% elif status.is_completed %}
                     <span class="ml-auto text-[9px] font-semibold text-emerald-700 shrink-0">Completed</span>
                     {% else %}
                     <span class="ml-auto text-[9px] font-semibold text-amber-700 shrink-0">Pending</span>

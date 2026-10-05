@@ -9,6 +9,23 @@
     <link rel="icon" href="{% static 'images/favicon.ico' %}" sizes="any">
     <link rel="icon" type="image/png" href="{% static 'images/favicon-32.png' %}" sizes="32x32">
     <link rel="apple-touch-icon" href="{% static 'images/apple-touch-icon.png' %}">
+    {# Firefox only accepts none/auto for -webkit-text-size-adjust; Tailwind preflight uses 100% and logs a CSS parse error. #}
+    <script>
+        (function () {
+            var desc = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+            Object.defineProperty(HTMLStyleElement.prototype, 'textContent', {
+                configurable: true,
+                enumerable: desc.enumerable,
+                get: function () { return desc.get.call(this); },
+                set: function (value) {
+                    if (typeof value === 'string' && value.indexOf('-webkit-text-size-adjust:100%') !== -1) {
+                        value = value.replace(/-webkit-text-size-adjust:\s*100%/g, '-webkit-text-size-adjust:none');
+                    }
+                    desc.set.call(this, value);
+                }
+            });
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{% static 'css/base.css' %}">

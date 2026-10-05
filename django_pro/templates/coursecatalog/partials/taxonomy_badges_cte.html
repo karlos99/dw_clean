@@ -1,0 +1,19 @@
+{# Read-only CTE path from coursecatalog_cte_pathways — pass assignment a (CtePathwayAssignment) #}
+{% if a %}
+<span class="inline-flex flex-wrap items-center gap-1 rounded-md border border-dashed border-slate-300 bg-slate-50/80 px-1 py-0.5" title="Synced from CTE pathways table (read-only)">
+    <span class="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-900">{{ a.tag_name }}</span>
+    {% if a.career_cluster %}
+    <span class="text-slate-300 text-[10px]">→</span>
+    <span class="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-900">{{ a.career_cluster }}</span>
+    {% endif %}
+    {% if a.cte_pathway %}
+    <span class="text-slate-300 text-[10px]">→</span>
+    <span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-950">{{ a.cte_pathway }}</span>
+    {% endif %}
+    {% if a.cte_course_level %}
+    <span class="text-slate-300 text-[10px]">→</span>
+    <span class="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-900">{{ a.cte_course_level }}</span>
+    {% endif %}
+    <span class="text-[9px] font-medium text-slate-400 uppercase tracking-wide ml-0.5">sync</span>
+</span>
+{% endif %}

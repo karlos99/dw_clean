@@ -17,6 +17,7 @@ from ..models import SavedQuery
 from ..constants import COLUMN_DEFINITIONS
 from ..column_utils import _get_display_name, RESULTS_STUDENT_MATCH_SQL, RESULTS_BLANK_SSID_SQL, normalize_score_value, parse_sat_column_key, sat_column_db_field, parse_apall_sort_key
 from ..utils import can_user_view_query, get_user_folders, is_unrestricted as _is_user_unrestricted, _apply_de_school_filter
+from .schedule_filter_sql import parse_schedule_marks_filters, apply_schedule_marks_filters
 from ..survey_utils import get_survey_columns
 from .student_data_utils import (
     get_current_student_columns,
@@ -122,7 +123,17 @@ def get_column_statistics(request):
         except:
             filters = saved_filters.copy()
     else:
-        filters = {k: v for k, v in saved_filters.items() if k not in ['search', 'school_year', 'grade', 'status']}
+        filters = {
+            k: v for k, v in saved_filters.items()
+            if k not in [
+                'search', 'school_year', 'grade', 'status',
+                'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
+            ]
+        }
+
+    schedule_marks_filters = parse_schedule_marks_filters(
+        request, saved_filters, column_filters=filters, user=request.user,
+    )
 
     # --- Reusing Filter Logic (Duplicated from load_students) ---
     def _apply_column_filters(where_clauses, params, filters_to_apply, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students=False, needs_eht=False):
@@ -723,6 +734,15 @@ def get_column_statistics(request):
 
         # Apply active school context or enforce school permissions
         _apply_de_school_filter(base_where_clauses, base_params, request.user)
+
+        apply_schedule_marks_filters(
+            base_where_clauses,
+            base_params,
+            request.user,
+            schedule_marks_filters,
+            school_year,
+            filters,
+        )
 
         # Apply grade level restrictions for specific roles
         if not is_unrestricted and hasattr(request.user, 'grade_levels'):
