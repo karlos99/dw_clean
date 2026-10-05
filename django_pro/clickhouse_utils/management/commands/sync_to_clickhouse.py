@@ -37,7 +37,13 @@ COURSE_PROGRAM_CH_TABLES = (
     'analytics_student_course_program',
     'analytics_course_program_values',
 )
-from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES, PROJECTION_DDL, SECONDARY_INDEX_DDL, get_all_ddl
+from clickhouse_utils.schema import (
+    ANALYTICS_TABLE_NAMES,
+    COLUMN_MIGRATION_DDL,
+    PROJECTION_DDL,
+    SECONDARY_INDEX_DDL,
+    get_all_ddl,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +115,13 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_marks_metadata': {'student_marks_list', 'current_student'},
     'analytics_student_course_program': {'schedule_list'},
     'analytics_course_program_values': {'schedule_list'},
+    # CCGI dashboards: flattened from the PostgreSQL ccgi_* JSONB tables and
+    # enriched with each student's most recent current_student row.
+    'analytics_ccgi_favorite_career': {'current_student'},
+    'analytics_ccgi_career_cluster': {'current_student'},
+    'analytics_ccgi_college_financial': {'current_student'},
+    'analytics_ccgi_college_application': {'current_student'},
+    'analytics_ccgi_application_status': {'current_student'},
 }
 
 
@@ -213,6 +226,12 @@ class Command(BaseCommand):
                 ch.command(index_sql)
             except Exception as exc:
                 self.stderr.write(self.style.WARNING(f'Index skipped: {exc}'))
+
+        for column_sql in COLUMN_MIGRATION_DDL:
+            try:
+                ch.command(column_sql)
+            except Exception as exc:
+                self.stderr.write(self.style.WARNING(f'Column migration skipped: {exc}'))
 
         if schema_only:
             self.stdout.write(self.style.SUCCESS('Schema-only sync complete.'))
@@ -423,8 +442,12 @@ class Command(BaseCommand):
         staging = f'{table}__sync'
         target = staging if atomic else table
         if atomic:
-            ch.command(f'CREATE TABLE IF NOT EXISTS {ch_db}.{staging} AS {ch_db}.{table}')
-            ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+            # Recreate the staging table from the live schema every run. A plain
+            # ``CREATE IF NOT EXISTS`` would keep a stale staging table across a
+            # schema change (e.g. a newly added column), which then fails the
+            # INSERT with a column-count mismatch.
+            ch.command(f'DROP TABLE IF EXISTS {ch_db}.{staging}')
+            ch.command(f'CREATE TABLE {ch_db}.{staging} AS {ch_db}.{table}')
         else:
             ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
         ch.command(self._derived_insert_sql(ch_db, table, target, pg_fn_kwargs or {}))
@@ -764,6 +787,215 @@ class Command(BaseCommand):
                 INNER JOIN {sd} AS sd ON sq.survey_definition_id = sd.id
                 INNER JOIN {il} AS il ON sr.import_log_id = il.id
                 WHERE il.ready_for_exploration AND il.status = 'COMPLETED' AND sd.is_active
+            """
+        if table == 'analytics_ccgi_favorite_career':
+            ce = _pg_table_fn(table='ccgi_career_explo', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    l.ssid, l.stu_annual_key, l.student_name, l.grade, l.school,
+                    l.school_state_id, l.status, l.sy AS school_year, career
+                FROM (
+                    SELECT
+                        ssid,
+                        argMax(stu_annual_key, school_year) AS stu_annual_key,
+                        argMax(student_name, school_year) AS student_name,
+                        argMax(grade, school_year) AS grade,
+                        argMax(school, school_year) AS school,
+                        argMax(school_state_id, school_year) AS school_state_id,
+                        argMax(status, school_year) AS status,
+                        max(school_year) AS sy
+                    FROM {ch_db}.current_student
+                    GROUP BY ssid
+                ) AS l
+                INNER JOIN (
+                    SELECT ssid, JSONExtract(favorite_careers, 'Array(String)') AS careers
+                    FROM {ce}
+                    WHERE favorite_careers IS NOT NULL
+                ) AS ce ON ce.ssid = l.ssid
+                ARRAY JOIN ce.careers AS career
+                WHERE career != ''
+            """
+        if table == 'analytics_ccgi_career_cluster':
+            ce = _pg_table_fn(table='ccgi_career_explo', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    l.ssid, l.stu_annual_key, l.student_name, l.grade, l.school,
+                    l.school_state_id, l.status, l.sy AS school_year,
+                    replaceRegexpOne(kv.1, '^Cluster: ''(.*)''$', '\\1') AS cluster,
+                    toInt32OrZero(kv.2) AS cluster_count
+                FROM (
+                    SELECT
+                        ssid,
+                        argMax(stu_annual_key, school_year) AS stu_annual_key,
+                        argMax(student_name, school_year) AS student_name,
+                        argMax(grade, school_year) AS grade,
+                        argMax(school, school_year) AS school,
+                        argMax(school_state_id, school_year) AS school_state_id,
+                        argMax(status, school_year) AS status,
+                        max(school_year) AS sy
+                    FROM {ch_db}.current_student
+                    GROUP BY ssid
+                ) AS l
+                INNER JOIN (
+                    SELECT ssid, arrayFilter(x -> x.2 != '', JSONExtractKeysAndValues(career_clusters, 'String')) AS clusters
+                    FROM {ce}
+                    WHERE career_clusters IS NOT NULL
+                ) AS ce ON ce.ssid = l.ssid
+                ARRAY JOIN ce.clusters AS kv
+            """
+        if table == 'analytics_ccgi_college_financial':
+            cf = _pg_table_fn(table='ccgi_college_financial', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    l.ssid, l.stu_annual_key, l.student_name, l.grade, l.school,
+                    l.school_state_id, l.status, l.sy AS school_year,
+                    toFloat64OrNull(NULLIF(JSONExtractString(cf.csu, 'gpa'), '')) AS csu_gpa,
+                    JSONExtractString(cf.csu, 'eligibility_cmp') AS csu_eligibility,
+                    toInt32OrDefault(JSONExtractString(cf.csu, 'completed_app_count')) AS csu_completed_apps,
+                    length(JSONExtract(cf.csu, 'in_progress_applications', 'Array(String)')) AS csu_in_progress_apps,
+                    toFloat64OrNull(NULLIF(JSONExtractString(cf.uc, 'gpa'), '')) AS uc_gpa,
+                    JSONExtractString(cf.uc, 'eligibility_cmp') AS uc_eligibility,
+                    toInt32OrDefault(JSONExtractString(cf.uc, 'completed_app_count')) AS uc_completed_apps,
+                    length(JSONExtract(cf.uc, 'in_progress_applications', 'Array(String)')) AS uc_in_progress_apps,
+                    toInt32OrDefault(JSONExtractString(cf.ccc, 'completed_app_count')) AS ccc_completed_apps,
+                    arrayStringConcat(JSONExtract(cf.ccc, 'completed_applications', 'Array(String)'), ', ') AS ccc_completed_app,
+                    JSONExtractString(cf.ccc, 'most_recent_completed_date') AS ccc_most_recent_completed_date,
+                    ifNull(cf.financial_aid_application_status, 'Unknown') AS financial_aid_status,
+                    NULLIF(JSONExtractString(cf.csu, 'eligibility_detail'), '') AS csu_eligibility_detail,
+                    NULLIF(JSONExtractString(cf.uc, 'eligibility_detail'), '') AS uc_eligibility_detail,
+                    toInt32(JSONExtractString(cf.csu, 'eligibility_cmp') = 'Requires Review') AS csu_requires_review,
+                    toInt32(JSONExtractString(cf.uc, 'eligibility_cmp') = 'Requires Review') AS uc_requires_review,
+                    multiIf(
+                        JSONExtractString(cf.csu, 'eligibility_cmp') = 'Requires Review'
+                            AND JSONExtractString(cf.uc, 'eligibility_cmp') = 'Requires Review', 'Both CSU & UC',
+                        JSONExtractString(cf.csu, 'eligibility_cmp') = 'Requires Review', 'CSU only',
+                        JSONExtractString(cf.uc, 'eligibility_cmp') = 'Requires Review', 'UC only',
+                        NULL
+                    ) AS review_scope,
+                    NULLIF(JSONExtractString(cf.ccc, 'id'), '') AS ccc_apply_id
+                FROM (
+                    SELECT
+                        ssid,
+                        argMax(stu_annual_key, school_year) AS stu_annual_key,
+                        argMax(student_name, school_year) AS student_name,
+                        argMax(grade, school_year) AS grade,
+                        argMax(school, school_year) AS school,
+                        argMax(school_state_id, school_year) AS school_state_id,
+                        argMax(status, school_year) AS status,
+                        max(school_year) AS sy
+                    FROM {ch_db}.current_student
+                    GROUP BY ssid
+                ) AS l
+                INNER JOIN {cf} AS cf ON cf.ssid = l.ssid
+            """
+        if table == 'analytics_ccgi_college_application':
+            cf = _pg_table_fn(table='ccgi_college_financial', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    l.ssid, l.stu_annual_key, l.student_name, l.grade, l.school,
+                    l.school_state_id, l.status, l.sy AS school_year,
+                    rec.1 AS system,
+                    rec.2 AS application_status,
+                    rec.3 AS college_name,
+                    rec.4 AS most_recent_completed_date,
+                    apps.csu_eligibility AS csu_eligibility,
+                    apps.uc_eligibility AS uc_eligibility,
+                    NULLIF(if(rec.1 = 'CCC', apps.ccc_id, ''), '') AS application_id
+                FROM (
+                    SELECT
+                        ssid,
+                        argMax(stu_annual_key, school_year) AS stu_annual_key,
+                        argMax(student_name, school_year) AS student_name,
+                        argMax(grade, school_year) AS grade,
+                        argMax(school, school_year) AS school,
+                        argMax(school_state_id, school_year) AS school_state_id,
+                        argMax(status, school_year) AS status,
+                        max(school_year) AS sy
+                    FROM {ch_db}.current_student
+                    GROUP BY ssid
+                ) AS l
+                INNER JOIN (
+                    SELECT
+                        ssid,
+                        JSONExtractString(csu, 'eligibility_cmp') AS csu_eligibility,
+                        JSONExtractString(uc, 'eligibility_cmp') AS uc_eligibility,
+                        JSONExtractString(ccc, 'id') AS ccc_id,
+                        arrayConcat(
+                            arrayMap(x -> ('CSU', 'Completed', x, ''),
+                                     JSONExtract(csu, 'completed_applications', 'Array(String)')),
+                            arrayMap(x -> ('CSU', 'In Progress', x, ''),
+                                     JSONExtract(csu, 'in_progress_applications', 'Array(String)')),
+                            arrayMap(x -> ('UC', 'Completed', x, ''),
+                                     JSONExtract(uc, 'completed_applications', 'Array(String)')),
+                            arrayMap(x -> ('UC', 'In Progress', x, ''),
+                                     JSONExtract(uc, 'in_progress_applications', 'Array(String)')),
+                            arrayMap(x -> ('CCC', 'Completed', x,
+                                           JSONExtractString(ccc, 'most_recent_completed_date')),
+                                     JSONExtract(ccc, 'completed_applications', 'Array(String)'))
+                        ) AS recs
+                    FROM {cf}
+                ) AS apps ON apps.ssid = l.ssid
+                ARRAY JOIN apps.recs AS rec
+                WHERE rec.3 != ''
+            """
+        if table == 'analytics_ccgi_application_status':
+            cf = _pg_table_fn(table='ccgi_college_financial', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    l.ssid, l.stu_annual_key, l.student_name, l.grade, l.school,
+                    l.school_state_id, l.status, l.sy AS school_year,
+                    rec.1 AS system,
+                    rec.2 AS application_status,
+                    NULLIF(rec.3, '') AS eligibility
+                FROM (
+                    SELECT
+                        ssid,
+                        argMax(stu_annual_key, school_year) AS stu_annual_key,
+                        argMax(student_name, school_year) AS student_name,
+                        argMax(grade, school_year) AS grade,
+                        argMax(school, school_year) AS school,
+                        argMax(school_state_id, school_year) AS school_state_id,
+                        argMax(status, school_year) AS status,
+                        max(school_year) AS sy
+                    FROM {ch_db}.current_student
+                    GROUP BY ssid
+                ) AS l
+                INNER JOIN (
+                    SELECT
+                        ssid,
+                        arrayConcat(
+                            arrayMap(x -> ('CSU', x, JSONExtractString(csu, 'eligibility_cmp')), csu_statuses),
+                            arrayMap(x -> ('UC', x, JSONExtractString(uc, 'eligibility_cmp')), uc_statuses),
+                            arrayMap(x -> ('CCC', x, ''), ccc_statuses)
+                        ) AS recs
+                    FROM (
+                        SELECT
+                            ssid, csu, uc, ccc,
+                            arrayConcat(
+                                if(length(JSONExtract(csu, 'completed_applications', 'Array(String)')) > 0, ['Completed'], []),
+                                if(length(JSONExtract(csu, 'in_progress_applications', 'Array(String)')) > 0, ['In Progress'], []),
+                                if(length(JSONExtract(csu, 'completed_applications', 'Array(String)')) = 0
+                                   AND length(JSONExtract(csu, 'in_progress_applications', 'Array(String)')) = 0, ['Not Applied'], [])
+                            ) AS csu_statuses,
+                            arrayConcat(
+                                if(length(JSONExtract(uc, 'completed_applications', 'Array(String)')) > 0, ['Completed'], []),
+                                if(length(JSONExtract(uc, 'in_progress_applications', 'Array(String)')) > 0, ['In Progress'], []),
+                                if(length(JSONExtract(uc, 'completed_applications', 'Array(String)')) = 0
+                                   AND length(JSONExtract(uc, 'in_progress_applications', 'Array(String)')) = 0, ['Not Applied'], [])
+                            ) AS uc_statuses,
+                            arrayConcat(
+                                if(length(JSONExtract(ccc, 'completed_applications', 'Array(String)')) > 0, ['Completed'], []),
+                                if(length(JSONExtract(ccc, 'completed_applications', 'Array(String)')) = 0, ['Not Applied'], [])
+                            ) AS ccc_statuses
+                        FROM {cf}
+                    ) AS base
+                ) AS apps ON apps.ssid = l.ssid
+                ARRAY JOIN apps.recs AS rec
             """
         raise ValueError(f'Unknown derived table {table}')
 

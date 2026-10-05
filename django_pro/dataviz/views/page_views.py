@@ -243,19 +243,33 @@ def page_view(request, slug):
         all_sections.extend(row_obj.sections.all())
     all_sections.extend(orphan_sections)
 
+    # Available filter columns on this page (for cross-page filter matching in JS)
+    page_filter_cols = sorted(set(f.get('source_col', '') for f in dv_page.page_filters if f.get('source_col')))
+
     # Attach filter cols via a flat dict keyed by section.id (Django templates
-    # reject attribute names starting with underscore)
+    # reject attribute names starting with underscore).
+    #
+    # Page-level filters apply to every chart on the page, but a chart config
+    # need not reference the filter column (e.g. a "Top Careers" bar whose
+    # x_col is ``career`` is still narrowed by the page's ``school``/``grade``
+    # filters). Union the page filter columns into each chart's declared
+    # dependency set so changing a page filter refreshes every affected chart
+    # instead of leaving tiles stale.
+    page_filter_col_set = set(page_filter_cols)
+
+    def _with_page_filters(chart_obj):
+        declared = set(filter(None, _chart_filter_cols(chart_obj).split(',')))
+        return ','.join(sorted(declared | page_filter_col_set))
+
     section_filter_cols_map = {}
     for section_obj in all_sections:
         if section_obj.element_type == 'chart' and section_obj.chart:
-            section_filter_cols_map[section_obj.id] = _chart_filter_cols(section_obj.chart)
+            section_filter_cols_map[section_obj.id] = _with_page_filters(section_obj.chart)
         if section_obj.element_type == 'dashboard' and section_obj.dashboard:
             for slot in section_obj.dashboard.chart_slots.all():
                 if slot.chart:
-                    section_filter_cols_map[slot.id] = _chart_filter_cols(slot.chart)
+                    section_filter_cols_map[slot.id] = _with_page_filters(slot.chart)
 
-    # Available filter columns on this page (for cross-page filter matching in JS)
-    page_filter_cols = sorted(set(f.get('source_col', '') for f in dv_page.page_filters if f.get('source_col')))
     has_visible_filters = any(not f.get('hidden') for f in dv_page.page_filters)
     has_hidden_filters = any(bool(f.get('hidden')) for f in dv_page.page_filters)
 
@@ -264,7 +278,7 @@ def page_view(request, slug):
 
     active_school = getattr(request.user, 'active_school', None)
 
-    return render(request, 'dataviz/pages/view.html', {
+    response = render(request, 'dataviz/pages/view.html', {
         'page':         dv_page,
         'dv_page':      dv_page,
         'rows':         rows,
@@ -283,3 +297,7 @@ def page_view(request, slug):
         'active_school_id': active_school.state_id if active_school else '',
         'active_school_name': active_school.school_name if active_school else '',
     })
+    # The page ships inline JS that carries a client cache-key version; never let
+    # a browser reuse a stale page whose JS would restore old cached chart HTML.
+    response['Cache-Control'] = 'private, no-cache, no-store, must-revalidate, max-age=0'
+    return response

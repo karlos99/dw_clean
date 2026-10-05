@@ -32,6 +32,11 @@ def get_all_ddl():
         CREATE_ANALYTICS_MARKS_METADATA,
         CREATE_ANALYTICS_STUDENT_COURSE_PROGRAM,
         CREATE_ANALYTICS_COURSE_PROGRAM_VALUES,
+        CREATE_ANALYTICS_CCGI_FAVORITE_CAREER,
+        CREATE_ANALYTICS_CCGI_CAREER_CLUSTER,
+        CREATE_ANALYTICS_CCGI_COLLEGE_FINANCIAL,
+        CREATE_ANALYTICS_CCGI_COLLEGE_APPLICATION,
+        CREATE_ANALYTICS_CCGI_APPLICATION_STATUS,
         CREATE_ANALYTICS_SYNC_META,
     ]
 
@@ -51,6 +56,19 @@ ANALYTICS_TABLE_NAMES = (
     'analytics_marks_metadata',
     'analytics_student_course_program',
     'analytics_course_program_values',
+    # CCGI (California College Guidance Initiative) dashboards. Flattened from
+    # the PostgreSQL ccgi_career_explo / ccgi_college_financial JSONB tables and
+    # enriched with the student's most recent current_student row.
+    'analytics_ccgi_favorite_career',
+    'analytics_ccgi_career_cluster',
+    'analytics_ccgi_college_financial',
+    # One row per (student, college application) across CSU / UC / CCC, with the
+    # application status (Completed / In Progress) and destination college.
+    'analytics_ccgi_college_application',
+    # One row per (student, system, status) where status is Completed /
+    # In Progress / Not Applied. Includes on-track students with no application
+    # so they are not invisible in the system funnel charts.
+    'analytics_ccgi_application_status',
 )
 
 
@@ -549,6 +567,117 @@ ORDER BY (school_year, dimension, value, stu_annual_key)
 SETTINGS index_granularity = 8192
 """
 
+CREATE_ANALYTICS_CCGI_FAVORITE_CAREER = """
+CREATE TABLE IF NOT EXISTS analytics_ccgi_favorite_career (
+    ssid String,
+    stu_annual_key String,
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    school_year String,
+    career String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, career)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_CCGI_CAREER_CLUSTER = """
+CREATE TABLE IF NOT EXISTS analytics_ccgi_career_cluster (
+    ssid String,
+    stu_annual_key String,
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    school_year String,
+    cluster String,
+    cluster_count Int32
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, cluster)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_CCGI_COLLEGE_FINANCIAL = """
+CREATE TABLE IF NOT EXISTS analytics_ccgi_college_financial (
+    ssid String,
+    stu_annual_key String,
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    school_year String,
+    csu_gpa Nullable(Float64),
+    csu_eligibility Nullable(String),
+    csu_completed_apps Int32,
+    csu_in_progress_apps Int32,
+    uc_gpa Nullable(Float64),
+    uc_eligibility Nullable(String),
+    uc_completed_apps Int32,
+    uc_in_progress_apps Int32,
+    ccc_completed_apps Int32,
+    ccc_completed_app Nullable(String),
+    ccc_most_recent_completed_date Nullable(String),
+    financial_aid_status Nullable(String),
+    csu_eligibility_detail Nullable(String),
+    uc_eligibility_detail Nullable(String),
+    csu_requires_review Int32,
+    uc_requires_review Int32,
+    review_scope Nullable(String),
+    ccc_apply_id Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_CCGI_COLLEGE_APPLICATION = """
+CREATE TABLE IF NOT EXISTS analytics_ccgi_college_application (
+    ssid String,
+    stu_annual_key String,
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    school_year String,
+    system String,
+    application_status String,
+    college_name String,
+    most_recent_completed_date Nullable(String),
+    csu_eligibility Nullable(String),
+    uc_eligibility Nullable(String),
+    application_id Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, system, ssid, college_name)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_CCGI_APPLICATION_STATUS = """
+CREATE TABLE IF NOT EXISTS analytics_ccgi_application_status (
+    ssid String,
+    stu_annual_key String,
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    school_year String,
+    system String,
+    application_status String,
+    eligibility Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, system, application_status, ssid)
+SETTINGS index_granularity = 8192
+"""
+
 CREATE_ANALYTICS_SYNC_META = """
 CREATE TABLE IF NOT EXISTS analytics_sync_meta (
     table_name String,
@@ -576,5 +705,30 @@ SECONDARY_INDEX_DDL = (
     "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_school school_state_id TYPE set(100) GRANULARITY 4",
     "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_grade grade TYPE set(20) GRANULARITY 4",
     "ALTER TABLE current_student ADD INDEX IF NOT EXISTS idx_cs_status status TYPE set(10) GRANULARITY 4",
+)
+
+# Columns added to existing tables after their initial CREATE. ``CREATE TABLE
+# IF NOT EXISTS`` never alters an already-existing table, so additive column
+# changes must be applied explicitly. Order matters: it must match the order
+# used in the corresponding CREATE and the derived INSERT ... SELECT projection.
+COLUMN_MIGRATION_DDL = (
+    "ALTER TABLE analytics_ccgi_college_financial "
+    "ADD COLUMN IF NOT EXISTS csu_eligibility_detail Nullable(String)",
+    "ALTER TABLE analytics_ccgi_college_financial "
+    "ADD COLUMN IF NOT EXISTS uc_eligibility_detail Nullable(String)",
+    "ALTER TABLE analytics_ccgi_college_financial "
+    "ADD COLUMN IF NOT EXISTS csu_requires_review Int32 DEFAULT 0",
+    "ALTER TABLE analytics_ccgi_college_financial "
+    "ADD COLUMN IF NOT EXISTS uc_requires_review Int32 DEFAULT 0",
+    "ALTER TABLE analytics_ccgi_college_financial "
+    "ADD COLUMN IF NOT EXISTS review_scope Nullable(String)",
+    "ALTER TABLE analytics_ccgi_college_financial "
+    "ADD COLUMN IF NOT EXISTS ccc_apply_id Nullable(String)",
+    "ALTER TABLE analytics_ccgi_college_application "
+    "ADD COLUMN IF NOT EXISTS csu_eligibility Nullable(String)",
+    "ALTER TABLE analytics_ccgi_college_application "
+    "ADD COLUMN IF NOT EXISTS uc_eligibility Nullable(String)",
+    "ALTER TABLE analytics_ccgi_college_application "
+    "ADD COLUMN IF NOT EXISTS application_id Nullable(String)",
 )
 

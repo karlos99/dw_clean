@@ -428,6 +428,37 @@ COLUMN_WHITELIST = {
         'student_id', 'ssid', 'survey_type', 'school_year', 'testing_window',
         'grade_range', 'question_order', 'value',
     },
+    'analytics_ccgi_favorite_career': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year', 'career',
+    },
+    'analytics_ccgi_career_cluster': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year', 'cluster', 'cluster_count',
+    },
+    'analytics_ccgi_college_financial': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year',
+        'csu_gpa', 'csu_eligibility', 'csu_completed_apps', 'csu_in_progress_apps',
+        'uc_gpa', 'uc_eligibility', 'uc_completed_apps', 'uc_in_progress_apps',
+        'ccc_completed_apps', 'ccc_completed_app',
+        'ccc_most_recent_completed_date', 'financial_aid_status',
+        'csu_eligibility_detail', 'uc_eligibility_detail',
+        'csu_requires_review', 'uc_requires_review', 'review_scope',
+        'ccc_apply_id',
+    },
+    'analytics_ccgi_college_application': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year',
+        'system', 'application_status', 'college_name',
+        'most_recent_completed_date',
+        'csu_eligibility', 'uc_eligibility', 'application_id',
+    },
+    'analytics_ccgi_application_status': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year',
+        'system', 'application_status', 'eligibility',
+    },
     'users_user': {
         'id', 'username', 'email', 'name', 'first_name', 'last_name', 'is_active',
         'is_superuser', 'is_staff'

@@ -47,6 +47,9 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'analytics_survey_responses',
     'analytics_test_metadata', 'analytics_marks_metadata',
     'analytics_student_course_program', 'analytics_course_program_values',
+    'analytics_ccgi_favorite_career', 'analytics_ccgi_career_cluster',
+    'analytics_ccgi_college_financial', 'analytics_ccgi_college_application',
+    'analytics_ccgi_application_status',
 })
 
 # add_data JSON keys that may be missing or stale in the ClickHouse mirror.
