@@ -115,7 +115,7 @@ def build_report_rows(report):
 
 def teacher_options_by_school(school_state_ids, school_year):
     """Map each school state id to sorted teacher names for that school/year."""
-    from studata.models import CurrentStudent, TeacherAccess
+    from studata.models import CurrentStudent, Schedule
 
     school_state_ids = [sid for sid in school_state_ids if sid]
     if not school_state_ids or not school_year:
@@ -131,7 +131,7 @@ def teacher_options_by_school(school_state_ids, school_year):
     if not key_to_school:
         return {sid: [] for sid in school_state_ids}
 
-    for staff_name, stu_key in TeacherAccess.objects.filter(
+    for staff_name, stu_key in Schedule.objects.filter(
         school_year=school_year,
         stu_annual_key__in=key_to_school.keys(),
     ).values_list('staff_name', 'stu_annual_key'):
@@ -147,7 +147,7 @@ def teacher_options_by_school(school_state_ids, school_year):
 
 
 def list_school_teachers(school_state_id, school_year):
-    """Teacher names (from the teacher access view) with students in the school/year."""
+    """Teacher names (from the schedule) with students in the school/year."""
     return teacher_options_by_school([school_state_id], school_year).get(school_state_id, [])
 
 
@@ -156,11 +156,32 @@ from collections import defaultdict
 from django.db import DatabaseError, transaction
 
 from desi.seis_data import seis_support_detail_for_student
-from studata.models import TeacherAccess
+
+
+def schedule_roster_keys(school_year, school_state_id, staff_name, student_keys=None):
+    """
+    Student annual keys on a staff member's schedule for a school/year.
+
+    Mirrors the roster a teacher sees in DESI (``User.get_accessible_student_keys``
+    is schedule-based), so coordinator teacher filters and reports match the
+    teacher's own count instead of the separately-maintained teacher-access view.
+    """
+    from studata.models import Schedule
+
+    if not school_year or not staff_name:
+        return []
+    qs = Schedule.objects.filter(school_year=school_year, staff_name__iexact=staff_name)
+    if school_state_id:
+        qs = qs.filter(state_school_id=school_state_id)
+    if student_keys is not None:
+        qs = qs.filter(stu_annual_key__in=student_keys)
+    return list(qs.values_list('stu_annual_key', flat=True).distinct())
 
 
 def teachers_for_students(stu_annual_keys, school_year):
-    """Map stu_annual_key -> sorted teacher names from the teacher access view."""
+    """Map stu_annual_key -> sorted teacher names from the schedule table."""
+    from studata.models import Schedule
+
     keys = [k for k in stu_annual_keys if k]
     if not keys:
         return {}
@@ -168,7 +189,7 @@ def teachers_for_students(stu_annual_keys, school_year):
     by_key = defaultdict(set)
     try:
         with transaction.atomic():
-            for staff_name, stu_key in TeacherAccess.objects.filter(
+            for staff_name, stu_key in Schedule.objects.filter(
                 school_year=school_year,
                 stu_annual_key__in=keys,
             ).values_list('staff_name', 'stu_annual_key'):
@@ -322,7 +343,7 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
     to a teacher's roster.
     """
     from desi.models import StudentAccommodation, StudentAssessmentCompletion
-    from studata.models import CurrentStudent, TeacherAccess
+    from studata.models import CurrentStudent
 
     filter_kind, filter_id = parse_support_filter_value(support_filter)
 
@@ -332,12 +353,13 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
     ).order_by('student_name', 'stu_annual_key')
 
     if teacher:
+        # Match the teacher's own DESI roster exactly (schedule-based) so the
+        # coordinator's per-teacher report shows the same students/counts.
         roster_keys = set(
-            TeacherAccess.objects.filter(
-                school_year=school_year,
-                staff_name__iexact=teacher,
-                stu_annual_key__in=students_qs.values('stu_annual_key'),
-            ).values_list('stu_annual_key', flat=True)
+            schedule_roster_keys(
+                school_year, school_state_id, teacher,
+                students_qs.values('stu_annual_key'),
+            )
         )
         if not roster_keys:
             return {'students': [], 'rows': [], 'total': 0}

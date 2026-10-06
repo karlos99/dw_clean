@@ -2,32 +2,116 @@
      x-data="{
         scope: '{{ rule.scope|default:"criteria" }}',
         supportId: '{% if selected_support_id %}{{ selected_support_id }}{% endif %}',
+        resultOptionsCache: {},
         criteria: [
             {% for c in criteria %}
             {
                 type: '{{ c.criterion_type }}', logic: '{{ c.logic_operator|default:"AND" }}',
                 field: '{{ c.field_name }}', operator: '{{ c.operator }}', value: '{{ c.value|escapejs }}',
-                assessment: '{{ c.test_name|escapejs }}|{{ c.test_subject|escapejs }}',
+                testName: '{{ c.test_name|escapejs }}', testSubject: '{{ c.test_subject|escapejs }}',
                 year: '{{ c.school_year|escapejs }}',
-                rfield: '{{ c.result_field|default:"pl" }}', rop: '{{ c.result_operator|default:"in" }}', rvalue: '{{ c.result_value|escapejs }}',
+                rfield: '{{ c.result_field|default:"pl" }}', oikey: '{{ c.result_other_info_key|escapejs }}',
+                rop: '{{ c.result_operator|default:"in" }}', rvalue: '{{ c.result_value|escapejs }}', multiValues: [], options: {}, plValues: [],
                 school: '{{ c.school_state_id|escapejs }}', staff: '{{ c.staff_name|escapejs }}', period: '{{ c.period|escapejs }}'
             }{% if not forloop.last %},{% endif %}
             {% endfor %}
         ],
         staffBySchool: JSON.parse(document.getElementById('staff-by-school-data').textContent || '{}'),
-        addDemographic() {
-            this.criteria.push({ type: 'demographic', logic: 'AND', field: 'grade', operator: 'is', value: '',
-                assessment: '', year: '', rfield: 'pl', rop: 'in', rvalue: '', school: '', staff: '', period: '' });
+        blankCriterion(type) {
+            return { type: type, logic: 'AND', field: 'grade', operator: 'is', value: '',
+                testName: '', testSubject: '', year: '', rfield: 'pl', oikey: '', rop: 'in', rvalue: '', multiValues: [], options: {}, plValues: [],
+                school: '', staff: '', period: '' };
         },
-        addResult() {
-            this.criteria.push({ type: 'result', logic: 'AND', field: 'grade', operator: 'is', value: '',
-                assessment: '', year: '', rfield: 'pl', rop: 'in', rvalue: '', school: '', staff: '', period: '' });
+        subjectsByAssessment: JSON.parse(document.getElementById('result-subjects-data').textContent || '{}'),
+        subjectOptions(row) {
+            if (!row || !row.testName) return [];
+            return this.subjectsByAssessment[row.testName] || [];
         },
-        addSchedule() {
-            this.criteria.push({ type: 'schedule', logic: 'AND', field: 'grade', operator: 'is', value: '',
-                assessment: '', year: '', rfield: 'pl', rop: 'in', rvalue: '', school: '', staff: '', period: '' });
+        onAssessmentChange(row) {
+            row.testSubject = '';
+            row.options = {};
+            row.plValues = [];
+            this.resetResultValue(row);
         },
-        removeCriterion(index) { this.criteria.splice(index, 1); }
+        addDemographic() { this.criteria.push(this.blankCriterion('demographic')); },
+        addResult() { this.criteria.push(this.blankCriterion('result')); },
+        addSchedule() { this.criteria.push(this.blankCriterion('schedule')); },
+        removeCriterion(index) { this.criteria.splice(index, 1); },
+        categoryValues(row) {
+            if (!row || !row.oikey) return [];
+            return (row.options && row.options[row.oikey]) || [];
+        },
+        resetResultValue(row) { row.rvalue = ''; row.multiValues = []; },
+        syncMulti(row) {
+            row.multiValues = (row.rvalue || '').split(',').map(s => s.trim()).filter(Boolean);
+        },
+        isMulti(row) { return !!row && (row.rop === 'in' || row.rop === 'not_in'); },
+        toggleMulti(row, value, checked) {
+            if (!row.multiValues) row.multiValues = [];
+            if (checked) {
+                if (!row.multiValues.includes(value)) row.multiValues.push(value);
+            } else {
+                row.multiValues = row.multiValues.filter(v => v !== value);
+            }
+            row.rvalue = row.multiValues.join(',');
+        },
+        onOperatorChange(row) {
+            if (this.isMulti(row)) {
+                this.syncMulti(row);
+            } else if (row.multiValues && row.multiValues.length) {
+                row.rvalue = row.multiValues[0];
+            }
+        },
+        // A dropdown is used for PL and for Additional Info categories whose
+        // name contains PL or that have 6 or fewer options; everything else
+        // (Scale Score, wide numeric categories) uses a free-text input.
+        valueIsInput(row) {
+            if (!row) return false;
+            if (row.rfield === 'ss') return true;
+            if (row.rfield === 'additional_info') {
+                if (!row.oikey) return false;
+                const vals = this.categoryValues(row);
+                const looksLikePL = row.oikey.toLowerCase().indexOf('pl') !== -1
+                    || (vals.length > 0 && vals.length <= 6);
+                return !looksLikePL;
+            }
+            return false;
+        },
+        valueOptions(row) {
+            if (!row) return [];
+            if (row.rfield === 'pl') return row.plValues || [];
+            if (row.rfield === 'additional_info') return this.categoryValues(row);
+            return [];
+        },
+        async loadResultOptions(row) {
+            if (!row || row.type !== 'result') return;
+            const assessment = (row.testName || '') + '|' + (row.testSubject || '');
+            if (!row.testName) { row.options = {}; row.plValues = []; return; }
+            const cacheKey = (row.year || '') + '::' + assessment;
+            const cached = this.resultOptionsCache[cacheKey];
+            if (cached) { row.options = cached.categories; row.plValues = cached.plValues; return; }
+            try {
+                const url = '{% url "desi:support_default_rule_result_options" %}'
+                    + '?year=' + encodeURIComponent(row.year || '')
+                    + '&assessment=' + encodeURIComponent(assessment);
+                const res = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                const data = await res.json();
+                row.options = data.categories || {};
+                row.plValues = data.pl_values || [];
+            } catch (err) {
+                row.options = {};
+                row.plValues = [];
+            }
+            this.resultOptionsCache[cacheKey] = { categories: row.options, plValues: row.plValues };
+        },
+        init() {
+            this.criteria.forEach(row => {
+                if (row.type === 'result') {
+                    this.syncMulti(row);
+                    this.loadResultOptions(row);
+                }
+            });
+        }
      }">
 
     {% if not embed %}
@@ -173,27 +257,83 @@
                                    class="w-full md:flex-1 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
                         </div>
 
-                        <div x-show="critRow.type === 'result'" class="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            <select name="crit_school_year[]" x-model="critRow.year" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
-                                <option value="">— Assessment year —</option>
-                                {% for year in test_school_year_options %}
-                                <option value="{{ year }}">{{ year }}</option>
-                                {% endfor %}
+                        <div x-show="critRow.type === 'result'" class="space-y-2">
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                <select name="crit_school_year[]" x-model="critRow.year" @change="loadResultOptions(critRow)"
+                                        class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                    <option value="">— Assessment year —</option>
+                                    {% for year in test_school_year_options %}
+                                    <option value="{{ year }}">{{ year }}</option>
+                                    {% endfor %}
+                                </select>
+                                <select name="crit_test_name[]" x-model="critRow.testName" @change="onAssessmentChange(critRow)"
+                                        class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                    <option value="">— Assessment —</option>
+                                    {% for choice in result_assessment_choices %}
+                                    <option value="{{ choice.value }}">{{ choice.label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <select name="crit_test_subject[]" x-model="critRow.testSubject" @change="loadResultOptions(critRow)"
+                                        class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                    <option value="">— Subject —</option>
+                                    <template x-for="subj in subjectOptions(critRow)" :key="subj">
+                                        <option :value="subj" x-text="subj" :selected="critRow.testSubject === subj"></option>
+                                    </template>
+                                </select>
+                                <!-- Field: PL / SS / Additional Info -->
+                                <select name="crit_result_field[]" x-model="critRow.rfield" @change="resetResultValue(critRow)"
+                                        class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                    <option value="pl">Performance Level</option>
+                                    <option value="ss">Scale Score</option>
+                                    <option value="additional_info">Additional Info</option>
+                                </select>
+                            </div>
+                            <!-- Additional Info options (categories) -->
+                            <select x-show="critRow.rfield === 'additional_info'" name="crit_result_other_info_key[]"
+                                    x-model="critRow.oikey" @change="resetResultValue(critRow)"
+                                    class="w-full rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                <option value="">— Additional Info option —</option>
+                                <template x-for="(vals, key) in critRow.options" :key="key">
+                                    <option :value="key" x-text="key" :selected="critRow.oikey === key"></option>
+                                </template>
                             </select>
-                            <select name="crit_assessment[]" x-model="critRow.assessment" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
-                                <option value="">— Assessment —</option>
-                                {% for choice in result_assessment_choices %}
-                                <option value="{{ choice.value }}">{{ choice.label }}</option>
-                                {% endfor %}
-                            </select>
-                            <input type="hidden" name="crit_result_field[]" value="pl">
-                            <select name="crit_result_operator[]" x-model="critRow.rop" class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
-                                {% for val, label in result_operator_choices %}
-                                <option value="{{ val }}">{{ label }}</option>
-                                {% endfor %}
-                            </select>
-                            <input type="text" name="crit_result_value[]" x-model="critRow.rvalue" placeholder="Performance level(s), e.g. 1,2"
-                                   class="md:col-span-2 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <!-- Canonical value submitted for the row (keeps server alignment) -->
+                                <input type="hidden" name="crit_result_value[]" :value="critRow.rvalue">
+                                <!-- Multiple selection (checkboxes) for In List / Not In List -->
+                                <div x-show="!valueIsInput(critRow) && isMulti(critRow)"
+                                     class="md:col-span-2 rounded border border-slate-300 bg-white px-2 py-1.5 max-h-32 overflow-y-auto space-y-1">
+                                    <template x-for="v in valueOptions(critRow)" :key="v">
+                                        <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                            <input type="checkbox" :value="v" :checked="critRow.multiValues.includes(v)"
+                                                   @change="toggleMulti(critRow, v, $event.target.checked)"
+                                                   class="h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+                                            <span x-text="v"></span>
+                                        </label>
+                                    </template>
+                                    <p x-show="valueOptions(critRow).length === 0" class="text-[10px] text-slate-400 italic">No options available.</p>
+                                </div>
+                                <!-- Single value dropdown for PL and PL-like Additional Info -->
+                                <select x-show="!valueIsInput(critRow) && !isMulti(critRow)" x-model="critRow.rvalue"
+                                        class="md:col-span-2 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                    <option value="">— Select value —</option>
+                                    <template x-for="v in valueOptions(critRow)" :key="v">
+                                        <option :value="v" x-text="v" :selected="critRow.rvalue === v"></option>
+                                    </template>
+                                </select>
+                                <!-- Free-text value for Scale Score and non-PL Additional Info -->
+                                <input x-show="valueIsInput(critRow)" type="text" x-model="critRow.rvalue"
+                                       :placeholder="critRow.rfield === 'ss' ? 'Scale score, e.g. 2500' : 'Value'"
+                                       class="md:col-span-2 rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                <!-- Criteria -->
+                                <select name="crit_result_operator[]" x-model="critRow.rop" @change="onOperatorChange(critRow)"
+                                        class="rounded border-slate-300 text-sm py-1.5 px-2 bg-white">
+                                    {% for val, label in result_operator_choices %}
+                                    <option value="{{ val }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <p class="text-[10px] text-slate-400">Assessment → PL / SS / Additional Info → value → criteria. In List / Not In List allow multiple values.</p>
                         </div>
 
                         <div x-show="critRow.type === 'schedule'" class="grid grid-cols-1 md:grid-cols-3 gap-2">
@@ -234,4 +374,5 @@
     </form>
 
     <script id="staff-by-school-data" type="application/json">{{ staff_by_school_json|default:"{}"|safe }}</script>
+    <script id="result-subjects-data" type="application/json">{{ result_subjects_by_assessment_json|default:"{}"|safe }}</script>
 </div>

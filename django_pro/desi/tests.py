@@ -212,6 +212,7 @@ class DesiWorkflowAndViewsTests(TestCase):
             student_id="local111",
             student_name="Test Student",
             grade="04",
+            status="Active",
             school_year="2025-2026"
         )
 
@@ -1728,6 +1729,26 @@ class DesiTestingCoordinatorAndRulesTests(TestCase):
         )
         self.assertEqual({row["ssid"] for row in report["rows"]}, {"elpacssid"})
 
+    def test_entered_supports_report_teacher_scope_uses_schedule(self):
+        from unittest.mock import patch
+
+        from desi.report_utils import build_entered_supports_report
+
+        # The report's per-teacher scope must use the schedule roster (same as
+        # the teacher's own DESI access) so coordinator and teacher counts match.
+        with patch(
+            "desi.report_utils.schedule_roster_keys",
+            return_value=[self.student.stu_annual_key],
+        ) as mock_roster:
+            report = build_entered_supports_report(
+                "SCH-A", "2025-2026", teacher="Smith"
+            )
+        mock_roster.assert_called_once()
+        self.assertEqual(
+            {s.stu_annual_key for s in report["students"]},
+            {self.student.stu_annual_key},
+        )
+
     def test_view_only_school_blocks_coordinator_save(self):
         DesiSchoolAccess.objects.create(school_state_id="SCH-A", teachers_can_edit=False)
         coord = User.objects.create_user(username="coord2@test.com", email="coord2@test.com", password="password123")
@@ -2020,6 +2041,7 @@ class DesiSeisDisplaySettingsViewTests(TestCase):
             student_id="seis-view",
             student_name="SEIS View Student",
             grade="04",
+            status="Active",
             school_year="2025-2026",
         )
         # Make the superuser/PA an admin that can see the student.
@@ -2292,6 +2314,7 @@ class DesiSpedReadonlyAndCaaGradeTests(TestCase):
             student_name="SPED CAA",
             grade="04",
             sped="Y",
+            status="Active",
             school_year="2025-2026",
         )
 
@@ -2594,12 +2617,12 @@ class DesiStudentListSchoolFilterTests(TestCase):
         CurrentStudent.objects.create(
             stu_annual_key="sf-a", ssid="sf-a", student_id="sf-a",
             student_name="Alpha Student", grade="03",
-            school_state_id="SCH-A", school_year="2025-2026",
+            school_state_id="SCH-A", status="Active", school_year="2025-2026",
         )
         CurrentStudent.objects.create(
             stu_annual_key="sf-b", ssid="sf-b", student_id="sf-b",
             student_name="Beta Student", grade="03",
-            school_state_id="SCH-B", school_year="2025-2026",
+            school_state_id="SCH-B", status="Active", school_year="2025-2026",
         )
 
     def _get(self, school=None):
@@ -2660,6 +2683,36 @@ class DesiStudentListSchoolFilterTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("504: Y", response.content.decode())
 
+    def test_student_list_shows_total_count(self):
+        # Total reflects the filtered result set, not just the current page.
+        response = self._get("SCH-A")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("<span>1 Student</span>", response.content.decode())
+
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("<span>2 Students</span>", response.content.decode())
+
+    def test_inactive_students_are_not_listed(self):
+        CurrentStudent.objects.create(
+            stu_annual_key="sf-inactive", ssid="sf-inactive", student_id="sf-inactive",
+            student_name="Inactive Student", grade="03",
+            school_state_id="SCH-A", status="Inactive", school_year="2025-2026",
+        )
+
+        # Only active students are listed.
+        response = self._get("SCH-A")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('id="student-list-item-sf-inactive"', response.content.decode())
+        self.assertIn("<span>1 Student</span>", response.content.decode())
+
+        # There is no way to opt into inactive students.
+        response = self.client.get(
+            reverse("desi:assign_accommodations", args=["sf-a"]),
+            {"school": "SCH-A", "inactive": "1"},
+        )
+        self.assertNotIn('id="student-list-item-sf-inactive"', response.content.decode())
+
 
 class DesiStudentListPeriodFilterTests(TestCase):
     """Period filter for non-elementary schools, sourced from the schedule table."""
@@ -2688,12 +2741,12 @@ class DesiStudentListPeriodFilterTests(TestCase):
             "HS-1": CurrentStudent.objects.create(
                 stu_annual_key="period-hs", ssid="period-hs", student_id="period-hs",
                 student_name="High Student", grade="09",
-                school_state_id="HS-1", school_year="2025-2026",
+                school_state_id="HS-1", status="Active", school_year="2025-2026",
             ),
             "EL-1": CurrentStudent.objects.create(
                 stu_annual_key="period-el", ssid="period-el", student_id="period-el",
                 student_name="Elem Student", grade="03",
-                school_state_id="EL-1", school_year="2025-2026",
+                school_state_id="EL-1", status="Active", school_year="2025-2026",
             ),
         }
 
@@ -2744,15 +2797,31 @@ class DesiStudentListPeriodFilterTests(TestCase):
         response = self._get("HS-1", period="2")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["period_filter"], "2")
-        mock_keys.assert_called_once()
-        args = mock_keys.call_args.args
+        # The teacher roster and the selected period both resolve via the
+        # schedule; assert the period-narrowing call specifically.
+        period_calls = [c for c in mock_keys.call_args_list if c.args[2] == "2"]
+        self.assertEqual(len(period_calls), 1)
+        args = period_calls[0].args
         self.assertEqual(args[1], "HS-1")
         self.assertEqual(args[2], "2")
         self.assertEqual(args[3], "Smith")
 
+    @mock.patch("desi.views._schedule_student_keys", return_value=["period-hs"])
+    @mock.patch("desi.views._schedule_periods", return_value=[])
+    def test_teacher_filter_uses_schedule_roster(self, mock_periods, mock_keys):
+        # The coordinator's per-teacher filter resolves the roster from the
+        # schedule (the same source as the teacher's own DESI access) instead of
+        # the teacher-access view, so the counts match what the teacher sees.
+        response = self._get("HS-1")
+        self.assertEqual(response.status_code, 200)
+        roster_calls = [c for c in mock_keys.call_args_list if c.args[2] == ""]
+        self.assertEqual(len(roster_calls), 1)
+        self.assertEqual(roster_calls[0].args[3], "Smith")
+        self.assertIn('id="student-list-item-period-hs"', response.content.decode())
+
     @mock.patch("desi.views._teacher_staff_names", return_value=["Smith"])
     @mock.patch("desi.views._schedule_periods", return_value=["1", "2"])
-    def test_teacher_single_school_shows_period_filter(self, mock_periods, mock_staff):
+    def test_teacher_single_school_defaults_and_shows_period_filter(self, mock_periods, mock_staff):
         teacher_role = Role.objects.create(name="Teacher")
         teacher = User.objects.create_user(
             username="period-teacher@test.com",
@@ -2765,6 +2834,7 @@ class DesiStudentListPeriodFilterTests(TestCase):
         teacher.save()
         self.client.force_login(teacher)
 
+        url = reverse("desi:assign_accommodations", args=["period-hs"])
         with mock.patch(
             "users.models.User.get_accessible_student_keys",
             return_value=["period-hs"],
@@ -2772,15 +2842,51 @@ class DesiStudentListPeriodFilterTests(TestCase):
             "users.context_processors.can_user_access_placement_cards",
             return_value=False,
         ):
-            response = self.client.get(
-                reverse("desi:assign_accommodations", args=["period-hs"])
-            )
+            # The teacher's only school is pre-selected and their own periods
+            # are available automatically (no teacher picker needed).
+            response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["school_filter"], "HS-1")
+        self.assertFalse(response.context["show_teacher_filter"])
         self.assertTrue(response.context["show_period_filter"])
         self.assertIn("Period 2", response.content.decode())
 
+    @mock.patch("desi.views._teacher_staff_names", return_value=["Smith"])
     @mock.patch("desi.views._schedule_periods", return_value=["1", "2"])
-    def test_school_view_single_school_period_shows_once_teacher_selected(self, mock_periods):
+    def test_coordinator_who_also_teaches_selects_staff_for_periods(self, mock_periods, mock_staff):
+        # A Testing Coordinator who also holds the Teacher role is school-wide:
+        # they see the teacher picker and only reveal periods for a staff member
+        # once that staff is selected (no automatic own-periods filter).
+        teacher_role = Role.objects.create(name="Teacher")
+        coord_role = Role.objects.create(name="Testing Coordinator")
+        user = User.objects.create_user(
+            username="coord-teacher-period@test.com",
+            email="coord-teacher-period@test.com",
+            password="password123",
+            staff_id="EMP-COORD",
+        )
+        user.roles.add(teacher_role, coord_role)
+        user.schools = ["HS-1"]
+        user.save()
+        self.client.force_login(user)
+
+        url = reverse("desi:assign_accommodations", args=["period-hs"])
+
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["school_filter"], "HS-1")
+        self.assertTrue(response.context["show_teacher_filter"])
+        self.assertFalse(response.context["show_period_filter"])
+        mock_staff.assert_not_called()
+        mock_periods.assert_not_called()
+
+        response = self.client.get(url, {"teacher": "Smith"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["show_period_filter"])
+        self.assertEqual(response.context["periods"], ["1", "2"])
+
+    @mock.patch("desi.views._schedule_periods", return_value=["1", "2"])
+    def test_school_view_period_shows_once_school_and_teacher_selected(self, mock_periods):
         view_role = Role.objects.create(name="School View")
         viewer = User.objects.create_user(
             username="period-view@test.com",
@@ -2793,12 +2899,16 @@ class DesiStudentListPeriodFilterTests(TestCase):
         self.client.force_login(viewer)
 
         url = reverse("desi:assign_accommodations", args=["period-hs"])
-        # No teacher yet -> no period filter, and no school was selected.
+        # The only accessible school is pre-selected, but no teacher is chosen
+        # yet -> no period filter.
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["school_filter"], "HS-1")
+        self.assertTrue(response.context["show_teacher_filter"])
         self.assertFalse(response.context["show_period_filter"])
+        self.assertIn('value="HS-1" selected', response.content.decode())
 
-        # Choosing a teacher reveals the period filter from the single school.
+        # Choosing a teacher reveals that staff member's periods.
         response = self.client.get(url, {"teacher": "Smith"})
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["show_period_filter"])
@@ -3026,6 +3136,122 @@ class DesiSupportDefaultRuleTests(TestCase):
         self.assertEqual(crit.school_year, "2025-2026")
         self.assertEqual(crit.result_field, "pl")
         self.assertEqual(crit.result_value, "1,2")
+
+    def test_result_form_includes_subject_dropdown(self):
+        Test.objects.create(test_group_key="caaspp-ela-x", test_name="CAASPP", subject="ELA", school_year="2025-2026")
+        Test.objects.create(test_group_key="caaspp-math-x", test_name="CAASPP", subject="Math", school_year="2025-2026")
+        response = self.client.get(reverse("desi:support_default_rule_create"))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('name="crit_test_subject[]"', content)
+        self.assertIn('id="result-subjects-data"', content)
+        self.assertIn("CAASPP", content)
+
+    def test_additional_info_result_criteria_rule(self):
+        Test.objects.create(
+            test_group_key="iready-ela-2025", test_name="iready",
+            subject="ELA", test_window="Fall", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="ai1", test_group_key="iready-ela-2025", ssid=self.student.ssid,
+            local_student_id="dr", school_year="2025-2026",
+            other_info={"placement": "Grade 3"},
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="iReady Grade 3", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", test_name="iready", test_subject="ELA",
+            school_year="2025-2026", result_field="additional_info",
+            result_other_info_key="placement", result_operator="is", result_value="Grade 3",
+        )
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+        other = CurrentStudent.objects.create(
+            stu_annual_key="dr-ai", ssid="dr-ai", student_id="drai",
+            student_name="Other AI", grade="03", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="ai2", test_group_key="iready-ela-2025", ssid="dr-ai",
+            local_student_id="drai", school_year="2025-2026",
+            other_info={"placement": "Grade 2"},
+        )
+        self.assertNotIn(self.opt.id, default_support_locks(other)["option_ids"])
+
+    def test_additional_info_numeric_result_criteria_rule(self):
+        Test.objects.create(
+            test_group_key="caaspp-ela-2025", test_name="CAASPP",
+            subject="ELA", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="ain1", test_group_key="caaspp-ela-2025", ssid=self.student.ssid,
+            local_student_id="dr", school_year="2025-2026",
+            other_info={"scale": "500"},
+        )
+        rule = SupportDefaultRule.objects.create(
+            name="CAASPP scale", support=self.acc, scope="criteria", is_active=True
+        )
+        rule.options.add(self.opt)
+        SupportDefaultRuleCriteria.objects.create(
+            rule=rule, criterion_type="result", test_name="CAASPP", test_subject="ELA",
+            school_year="2025-2026", result_field="additional_info",
+            result_other_info_key="scale", result_operator="gte", result_value="400",
+        )
+        self.assertIn(self.opt.id, default_support_locks(self.student)["option_ids"])
+
+    def test_result_criterion_saved_with_additional_info_from_dropdowns(self):
+        response = self.client.post(reverse("desi:support_default_rule_create"), {
+            "name": "iReady AI Rule",
+            "support_id": str(self.acc.id),
+            "scope": "criteria",
+            "is_active": "on",
+            "options": [str(self.opt.id)],
+            "crit_type[]": ["result"],
+            "crit_logic_op[]": ["AND"],
+            "crit_field[]": [""], "crit_operator[]": [""], "crit_value[]": [""],
+            "crit_assessment[]": ["iready|ELA"],
+            "crit_school_year[]": ["2025-2026"],
+            "crit_result_field[]": ["additional_info"],
+            "crit_result_other_info_key[]": ["placement"],
+            "crit_result_operator[]": ["is"],
+            "crit_result_value[]": ["Grade 3"],
+            "crit_school[]": [""], "crit_staff[]": [""], "crit_period[]": [""],
+        })
+        self.assertEqual(response.status_code, 302)
+        crit = SupportDefaultRuleCriteria.objects.get(rule__name="iReady AI Rule")
+        self.assertEqual(crit.criterion_type, "result")
+        self.assertEqual(crit.test_name, "iready")
+        self.assertEqual(crit.test_subject, "ELA")
+        self.assertEqual(crit.result_field, "additional_info")
+        self.assertEqual(crit.result_other_info_key, "placement")
+        self.assertEqual(crit.result_value, "Grade 3")
+
+    def test_result_options_endpoint_returns_additional_info_categories(self):
+        Test.objects.create(
+            test_group_key="iready-ela-2025b", test_name="iready",
+            subject="ELA", test_window="Fall", school_year="2025-2026",
+        )
+        Result.objects.create(
+            test_id="aie1", test_group_key="iready-ela-2025b", ssid="ai-ssid",
+            local_student_id="aie", school_year="2025-2026", pl="3",
+            other_info={"placement": "Grade 3", "LQMeasure": "Emerging K"},
+        )
+        Result.objects.create(
+            test_id="aie2", test_group_key="iready-ela-2025b", ssid="ai-ssid-2",
+            local_student_id="aie2", school_year="2025-2026", pl="1",
+            other_info={"placement": "Grade 1"},
+        )
+        response = self.client.get(
+            reverse("desi:support_default_rule_result_options"),
+            {"year": "2025-2026", "assessment": "iready|ELA"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        categories = payload["categories"]
+        self.assertEqual(categories.get("placement"), ["Grade 1", "Grade 3"])
+        self.assertEqual(categories.get("LQMeasure"), ["Emerging K"])
+        self.assertEqual(payload["pl_values"], ["1", "3"])
 
     def test_schedule_criterion_created_from_school_class_dropdowns(self):
         response = self.client.post(reverse("desi:support_default_rule_create"), {

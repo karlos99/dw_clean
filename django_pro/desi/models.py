@@ -506,14 +506,17 @@ class SupportDefaultRuleCriteria(models.Model):
     RESULT_FIELD_CHOICES = [
         ('pl', 'Performance Level'),
         ('ss', 'Scale Score'),
+        ('additional_info', 'Additional Info'),
     ]
     RESULT_OPERATOR_CHOICES = [
         ('in', 'In List'),
         ('not_in', 'Not In List'),
-        ('is', 'Is'),
-        ('is_not', 'Is Not'),
+        ('is', 'Equals'),
+        ('is_not', 'Does Not Equal'),
         ('between', 'Between (min-max)'),
+        ('gt', 'Greater Than'),
         ('gte', 'Greater or Equal'),
+        ('lt', 'Less Than'),
         ('lte', 'Less or Equal'),
     ]
 
@@ -532,7 +535,11 @@ class SupportDefaultRuleCriteria(models.Model):
     test_subject = models.CharField(max_length=255, blank=True, help_text="e.g. 'summative'")
     test_window = models.CharField(max_length=255, blank=True)
     school_year = models.CharField(max_length=20, blank=True, help_text="e.g. '2025-2026'")
-    result_field = models.CharField(max_length=10, blank=True, choices=RESULT_FIELD_CHOICES, default='pl')
+    result_field = models.CharField(max_length=20, blank=True, choices=RESULT_FIELD_CHOICES, default='pl')
+    result_other_info_key = models.CharField(
+        max_length=255, blank=True,
+        help_text="results.other_info JSON key when result_field is 'additional_info'",
+    )
     result_operator = models.CharField(max_length=20, blank=True, choices=RESULT_OPERATOR_CHOICES, default='in')
     result_value = models.CharField(max_length=255, blank=True, help_text="e.g. '1,2' or '300-350'")
 
@@ -546,9 +553,12 @@ class SupportDefaultRuleCriteria(models.Model):
 
     def __str__(self):
         if self.criterion_type == 'result':
+            field_label = self.get_result_field_display()
+            if self.result_field == 'additional_info' and self.result_other_info_key:
+                field_label = f"Additional Info ({self.result_other_info_key})"
             return (
                 f"{self.test_name or 'Result'} {self.test_subject} "
-                f"{self.school_year} {self.get_result_field_display()} "
+                f"{self.school_year} {field_label} "
                 f"{self.get_result_operator_display()} '{self.result_value}'"
             )
         if self.criterion_type == 'schedule':
