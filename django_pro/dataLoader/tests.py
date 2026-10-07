@@ -113,6 +113,98 @@ class SurveySettingsViewTests(TestCase):
         self.assertEqual(self.question.topic_id, self.topic.pk)
 
 
+class ColorPaletteTests(TestCase):
+    """Tests for saved color palettes and per-question color assignment."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from django.urls import reverse
+        from dataLoader.models import SurveyDefinition, SurveyQuestion, TestingWindow
+
+        self.reverse = reverse
+        user = get_user_model().objects.create_superuser(
+            username='admin2', email='admin2@test.com', password='pw'
+        )
+        self.client.force_login(user)
+        self.survey = SurveyDefinition.objects.create(
+            name='Equity Test 2', survey_type='Equity Survey',
+            school_year='2026-2027', testing_window=TestingWindow.FALL,
+            grade_range='Grades 6-8',
+        )
+        self.question = SurveyQuestion.objects.create(
+            survey_definition=self.survey,
+            question_text='How much support do the adults at your school give you?',
+            value_column_name='How much support do the adults at your school give you? TEXT',
+            text_column_name='How much support do the adults at your school give you? TEXT',
+            order=0,
+            response_scale_max=5,
+        )
+
+    def test_create_update_delete_palette(self):
+        from dataLoader.models import SurveyColorPalette
+
+        resp = self.client.post(
+            self.reverse('dataLoader:color_palette_list'),
+            data='{"name": "Low-Mid-High", "colors": {"scale_5": {"1": "#111111", "5": "#eeeeee"}, "bogus": "x"}}',
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 201)
+        palette_id = resp.json()['palette']['id']
+        palette = SurveyColorPalette.objects.get(pk=palette_id)
+        # Invalid scale keys are dropped, valid ones kept
+        self.assertEqual(palette.colors, {'scale_5': {'1': '#111111', '5': '#eeeeee'}})
+
+        resp = self.client.post(
+            self.reverse('dataLoader:update_color_palette', args=[palette_id]),
+            data='{"name": "Renamed", "colors": {"scale_7": {"7": "#00ff00"}}}',
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        palette.refresh_from_db()
+        self.assertEqual(palette.name, 'Renamed')
+        self.assertEqual(palette.colors, {'scale_7': {'7': '#00ff00'}})
+
+        resp = self.client.post(
+            self.reverse('dataLoader:delete_color_palette', args=[palette_id]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(SurveyColorPalette.objects.filter(pk=palette_id).exists())
+
+    def test_save_question_colors_stores_override(self):
+        resp = self.client.post(
+            self.reverse('dataLoader:save_question_colors',
+                         args=[self.survey.pk, self.question.pk]),
+            data='{"colors": {"1": "#111111", "5": "#eeeeee"}}',
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.survey.refresh_from_db()
+        self.assertEqual(
+            self.survey.response_colors.get('questions', {}).get('0'),
+            {'1': '#111111', '5': '#eeeeee'},
+        )
+
+    def test_settings_page_embeds_palettes_as_json_object(self):
+        import json
+        import re
+        from dataLoader.models import SurveyColorPalette
+
+        SurveyColorPalette.objects.create(
+            name='default_X', colors={'scale_5': {'1': '#000000'}})
+
+        resp = self.client.get(
+            self.reverse('dataLoader:survey_settings'), {'survey': self.survey.pk})
+        body = resp.content.decode()
+        match = re.search(
+            r'<script id="colorPalettesData" type="application/json">(.*?)</script>',
+            body, re.S,
+        )
+        self.assertIsNotNone(match)
+        data = json.loads(match.group(1))
+        # Must be a dict of palettes (not a double-encoded string).
+        self.assertIsInstance(data, dict)
+        self.assertIn('default_X', [v['name'] for v in data.values()])
+
+
 class TextOnlyImportTests(TestCase):
     """End-to-end import of a TEXT-only layout into the database."""
 

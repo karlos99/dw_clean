@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Set, Tuple
 from dataclasses import dataclass
 from django.db import transaction, connection
 from django.utils import timezone
+import logging
 import threading
 
 from dataLoader.models import (
@@ -14,6 +15,9 @@ from dataLoader.models import (
 )
 from dataLoader.utils.column_analyzer import AnalysisResult, QuestionColumn, parse_csv_rows
 from dataLoader.utils.student_matcher import StudentMatcher, MatchResult
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -402,6 +406,52 @@ def run_import_async(import_log_id: int, file_content: str, analysis_data: dict,
         finally:
             connection.close()
     
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return thread
+
+
+_survey_sync_lock = threading.Lock()
+_survey_sync_requested = threading.Event()
+
+
+def run_survey_clickhouse_sync_async():
+    """
+    Rebuild the ``analytics_survey_responses`` ClickHouse table in a background
+    thread so Data Exploration reflects survey publish/unpublish without a manual
+    ``manage.py sync_to_clickhouse``. Concurrent requests are coalesced: if a
+    sync is already running, the request is folded into a follow-up pass.
+    Best-effort: failures are logged and never surface to the user.
+    """
+    from django.core.management import call_command
+
+    _survey_sync_requested.set()
+    if not _survey_sync_lock.acquire(blocking=False):
+        # A worker is already running and will pick up this request.
+        return None
+
+    def _run():
+        try:
+            while _survey_sync_requested.is_set():
+                _survey_sync_requested.clear()
+                connection.close()
+                try:
+                    call_command(
+                        'sync_to_clickhouse',
+                        tables='analytics_survey_responses',
+                        full=True,
+                    )
+                    logger.info("Survey ClickHouse sync completed.")
+                except Exception:
+                    logger.exception("Survey ClickHouse sync failed.")
+                finally:
+                    connection.close()
+        finally:
+            _survey_sync_lock.release()
+            # A request may have arrived between the loop check and the release.
+            if _survey_sync_requested.is_set():
+                run_survey_clickhouse_sync_async()
+
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
     return thread

@@ -682,7 +682,7 @@ class Command(BaseCommand):
                 FROM {r} AS r
                 INNER JOIN {e} AS e ON r.exam_id = e.code
                 INNER JOIN {il} AS il ON r.import_log_id = il.id
-                WHERE il.is_published
+                WHERE toUInt8(il.is_published) = 1
             """
         if table == 'analytics_ap_awards':
             a = _pg_table_fn(table='dataLoader_apstudentaward', **pg)
@@ -695,7 +695,7 @@ class Command(BaseCommand):
                 FROM {a} AS a
                 INNER JOIN {t} AS t ON a.award_type_id = t.code
                 INNER JOIN {il} AS il ON a.import_log_id = il.id
-                WHERE il.is_published
+                WHERE toUInt8(il.is_published) = 1
             """
         if table == 'analytics_sat_results':
             from dataLoader.models import SATSettings
@@ -766,7 +766,7 @@ class Command(BaseCommand):
                         ) AS _rn
                     FROM {r} AS r
                     INNER JOIN {il} AS il ON r.import_log_id = il.id
-                    WHERE il.is_published AND r.ssid != ''
+                    WHERE toUInt8(il.is_published) = 1 AND r.ssid != ''
                 ) AS t
                 WHERE t._rn = 1
             """
@@ -786,7 +786,7 @@ class Command(BaseCommand):
                 INNER JOIN {sq} AS sq ON sr.question_id = sq.id
                 INNER JOIN {sd} AS sd ON sq.survey_definition_id = sd.id
                 INNER JOIN {il} AS il ON sr.import_log_id = il.id
-                WHERE il.ready_for_exploration AND il.status = 'COMPLETED' AND sd.is_active
+                WHERE toUInt8(il.ready_for_exploration) = 1 AND il.status = 'COMPLETED' AND toUInt8(sd.is_active) = 1
             """
         if table == 'analytics_ccgi_favorite_career':
             ce = _pg_table_fn(table='ccgi_career_explo', **pg)
