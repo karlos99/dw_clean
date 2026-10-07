@@ -127,6 +127,36 @@ class SurveyTopic(models.Model):
         return self.name
 
 
+class SurveyColorPalette(models.Model):
+    """
+    A saved, reusable response-color palette. Stores a color map for the
+    1-5 and 1-7 response scales so it can be loaded onto any survey question.
+    """
+    name = models.CharField(max_length=100, unique=True)
+    colors = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Color maps per scale, e.g. {'scale_5': {'1': '#ef581c', ...}, 'scale_7': {...}}",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_color_palettes',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Survey Color Palette'
+        verbose_name_plural = 'Survey Color Palettes'
+
+    def __str__(self):
+        return self.name
+
+
 class SurveyQuestion(models.Model):
     """
     Represents a question within a survey. Questions may change across years,

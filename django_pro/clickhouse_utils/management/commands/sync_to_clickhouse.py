@@ -682,7 +682,7 @@ class Command(BaseCommand):
                 FROM {r} AS r
                 INNER JOIN {e} AS e ON r.exam_id = e.code
                 INNER JOIN {il} AS il ON r.import_log_id = il.id
-                WHERE il.is_published
+                WHERE toUInt8(il.is_published) = 1
             """
         if table == 'analytics_ap_awards':
             a = _pg_table_fn(table='dataLoader_apstudentaward', **pg)
@@ -695,7 +695,7 @@ class Command(BaseCommand):
                 FROM {a} AS a
                 INNER JOIN {t} AS t ON a.award_type_id = t.code
                 INNER JOIN {il} AS il ON a.import_log_id = il.id
-                WHERE il.is_published
+                WHERE toUInt8(il.is_published) = 1
             """
         if table == 'analytics_sat_results':
             from dataLoader.models import SATSettings
@@ -766,7 +766,7 @@ class Command(BaseCommand):
                         ) AS _rn
                     FROM {r} AS r
                     INNER JOIN {il} AS il ON r.import_log_id = il.id
-                    WHERE il.is_published AND r.ssid != ''
+                    WHERE toUInt8(il.is_published) = 1 AND r.ssid != ''
                 ) AS t
                 WHERE t._rn = 1
             """
@@ -786,7 +786,7 @@ class Command(BaseCommand):
                 INNER JOIN {sq} AS sq ON sr.question_id = sq.id
                 INNER JOIN {sd} AS sd ON sq.survey_definition_id = sd.id
                 INNER JOIN {il} AS il ON sr.import_log_id = il.id
-                WHERE il.ready_for_exploration AND il.status = 'COMPLETED' AND sd.is_active
+                WHERE toUInt8(il.ready_for_exploration) = 1 AND il.status = 'COMPLETED' AND toUInt8(sd.is_active) = 1
             """
         if table == 'analytics_ccgi_favorite_career':
             ce = _pg_table_fn(table='ccgi_career_explo', **pg)
@@ -904,7 +904,9 @@ class Command(BaseCommand):
                     rec.4 AS most_recent_completed_date,
                     apps.csu_eligibility AS csu_eligibility,
                     apps.uc_eligibility AS uc_eligibility,
-                    NULLIF(if(rec.1 = 'CCC', apps.ccc_id, ''), '') AS application_id
+                    NULLIF(if(rec.1 = 'CCC', apps.ccc_id, ''), '') AS application_id,
+                    apps.csu_gpa AS csu_gpa,
+                    apps.uc_gpa AS uc_gpa
                 FROM (
                     SELECT
                         ssid,
@@ -924,6 +926,8 @@ class Command(BaseCommand):
                         JSONExtractString(csu, 'eligibility_cmp') AS csu_eligibility,
                         JSONExtractString(uc, 'eligibility_cmp') AS uc_eligibility,
                         JSONExtractString(ccc, 'id') AS ccc_id,
+                        toFloat64OrNull(NULLIF(JSONExtractString(csu, 'gpa'), '')) AS csu_gpa,
+                        toFloat64OrNull(NULLIF(JSONExtractString(uc, 'gpa'), '')) AS uc_gpa,
                         arrayConcat(
                             arrayMap(x -> ('CSU', 'Completed', x, ''),
                                      JSONExtract(csu, 'completed_applications', 'Array(String)')),
@@ -951,7 +955,9 @@ class Command(BaseCommand):
                     l.school_state_id, l.status, l.sy AS school_year,
                     rec.1 AS system,
                     rec.2 AS application_status,
-                    NULLIF(rec.3, '') AS eligibility
+                    NULLIF(rec.3, '') AS eligibility,
+                    apps.csu_gpa AS csu_gpa,
+                    apps.uc_gpa AS uc_gpa
                 FROM (
                     SELECT
                         ssid,
@@ -968,6 +974,8 @@ class Command(BaseCommand):
                 INNER JOIN (
                     SELECT
                         ssid,
+                        toFloat64OrNull(NULLIF(JSONExtractString(csu, 'gpa'), '')) AS csu_gpa,
+                        toFloat64OrNull(NULLIF(JSONExtractString(uc, 'gpa'), '')) AS uc_gpa,
                         arrayConcat(
                             arrayMap(x -> ('CSU', x, JSONExtractString(csu, 'eligibility_cmp')), csu_statuses),
                             arrayMap(x -> ('UC', x, JSONExtractString(uc, 'eligibility_cmp')), uc_statuses),

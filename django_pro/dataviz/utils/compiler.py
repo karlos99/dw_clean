@@ -453,11 +453,13 @@ COLUMN_WHITELIST = {
         'system', 'application_status', 'college_name',
         'most_recent_completed_date',
         'csu_eligibility', 'uc_eligibility', 'application_id',
+        'csu_gpa', 'uc_gpa',
     },
     'analytics_ccgi_application_status': {
         'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
         'school_state_id', 'status', 'school_year',
         'system', 'application_status', 'eligibility',
+        'csu_gpa', 'uc_gpa',
     },
     'users_user': {
         'id', 'username', 'email', 'name', 'first_name', 'last_name', 'is_active',

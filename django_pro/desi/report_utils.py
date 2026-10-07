@@ -14,7 +14,7 @@ def build_school_report(school_state_id, school_year):
     pending_by_assessment: {assessment_id: [student, ...]} (eligible, not completed)
     """
     from desi.models import Assessment, StudentAssessmentCompletion
-    from desi.views import check_criteria
+    from desi.views import check_criteria, build_effective_assessment_criteria
     from studata.models import CurrentStudent
 
     students = list(
@@ -22,7 +22,8 @@ def build_school_report(school_state_id, school_year):
         .filter(school_year=school_year, school_state_id=school_state_id)
         .order_by('student_name', 'stu_annual_key')
     )
-    assessments = list(Assessment.objects.filter(is_active=True).order_by('name'))
+    all_assessments = list(Assessment.objects.prefetch_related('criteria').order_by('name'))
+    assessments = [a for a in all_assessments if a.is_active]
 
     student_keys = [s.stu_annual_key for s in students]
     completed_pairs = set()
@@ -46,7 +47,9 @@ def build_school_report(school_state_id, school_year):
     for student in students:
         statuses = []
         for assessment in assessments:
-            eligible, _failed = check_criteria(assessment.criteria.all(), student)
+            eligible, _failed = check_criteria(
+                build_effective_assessment_criteria(assessment, all_assessments), student
+            )
             is_completed = (student.stu_annual_key, assessment.id) in completed_pairs
             statuses.append({
                 'assessment': assessment,
@@ -112,7 +115,7 @@ def build_report_rows(report):
 
 def teacher_options_by_school(school_state_ids, school_year):
     """Map each school state id to sorted teacher names for that school/year."""
-    from studata.models import CurrentStudent, TeacherAccess
+    from studata.models import CurrentStudent, Schedule
 
     school_state_ids = [sid for sid in school_state_ids if sid]
     if not school_state_ids or not school_year:
@@ -128,7 +131,7 @@ def teacher_options_by_school(school_state_ids, school_year):
     if not key_to_school:
         return {sid: [] for sid in school_state_ids}
 
-    for staff_name, stu_key in TeacherAccess.objects.filter(
+    for staff_name, stu_key in Schedule.objects.filter(
         school_year=school_year,
         stu_annual_key__in=key_to_school.keys(),
     ).values_list('staff_name', 'stu_annual_key'):
@@ -144,7 +147,7 @@ def teacher_options_by_school(school_state_ids, school_year):
 
 
 def list_school_teachers(school_state_id, school_year):
-    """Teacher names (from the teacher access view) with students in the school/year."""
+    """Teacher names (from the schedule) with students in the school/year."""
     return teacher_options_by_school([school_state_id], school_year).get(school_state_id, [])
 
 
@@ -153,11 +156,32 @@ from collections import defaultdict
 from django.db import DatabaseError, transaction
 
 from desi.seis_data import seis_support_detail_for_student
-from studata.models import TeacherAccess
+
+
+def schedule_roster_keys(school_year, school_state_id, staff_name, student_keys=None):
+    """
+    Student annual keys on a staff member's schedule for a school/year.
+
+    Mirrors the roster a teacher sees in DESI (``User.get_accessible_student_keys``
+    is schedule-based), so coordinator teacher filters and reports match the
+    teacher's own count instead of the separately-maintained teacher-access view.
+    """
+    from studata.models import Schedule
+
+    if not school_year or not staff_name:
+        return []
+    qs = Schedule.objects.filter(school_year=school_year, staff_name__iexact=staff_name)
+    if school_state_id:
+        qs = qs.filter(state_school_id=school_state_id)
+    if student_keys is not None:
+        qs = qs.filter(stu_annual_key__in=student_keys)
+    return list(qs.values_list('stu_annual_key', flat=True).distinct())
 
 
 def teachers_for_students(stu_annual_keys, school_year):
-    """Map stu_annual_key -> sorted teacher names from the teacher access view."""
+    """Map stu_annual_key -> sorted teacher names from the schedule table."""
+    from studata.models import Schedule
+
     keys = [k for k in stu_annual_keys if k]
     if not keys:
         return {}
@@ -165,7 +189,7 @@ def teachers_for_students(stu_annual_keys, school_year):
     by_key = defaultdict(set)
     try:
         with transaction.atomic():
-            for staff_name, stu_key in TeacherAccess.objects.filter(
+            for staff_name, stu_key in Schedule.objects.filter(
                 school_year=school_year,
                 stu_annual_key__in=keys,
             ).values_list('staff_name', 'stu_annual_key'):
@@ -184,12 +208,19 @@ def teachers_for_students(stu_annual_keys, school_year):
 
 def build_support_filter_groups():
     """
-    Support filter dropdown: section category (or legacy category), then support
-    / option entries. Values are ``o<option_id>`` or ``a<accommodation_id>``.
+    Support filter dropdown: program (CAASPP / ELPAC), then section category (or
+    legacy category), then support / option entries. Values are
+    ``program:<TAG>``, ``o<option_id>`` or ``a<accommodation_id>``.
     """
     from desi.models import Accommodation, AccommodationCategory
 
-    groups = []
+    groups = [{
+        'label': 'Program',
+        'options': [
+            {'value': 'program:CAASPP', 'label': 'CAASPP'},
+            {'value': 'program:ELPAC', 'label': 'ELPAC'},
+        ],
+    }]
     seen_accommodation_ids = set()
 
     categories = list(AccommodationCategory.objects.order_by('order', 'name'))
@@ -246,8 +277,16 @@ def build_support_filter_groups():
 
 
 def parse_support_filter_value(raw_value):
-    """Return (kind, id) for ``o123`` / ``a456``, or (None, None) if invalid."""
+    """
+    Return (kind, id) for ``program:<TAG>`` / ``o123`` / ``a456``, or
+    (None, None) if invalid.
+    """
     raw = (raw_value or '').strip()
+    if raw.lower().startswith('program:'):
+        program = raw.split(':', 1)[1].strip().upper()
+        if program:
+            return ('program', program)
+        return None, None
     if len(raw) < 2:
         return None, None
     prefix, id_part = raw[0], raw[1:]
@@ -257,13 +296,24 @@ def parse_support_filter_value(raw_value):
 
 
 def student_has_support_filter(record, seis_detail, filter_kind, filter_id):
-    """Whether a student has the selected support (DESI entry and/or SEIS)."""
+    """Whether a student has the selected support/program (DESI entry and/or SEIS)."""
     if not filter_kind or filter_id is None:
         return True
 
     seis_detail = seis_detail or {}
     seis_option_ids = seis_detail.get('option_ids') or set()
     seis_acc_ids = seis_detail.get('accommodation_ids') or set()
+
+    if filter_kind == 'program':
+        tag = str(filter_id).strip().upper()
+        if tag in (seis_detail.get('tags') or set()):
+            return True
+        if record:
+            if record.options.filter(accommodation__tag__iexact=tag).exists():
+                return True
+            if record.selected_accommodations.filter(tag__iexact=tag).exists():
+                return True
+        return False
 
     if filter_kind == 'option':
         if filter_id in seis_option_ids:
@@ -293,7 +343,7 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
     to a teacher's roster.
     """
     from desi.models import StudentAccommodation, StudentAssessmentCompletion
-    from studata.models import CurrentStudent, TeacherAccess
+    from studata.models import CurrentStudent
 
     filter_kind, filter_id = parse_support_filter_value(support_filter)
 
@@ -303,12 +353,13 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
     ).order_by('student_name', 'stu_annual_key')
 
     if teacher:
+        # Match the teacher's own DESI roster exactly (schedule-based) so the
+        # coordinator's per-teacher report shows the same students/counts.
         roster_keys = set(
-            TeacherAccess.objects.filter(
-                school_year=school_year,
-                staff_name__iexact=teacher,
-                stu_annual_key__in=students_qs.values('stu_annual_key'),
-            ).values_list('stu_annual_key', flat=True)
+            schedule_roster_keys(
+                school_year, school_state_id, teacher,
+                students_qs.values('stu_annual_key'),
+            )
         )
         if not roster_keys:
             return {'students': [], 'rows': [], 'total': 0}
@@ -322,7 +373,11 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
         rec.student_annual_key: rec
         for rec in StudentAccommodation.objects.filter(student_annual_key__in=keys)
         .select_related('updated_by')
-        .prefetch_related('options__accommodation', 'selected_accommodations')
+        .prefetch_related(
+            'options__accommodation',
+            'options__assessments',
+            'selected_accommodations__options__assessments',
+        )
     }
 
     completed_map = {}
@@ -335,43 +390,104 @@ def build_entered_supports_report(school_state_id, school_year, teacher=None, su
         ):
             completed_map.setdefault(key, []).append(assessment_name)
 
+    # Report columns: (row key, program tag, subject filter). CAASPP supports are
+    # split by content area (ELA / Math / Science); a support that applies to
+    # several areas is listed under each. ELPAC keeps a single column.
+    columns = [
+        ('supports_caaspp_ela', 'CAASPP', 'ELA'),
+        ('supports_caaspp_math', 'CAASPP', 'Math'),
+        ('supports_caaspp_science', 'CAASPP', 'Science'),
+        ('supports_elpac', 'ELPAC', None),
+    ]
+    column_tags = {tag for _key, tag, _subject in columns}
+
+    def _option_subjects(option):
+        return {
+            (ast.subject or '').strip()
+            for ast in option.assessments.all()
+            if (ast.subject or '').strip()
+        }
+
+    def _direct_support_subjects(acc):
+        subjects = set()
+        for option in acc.options.all():
+            subjects |= _option_subjects(option)
+        return subjects
+
     rows = []
     for student in students:
         record = records.get(student.stu_annual_key)
-        supports = []
+        supports_by_col = {key: [] for key, _tag, _subject in columns}
+        manual_keys_by_col = {key: set() for key, _tag, _subject in columns}
+
+        def _add_support(raw_tag, subjects, label):
+            tag = (raw_tag or '').strip().upper()
+            label_key = label.casefold()
+            subjects = {(s or '').strip() for s in (subjects or set()) if (s or '').strip()}
+            for key, col_tag, col_subject in columns:
+                if tag != col_tag:
+                    continue
+                # Unknown subject (no mapping) falls into every column for the tag.
+                if col_subject and subjects and col_subject not in subjects:
+                    continue
+                if label_key in manual_keys_by_col[key]:
+                    continue
+                supports_by_col[key].append(label)
+                manual_keys_by_col[key].add(label_key)
+
         if record:
             for option in record.options.all():
                 prefix = f"{option.accommodation.name}: " if option.accommodation else ''
-                supports.append(f"{prefix}{option.name}")
-            supports += [acc.name for acc in record.selected_accommodations.all()]
+                _add_support(
+                    getattr(option.accommodation, 'tag', '') if option.accommodation else '',
+                    _option_subjects(option),
+                    f"{prefix}{option.name}",
+                )
+            for acc in record.selected_accommodations.all():
+                _add_support(acc.tag, _direct_support_subjects(acc), acc.name)
 
         seis_detail = seis_support_detail_for_student(student)
         seis_labels = seis_detail['labels']
         if filter_kind and not student_has_support_filter(record, seis_detail, filter_kind, filter_id):
             continue
 
-        manual_keys = {label.casefold() for label in supports}
-        for label in seis_labels:
-            if label.casefold() not in manual_keys:
-                supports.append(f"{label} (SEIS)")
-                manual_keys.add(label.casefold())
+        labels_by_tag = seis_detail.get('labels_by_tag') or {}
+        label_subjects = seis_detail.get('label_subjects') or {}
+        for tag in column_tags:
+            for label in labels_by_tag.get(tag, []):
+                _add_support(
+                    tag,
+                    set(label_subjects.get(label) or []),
+                    f"{label} (SEIS)",
+                )
+
+        combined = []
+        seen_combined = set()
+        for key, _tag, _subject in columns:
+            for label in supports_by_col[key]:
+                if label.casefold() not in seen_combined:
+                    seen_combined.add(label.casefold())
+                    combined.append(label)
 
         completions = sorted(completed_map.get(student.stu_annual_key, []))
         updater = record.updated_by if record else None
         has_seis = bool(seis_labels)
         teacher_names = teacher_map.get(student.stu_annual_key, [])
-        rows.append({
+        row = {
             'stu_annual_key': student.stu_annual_key,
             'ssid': student.ssid or '',
             'student_name': student.student_name or '',
             'grade': student.grade or '',
             'teachers': ', '.join(teacher_names),
-            'supports': '; '.join(supports),
+            'supports': '; '.join(combined),
             'has_seis_supports': has_seis,
             'from_seis': 'Yes' if has_seis else 'No',
             'completions': ', '.join(completions),
             'updated_by': (updater.name or updater.email) if updater else '',
             'updated_at': record.updated_at.strftime('%Y-%m-%d %H:%M') if record and record.updated_at else '',
-        })
+        }
+        for key, _tag, _subject in columns:
+            row[key] = '; '.join(supports_by_col[key])
+        rows.append(row)
 
     return {'students': students, 'rows': rows, 'total': len(rows)}
