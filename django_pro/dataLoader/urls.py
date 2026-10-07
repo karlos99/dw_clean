@@ -20,6 +20,7 @@ urlpatterns = [
     path('topics/<int:pk>/delete/', views.delete_topic, name='delete_topic'),
 
     path('surveys/', views.SurveyDefinitionListView.as_view(), name='survey_list'),
+    path('surveys/settings/', views.SurveySettingsView.as_view(), name='survey_settings'),
     path('surveys/<int:pk>/', views.SurveyDefinitionDetailView.as_view(), name='survey_detail'),
     path('surveys/<int:pk>/delete/', views.delete_survey, name='delete_survey'),
     path('surveys/<int:pk>/publish/', views.toggle_publish, name='toggle_publish'),

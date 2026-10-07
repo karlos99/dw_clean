@@ -8,6 +8,154 @@ from dataLoader.utils.column_analyzer import (
 )
 
 
+TEXT_ONLY_CSV = (
+    "Client Name,School Name,School ID,Student First Name,Student Last Name,"
+    "Student ID,Student Grade Level,"
+    "How often do you stay focused? TEXT,"
+    "How positive or negative is the mood at your school? TEXT\n"
+    "Desert Sands,Test MS,335,John,Doe,10001,6,Almost always,Very positive\n"
+    "Desert Sands,Test MS,335,Jane,Smith,10002,7,Almost never,Very negative\n"
+)
+
+
+class TextOnlyLayoutTests(SimpleTestCase):
+    """Tests for the newer Panorama layout that omits the numeric VALUES column."""
+
+    def test_find_question_columns_detects_text_only(self):
+        headers = [
+            'Student ID',
+            'How often do you stay focused? TEXT',
+            'How positive or negative is the mood at your school? TEXT',
+        ]
+        questions = _find_question_columns(headers)
+        self.assertEqual(len(questions), 2)
+        self.assertTrue(all(q.text_only for q in questions))
+        self.assertEqual(questions[0].question_text, 'How often do you stay focused?')
+        self.assertEqual(questions[0].text_column_index, 1)
+        self.assertEqual(questions[0].value_column, '')
+
+    def test_analyze_csv_maps_labels_to_values(self):
+        result = analyze_csv(TEXT_ONLY_CSV, 'Fall 26 Equity Survey Grades 6 - 8.csv')
+        self.assertEqual(result.detected_survey_type, 'Equity Survey')
+        self.assertEqual(result.detected_grade_range, 'Grades 6-8')
+        self.assertEqual(len(result.questions), 2)
+        self.assertEqual(result.warnings, [])
+
+        focus, mood = result.questions
+        self.assertTrue(focus.text_only)
+        self.assertEqual(focus.response_scale_max, 5)
+        self.assertEqual(focus.scale_labels[1], 'Almost never')
+        self.assertEqual(focus.scale_labels[5], 'Almost always')
+
+        self.assertEqual(mood.response_scale_max, 7)
+        self.assertEqual(mood.scale_labels[1], 'Very negative')
+        self.assertEqual(mood.scale_labels[7], 'Very positive')
+
+    def test_grade_range_with_spaces(self):
+        self.assertEqual(
+            analyze_csv(TEXT_ONLY_CSV, 'x Grades 6 - 8.csv').detected_grade_range,
+            'Grades 6-8',
+        )
+        self.assertEqual(
+            analyze_csv(TEXT_ONLY_CSV, 'x Grades 9 - 12.csv').detected_grade_range,
+            'Grades 9-12',
+        )
+
+
+class SurveySettingsViewTests(TestCase):
+    """Tests for the Survey Settings page (select survey, assign categories)."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from django.urls import reverse
+        from dataLoader.models import (
+            SurveyDefinition, SurveyQuestion, SurveyTopic, TestingWindow,
+        )
+
+        self.reverse = reverse
+        user = get_user_model().objects.create_superuser(
+            username='admin', email='admin@test.com', password='pw'
+        )
+        self.client.force_login(user)
+
+        self.survey = SurveyDefinition.objects.create(
+            name='Equity Test', survey_type='Equity Survey',
+            school_year='2026-2027', testing_window=TestingWindow.FALL,
+            grade_range='Grades 6-8',
+        )
+        self.question = SurveyQuestion.objects.create(
+            survey_definition=self.survey,
+            question_text='How much support do the adults at your school give you?',
+            value_column_name='How much support do the adults at your school give you? TEXT',
+            text_column_name='How much support do the adults at your school give you? TEXT',
+            order=0,
+        )
+        self.topic = SurveyTopic.objects.create(name='Teacher-Student Relationships')
+
+    def test_settings_page_lists_survey_questions_and_topics(self):
+        resp = self.client.get(self.reverse('dataLoader:survey_settings'),
+                               {'survey': self.survey.pk})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.content.decode()
+        self.assertIn('question-topic-select', body)
+        self.assertIn('Teacher-Student Relationships', body)
+        self.assertIn(self.question.question_text, body)
+
+    def test_assign_question_topic(self):
+        resp = self.client.post(
+            self.reverse('dataLoader:assign_question_topic',
+                         args=[self.survey.pk, self.question.pk]),
+            data='{"topic_id": %d}' % self.topic.pk,
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.question.refresh_from_db()
+        self.assertEqual(self.question.topic_id, self.topic.pk)
+
+
+class TextOnlyImportTests(TestCase):
+    """End-to-end import of a TEXT-only layout into the database."""
+
+    def test_loader_resolves_text_labels_to_numeric_values(self):
+        from dataLoader.models import (
+            ImportLog, SurveyResponse, TestingWindow, ImportStatus,
+        )
+        from dataLoader.utils.response_loader import ResponseLoader, LoaderConfig
+
+        analysis = analyze_csv(TEXT_ONLY_CSV, 'Fall 26 Equity Survey Grades 6 - 8.csv')
+        import_log = ImportLog.objects.create(
+            name='Equity Test',
+            school_year='2026-2027',
+            testing_window=TestingWindow.FALL,
+            filename='equity.csv',
+        )
+        loader = ResponseLoader(
+            import_log, analysis,
+            config=LoaderConfig(skip_unmatched_students=False),
+        )
+        loader.create_survey_definition(user=None)
+        loader.create_questions()
+        loader.load_responses(TEXT_ONLY_CSV)
+
+        self.assertEqual(loader.questions['How often do you stay focused? TEXT']
+                         .response_scale_max, 5)
+        self.assertEqual(SurveyResponse.objects.count(), 4)
+
+        john_focus = SurveyResponse.objects.get(
+            student_id='10001',
+            question__question_text='How often do you stay focused?',
+        )
+        self.assertEqual(john_focus.value, 5)  # Almost always
+
+        jane_mood = SurveyResponse.objects.get(
+            student_id='10002',
+            question__question_text='How positive or negative is the mood at your school?',
+        )
+        self.assertEqual(jane_mood.value, 1)  # Very negative
+
+        self.assertEqual(import_log.status, ImportStatus.COMPLETED)
+
+
 class ColumnAnalyzerTests(TestCase):
     """Tests for the column analyzer utility."""
     

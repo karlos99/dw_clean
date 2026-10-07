@@ -148,6 +148,7 @@ def _build_loader_cards():
             'name': 'Surveys',
             'description': 'Panorama SEL skills, competencies, and other survey CSV exports.',
             'upload_url': reverse('dataLoader:upload'),
+            'settings_url': reverse('dataLoader:survey_settings'),
             'accent': 'blue',
             'button_css': 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
             'icon_bg': 'bg-blue-100',
@@ -306,6 +307,7 @@ class UploadView(ProjectAdminRequiredMixin, View):
                         'text_column_index': q.text_column_index,
                         'response_scale_max': q.response_scale_max,
                         'scale_labels': q.scale_labels,
+                        'text_only': q.text_only,
                     }
                     for q in analysis.questions
                 ],
@@ -464,6 +466,43 @@ class SurveyDefinitionDetailView(ProjectAdminRequiredMixin, DetailView):
         }
         
         return context
+
+
+class SurveySettingsView(ProjectAdminRequiredMixin, View):
+    """
+    Survey settings: select a survey, then assign each of its questions to a
+    category (SurveyTopic). Assignments are saved via the existing
+    assign_question_topic AJAX endpoint so the Data Exploration grouping updates.
+    """
+    template_name = 'dataLoader/survey_settings.html'
+
+    def get(self, request):
+        surveys = SurveyDefinition.objects.order_by(
+            '-school_year', 'survey_type', 'testing_window', 'grade_range'
+        )
+
+        selected = None
+        selected_pk = request.GET.get('survey', '').strip()
+        if selected_pk.isdigit():
+            selected = SurveyDefinition.objects.filter(pk=int(selected_pk)).first()
+        if selected is None:
+            selected = surveys.first()
+
+        questions = []
+        assigned_count = 0
+        if selected:
+            questions = list(selected.questions.select_related('topic').order_by('order'))
+            assigned_count = sum(1 for q in questions if q.topic_id)
+
+        context = {
+            'surveys': surveys,
+            'selected': selected,
+            'questions': questions,
+            'topics': SurveyTopic.objects.order_by('name'),
+            'assigned_count': assigned_count,
+            'unassigned_count': len(questions) - assigned_count,
+        }
+        return render(request, self.template_name, context)
 
 
 # Function-based view for HTMX file upload progress (optional enhancement)
@@ -864,6 +903,9 @@ def assign_question_topic(request, pk, question_pk):
         question.topic = None
 
     question.save(update_fields=['topic'])
+    # Invalidate the survey columns cache so Data Exploration grouping reflects
+    # the new category immediately.
+    cache.delete_pattern('*survey_columns_v8*')
     return JsonResponse({'success': True})
 
 

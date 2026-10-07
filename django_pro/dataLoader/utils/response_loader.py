@@ -46,6 +46,9 @@ class ResponseLoader:
         self.config = config or LoaderConfig()
         self.survey_definition: Optional[SurveyDefinition] = None
         self.questions: Dict[str, SurveyQuestion] = {}
+        # question.pk -> {label: value} for TEXT-only layouts, so responses can
+        # be resolved from the label text when there is no numeric VALUES column.
+        self.label_lookup: Dict[int, Dict[str, int]] = {}
         self.matcher: Optional[StudentMatcher] = None
         self._stop_flag = False
     
@@ -87,12 +90,16 @@ class ResponseLoader:
             raise ValueError("Must call create_survey_definition first")
         
         self.questions = {}
+        self.label_lookup = {}
         labels_to_create = []
         
         for i, q in enumerate(self.analysis.questions):
+            # TEXT-only questions have no numeric VALUES column; fall back to the
+            # TEXT header as the (unique) source column name/key.
+            value_col_name = q.value_column or q.text_column
             question, created = SurveyQuestion.objects.get_or_create(
                 survey_definition=self.survey_definition,
-                value_column_name=q.value_column,
+                value_column_name=value_col_name,
                 defaults={
                     'question_text': q.question_text,
                     'text_column_name': q.text_column,
@@ -108,14 +115,18 @@ class ResponseLoader:
                 question.response_scale_max = q.response_scale_max
                 question.save()
             
-            # Collect scale labels for bulk create
+            # Collect scale labels for bulk create and remember the reverse
+            # (label -> value) mapping for resolving TEXT-only responses.
             if q.scale_labels:
+                self.label_lookup[question.pk] = {
+                    label: value for value, label in q.scale_labels.items()
+                }
                 for value, label in q.scale_labels.items():
                     labels_to_create.append(
                         ResponseScaleLabel(question=question, value=value, label=label)
                     )
             
-            self.questions[q.value_column] = question
+            self.questions[value_col_name] = question
         
         # Bulk create scale labels with update on conflict
         if labels_to_create:
@@ -276,6 +287,13 @@ class ResponseLoader:
                     value_str = row.get(value_col, '').strip()
                     value_int = int(value_str) if value_str and value_str.isdigit() else None
 
+                    # TEXT-only layout: the source column holds a label, not a
+                    # number, so resolve it through the question's scale labels.
+                    if value_int is None and value_str:
+                        lookup = self.label_lookup.get(question.pk)
+                        if lookup:
+                            value_int = lookup.get(value_str)
+
                     responses_to_create.append(SurveyResponse(
                         student_id=student_id,
                         ssid=ssid,
@@ -358,6 +376,7 @@ def run_import_async(import_log_id: int, file_content: str, analysis_data: dict,
                         text_column_index=q['text_column_index'],
                         response_scale_max=q.get('response_scale_max', 7),
                         scale_labels=q.get('scale_labels', {}),
+                        text_only=q.get('text_only', False),
                     )
                     for q in analysis_data['questions']
                 ],
