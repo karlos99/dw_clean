@@ -81,10 +81,12 @@ services:
       - .env
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings
+      - DJANGO_PROJECT_DIR=/app/django_pro
     volumes:
       - ./django_pro:/app/django_pro
       - ./django_pro/files/staticfiles:/app/django_pro/files/staticfiles
       - ./django_pro/files/mediafiles:/app/django_pro/files/mediafiles
+      - ./scripts:/app/scripts:ro
       - ./ref:/app/ref
       - ./logs:/app/logs
       - ./pictures:/app/pictures:ro

@@ -652,7 +652,9 @@ CREATE TABLE IF NOT EXISTS analytics_ccgi_college_application (
     most_recent_completed_date Nullable(String),
     csu_eligibility Nullable(String),
     uc_eligibility Nullable(String),
-    application_id Nullable(String)
+    application_id Nullable(String),
+    csu_gpa Nullable(Float64),
+    uc_gpa Nullable(Float64)
 )
 ENGINE = MergeTree
 ORDER BY (school_year, system, ssid, college_name)
@@ -671,7 +673,9 @@ CREATE TABLE IF NOT EXISTS analytics_ccgi_application_status (
     school_year String,
     system String,
     application_status String,
-    eligibility Nullable(String)
+    eligibility Nullable(String),
+    csu_gpa Nullable(Float64),
+    uc_gpa Nullable(Float64)
 )
 ENGINE = MergeTree
 ORDER BY (school_year, system, application_status, ssid)
@@ -730,5 +734,13 @@ COLUMN_MIGRATION_DDL = (
     "ADD COLUMN IF NOT EXISTS uc_eligibility Nullable(String)",
     "ALTER TABLE analytics_ccgi_college_application "
     "ADD COLUMN IF NOT EXISTS application_id Nullable(String)",
+    "ALTER TABLE analytics_ccgi_college_application "
+    "ADD COLUMN IF NOT EXISTS csu_gpa Nullable(Float64)",
+    "ALTER TABLE analytics_ccgi_college_application "
+    "ADD COLUMN IF NOT EXISTS uc_gpa Nullable(Float64)",
+    "ALTER TABLE analytics_ccgi_application_status "
+    "ADD COLUMN IF NOT EXISTS csu_gpa Nullable(Float64)",
+    "ALTER TABLE analytics_ccgi_application_status "
+    "ADD COLUMN IF NOT EXISTS uc_gpa Nullable(Float64)",
 )
 

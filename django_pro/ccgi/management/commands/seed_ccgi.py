@@ -1,12 +1,14 @@
 """Seed the CCGI dashboards (datasets, saved charts, and DataVizPage records).
 
 The CCGI source data lives in PostgreSQL (``ccgi_career_explo`` and
-``ccgi_college_financial``) and is mirrored into ClickHouse as three flattened
+``ccgi_college_financial``) and is mirrored into ClickHouse as five flattened
 analytics tables by ``sync_to_clickhouse``:
 
   * ``analytics_ccgi_favorite_career``  — one row per (student, favorite career)
   * ``analytics_ccgi_career_cluster``   — one row per (student, career cluster)
   * ``analytics_ccgi_college_financial``— one row per student (CSU/UC/CCC + aid)
+  * ``analytics_ccgi_college_application`` — one row per (student, application)
+  * ``analytics_ccgi_application_status``  — one row per (student, system, status)
 
 This command wires those tables into the existing DataViz engine by creating
 Datasets + SavedCharts and two publishable DataVizPage records:
@@ -17,9 +19,15 @@ Datasets + SavedCharts and two publishable DataVizPage records:
                               financial-aid application status, filterable by
                               school.
 
+One dataset is created per analytics table.  Charts that need to show a single
+college system (CSU / UC / CCC) narrow the shared applications/status dataset
+with a chart-level ``source_filters`` entry instead of a dedicated dataset.
+
 Every chart is drill-through enabled, so clicking a bar / slice opens the
 student list for that category (joined to ``current_student`` for names,
-grade, and school).
+grade, and school).  Drill columns come from ``DRILL_COLUMNS_BY_DATASET``
+(keyed by dataset) and always lead with ``ssid`` then ``student_id``; the
+internal ``stu_annual_key`` is never shown.
 
 Usage:
     python manage.py seed_ccgi
@@ -66,11 +74,19 @@ APPLICATION_COLUMNS = STUDENT_COLUMNS + [
     'system', 'application_status', 'college_name',
     'most_recent_completed_date',
     'csu_eligibility', 'uc_eligibility', 'application_id',
+    'csu_gpa', 'uc_gpa',
 ]
-STATUS_COLUMNS = STUDENT_COLUMNS + ['system', 'application_status', 'eligibility']
+STATUS_COLUMNS = STUDENT_COLUMNS + [
+    'system', 'application_status', 'eligibility', 'csu_gpa', 'uc_gpa',
+]
 
 COLLEGE_SYSTEMS = ('CSU', 'UC', 'CCC')
 
+# One dataset per underlying analytics table.  Earlier versions also seeded a
+# separate dataset per college system (CSU/UC/CCC) for the same two tables;
+# those were redundant and have been collapsed into the shared
+# 'CCGI College Applications' / 'CCGI Application Status' datasets.  Charts
+# narrow to a single system with a chart-level ``source_filters`` entry.
 DATASET_SPECS = [
     {
         'name': 'CCGI Career Explorer',
@@ -105,11 +121,7 @@ DATASET_SPECS = [
     {
         'name': 'CCGI College Applications',
         'base_table': COLLEGE_APPLICATION_TABLE,
-        'columns': STUDENT_COLUMNS + [
-            'system', 'application_status', 'college_name',
-            'most_recent_completed_date',
-            'csu_eligibility', 'uc_eligibility', 'application_id',
-        ],
+        'columns': APPLICATION_COLUMNS,
         'description': 'One row per CCGI college application across CSU, UC, and '
                        'CCC, including the application status (Completed / In '
                        'Progress) and the destination college.',
@@ -122,67 +134,49 @@ DATASET_SPECS = [
                        'Completed, In Progress, or Not Applied — includes on-track '
                        'students who have not yet applied.',
     },
-    # ── Per-system datasets ──────────────────────────────────────────
-    # The system (and, for the On-Track status sets, the eligibility) is baked
-    # into the dataset as a static filter so a section chart can never render
-    # another system's colleges/students — even in views that do not replay the
-    # chart's saved source_filters.
-    *[
-        {
-            'name': f'CCGI {system} Applications',
-            'base_table': COLLEGE_APPLICATION_TABLE,
-            'columns': APPLICATION_COLUMNS,
-            'filters': [{
-                'column': f'{COLLEGE_APPLICATION_TABLE}.system',
-                'operator': 'exact', 'value': system,
-            }],
-            'description': f'CCGI {system} college applications only.',
-        }
-        for system in COLLEGE_SYSTEMS
+]
+
+# Datasets seeded by earlier versions that are now replaced by the shared
+# datasets above.  Removed from the database on the next run.
+OBSOLETE_DATASET_NAMES = [
+    *[f'CCGI {system} Applications' for system in COLLEGE_SYSTEMS],
+    *[f'CCGI {system} On-Track Status' for system in ('CSU', 'UC')],
+]
+
+# Drill-through columns per dataset.  ``ssid`` and ``student_id`` lead the
+# table; the list otherwise mirrors the dataset columns but deliberately omits
+# internal join keys — notably ``stu_annual_key`` — so the drill table never
+# shows the annual key.  Deduplication still uses the key internally; it just
+# isn't displayed.
+DRILL_COLUMNS_BY_DATASET = {
+    'CCGI Career Explorer': [
+        'ssid', 'student_id', 'student_name', 'grade', 'school', 'career',
+        'school_year',
     ],
-]
-
-
-def _on_track_dataset_spec(system):
-    return {
-        'name': f'CCGI {system} On-Track Status',
-        'base_table': APPLICATION_STATUS_TABLE,
-        'columns': STATUS_COLUMNS,
-        'filters': [
-            {'column': f'{APPLICATION_STATUS_TABLE}.system',
-             'operator': 'exact', 'value': system},
-            {'column': f'{APPLICATION_STATUS_TABLE}.eligibility',
-             'operator': 'exact', 'value': 'On-Track'},
-        ],
-        'description': f'CCGI {system} application status for On-Track students '
-                       f'(Completed / In Progress / Not Applied).',
-    }
-
-
-DATASET_SPECS += [_on_track_dataset_spec(s) for s in ('CSU', 'UC')]
-
-DRILL_CAREER_COLUMNS = [
-    'ssid', 'student_name', 'grade', 'school', 'career', 'school_year',
-]
-DRILL_CLUSTER_COLUMNS = [
-    'ssid', 'student_name', 'grade', 'school', 'cluster', 'cluster_count', 'school_year',
-]
-DRILL_COLLEGE_COLUMNS = [
-    'ssid', 'student_name', 'grade', 'school',
-    'csu_gpa', 'csu_eligibility', 'csu_eligibility_detail',
-    'uc_gpa', 'uc_eligibility', 'uc_eligibility_detail',
-    'review_scope',
-    'ccc_completed_app', 'ccc_apply_id', 'financial_aid_status', 'school_year',
-]
-DRILL_APPLICATION_COLUMNS = [
-    'ssid', 'student_name', 'grade', 'school',
-    'system', 'application_status', 'college_name',
-    'most_recent_completed_date', 'application_id', 'school_year',
-]
-DRILL_STATUS_COLUMNS = [
-    'ssid', 'student_name', 'grade', 'school',
-    'system', 'application_status', 'eligibility', 'school_year',
-]
+    'CCGI Career Clusters': [
+        'ssid', 'student_id', 'student_name', 'grade', 'school', 'cluster',
+        'cluster_count', 'school_year',
+    ],
+    'CCGI College & Financial': [
+        'ssid', 'student_id', 'student_name', 'grade', 'school',
+        'csu_gpa', 'csu_eligibility', 'csu_eligibility_detail',
+        'uc_gpa', 'uc_eligibility', 'uc_eligibility_detail',
+        'review_scope',
+        'ccc_completed_app', 'ccc_apply_id', 'financial_aid_status',
+        'school_year',
+    ],
+    'CCGI College Applications': [
+        'ssid', 'student_id', 'student_name', 'grade', 'school',
+        'system', 'application_status', 'college_name',
+        'most_recent_completed_date', 'application_id',
+        'csu_gpa', 'uc_gpa', 'school_year',
+    ],
+    'CCGI Application Status': [
+        'ssid', 'student_id', 'student_name', 'grade', 'school',
+        'system', 'application_status', 'eligibility',
+        'csu_gpa', 'uc_gpa', 'school_year',
+    ],
+}
 
 
 def _base_cfg(chart_type, title, **overrides):
@@ -208,7 +202,7 @@ def _base_cfg(chart_type, title, **overrides):
         'legend_pos': 'bottom',
         'data_labels': True,
         'show_grid': True,
-        'show_zoom': True,
+        'show_zoom': False,
         'show_tooltip': True,
         'animation': True,
         'palette': '',
@@ -221,6 +215,9 @@ def _base_cfg(chart_type, title, **overrides):
     return cfg
 
 
+# Every chart's drill-through columns come from DRILL_COLUMNS_BY_DATASET (keyed
+# by the chart's dataset), which excludes internal keys such as
+# ``stu_annual_key``.  ``drill_through_filter_map`` stays the default empty map.
 CHART_SPECS = [
     # ── Career Explorer ──────────────────────────────────────────────
     {
@@ -231,7 +228,6 @@ CHART_SPECS = [
             'bar', 'Top 20 Favorite Careers',
             x_col='career', agg='count', top_n=20,
         ),
-        'drill_through_columns': DRILL_CAREER_COLUMNS,
     },
     {
         'name': 'CCGI • Students by Career Cluster',
@@ -241,7 +237,6 @@ CHART_SPECS = [
             'bar', 'Students Interested by Career Cluster',
             x_col='cluster', agg='count',
         ),
-        'drill_through_columns': DRILL_CLUSTER_COLUMNS,
     },
     {
         'name': 'CCGI • Career Cluster Interest by Grade',
@@ -252,7 +247,6 @@ CHART_SPECS = [
             x_col='cluster', stack_col='grade', series_col='grade',
             y_col='cluster_count', agg='sum', data_labels=False,
         ),
-        'drill_through_columns': DRILL_CLUSTER_COLUMNS,
     },
     # ── College & Financial ──────────────────────────────────────────
     {
@@ -262,7 +256,6 @@ CHART_SPECS = [
         'config': _base_cfg(
             'donut', 'CSU Eligibility', x_col='csu_eligibility', agg='count',
         ),
-        'drill_through_columns': DRILL_COLLEGE_COLUMNS,
     },
     {
         'name': 'CCGI • UC Eligibility',
@@ -271,7 +264,6 @@ CHART_SPECS = [
         'config': _base_cfg(
             'donut', 'UC Eligibility', x_col='uc_eligibility', agg='count',
         ),
-        'drill_through_columns': DRILL_COLLEGE_COLUMNS,
     },
     {
         'name': 'CCGI • CSU Eligibility by School',
@@ -282,7 +274,6 @@ CHART_SPECS = [
             x_col='school', stack_col='csu_eligibility',
             series_col='csu_eligibility', agg='count', data_labels=False,
         ),
-        'drill_through_columns': DRILL_COLLEGE_COLUMNS,
     },
     {
         'name': 'CCGI • UC Eligibility by School',
@@ -293,7 +284,6 @@ CHART_SPECS = [
             x_col='school', stack_col='uc_eligibility',
             series_col='uc_eligibility', agg='count', data_labels=False,
         ),
-        'drill_through_columns': DRILL_COLLEGE_COLUMNS,
     },
     {
         'name': 'CCGI • CCC Applications Completed by School',
@@ -304,7 +294,6 @@ CHART_SPECS = [
             x_col='school', y_col='ccc_completed_apps', agg='sum',
             data_labels=True,
         ),
-        'drill_through_columns': DRILL_COLLEGE_COLUMNS,
     },
     {
         'name': 'CCGI • Financial Aid Application Status',
@@ -314,7 +303,6 @@ CHART_SPECS = [
             'donut', 'Financial Aid Application Status',
             x_col='financial_aid_status', agg='count',
         ),
-        'drill_through_columns': DRILL_COLLEGE_COLUMNS,
     },
     {
         # Eligibility "Requires Review" scope, organized across both systems.
@@ -327,7 +315,6 @@ CHART_SPECS = [
             'donut', 'Eligibility Requires Review (CSU vs UC)',
             x_col='review_scope', agg='count',
         ),
-        'drill_through_columns': DRILL_COLLEGE_COLUMNS,
     },
     {
         'name': 'CCGI • Students Requiring Review by School',
@@ -338,7 +325,6 @@ CHART_SPECS = [
             x_col='school', stack_col='review_scope', series_col='review_scope',
             agg='count', data_labels=False,
         ),
-        'drill_through_columns': DRILL_COLLEGE_COLUMNS,
     },
     # ── College applications (CSU / UC / CCC) ────────────────────────
     {
@@ -350,37 +336,38 @@ CHART_SPECS = [
             x_col='system', stack_col='application_status',
             series_col='application_status', agg='count',
         ),
-        'drill_through_columns': DRILL_APPLICATION_COLUMNS,
     },
     {
+        # System is applied as a chart-level source filter against the shared
+        # 'CCGI College Applications' dataset (not a dedicated dataset).
         'name': 'CCGI • CSU Applications by College',
         'chart_type': 'bar',
-        'dataset': 'CCGI CSU Applications',
+        'dataset': 'CCGI College Applications',
+        'source_filters': {'system': ['CSU']},
         'config': _base_cfg(
             'bar', 'CSU Applications by College', x_col='college_name', agg='count',
             top_n=20,
         ),
-        'drill_through_columns': DRILL_APPLICATION_COLUMNS,
     },
     {
         'name': 'CCGI • UC Applications by College',
         'chart_type': 'bar',
-        'dataset': 'CCGI UC Applications',
+        'dataset': 'CCGI College Applications',
+        'source_filters': {'system': ['UC']},
         'config': _base_cfg(
             'bar', 'UC Applications by College', x_col='college_name', agg='count',
             top_n=20,
         ),
-        'drill_through_columns': DRILL_APPLICATION_COLUMNS,
     },
     {
         'name': 'CCGI • CCC Applications by College',
         'chart_type': 'bar',
-        'dataset': 'CCGI CCC Applications',
+        'dataset': 'CCGI College Applications',
+        'source_filters': {'system': ['CCC']},
         'config': _base_cfg(
             'bar', 'CCC Applications by College', x_col='college_name', agg='count',
             top_n=20,
         ),
-        'drill_through_columns': DRILL_APPLICATION_COLUMNS,
     },
     {
         # KPI: unique students who applied to ANY system (CSU/UC/CCC). The
@@ -394,16 +381,17 @@ CHART_SPECS = [
             'gauge', 'Students Who Applied (Any System)',
             y_col='ssid', agg='count_unique',
         ),
-        'drill_through_columns': DRILL_APPLICATION_COLUMNS,
-        'drill_through_filter_map': {},
     },
     {
         # On-Track students, stacked by application status including
         # "Not Applied" (from the status table) so not-yet-applied on-track
-        # students are visible. Unique students per status.
+        # students are visible. Unique students per status. The system +
+        # eligibility are chart-level source filters against the shared
+        # 'CCGI Application Status' dataset.
         'name': 'CCGI • CSU On-Track Applicants by School',
         'chart_type': 'stacked_bar',
-        'dataset': 'CCGI CSU On-Track Status',
+        'dataset': 'CCGI Application Status',
+        'source_filters': {'system': ['CSU'], 'eligibility': ['On-Track']},
         'config': _base_cfg(
             'stacked_bar', 'CSU On-Track Applicants by School',
             x_col='school', stack_col='application_status',
@@ -411,12 +399,12 @@ CHART_SPECS = [
             stack_order=['Not Applied', 'In Progress', 'Completed'],
             data_labels=True, label_position='inside',
         ),
-        'drill_through_columns': DRILL_STATUS_COLUMNS,
     },
     {
         'name': 'CCGI • UC On-Track Applicants by School',
         'chart_type': 'stacked_bar',
-        'dataset': 'CCGI UC On-Track Status',
+        'dataset': 'CCGI Application Status',
+        'source_filters': {'system': ['UC'], 'eligibility': ['On-Track']},
         'config': _base_cfg(
             'stacked_bar', 'UC On-Track Applicants by School',
             x_col='school', stack_col='application_status',
@@ -424,7 +412,6 @@ CHART_SPECS = [
             stack_order=['Not Applied', 'In Progress', 'Completed'],
             data_labels=True, label_position='inside',
         ),
-        'drill_through_columns': DRILL_STATUS_COLUMNS,
     },
 ]
 
@@ -538,6 +525,8 @@ class Command(BaseCommand):
         for spec in CHART_SPECS:
             charts[spec['name']] = self._upsert_chart(spec, datasets, owner)
 
+        self._remove_obsolete_datasets()
+
         pages = []
         for spec in PAGE_SPECS:
             pages.append(self._upsert_page(spec, charts, owner))
@@ -604,6 +593,19 @@ class Command(BaseCommand):
         self.stdout.write(f'Dataset ready: {dataset.name} (#{dataset.pk})')
         return dataset
 
+    def _remove_obsolete_datasets(self):
+        """Delete the per-system datasets replaced by the shared CCGI datasets."""
+        if not OBSOLETE_DATASET_NAMES:
+            return
+        qs = Dataset.objects.filter(name__in=OBSOLETE_DATASET_NAMES)
+        count = qs.count()
+        if count:
+            qs.delete()
+            self.stdout.write(
+                f'Removed {count} obsolete dataset(s): '
+                f'{", ".join(OBSOLETE_DATASET_NAMES)}'
+            )
+
     def _upsert_chart(self, spec, datasets, owner):
         dataset = datasets[spec['dataset']]
         chart, _ = SavedChart.objects.update_or_create(
@@ -618,7 +620,10 @@ class Command(BaseCommand):
                 'source_filters': spec.get('source_filters', {}),
                 'column_defs': {},
                 'school_filter_mode': 'enrolled',
-                'drill_through_columns': spec.get('drill_through_columns', []),
+                'drill_through_columns': spec.get(
+                    'drill_through_columns',
+                    DRILL_COLUMNS_BY_DATASET.get(spec['dataset'], []),
+                ),
                 'drill_through_filter_map': spec.get('drill_through_filter_map', {}),
                 'description': spec['config'].get('chart_title', ''),
             },
