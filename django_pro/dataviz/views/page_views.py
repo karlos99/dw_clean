@@ -155,7 +155,10 @@ def page_view(request, slug):
     if not is_owner:
         if dv_page.status != DataVizPage.STATUS_ACTIVE:
             from django.http import Http404
-            raise Http404
+            from users.context_processors import user_can_preview_draft_site_page
+            linked = dv_page.linked_site_page
+            if not linked or not user_can_preview_draft_site_page(request.user, linked):
+                raise Http404
         if dv_page.linked_site_page:
             from users.context_processors import user_can_access_page
             if not user_can_access_page(request.user, dv_page.linked_site_page):

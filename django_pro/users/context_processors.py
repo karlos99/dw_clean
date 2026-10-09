@@ -107,6 +107,65 @@ def _is_preview_forced(user, page) -> bool:
     return any(u.id == user.id for u in page.menu_allowed_users.all())
 
 
+def _has_preview_grant_on_page_or_ancestor(user, page) -> bool:
+    """Preview grant on this page or a menu ancestor (e.g. CCGI category email allow-list)."""
+    if not user.is_authenticated or page is None:
+        return False
+    current = page
+    while current is not None:
+        if current.allowed_users.filter(id=user.id).exists():
+            return True
+        if _is_preview_forced(user, current):
+            return True
+        current = current.parent_page
+    return False
+
+
+def _preview_menu_pages_for_user(user):
+    """
+    Non-active menu pages visible for preview/testing.
+
+    Includes descendants under a preview-granted parent so a menu category allow-list
+    exposes draft child links (without adding every child by email).
+    """
+    from django.db.models import Q as _Q
+
+    if not user.is_authenticated:
+        return []
+
+    roots = list(
+        Page.objects.filter(show_in_menu=True)
+        .filter(_Q(allowed_users=user) | _Q(menu_allowed_users=user))
+        .exclude(status='active')
+        .distinct()
+        .prefetch_related('menu_allowed_users')
+        .order_by('menu_order', 'name')
+    )
+    if not roots:
+        return []
+
+    seen = {p.id for p in roots}
+    queue = list(roots)
+    while queue:
+        parent = queue.pop(0)
+        children = Page.objects.filter(
+            parent_page_id=parent.id,
+            show_in_menu=True,
+        ).exclude(status='active').prefetch_related('menu_allowed_users')
+        for child in children:
+            if child.id in seen:
+                continue
+            seen.add(child.id)
+            roots.append(child)
+            queue.append(child)
+    return roots
+
+
+def user_can_preview_draft_site_page(user, page) -> bool:
+    """Whether ``page`` (or its menu ancestors) grants draft/preview access."""
+    return _has_preview_grant_on_page_or_ancestor(user, page)
+
+
 def _can_show_page_in_navigation(request, page, force_preview: bool = False) -> bool:
     # If the user was explicitly added for preview/testing, skip business-logic gates
     if force_preview:
@@ -240,16 +299,9 @@ def navigation_pages(request):
     for page in all_pages:
         children_by_parent.setdefault(page.parent_page_id, []).append(page)
 
-    # Preview/access override: a page that is not active yet (e.g. draft) is still
-    # shown in the navigation for users explicitly granted access by email.
-    from django.db.models import Q as _Q
-    preview_pages = list(
-        Page.objects.filter(
-            show_in_menu=True,
-        ).filter(
-            _Q(allowed_users=request.user) | _Q(menu_allowed_users=request.user)
-        ).exclude(status='active').distinct().prefetch_related('menu_allowed_users').order_by('menu_order', 'name')
-    )
+    # Preview/access override: draft/inactive pages (and their draft menu children)
+    # for users explicitly granted access on the page or a menu category ancestor.
+    preview_pages = _preview_menu_pages_for_user(request.user)
     for page in preview_pages:
         children_by_parent.setdefault(page.parent_page_id, []).append(page)
     for children in children_by_parent.values():

@@ -193,4 +193,41 @@ class DistrictRoleVisibilityTests(TestCase):
         self.assertIn('0999999', available_ids)
 
 
+class DraftMenuPreviewTests(TestCase):
+    def setUp(self):
+        from users.models_pages import Page
+
+        self.viewer = User.objects.create(username='preview_user', email='preview@x.com')
+        self.category = Page.objects.create(
+            slug='preview-cat',
+            name='Preview Cat',
+            url_path='',
+            status='draft',
+            is_menu_category=True,
+            show_in_menu=True,
+        )
+        self.category.menu_allowed_users.add(self.viewer)
+        self.child = Page.objects.create(
+            slug='preview-child',
+            name='Preview Child',
+            url_path='/dataviz/pages/preview-child/',
+            status='draft',
+            show_in_menu=True,
+            parent_page=self.category,
+        )
+
+    def test_preview_menu_includes_draft_children_under_category_grant(self):
+        from django.test import RequestFactory
+        from users.context_processors import navigation_pages, user_can_preview_draft_site_page
+
+        request = RequestFactory().get('/')
+        request.user = self.viewer
+        nav = navigation_pages(request)['navigation_pages']
+        slugs = {p.slug for p in nav}
+        self.assertIn('preview-cat', slugs)
+        cat = next(p for p in nav if p.slug == 'preview-cat')
+        child_slugs = {c.slug for c in cat.accessible_children}
+        self.assertIn('preview-child', child_slugs)
+        self.assertTrue(user_can_preview_draft_site_page(self.viewer, self.child))
+
 

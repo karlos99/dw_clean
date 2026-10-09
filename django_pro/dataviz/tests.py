@@ -1395,6 +1395,32 @@ class DatasetDrillThroughTests(TestCase):
         cfg.enabled_dataset_tables = None
         cfg.save()
 
+    def test_persisted_dataset_base_table_allowed_when_builder_restricted(self):
+        from dataviz.utils.compiler import get_allowed_dataset_tables, compile_dataset_to_sql
+        from landing.models import ProjectConfig
+
+        Dataset.objects.create(
+            name='CCGI Career Explorer Test',
+            base_table='analytics_ccgi_favorite_career',
+            columns=['analytics_ccgi_favorite_career.ssid'],
+            owner=self.user,
+        )
+        cfg = ProjectConfig.get()
+        cfg.enabled_dataset_tables = ['current_student']
+        cfg.save()
+
+        allowed = get_allowed_dataset_tables()
+        self.assertIn('analytics_ccgi_favorite_career', allowed)
+        self.assertNotIn('results', allowed)
+
+        ccgi_ds = Dataset.objects.get(name='CCGI Career Explorer Test')
+        sql, _params = compile_dataset_to_sql(ccgi_ds, user=self.user)
+        self.assertIn('analytics_ccgi_favorite_career', sql)
+
+        cfg.enabled_dataset_tables = None
+        cfg.save()
+        Dataset.objects.filter(name='CCGI Career Explorer Test').delete()
+
     @patch('dataexploration.column_utils.get_mark_columns', return_value={})
     @patch('dataexploration.column_utils.get_test_columns', return_value={})
     def test_dataset_builder_view_dynamic_tables_and_cache(self, mock_get_tests, mock_get_marks):
