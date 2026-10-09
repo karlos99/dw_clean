@@ -1,5 +1,3 @@
-from django.db.models import Q
-
 from .models_pages import Page, NavbarConfig
 from mathr.view_modules.access_utils import can_user_access_mathr
 from placementcards.view_modules.card_data_utils import (
@@ -234,18 +232,28 @@ def navigation_pages(request):
     school = get_request_school(request)
     placement_cards_access = can_user_access_placement_cards(request.user, school)
     
-    all_pages = list(
-        Page.objects.filter(
-            show_in_menu=True,
-        ).filter(
-            Q(status='active')
-            | Q(allowed_users=request.user)
-            | Q(menu_allowed_users=request.user)
-        ).distinct().prefetch_related('menu_allowed_users').order_by('menu_order', 'name')
-    )
+    all_pages = list(Page.objects.filter(
+        status='active',
+        show_in_menu=True,
+    ).prefetch_related('menu_allowed_users').order_by('menu_order', 'name'))
     children_by_parent = {}
     for page in all_pages:
         children_by_parent.setdefault(page.parent_page_id, []).append(page)
+
+    # Preview/access override: a page that is not active yet (e.g. draft) is still
+    # shown in the navigation for users explicitly granted access by email.
+    from django.db.models import Q as _Q
+    preview_pages = list(
+        Page.objects.filter(
+            show_in_menu=True,
+        ).filter(
+            _Q(allowed_users=request.user) | _Q(menu_allowed_users=request.user)
+        ).exclude(status='active').distinct().prefetch_related('menu_allowed_users').order_by('menu_order', 'name')
+    )
+    for page in preview_pages:
+        children_by_parent.setdefault(page.parent_page_id, []).append(page)
+    for children in children_by_parent.values():
+        children.sort(key=lambda p: (p.menu_order, p.name))
     
     # Filter pages by access
     accessible_pages = []
