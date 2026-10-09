@@ -149,7 +149,7 @@ class DatasetBuilderView(ProjectAdminMixin, TemplateView):
         from dataviz.utils.compiler import get_allowed_dataset_tables, get_columns_for_table
         from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
 
-        allowed_tables = get_allowed_dataset_tables()
+        allowed_tables = get_allowed_dataset_tables(for_dataset_builder=True)
         tables = sorted(list(allowed_tables.keys()))
 
         try:
