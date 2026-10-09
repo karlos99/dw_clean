@@ -205,6 +205,65 @@ class ColorPaletteTests(TestCase):
         self.assertIn('default_X', [v['name'] for v in data.values()])
 
 
+class CreateDefaultColorPalettesCommandTests(TestCase):
+    """Management command: seed SurveyColorPalette from existing survey colors."""
+
+    def test_creates_default_palettes_skips_today_and_existing_names(self):
+        from datetime import timedelta
+        from django.core.management import call_command
+        from django.utils import timezone
+        from dataLoader.models import SurveyDefinition, SurveyColorPalette, TestingWindow
+
+        scale5 = {'1': '#ef581c', '5': '#1caa49'}
+        scale5_7 = {
+            'scale_5': scale5,
+            'scale_7': {'1': '#ef581c', '7': '#1caa49'},
+        }
+
+        old_a = SurveyDefinition.objects.create(
+            name='Old A', survey_type='Equity Survey',
+            school_year='2025-2026', testing_window=TestingWindow.FALL,
+            grade_range='Grades 6-8',
+            response_colors={'scale_5': scale5},
+        )
+        old_b = SurveyDefinition.objects.create(
+            name='Old B', survey_type='Equity Survey',
+            school_year='2024-2025', testing_window=TestingWindow.FALL,
+            grade_range='Grades 6-8',
+            response_colors=scale5_7,
+        )
+        yesterday = timezone.now() - timedelta(days=1)
+        SurveyDefinition.objects.filter(pk__in=[old_a.pk, old_b.pk]).update(created_at=yesterday)
+
+        today_survey = SurveyDefinition.objects.create(
+            name='Today', survey_type='Equity Survey',
+            school_year='2026-2027', testing_window=TestingWindow.FALL,
+            grade_range='Grades 6-8',
+            response_colors={'scale_5': {'1': '#000000', '5': '#ffffff'}},
+        )
+        self.assertEqual(
+            timezone.localtime(today_survey.created_at).date(),
+            timezone.localdate(),
+        )
+
+        call_command('create_default_color_palettes')
+
+        self.assertTrue(SurveyColorPalette.objects.filter(name='default_1').exists())
+        self.assertTrue(SurveyColorPalette.objects.filter(name='default_2').exists())
+        p1 = SurveyColorPalette.objects.get(name='default_1')
+        self.assertEqual(p1.colors, {'scale_5': scale5})
+
+        # Second run must not duplicate or overwrite.
+        call_command('create_default_color_palettes')
+        self.assertEqual(SurveyColorPalette.objects.filter(name='default_1').count(), 1)
+
+        # Today's-only palette must not become a saved default.
+        self.assertFalse(any(
+            (p.colors.get('scale_5') or {}).get('1') == '#000000'
+            for p in SurveyColorPalette.objects.all()
+        ))
+
+
 class TextOnlyImportTests(TestCase):
     """End-to-end import of a TEXT-only layout into the database."""
 
