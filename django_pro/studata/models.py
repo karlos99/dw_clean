@@ -315,5 +315,53 @@ class TeacherAccess(models.Model):
         return f"{self.access_id} - {self.staff_name} - {self.student_id}"
 
 
+class StudentRpc(models.Model):
+    """Read-only per-student record/transcript row (``student_rpc`` table, ETL-owned).
 
+    One row per SSID holding the student's latest profile, GPA/rank, course
+    history, and graduation/UC/CSU requirement progress as JSON.
+    """
+
+    ssid = models.CharField(max_length=20, primary_key=True)
+    student_id = models.CharField(max_length=20, blank=True, null=True, db_index=True)
+    school_year = models.CharField(max_length=20, blank=True, null=True, db_index=True)
+    student_name = models.CharField(max_length=255, blank=True, null=True)
+    grade = models.CharField(max_length=50, blank=True, null=True)
+    gender = models.CharField(max_length=20, blank=True, null=True)
+    birth_date = models.CharField(max_length=20, blank=True, null=True)
+    phone = models.CharField(max_length=50, blank=True, null=True)
+    home_address = models.CharField(max_length=255, blank=True, null=True)
+    home_city = models.CharField(max_length=100, blank=True, null=True)
+    home_state = models.CharField(max_length=10, blank=True, null=True)
+    home_zip = models.CharField(max_length=20, blank=True, null=True)
+    enter_date = models.CharField(max_length=20, blank=True, null=True)
+    leave_date = models.CharField(max_length=20, blank=True, null=True)
+    expected_graduation_year = models.CharField(max_length=10, blank=True, null=True)
+    graduation_status = models.CharField(max_length=100, blank=True, null=True)
+    counselor_name = models.CharField(max_length=255, blank=True, null=True)
+    school_name = models.CharField(max_length=255, blank=True, null=True)
+    school_phone = models.CharField(max_length=50, blank=True, null=True)
+    school_address = models.CharField(max_length=255, blank=True, null=True)
+    school_city = models.CharField(max_length=100, blank=True, null=True)
+    school_state = models.CharField(max_length=10, blank=True, null=True)
+    school_zip = models.CharField(max_length=20, blank=True, null=True)
+    weighted_gpa = models.CharField(max_length=20, blank=True, null=True)
+    unweighted_gpa = models.CharField(max_length=20, blank=True, null=True)
+    class_rank = models.CharField(max_length=20, blank=True, null=True)
+    class_size = models.CharField(max_length=20, blank=True, null=True)
+    course_history = models.JSONField(blank=True, null=True)
+    graduation_requirements = models.JSONField(blank=True, null=True)
+    uc_requirements = models.JSONField(blank=True, null=True)
+    csu_requirements = models.JSONField(blank=True, null=True)
+    current_schedule = models.JSONField(blank=True, null=True)
+    updated_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'student_rpc'
+        managed = False
+        verbose_name = 'Student RPC'
+        verbose_name_plural = 'Student RPC'
+
+    def __str__(self):
+        return f"{self.student_name or ''} ({self.ssid}) - {self.school_year or ''}"
 

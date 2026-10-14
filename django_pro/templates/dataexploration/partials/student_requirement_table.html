@@ -1,0 +1,98 @@
+{# Requirement plan table. Expects `plan` (with `.rows`). #}
+<div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-slate-100">
+        <thead>
+            <tr class="text-[10px] uppercase tracking-wider text-slate-400">
+                <th class="px-4 py-2 text-left font-semibold">Subject Area</th>
+                <th class="px-4 py-2 text-left font-semibold">Progress</th>
+                <th class="px-4 py-2 text-right font-semibold">Earned</th>
+                <th class="px-4 py-2 text-right font-semibold">Needed</th>
+                <th class="px-4 py-2 text-right font-semibold">Schedule</th>
+                <th class="px-4 py-2 text-center font-semibold">Status</th>
+            </tr>
+        </thead>
+        {% for row in plan.rows %}
+        <tbody class="divide-y divide-slate-50" x-data="{ open: false }">
+            <tr class="cursor-pointer hover:bg-slate-50" @click="open = !open">
+                <td class="px-4 py-2">
+                    <div class="flex items-center gap-1.5">
+                        <svg class="h-3 w-3 text-slate-400 transition-transform duration-200" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                        <span class="text-xs font-medium text-slate-800">{{ row.subject_area }}</span>
+                    </div>
+                    <div class="mt-0.5 pl-4 text-[9px] text-slate-400">Required {{ row.req_credits|floatformat:"-2" }}{% if row.req_years %} ({{ row.req_years }} yr{{ row.req_years|pluralize }}){% endif %} · {{ row.by_year|length }} year(s){% if row.in_progress %} · {{ row.in_progress|length }} in schedule{% endif %}</div>
+                </td>
+                <td class="px-4 py-2">
+                    <div class="flex items-center gap-2">
+                        <div class="flex h-2 w-28 shrink-0 overflow-hidden rounded-full bg-slate-100">
+                            <div class="h-2 {% if row.projection_status == 'Met' %}bg-emerald-500{% elif row.pct_earned >= 50 %}bg-amber-400{% else %}bg-rose-400{% endif %}" style="width: {{ row.pct_earned }}%"></div>
+                            {% if row.pct_projected %}<div class="h-2 bg-sky-300" style="width: {{ row.pct_projected }}%"></div>{% endif %}
+                        </div>
+                        <span class="text-[10px] text-slate-500">{{ row.pct_earned }}%{% if row.pct_projected %} <span class="text-sky-600">+{{ row.pct_projected }}%</span>{% endif %}</span>
+                    </div>
+                </td>
+                <td class="px-4 py-2 text-right text-xs text-slate-700">
+                    {{ row.counted_credits|floatformat:"-2" }}
+                    {% if row.earned_current %}<div class="text-[9px] text-emerald-600">+{{ row.earned_current|floatformat:"-2" }} earned</div>{% endif %}
+                </td>
+                <td class="px-4 py-2 text-right text-xs {% if row.needed_after > 0 %}font-semibold text-rose-700{% else %}text-slate-400{% endif %}">
+                    {{ row.needed_after|floatformat:"-2" }}
+                </td>
+                <td class="px-4 py-2 text-right text-xs">
+                    {% if row.scheduled_current %}<span class="text-sky-700">+{{ row.scheduled_current|floatformat:"-2" }}</span><div class="text-[9px] text-slate-400">{{ row.projected_total|floatformat:"-2" }} total</div>{% else %}<span class="text-slate-300">—</span>{% endif %}
+                </td>
+                <td class="px-4 py-2 text-center">
+                    <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold
+                        {% if row.projection_status == 'Met' %}bg-emerald-100 text-emerald-800
+                        {% elif row.projection_status == 'Scheduled' %}bg-sky-100 text-sky-800
+                        {% else %}bg-rose-100 text-rose-800{% endif %}">{{ row.projection_status }}</span>
+                </td>
+            </tr>
+            <tr x-show="open" style="display: none;">
+                <td colspan="6" class="bg-slate-50 px-4 py-3">
+                    {% if row.by_year %}
+                    <div class="space-y-2">
+                        {% for y in row.by_year %}
+                        <div>
+                            <div class="text-[10px] font-semibold {% if y.in_progress %}text-amber-700{% else %}text-slate-600{% endif %}">
+                                {{ y.school_year }}{% if y.in_progress %} · current{% endif %} · {{ y.credits|floatformat:"-2" }} cr
+                            </div>
+                            <ul class="mt-0.5 divide-y divide-slate-100">
+                                {% for c in y.courses %}
+                                <li class="flex items-center justify-between gap-3 py-1 text-[11px] {% if c.credit_ok == False %}text-slate-400{% else %}text-slate-700{% endif %}">
+                                    <span class="flex items-center gap-2">
+                                        {% if c.term %}<span class="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500">{{ c.term }}</span>{% endif %}
+                                        <span>{{ c.name }}</span>
+                                    </span>
+                                    <span class="flex items-center gap-2 whitespace-nowrap">
+                                        <span class="inline-flex min-w-[1.75rem] justify-center rounded border px-1.5 text-[10px] font-bold
+                                            {% if c.credit_ok == False %}border-rose-200 bg-rose-50 text-rose-700{% else %}border-slate-200 bg-white text-slate-800{% endif %}">{{ c.mark|default:"—" }}</span>
+                                        <span class="text-slate-500">{{ c.credits|floatformat:"-2" }} cr</span>
+                                        {% if c.credit_ok == False %}
+                                        <span class="rounded-full bg-rose-50 px-1.5 py-0.5 text-[9px] font-semibold text-rose-700" title="A grade of C- or better is required to earn A-G credit">No A‑G credit</span>
+                                        {% elif c.earned %}
+                                        <span class="text-[9px] font-medium text-emerald-600">earned</span>
+                                        {% else %}
+                                        <span class="text-[9px] font-medium text-sky-600">scheduled</span>
+                                        {% endif %}
+                                    </span>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    {% if row.counted_credits and row.counted_credits > 0 %}
+                    <p class="text-[11px] text-slate-500">{{ row.counted_credits|floatformat:"-2" }} credit(s) on record — no course detail available.</p>
+                    {% else %}
+                    <p class="text-[11px] text-slate-500">No courses recorded toward this requirement yet.</p>
+                    {% endif %}
+                    {% endif %}
+                </td>
+            </tr>
+        </tbody>
+        {% endfor %}
+    </table>
+</div>

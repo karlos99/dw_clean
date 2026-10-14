@@ -1,0 +1,290 @@
+{% comment %}
+Student profile hub.
+
+A flat, scannable identity header:
+  - left: portrait, name and school (short name given priority),
+  - right: an "at a glance" strip of the numbers people look for first,
+  - below: collapsible detail cards (diploma, A-G, CTE).
+
+Only the cards the student actually has are rendered. No gradients here:
+everything is a solid surface with a single accent colour.
+
+Expects: student_info, ssid, student_details, student_cte_details, student_name.
+Uses the parent Alpine scope `node` (active detail card).
+{% endcomment %}
+{% if student_info %}
+{% with s=student_details.summary ell=student_info.ell_status|upper %}
+<div class="mb-5 space-y-3">
+
+    {# ---------- Identity + at-a-glance ---------- #}
+    <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex flex-col gap-5 p-5 sm:p-6 lg:flex-row lg:items-start">
+
+            {# Identity #}
+            <div class="flex items-start gap-4 lg:w-72 lg:shrink-0">
+                <div class="relative h-20 w-20 shrink-0 sm:h-24 sm:w-24">
+                    <span class="absolute -inset-1.5 rounded-full border border-dashed border-slate-300" style="animation: orbit-spin 40s linear infinite;" aria-hidden="true"></span>
+                    <img src="{% url 'studata:picture' ssid %}"
+                         alt="{% if student_info.full_name %}Photo of {{ student_info.full_name }}{% else %}Student photo{% endif %}"
+                         width="96" height="96"
+                         class="relative h-20 w-20 rounded-full bg-slate-100 object-cover ring-2 ring-white sm:h-24 sm:w-24">
+                </div>
+                <div class="min-w-0 flex-1 pt-0.5">
+                    <h2 class="text-lg font-bold leading-tight tracking-tight text-slate-900 sm:text-xl">{{ student_info.full_name|default:"Student" }}</h2>
+                    <p class="mt-1 flex items-start gap-1.5">
+                        <svg class="mt-0.5 h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"></path></svg>
+                        <span class="text-sm font-semibold leading-snug text-slate-700">{{ student_info.school_short_name|default:student_info.school|default:"No school on record" }}</span>
+                    </p>
+                    <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span class="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">Grade {{ student_info.grade|default:"-" }}</span>
+                        <span class="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">{{ student_info.school_year|default:"-" }}</span>
+                        <span class="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">SSID <span class="font-semibold text-slate-800">{{ student_info.ssid|default:"-" }}</span></span>
+                        <span class="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">ID <span class="font-semibold text-slate-800">{{ student_info.student_id|default:"-" }}</span></span>
+                    </div>
+                </div>
+            </div>
+
+            {# At-a-glance strip #}
+            <div class="min-w-0 flex-1">
+                {% if student_details.has_any %}
+                <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <div class="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">Weighted GPA</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ s.weighted_gpa|default:"—" }}</p>
+                    </div>
+                    <div class="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-sky-700">Unweighted GPA</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ s.unweighted_gpa|default:"—" }}</p>
+                    </div>
+                    <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">Expected Graduation</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ s.expected_graduation_year|default:"—" }}</p>
+                    </div>
+                </div>
+                {% if s.graduation_status or s.academic_recognition %}
+                <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                    {% if s.graduation_status %}
+                    <span class="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                        <svg class="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        {{ s.graduation_status }}
+                    </span>
+                    {% endif %}
+                    {% if s.academic_recognition and summary_sections.recognition %}
+                    <span class="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200"
+                          title="Current academic recognition based on unweighted GPA">
+                        <svg class="h-3.5 w-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-6.842V4.5c0 2.108-.966 3.99-2.48 5.228m2.48-5.492a46.32 46.32 0 012.916.52 6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0"></path></svg>
+                        {{ s.academic_recognition }}
+                    </span>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% else %}
+                <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">Attendance</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{% if student_info.atendace_rate %}{{ student_info.atendace_rate }}%{% else %}—{% endif %}</p>
+                    </div>
+                    <div class="rounded-xl border border-slate-200 bg-slate-100 px-3 py-2.5">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-600">Status</p>
+                        <p class="mt-0.5 truncate text-sm font-bold text-slate-900">{{ student_info.status|default:"—" }}</p>
+                    </div>
+                    <div class="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">School Year</p>
+                        <p class="mt-0.5 truncate text-sm font-bold text-slate-900">{{ student_info.school_year|default:"—" }}</p>
+                    </div>
+                    <div class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-amber-700">Instruction</p>
+                        <p class="mt-0.5 truncate text-sm font-bold text-slate-900">{{ student_info.instructional_setting|default:"—" }}</p>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {# Support flags #}
+        {% if summary_sections.flags and ell and ell != 'N' or summary_sections.flags and student_info.sped and student_info.sped|upper != 'N' or summary_sections.flags and student_info.in_504 and student_info.in_504|upper != 'N' or summary_sections.flags and student_info.gate and student_info.gate|upper != 'N' or summary_sections.flags and student_info.sed and student_info.sed|upper != 'N' or summary_sections.flags and student_info.foster and student_info.foster|upper != 'N' or summary_sections.flags and student_info.homeless and student_info.homeless|upper != 'N' or summary_sections.flags and student_info.migrant and student_info.migrant|upper != 'N' or summary_sections.flags and student_info.dli and student_info.dli|upper != 'N' or summary_sections.flags and student_info.ltel and student_info.ltel|upper != 'N' %}
+        <div class="flex flex-wrap items-center gap-1.5 border-t border-slate-100 px-5 py-3 sm:px-6">
+            <span class="mr-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Flags</span>
+            {% if ell and ell != 'N' %}
+            <span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold
+                {% if ell == 'EL' or ell == 'ADEL' %}border-amber-200 bg-amber-50 text-amber-800
+                {% elif ell == 'RFEP' or ell == 'IFEP' %}border-emerald-200 bg-emerald-50 text-emerald-800
+                {% else %}border-slate-200 bg-slate-50 text-slate-600{% endif %}"
+                title="{% if ell == 'EO' %}English Only{% elif ell == 'EL' %}English Learner{% elif ell == 'RFEP' %}Reclassified Fluent English Proficient{% elif ell == 'IFEP' %}Initially Fluent English Proficient{% elif ell == 'ADEL' %}Adult English Learner{% else %}English language status{% endif %}">{{ ell }}</span>
+            {% endif %}
+            {% if student_info.sped and student_info.sped|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800" title="Special Education">SPED</span>{% endif %}
+            {% if student_info.in_504 and student_info.in_504|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800" title="Section 504 Plan">504</span>{% endif %}
+            {% if student_info.gate and student_info.gate|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800" title="Gifted and Talented Education">GATE</span>{% endif %}
+            {% if student_info.sed and student_info.sed|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-700" title="Socioeconomically Disadvantaged">SED</span>{% endif %}
+            {% if student_info.foster and student_info.foster|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-800">Foster</span>{% endif %}
+            {% if student_info.homeless and student_info.homeless|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-800">Homeless</span>{% endif %}
+            {% if student_info.migrant and student_info.migrant|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-teal-800">Migrant</span>{% endif %}
+            {% if student_info.dli and student_info.dli|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-800" title="Dual Language Immersion">DLI</span>{% endif %}
+            {% if student_info.ltel and student_info.ltel|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-800" title="Long-Term English Learner">LTEL</span>{% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+    {# ---------- Detail cards ---------- #}
+    {% if student_details.has_any or student_cte_details.has_any %}
+    <div class="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:items-start">
+
+        {% for plan in student_details.requirements.diploma %}{% if forloop.first %}
+        <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <button type="button" @click="node = (node === 'diploma' ? null : 'diploma')"
+                class="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50">
+                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 10L12 5 2 10l10 5 10-5zM6 12v5c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5v-5"></path></svg>
+                </span>
+                <span class="min-w-0 flex-1">
+                    <span class="block text-sm font-semibold text-slate-800">Diploma Requirements</span>
+                    <span class="block truncate text-[11px] text-slate-500">{{ plan.display_label|default:plan.label }}{% if plan.pathway_credits %} · {{ plan.pathway_credits }} cr{% endif %} · {{ plan.met_count }}/{{ plan.row_count }} areas met{% if student_details.requirements.diploma|length > 1 %} · {{ student_details.requirements.diploma|length }} options{% endif %}</span>
+                </span>
+                <svg class="h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200" :class="{ 'rotate-180': node === 'diploma' }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            </button>
+            <div x-show="node === 'diploma'" x-collapse x-cloak class="border-t border-slate-100 px-4 py-4">
+                {% if plan.row_count %}
+                <div class="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div class="h-full rounded-full bg-indigo-500" style="width: {% widthratio plan.met_count plan.row_count 100 %}%"></div>
+                </div>
+                {% endif %}
+                <div class="space-y-2">
+                    {% for row in plan.rows %}
+                    <div class="flex items-center justify-between gap-2 text-[11px]">
+                        <span class="truncate text-slate-700">{{ row.subject_area }}</span>
+                        <span class="flex items-center gap-2 whitespace-nowrap">
+                            <span class="tabular-nums text-slate-500">{{ row.counted_credits|floatformat:"-2" }}/{{ row.req_credits|floatformat:"-2" }}</span>
+                            <span class="rounded-full px-2 py-0.5 text-[9px] font-semibold
+                                {% if row.projection_status == 'Met' %}bg-emerald-100 text-emerald-800
+                                {% elif row.projection_status == 'Scheduled' %}bg-sky-100 text-sky-800
+                                {% else %}bg-rose-100 text-rose-800{% endif %}">{{ row.projection_status }}</span>
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </section>
+        {% endif %}{% endfor %}
+
+        {% for plan in student_details.requirements.ag %}{% if forloop.first %}
+        <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <button type="button" @click="node = (node === 'ag' ? null : 'ag')"
+                class="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50">
+                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3l9 4-9 4-9-4 9-4zM6 11v4.5c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5V11"></path></svg>
+                </span>
+                <span class="min-w-0 flex-1">
+                    <span class="block text-sm font-semibold text-slate-800">UC/CSU A-G</span>
+                    <span class="block truncate text-[11px] text-slate-500">{{ plan.met_count }}/{{ plan.row_count }} areas met</span>
+                </span>
+                <svg class="h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200" :class="{ 'rotate-180': node === 'ag' }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            </button>
+            <div x-show="node === 'ag'" x-collapse x-cloak class="border-t border-slate-100 px-4 py-4">
+                {% if plan.row_count %}
+                <div class="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div class="h-full rounded-full bg-violet-500" style="width: {% widthratio plan.met_count plan.row_count 100 %}%"></div>
+                </div>
+                {% endif %}
+                <div class="space-y-2">
+                    {% for row in plan.rows %}
+                    <div class="flex items-center justify-between gap-2 text-[11px]">
+                        <span class="truncate text-slate-700">{{ row.subject_area }}</span>
+                        <span class="flex items-center gap-2 whitespace-nowrap">
+                            <span class="tabular-nums text-slate-500">{{ row.counted_credits|floatformat:"-2" }}/{{ row.req_credits|floatformat:"-2" }}</span>
+                            <span class="rounded-full px-2 py-0.5 text-[9px] font-semibold
+                                {% if row.projection_status == 'Met' %}bg-emerald-100 text-emerald-800
+                                {% elif row.projection_status == 'Scheduled' %}bg-sky-100 text-sky-800
+                                {% else %}bg-rose-100 text-rose-800{% endif %}">{{ row.projection_status }}</span>
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </section>
+        {% endif %}{% endfor %}
+
+        {% if student_cte_details.has_any %}
+        <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <button type="button" @click="node = (node === 'cte' ? null : 'cte')"
+                class="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50">
+                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" stroke-width="2"></rect><line x1="8" y1="21" x2="16" y2="21" stroke-width="2"></line><line x1="12" y1="17" x2="12" y2="21" stroke-width="2"></line></svg>
+                </span>
+                <span class="min-w-0 flex-1">
+                    <span class="block text-sm font-semibold text-slate-800">CTE Pathways</span>
+                    <span class="block truncate text-[11px] text-slate-500">
+                        {% if student_cte_details.current %}
+                            {% if student_cte_details.current|length == 1 %}{{ student_cte_details.current.0.cte_pathway }}{% if student_cte_details.current.0.pathway_status %} · {{ student_cte_details.current.0.pathway_status }}{% endif %}
+                            {% else %}{{ student_cte_details.current|length }} active pathway{{ student_cte_details.current|length|pluralize }}{% if student_cte_details.past_completers %} · {{ student_cte_details.past_completers|length }} completed{% endif %}
+                            {% endif %}
+                        {% elif student_cte_details.past_completers %}{{ student_cte_details.past_completers|length }} completed pathway{{ student_cte_details.past_completers|length|pluralize }}
+                        {% else %}No pathway on record{% endif %}
+                    </span>
+                </span>
+                <span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{% with cur_count=student_cte_details.current|length past_count=student_cte_details.past_completers|length %}{{ cur_count|add:past_count }}{% endwith %}</span>
+                <svg class="h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200" :class="{ 'rotate-180': node === 'cte' }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            </button>
+            <div x-show="node === 'cte'" x-collapse x-cloak class="space-y-3 border-t border-slate-100 px-4 py-4">
+                {% if student_cte_details.current %}
+                <div>
+                    <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Current pathways</p>
+                    <div class="space-y-2">
+                        {% for pathway in student_cte_details.current %}
+                        <div class="rounded-xl border border-slate-200 p-3">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div class="flex flex-wrap items-center gap-1.5">
+                                        <span class="text-sm font-semibold text-slate-900">{{ pathway.cte_pathway }}</span>
+                                        {% if pathway.is_completer %}<span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">Completer</span>{% endif %}
+                                    </div>
+                                    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
+                                        {% if pathway.industry_sector %}<span class="rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-600">{{ pathway.industry_sector }}</span>{% endif %}
+                                        <span>{{ pathway.course_count }} course{{ pathway.course_count|pluralize }}</span>
+                                        <span class="text-slate-300">·</span>
+                                        <span>{{ pathway.total_credits|floatformat:"-2" }} credits</span>
+                                        {% if pathway.school_year %}<span class="text-slate-300">·</span><span>{{ pathway.school_year }}</span>{% endif %}
+                                    </div>
+                                </div>
+                                <span class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold
+                                    {% if pathway.is_completer %}bg-emerald-100 text-emerald-800
+                                    {% elif pathway.pathway_status == 'In Progress' %}bg-sky-100 text-sky-800
+                                    {% else %}bg-amber-100 text-amber-900{% endif %}">
+                                    <span class="h-1.5 w-1.5 rounded-full {% if pathway.is_completer %}bg-emerald-500{% elif pathway.pathway_status == 'In Progress' %}bg-sky-500{% else %}bg-amber-500{% endif %}"></span>
+                                    {{ pathway.pathway_status|default:"—" }}
+                                </span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% if student_cte_details.past_completers %}
+                <div>
+                    <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Completed pathways</p>
+                    <div class="space-y-1.5">
+                        {% for p in student_cte_details.past_completers %}
+                        <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2">
+                            <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                {% if p.industry_sector %}<span class="rounded bg-white px-1.5 py-0.5 font-semibold text-emerald-700">{{ p.industry_sector }}</span>{% endif %}
+                                <span class="font-semibold text-slate-900">{{ p.cte_pathway }}</span>
+                            </div>
+                            <span class="text-[10px] font-medium text-slate-500">{{ p.school_year }}{% if p.pathway_status %} · {{ p.pathway_status }}{% endif %}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% if not student_cte_details.current and not student_cte_details.past_completers %}
+                <p class="text-[11px] text-slate-500">No CTE pathway on record.</p>
+                {% endif %}
+            </div>
+        </section>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+<style>
+@keyframes orbit-spin { 100% { transform: rotate(360deg); } }
+</style>
+{% endwith %}
+{% endif %}
