@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}DESI Admin Dashboard - DS Data{% endblock %}
 
@@ -582,7 +583,7 @@
     });
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="{% static 'vendor/sortable/Sortable.min.js' %}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', () => {
         const orderList = document.getElementById('assessment-order-list');

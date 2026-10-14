@@ -5,7 +5,7 @@
 {% block title %}{{ page.title }} – DataViz{% endblock %}
 
 {% block extra_head %}
-<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+{% include 'partials/vendor_echarts.html' %}
 <style>
   /* Responsive grid: 12-col on desktop, single-col on mobile.
      Matches builder GridStack: cellHeight=80px, margin=8px, overflow=hidden */
