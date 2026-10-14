@@ -1462,6 +1462,11 @@ def execute_drill_query(
             if k_clean in ('ssid', 'student_id', 'stu_annual_key') and k_clean not in r:
                 r[k_clean] = v
 
+    # ``stu_annual_key`` is an internal join/dedup key (and still used for
+    # cursor pagination below) — never expose it as a drill column.
+    cols = [c for c in cols if c.split('.')[-1] != 'stu_annual_key']
+    all_columns = [c for c in all_columns if c.split('.')[-1] != 'stu_annual_key']
+
     total = sql_total_rows if sql_total_rows is not None else len(rows)
     if sql_total_rows is not None:
         paged = rows

@@ -32,7 +32,7 @@
             {% for status in student.assessment_statuses %}
                 {% cycle 'bg-blue-700' 'bg-emerald-700' 'bg-violet-700' 'bg-amber-700' 'bg-rose-700' 'bg-cyan-700' as assessment_color silent %}
                 <div class="flex items-center gap-1.5 min-w-0 text-[10px]">
-                    <span class="{% if status.is_seis %}bg-violet-700{% else %}{{ assessment_color }}{% endif %} w-1.5 h-3.5 rounded-sm shrink-0" aria-hidden="true"></span>
+                    <span class="{% if status.is_seis %}bg-violet-700{% elif status.is_sped %}bg-purple-600{% else %}{{ assessment_color }}{% endif %} w-1.5 h-3.5 rounded-sm shrink-0" aria-hidden="true"></span>
                     <span class="truncate text-slate-600" title="{{ status.assessment.name }}{% if status.assessment.subject %} — {{ status.assessment.subject }}{% endif %}">
                         {{ status.assessment.name }}{% if status.assessment.subject %} — {{ status.assessment.subject }}{% endif %}
                     </span>
@@ -40,6 +40,8 @@
                     <span class="ml-auto text-[9px] font-semibold text-violet-700 shrink-0">SEIS</span>
                     {% elif status.is_completed %}
                     <span class="ml-auto text-[9px] font-semibold text-emerald-700 shrink-0">Completed</span>
+                    {% elif status.is_sped %}
+                    <span class="ml-auto text-[9px] font-semibold text-purple-700 shrink-0">SPED</span>
                     {% else %}
                     <span class="ml-auto text-[9px] font-semibold text-amber-700 shrink-0">Pending</span>
                     {% endif %}

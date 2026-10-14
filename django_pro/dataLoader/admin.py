@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from .models import (
     SurveyDefinition, SurveyQuestion, SurveyResponse, ImportLog,
-    ResponseScaleLabel, SurveyTopic, APExamCode, APAwardType,
+    ResponseScaleLabel, SurveyTopic, SurveyColorPalette, APExamCode, APAwardType,
     APImportLog, APStudentAward, APExamResult,
     SATImportLog, SATResult, SATSettings,
 )
@@ -11,6 +11,12 @@ from .models import (
 @admin.register(SurveyTopic)
 class SurveyTopicAdmin(admin.ModelAdmin):
     list_display = ['name', 'color']
+    search_fields = ['name']
+
+
+@admin.register(SurveyColorPalette)
+class SurveyColorPaletteAdmin(admin.ModelAdmin):
+    list_display = ['name', 'updated_at']
     search_fields = ['name']
 
 

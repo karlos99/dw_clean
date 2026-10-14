@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Set, Tuple
 from dataclasses import dataclass
 from django.db import transaction, connection
 from django.utils import timezone
+import logging
 import threading
 
 from dataLoader.models import (
@@ -14,6 +15,9 @@ from dataLoader.models import (
 )
 from dataLoader.utils.column_analyzer import AnalysisResult, QuestionColumn, parse_csv_rows
 from dataLoader.utils.student_matcher import StudentMatcher, MatchResult
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,6 +50,9 @@ class ResponseLoader:
         self.config = config or LoaderConfig()
         self.survey_definition: Optional[SurveyDefinition] = None
         self.questions: Dict[str, SurveyQuestion] = {}
+        # question.pk -> {label: value} for TEXT-only layouts, so responses can
+        # be resolved from the label text when there is no numeric VALUES column.
+        self.label_lookup: Dict[int, Dict[str, int]] = {}
         self.matcher: Optional[StudentMatcher] = None
         self._stop_flag = False
     
@@ -87,12 +94,16 @@ class ResponseLoader:
             raise ValueError("Must call create_survey_definition first")
         
         self.questions = {}
+        self.label_lookup = {}
         labels_to_create = []
         
         for i, q in enumerate(self.analysis.questions):
+            # TEXT-only questions have no numeric VALUES column; fall back to the
+            # TEXT header as the (unique) source column name/key.
+            value_col_name = q.value_column or q.text_column
             question, created = SurveyQuestion.objects.get_or_create(
                 survey_definition=self.survey_definition,
-                value_column_name=q.value_column,
+                value_column_name=value_col_name,
                 defaults={
                     'question_text': q.question_text,
                     'text_column_name': q.text_column,
@@ -108,14 +119,18 @@ class ResponseLoader:
                 question.response_scale_max = q.response_scale_max
                 question.save()
             
-            # Collect scale labels for bulk create
+            # Collect scale labels for bulk create and remember the reverse
+            # (label -> value) mapping for resolving TEXT-only responses.
             if q.scale_labels:
+                self.label_lookup[question.pk] = {
+                    label: value for value, label in q.scale_labels.items()
+                }
                 for value, label in q.scale_labels.items():
                     labels_to_create.append(
                         ResponseScaleLabel(question=question, value=value, label=label)
                     )
             
-            self.questions[q.value_column] = question
+            self.questions[value_col_name] = question
         
         # Bulk create scale labels with update on conflict
         if labels_to_create:
@@ -276,6 +291,13 @@ class ResponseLoader:
                     value_str = row.get(value_col, '').strip()
                     value_int = int(value_str) if value_str and value_str.isdigit() else None
 
+                    # TEXT-only layout: the source column holds a label, not a
+                    # number, so resolve it through the question's scale labels.
+                    if value_int is None and value_str:
+                        lookup = self.label_lookup.get(question.pk)
+                        if lookup:
+                            value_int = lookup.get(value_str)
+
                     responses_to_create.append(SurveyResponse(
                         student_id=student_id,
                         ssid=ssid,
@@ -358,6 +380,7 @@ def run_import_async(import_log_id: int, file_content: str, analysis_data: dict,
                         text_column_index=q['text_column_index'],
                         response_scale_max=q.get('response_scale_max', 7),
                         scale_labels=q.get('scale_labels', {}),
+                        text_only=q.get('text_only', False),
                     )
                     for q in analysis_data['questions']
                 ],
@@ -383,6 +406,52 @@ def run_import_async(import_log_id: int, file_content: str, analysis_data: dict,
         finally:
             connection.close()
     
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return thread
+
+
+_survey_sync_lock = threading.Lock()
+_survey_sync_requested = threading.Event()
+
+
+def run_survey_clickhouse_sync_async():
+    """
+    Rebuild the ``analytics_survey_responses`` ClickHouse table in a background
+    thread so Data Exploration reflects survey publish/unpublish without a manual
+    ``manage.py sync_to_clickhouse``. Concurrent requests are coalesced: if a
+    sync is already running, the request is folded into a follow-up pass.
+    Best-effort: failures are logged and never surface to the user.
+    """
+    from django.core.management import call_command
+
+    _survey_sync_requested.set()
+    if not _survey_sync_lock.acquire(blocking=False):
+        # A worker is already running and will pick up this request.
+        return None
+
+    def _run():
+        try:
+            while _survey_sync_requested.is_set():
+                _survey_sync_requested.clear()
+                connection.close()
+                try:
+                    call_command(
+                        'sync_to_clickhouse',
+                        tables='analytics_survey_responses',
+                        full=True,
+                    )
+                    logger.info("Survey ClickHouse sync completed.")
+                except Exception:
+                    logger.exception("Survey ClickHouse sync failed.")
+                finally:
+                    connection.close()
+        finally:
+            _survey_sync_lock.release()
+            # A request may have arrived between the loop check and the release.
+            if _survey_sync_requested.is_set():
+                run_survey_clickhouse_sync_async()
+
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
     return thread

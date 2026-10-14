@@ -3,7 +3,7 @@
 
 {% block content %}
 {% include "dataviz/submenu.html" %}
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+<div class="w-full px-4 sm:px-6 lg:px-8 py-10">
     <!-- Header -->
     <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -21,7 +21,7 @@
     </div>
 
     <!-- Datasets Table -->
-    <div class="bg-white border border-slate-200 shadow rounded-none overflow-hidden">
+    <div class="bg-white border border-slate-200 shadow rounded-none overflow-x-auto">
         {% if datasets %}
         <table class="min-w-full divide-y divide-slate-200">
             <thead class="bg-slate-50">

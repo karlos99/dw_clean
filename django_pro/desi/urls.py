@@ -27,6 +27,7 @@ from .views import (
     support_default_rule_list,
     support_default_rule_form,
     support_default_rule_manage,
+    support_default_rule_result_options,
     delete_support_default_rule,
 )
 
@@ -57,6 +58,7 @@ urlpatterns = [
     path('support-rules/<int:id>/delete/', delete_support_rule, name='support_rule_delete'),
     path('default-rules/', support_default_rule_list, name='support_default_rule_list'),
     path('default-rules/manage/<int:support_id>/', support_default_rule_manage, name='support_default_rule_manage'),
+    path('default-rules/result-options/', support_default_rule_result_options, name='support_default_rule_result_options'),
     path('default-rules/create/', support_default_rule_form, name='support_default_rule_create'),
     path('default-rules/<int:id>/edit/', support_default_rule_form, name='support_default_rule_edit'),
     path('default-rules/<int:id>/delete/', delete_support_default_rule, name='support_default_rule_delete'),

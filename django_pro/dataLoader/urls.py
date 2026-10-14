@@ -19,7 +19,12 @@ urlpatterns = [
     path('topics/<int:pk>/update/', views.update_topic, name='update_topic'),
     path('topics/<int:pk>/delete/', views.delete_topic, name='delete_topic'),
 
+    path('palettes/', views.color_palette_list, name='color_palette_list'),
+    path('palettes/<int:pk>/update/', views.update_color_palette, name='update_color_palette'),
+    path('palettes/<int:pk>/delete/', views.delete_color_palette, name='delete_color_palette'),
+
     path('surveys/', views.SurveyDefinitionListView.as_view(), name='survey_list'),
+    path('surveys/settings/', views.SurveySettingsView.as_view(), name='survey_settings'),
     path('surveys/<int:pk>/', views.SurveyDefinitionDetailView.as_view(), name='survey_detail'),
     path('surveys/<int:pk>/delete/', views.delete_survey, name='delete_survey'),
     path('surveys/<int:pk>/publish/', views.toggle_publish, name='toggle_publish'),
@@ -29,6 +34,7 @@ urlpatterns = [
     path('surveys/<int:pk>/topics/existing/', views.existing_survey_topics, name='survey_topics_existing'),
     path('surveys/<int:pk>/topics/<int:topic_pk>/delete/', views.delete_survey_topic, name='delete_survey_topic'),
     path('surveys/<int:pk>/questions/<int:question_pk>/topic/', views.assign_question_topic, name='assign_question_topic'),
+    path('surveys/<int:pk>/questions/<int:question_pk>/colors/', views.save_question_colors, name='save_question_colors'),
 
     path('ap/upload/', views.APUploadView.as_view(), name='ap_upload'),
     path('ap/preview/', views.APPreviewView.as_view(), name='ap_preview'),

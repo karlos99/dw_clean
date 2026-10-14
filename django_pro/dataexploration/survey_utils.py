@@ -148,7 +148,8 @@ def get_survey_columns(column_filters=None):
             col_key = _generate_survey_column_key(survey_type, school_year, window, order, grade_range)
             
             # Store response colors and scale for this column
-            # response_colors format: {'scale_5': {...}, 'scale_7': {...}}
+            # response_colors format: {'scale_5': {...}, 'scale_7': {...},
+            #                          'questions': {'<order>': {value: color}}}
             question_scale = scale_max or 5
             # psycopg3 may return JSONB columns as strings from raw cursor queries
             if isinstance(response_colors, str):
@@ -156,21 +157,22 @@ def get_survey_columns(column_filters=None):
                     response_colors = json.loads(response_colors)
                 except (json.JSONDecodeError, TypeError):
                     response_colors = {}
+            if not isinstance(response_colors, dict):
+                response_colors = {}
+            # A question can override the survey-wide palette for its own
+            # response range; anything not overridden falls back to scale_N.
+            q_overrides = (response_colors.get('questions') or {}).get(str(order)) or {}
+            effective_colors = {
+                'scale_5': {**(response_colors.get('scale_5') or {}), **q_overrides},
+                'scale_7': {**(response_colors.get('scale_7') or {}), **q_overrides},
+            }
             _short_label = _abbreviate_survey_header(survey_type, school_year, window, grade_range)
-            if response_colors:
-                column_colors[col_key] = {
-                    'colors': response_colors,
-                    'scale_max': question_scale,
-                    'short_label': _short_label,
-                    'topic': theme_name or '',
-                }
-            else:
-                column_colors[col_key] = {
-                    'colors': {},
-                    'scale_max': question_scale,
-                    'short_label': _short_label,
-                    'topic': theme_name or '',
-                }
+            column_colors[col_key] = {
+                'colors': effective_colors,
+                'scale_max': question_scale,
+                'short_label': _short_label,
+                'topic': theme_name or '',
+            }
             
             # Add question info
             columns[school_year][type_grade_key]['windows'][window][order] = {

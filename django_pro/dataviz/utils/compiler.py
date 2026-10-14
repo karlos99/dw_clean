@@ -322,10 +322,26 @@ def get_columns_for_table(table_name: str) -> set:
     return final_cols
 
 
-def get_allowed_dataset_tables():
+def _persisted_dataset_base_tables(db_tables: dict) -> set[str]:
+    """Base tables referenced by saved datasets (may be outside the builder allowlist)."""
+    try:
+        from dataviz.models import Dataset
+        return {
+            t for t in Dataset.objects.values_list('base_table', flat=True).distinct()
+            if t and t in db_tables
+        }
+    except Exception:
+        logger.warning('Could not load persisted dataset base tables', exc_info=True)
+        return set()
+
+
+def get_allowed_dataset_tables(*, for_dataset_builder: bool = False):
     """
-    Return the set of database tables allowed for dataset construction.
-    Filters the dynamically discovered tables based on settings config.
+    Return database tables allowed for dataset construction / compilation.
+
+    ``ProjectConfig.enabled_dataset_tables`` restricts the Dataset Builder UI.
+    Saved datasets may still use other base tables (e.g. CCGI analytics) at
+    runtime unless ``for_dataset_builder=True``.
     """
     from landing.utils import get_project_config
     from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES
@@ -338,7 +354,11 @@ def get_allowed_dataset_tables():
         cfg = get_project_config()
         enabled = getattr(cfg, 'enabled_dataset_tables', None)
         if enabled is not None:
-            return {t: db_tables[t] for t in enabled if t in db_tables}
+            allowed = {t: db_tables[t] for t in enabled if t in db_tables}
+            if not for_dataset_builder:
+                for t in _persisted_dataset_base_tables(db_tables):
+                    allowed[t] = db_tables[t]
+            return allowed
     except Exception:
         pass
     return db_tables
@@ -427,6 +447,39 @@ COLUMN_WHITELIST = {
     'analytics_survey_responses': {
         'student_id', 'ssid', 'survey_type', 'school_year', 'testing_window',
         'grade_range', 'question_order', 'value',
+    },
+    'analytics_ccgi_favorite_career': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year', 'career',
+    },
+    'analytics_ccgi_career_cluster': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year', 'cluster', 'cluster_count',
+    },
+    'analytics_ccgi_college_financial': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year',
+        'csu_gpa', 'csu_eligibility', 'csu_completed_apps', 'csu_in_progress_apps',
+        'uc_gpa', 'uc_eligibility', 'uc_completed_apps', 'uc_in_progress_apps',
+        'ccc_completed_apps', 'ccc_completed_app',
+        'ccc_most_recent_completed_date', 'financial_aid_status',
+        'csu_eligibility_detail', 'uc_eligibility_detail',
+        'csu_requires_review', 'uc_requires_review', 'review_scope',
+        'ccc_apply_id',
+    },
+    'analytics_ccgi_college_application': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year',
+        'system', 'application_status', 'college_name',
+        'most_recent_completed_date',
+        'csu_eligibility', 'uc_eligibility', 'application_id',
+        'csu_gpa', 'uc_gpa',
+    },
+    'analytics_ccgi_application_status': {
+        'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year',
+        'system', 'application_status', 'eligibility',
+        'csu_gpa', 'uc_gpa',
     },
     'users_user': {
         'id', 'username', 'email', 'name', 'first_name', 'last_name', 'is_active',

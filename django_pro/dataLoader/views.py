@@ -19,13 +19,13 @@ from django.conf import settings
 from .access_control import project_admin_required, ProjectAdminRequiredMixin
 from .models import (
     SurveyDefinition, SurveyQuestion, SurveyResponse, ImportLog,
-    TestingWindow, ImportStatus, SurveyTopic,
+    TestingWindow, ImportStatus, SurveyTopic, SurveyColorPalette,
     APExamCode, APAwardType, APImportLog, APStudentAward, APExamResult, APImportStatus,
     SATImportLog, SATResult, SATSettings, SATImportStatus,
     SAT_PERCENTILE_REGIONS, SAT_PERCENTILE_METRICS,
 )
 from .utils.column_analyzer import analyze_csv, AnalysisResult
-from .utils.response_loader import ResponseLoader, LoaderConfig
+from .utils.response_loader import ResponseLoader, LoaderConfig, run_survey_clickhouse_sync_async
 
 
 # School year choices - generate dynamically
@@ -55,6 +55,24 @@ def _status_css(status):
         'PARTIAL': 'bg-amber-100 text-amber-800',
         'PENDING': 'bg-slate-100 text-slate-800',
     }.get(status, 'bg-slate-100 text-slate-800')
+
+
+def _invalidate_survey_caches():
+    """
+    Clear cached survey structures and the rendered Data Explorer column panel.
+
+    Category (topic) assignments and publish changes must refresh BOTH:
+      * the raw survey structure cache (``survey_columns_v8*``), and
+      * the rendered Data Explorer sidebar fragment
+        (``dataexp:column_structures_html*``),
+    otherwise Data Exploration keeps showing the previous grouping for up to an
+    hour because survey edits do not bump the ClickHouse sync version.
+    """
+    try:
+        cache.delete_pattern('*survey_columns_v8*')
+        cache.delete_pattern('*dataexp:column_structures_html*')
+    except Exception:
+        pass
 
 
 def _normalize_survey_import(obj):
@@ -148,6 +166,7 @@ def _build_loader_cards():
             'name': 'Surveys',
             'description': 'Panorama SEL skills, competencies, and other survey CSV exports.',
             'upload_url': reverse('dataLoader:upload'),
+            'settings_url': reverse('dataLoader:survey_settings'),
             'accent': 'blue',
             'button_css': 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
             'icon_bg': 'bg-blue-100',
@@ -306,6 +325,7 @@ class UploadView(ProjectAdminRequiredMixin, View):
                         'text_column_index': q.text_column_index,
                         'response_scale_max': q.response_scale_max,
                         'scale_labels': q.scale_labels,
+                        'text_only': q.text_only,
                     }
                     for q in analysis.questions
                 ],
@@ -466,6 +486,64 @@ class SurveyDefinitionDetailView(ProjectAdminRequiredMixin, DetailView):
         return context
 
 
+class SurveySettingsView(ProjectAdminRequiredMixin, View):
+    """
+    Survey settings: select a survey, then assign each of its questions to a
+    category (SurveyTopic). Assignments are saved via the existing
+    assign_question_topic AJAX endpoint so the Data Exploration grouping updates.
+    """
+    template_name = 'dataLoader/survey_settings.html'
+
+    def get(self, request):
+        surveys = SurveyDefinition.objects.order_by(
+            '-school_year', 'survey_type', 'testing_window', 'grade_range'
+        )
+
+        selected = None
+        selected_pk = request.GET.get('survey', '').strip()
+        if selected_pk.isdigit():
+            selected = SurveyDefinition.objects.filter(pk=int(selected_pk)).first()
+        if selected is None:
+            selected = surveys.first()
+
+        questions = []
+        assigned_count = 0
+        question_colors = {}
+        if selected:
+            questions = list(selected.questions.select_related('topic').order_by('order'))
+            assigned_count = sum(1 for q in questions if q.topic_id)
+
+            rc = selected.response_colors if isinstance(selected.response_colors, dict) else {}
+            base5 = rc.get('scale_5') or {}
+            base7 = rc.get('scale_7') or {}
+            overrides = rc.get('questions') or {}
+            for q in questions:
+                over = overrides.get(str(q.order)) or {}
+                scale_max = q.response_scale_max or 5
+                base = base7 if scale_max >= 7 else base5
+                question_colors[q.pk] = {
+                    'scale_max': scale_max,
+                    'colors': {**base, **over},
+                    'has_override': bool(over),
+                }
+
+        context = {
+            'surveys': surveys,
+            'selected': selected,
+            'questions': questions,
+            'topics': SurveyTopic.objects.order_by('name'),
+            'assigned_count': assigned_count,
+            'unassigned_count': len(questions) - assigned_count,
+            'question_colors_json': json.dumps(question_colors),
+            'color_palettes': SurveyColorPalette.objects.order_by('name'),
+            'color_palettes_data': {
+                str(p.pk): {'name': p.name, 'colors': p.colors}
+                for p in SurveyColorPalette.objects.all()
+            },
+        }
+        return render(request, self.template_name, context)
+
+
 # Function-based view for HTMX file upload progress (optional enhancement)
 @project_admin_required
 def check_import_status(request, pk):
@@ -514,6 +592,8 @@ def delete_import(request, pk):
         
         # Delete the import log (responses will cascade delete)
         import_log.delete()
+        _invalidate_survey_caches()
+        run_survey_clickhouse_sync_async()
         
         messages.success(
             request, 
@@ -546,6 +626,8 @@ def delete_survey(request, pk):
         
         # Delete the survey (questions and responses will cascade)
         survey.delete()
+        _invalidate_survey_caches()
+        run_survey_clickhouse_sync_async()
         
         messages.success(
             request, 
@@ -591,7 +673,8 @@ def toggle_publish(request, pk):
             messages.success(request, f"'{survey.name}' is now available in Data Exploration.")
         
         # Invalidate the survey columns cache so data exploration reflects the change immediately
-        cache.delete_pattern('*survey_columns_v8*')
+        _invalidate_survey_caches()
+        run_survey_clickhouse_sync_async()
         return redirect('dataLoader:survey_detail', pk=pk)
     
     # GET - show confirmation page
@@ -630,7 +713,8 @@ def quick_toggle_publish(request, pk):
         messages.success(request, f"'{survey.name}' is now published to Data Exploration.")
     
     # Invalidate the survey columns cache so data exploration reflects the change immediately
-    cache.delete_pattern('*survey_columns_v8*')
+    _invalidate_survey_caches()
+    run_survey_clickhouse_sync_async()
     return redirect('dataLoader:survey_list')
 
 
@@ -663,7 +747,8 @@ def quick_toggle_publish_import(request, pk):
         messages.success(request, f"'{import_log.name}' is now published to Data Exploration.")
     
     # Invalidate the survey columns cache so data exploration reflects the change immediately
-    cache.delete_pattern('*survey_columns_v8*')
+    _invalidate_survey_caches()
+    run_survey_clickhouse_sync_async()
     return redirect('dataLoader:dashboard')
 
 
@@ -692,16 +777,69 @@ def save_response_colors(request, pk):
                     # Validate hex color format
                     if isinstance(color, str) and (color.startswith('#') or color == ''):
                         validated_colors[scale_key][str_value] = color
-        
+
+        # Preserve any per-question overrides ('questions') set elsewhere.
+        existing = survey.response_colors if isinstance(survey.response_colors, dict) else {}
+        if existing.get('questions'):
+            validated_colors['questions'] = existing['questions']
+
         survey.response_colors = validated_colors
         survey.save(update_fields=['response_colors'])
-        
+        _invalidate_survey_caches()
+
         return JsonResponse({'success': True, 'colors': validated_colors})
     
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+
+@project_admin_required
+def save_question_colors(request, pk, question_pk):
+    """
+    Save per-question response colors, overriding the survey default palette for
+    that question's response range. Sending an empty colors dict clears the
+    override so the question falls back to the survey-wide scale_N palette.
+    """
+    import json
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    survey = get_object_or_404(SurveyDefinition, pk=pk)
+    question = get_object_or_404(SurveyQuestion, pk=question_pk, survey_definition=survey)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    colors = data.get('colors') or {}
+    validated = {}
+    if isinstance(colors, dict):
+        for value, color in colors.items():
+            if isinstance(color, str) and color.startswith('#') and len(color) == 7:
+                validated[str(value)] = color
+
+    rc = survey.response_colors if isinstance(survey.response_colors, dict) else {}
+    questions = rc.get('questions') if isinstance(rc.get('questions'), dict) else {}
+    key = str(question.order)
+    if validated:
+        questions[key] = validated
+    else:
+        questions.pop(key, None)
+
+    if questions:
+        rc['questions'] = questions
+    else:
+        rc.pop('questions', None)
+
+    survey.response_colors = rc
+    survey.save(update_fields=['response_colors'])
+    _invalidate_survey_caches()
+
+    return JsonResponse({'success': True, 'colors': validated})
 
 
 @project_admin_required
@@ -733,6 +871,7 @@ def topic_list(request):
             return JsonResponse({'error': f'A topic named "{name}" already exists'}, status=400)
 
         topic = SurveyTopic.objects.create(name=name, color=color)
+        _invalidate_survey_caches()
         return JsonResponse({'topic': {'id': topic.pk, 'name': topic.name, 'color': topic.color}}, status=201)
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -763,6 +902,7 @@ def update_topic(request, pk):
         topic.color = color
 
     topic.save()
+    _invalidate_survey_caches()
     return JsonResponse({'topic': {'id': topic.pk, 'name': topic.name, 'color': topic.color}})
 
 
@@ -774,6 +914,97 @@ def delete_topic(request, pk):
 
     topic = get_object_or_404(SurveyTopic, pk=pk)
     topic.delete()  # SET_NULL on SurveyQuestion.topic clears references
+    _invalidate_survey_caches()
+    return JsonResponse({'success': True})
+
+
+def _validate_palette_colors(colors):
+    """Normalize a palette colors dict: {'scale_5': {value: '#hex'}, 'scale_7': {...}}."""
+    result = {}
+    if not isinstance(colors, dict):
+        return result
+    for scale_key in ('scale_5', 'scale_7'):
+        scale = colors.get(scale_key)
+        if isinstance(scale, dict):
+            cleaned = {}
+            for value, color in scale.items():
+                if isinstance(color, str) and color.startswith('#') and len(color) == 7:
+                    cleaned[str(value)] = color
+            if cleaned:
+                result[scale_key] = cleaned
+    return result
+
+
+@project_admin_required
+def color_palette_list(request):
+    """List (GET) or create (POST) saved color palettes."""
+    import json
+
+    if request.method == 'GET':
+        palettes = list(
+            SurveyColorPalette.objects.values('id', 'name', 'colors').order_by('name')
+        )
+        return JsonResponse({'palettes': palettes})
+
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        name = (data.get('name') or '').strip()
+        if not name:
+            return JsonResponse({'error': 'Name is required'}, status=400)
+        if SurveyColorPalette.objects.filter(name__iexact=name).exists():
+            return JsonResponse({'error': f'A palette named "{name}" already exists'}, status=400)
+
+        palette = SurveyColorPalette.objects.create(
+            name=name,
+            colors=_validate_palette_colors(data.get('colors') or {}),
+            created_by=request.user,
+        )
+        return JsonResponse(
+            {'palette': {'id': palette.pk, 'name': palette.name, 'colors': palette.colors}},
+            status=201,
+        )
+
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+@project_admin_required
+def update_color_palette(request, pk):
+    """Rename and/or recolor a saved palette."""
+    import json
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    palette = get_object_or_404(SurveyColorPalette, pk=pk)
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    name = (data.get('name') or '').strip()
+    if name and name != palette.name:
+        if SurveyColorPalette.objects.filter(name__iexact=name).exclude(pk=pk).exists():
+            return JsonResponse({'error': f'A palette named "{name}" already exists'}, status=400)
+        palette.name = name
+    if 'colors' in data:
+        palette.colors = _validate_palette_colors(data.get('colors') or {})
+
+    palette.save()
+    return JsonResponse({'palette': {'id': palette.pk, 'name': palette.name, 'colors': palette.colors}})
+
+
+@project_admin_required
+def delete_color_palette(request, pk):
+    """Delete a saved palette. Questions that already loaded it keep their colors."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    palette = get_object_or_404(SurveyColorPalette, pk=pk)
+    palette.delete()
     return JsonResponse({'success': True})
 
 
@@ -806,6 +1037,7 @@ def manage_survey_topics(request, pk):
             return JsonResponse({'error': f'A topic named "{name}" already exists'}, status=400)
 
         topic = SurveyTopic.objects.create(name=name, color=color)
+        _invalidate_survey_caches()
         return JsonResponse({'topic': {'id': topic.pk, 'name': topic.name, 'color': topic.color}}, status=201)
 
     return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -836,6 +1068,7 @@ def delete_survey_topic(request, pk, topic_pk):
     get_object_or_404(SurveyDefinition, pk=pk)  # 404 if survey doesn't exist
     topic = get_object_or_404(SurveyTopic, pk=topic_pk)
     topic.delete()
+    _invalidate_survey_caches()
     return JsonResponse({'success': True})
 
 
@@ -864,6 +1097,9 @@ def assign_question_topic(request, pk, question_pk):
         question.topic = None
 
     question.save(update_fields=['topic'])
+    # Invalidate the survey caches so Data Exploration grouping reflects the
+    # new category immediately.
+    _invalidate_survey_caches()
     return JsonResponse({'success': True})
 
 

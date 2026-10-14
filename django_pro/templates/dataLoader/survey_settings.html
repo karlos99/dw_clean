@@ -1,0 +1,698 @@
+{% extends "base.html" %}
+{% load static dataloader_tags %}
+
+{% block title %}Survey Settings - Data Loader{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <nav class="flex mb-4" aria-label="Breadcrumb">
+            <ol class="flex items-center space-x-2">
+                <li><a href="{% url 'dataLoader:dashboard' %}" class="text-slate-500 hover:text-slate-700">Data Loader</a></li>
+                <li><span class="text-slate-400">/</span></li>
+                <li class="text-slate-900 font-medium">Survey Settings</li>
+            </ol>
+        </nav>
+        <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Survey Settings</h1>
+        <p class="mt-2 text-slate-600">
+            Select a survey, then assign each question to a category. Categories drive how
+            questions are grouped in Data Exploration.
+        </p>
+    </div>
+
+    <!-- Survey selector -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-5 flex flex-wrap items-end justify-between gap-4">
+            <form method="get" class="flex items-end gap-3">
+                <div>
+                    <label for="survey" class="block text-sm font-medium text-slate-700 mb-1">Survey</label>
+                    <select name="survey" id="survey" onchange="this.form.submit()"
+                            class="w-full sm:w-96 px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        {% for s in surveys %}
+                        <option value="{{ s.pk }}" {% if selected and s.pk == selected.pk %}selected{% endif %}>
+                            {{ s.name }} — {{ s.survey_type }}{% if s.grade_range %} · {{ s.grade_range }}{% endif %} ({{ s.school_year }} {{ s.get_testing_window_display }})
+                        </option>
+                        {% empty %}
+                        <option value="">No surveys available</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <noscript>
+                    <button type="submit"
+                            class="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition">
+                        Load
+                    </button>
+                </noscript>
+            </form>
+            <a href="{% url 'dataLoader:topic_list' %}"
+               class="inline-flex items-center px-3 py-2 border border-indigo-300 text-indigo-700 text-sm rounded-md hover:bg-indigo-50 transition">
+                Manage Categories
+            </a>
+        </div>
+    </div>
+
+    {% if selected %}
+    <!-- Summary -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Questions</p>
+            <p class="mt-1 text-2xl font-bold text-slate-900">{{ questions|length }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Assigned</p>
+            <p class="mt-1 text-2xl font-bold text-green-600" id="assignedCount">{{ assigned_count }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Unassigned</p>
+            <p class="mt-1 text-2xl font-bold text-amber-600" id="unassignedCount">{{ unassigned_count }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 p-4">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Categories</p>
+            <p class="mt-1 text-2xl font-bold text-indigo-600">{{ topics|length }}</p>
+        </div>
+    </div>
+
+    <!-- Categories -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Categories</h2>
+            <p class="mt-1 text-sm text-slate-500">
+                Categories are global. Edit their name or color, or add a new one — then assign
+                them to the questions below. Changes appear in Data Exploration immediately.
+            </p>
+        </div>
+
+        <!-- Add category -->
+        <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+            <div class="flex flex-wrap items-end gap-3">
+                <div class="flex-1 min-w-[220px]">
+                    <label class="block text-xs font-medium text-slate-600 mb-1">New category name</label>
+                    <input id="newCategoryName" type="text" placeholder="e.g. Sense of Belonging"
+                           class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-600 mb-1">Color</label>
+                    <input id="newCategoryColor" type="color" value="#6366f1"
+                           class="w-10 h-9 rounded border border-slate-300 cursor-pointer">
+                </div>
+                <button id="createCategoryBtn"
+                        class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 transition">
+                    Add Category
+                </button>
+            </div>
+            <p id="createCategoryError" class="hidden mt-2 text-sm text-red-600"></p>
+        </div>
+
+        <!-- Existing categories -->
+        <div class="divide-y divide-slate-100">
+            {% for topic in topics %}
+            <div class="px-6 py-3 flex items-center justify-between gap-3" data-topic-row="{{ topic.pk }}">
+                <div class="flex items-center gap-3 min-w-0">
+                    <span class="category-dot inline-block w-3.5 h-3.5 rounded-full flex-shrink-0"
+                          style="background-color: {{ topic.color }}"></span>
+                    <span class="category-name text-sm font-medium text-slate-800 truncate">{{ topic.name }}</span>
+                    <span class="text-xs text-slate-400">{{ topic.questions.count }} question{{ topic.questions.count|pluralize }}</span>
+                </div>
+                <div class="category-view flex items-center gap-3 flex-shrink-0">
+                    <button type="button" class="category-edit-btn text-blue-600 hover:text-blue-900 text-sm" data-pk="{{ topic.pk }}">Edit</button>
+                    <button type="button" class="category-delete-btn text-red-600 hover:text-red-900 text-sm" data-pk="{{ topic.pk }}" data-name="{{ topic.name }}">Delete</button>
+                </div>
+                <div class="category-edit-mode hidden items-center gap-2 flex-shrink-0">
+                    <input type="color" class="category-edit-color w-8 h-8 rounded border border-slate-300 cursor-pointer" value="{{ topic.color }}">
+                    <input type="text" class="category-edit-name px-2 py-1 border border-slate-300 rounded text-sm w-48 focus:outline-none focus:ring-1 focus:ring-indigo-400" value="{{ topic.name }}">
+                    <button type="button" class="category-save-btn px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700" data-pk="{{ topic.pk }}">Save</button>
+                    <button type="button" class="category-cancel-btn px-3 py-1 border border-slate-300 text-slate-600 text-sm rounded hover:bg-slate-100">Cancel</button>
+                </div>
+            </div>
+            {% empty %}
+            <div class="px-6 py-8 text-center text-sm text-slate-500">No categories yet. Add one above.</div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Color palettes -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-900">Color palettes</h2>
+            <p class="mt-1 text-sm text-slate-500">
+                Save reusable response-color palettes, then load them onto any question below.
+            </p>
+        </div>
+
+        <!-- Add palette -->
+        <div class="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+            <div class="flex flex-wrap items-end gap-3">
+                <div class="flex-1 min-w-[200px]">
+                    <label class="block text-xs font-medium text-slate-600 mb-1">New palette name</label>
+                    <input id="newPaletteName" type="text" placeholder="e.g. Low / Mid / High"
+                           class="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <button id="addPaletteBtn"
+                        class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 transition">
+                    Add Palette
+                </button>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-6">
+                <div>
+                    <p class="text-xs font-medium text-slate-600 mb-1">Scale 1–5</p>
+                    <div id="newPalette5" class="flex gap-2"></div>
+                </div>
+                <div>
+                    <p class="text-xs font-medium text-slate-600 mb-1">Scale 1–7</p>
+                    <div id="newPalette7" class="flex gap-1.5"></div>
+                </div>
+            </div>
+            <p id="paletteError" class="hidden mt-2 text-sm text-red-600"></p>
+        </div>
+
+        <!-- Existing palettes -->
+        <div class="divide-y divide-slate-100">
+            {% for p in color_palettes %}
+            <div class="px-6 py-3 flex flex-wrap items-center justify-between gap-3" data-palette-row="{{ p.pk }}">
+                <div class="flex items-center gap-3 min-w-0">
+                    <span class="text-sm font-medium text-slate-800 truncate">{{ p.name }}</span>
+                    <span class="flex gap-0.5">
+                        {% for v in "12345"|make_list %}
+                        <span class="w-4 h-4 rounded-sm border border-slate-200"
+                              style="background-color: {{ p.colors.scale_5|get_item:v|default:'#ffffff' }}"></span>
+                        {% endfor %}
+                    </span>
+                    <span class="flex gap-0.5">
+                        {% for v in "1234567"|make_list %}
+                        <span class="w-4 h-4 rounded-sm border border-slate-200"
+                              style="background-color: {{ p.colors.scale_7|get_item:v|default:'#ffffff' }}"></span>
+                        {% endfor %}
+                    </span>
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                    <button type="button" class="palette-apply-btn text-indigo-600 hover:text-indigo-900 text-sm" data-pk="{{ p.pk }}">Apply to all questions</button>
+                    <button type="button" class="palette-edit-btn text-blue-600 hover:text-blue-900 text-sm" data-pk="{{ p.pk }}">Edit</button>
+                    <button type="button" class="palette-delete-btn text-red-600 hover:text-red-900 text-sm" data-pk="{{ p.pk }}" data-name="{{ p.name }}">Delete</button>
+                </div>
+                <div class="palette-edit-mode hidden items-center gap-2 w-full flex-wrap">
+                    <input type="text" class="palette-edit-name px-2 py-1 border border-slate-300 rounded text-sm w-48 focus:outline-none focus:ring-1 focus:ring-indigo-400" value="{{ p.name }}">
+                    <div class="palette-edit-5 flex gap-1.5" data-palette-id="{{ p.pk }}"></div>
+                    <div class="palette-edit-7 flex gap-1.5" data-palette-id="{{ p.pk }}"></div>
+                    <button type="button" class="palette-save-btn px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700" data-pk="{{ p.pk }}">Save</button>
+                    <button type="button" class="palette-cancel-btn px-3 py-1 border border-slate-300 text-slate-600 text-sm rounded hover:bg-slate-100">Cancel</button>
+                </div>
+            </div>
+            {% empty %}
+            <div class="px-6 py-8 text-center text-sm text-slate-500">No palettes yet. Add one above.</div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Questions -->
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 mb-6">
+        <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-slate-900">Questions ({{ questions|length }})</h2>
+            <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" id="onlyUnassigned"
+                       class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4">
+                Show only unassigned
+            </label>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">#</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Question</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Category</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Response colors</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Scale</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-200">
+                    {% for question in questions %}
+                    <tr class="hover:bg-slate-50 question-row" data-assigned="{% if question.topic_id %}1{% else %}0{% endif %}">
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">{{ question.order|add:1 }}</td>
+                        <td class="px-6 py-3 text-sm text-slate-900">
+                            <div title="{{ question.question_text }}">{{ question.question_text|truncatechars:110 }}</div>
+                        </td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm">
+                            <div class="flex items-center gap-2">
+                                <span class="topic-dot-{{ question.pk }} inline-block w-2.5 h-2.5 rounded-full {% if not question.topic %}hidden{% endif %}"
+                                      style="background-color: {{ question.topic.color|default:'transparent' }}"></span>
+                                <select class="question-topic-select text-sm border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                        data-question-id="{{ question.pk }}"
+                                        data-survey-pk="{{ selected.pk }}">
+                                    <option value="">— Uncategorized —</option>
+                                    {% for topic in topics %}
+                                    <option value="{{ topic.id }}" {% if question.topic_id == topic.id %}selected{% endif %}
+                                            data-color="{{ topic.color }}">{{ topic.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm">
+                            <button type="button" class="qcolor-btn text-blue-600 hover:text-blue-900 text-sm"
+                                    data-question-id="{{ question.pk }}">Colors</button>
+                        </td>
+                        <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-500">1-{{ question.response_scale_max }}</td>
+                    </tr>
+                    <tr class="qcolor-row hidden" data-qcolor-row="{{ question.pk }}">
+                        <td colspan="5" class="px-6 pb-4">
+                            <div class="qcolor-panel" data-question-id="{{ question.pk }}"></div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="px-6 py-4 text-center text-sm text-slate-500">No questions defined for this survey.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 px-6 py-16 text-center">
+        <p class="text-sm text-slate-500">No surveys have been imported yet.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% if selected %}
+{{ color_palettes_data|json_script:"colorPalettesData" }}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const CSRF = '{{ csrf_token }}';
+    const SURVEY_PK = {{ selected.pk }};
+
+    // ── Category assignment ────────────────────────────────────────────────
+    function updateDot(questionPk, color) {
+        const dot = document.querySelector(`.topic-dot-${questionPk}`);
+        if (!dot) return;
+        if (color) {
+            dot.style.backgroundColor = color;
+            dot.classList.remove('hidden');
+        } else {
+            dot.classList.add('hidden');
+        }
+    }
+
+    async function assignTopic(questionPk, topicId) {
+        await fetch(`/dataloader/surveys/${SURVEY_PK}/questions/${questionPk}/topic/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            body: JSON.stringify({ topic_id: topicId || null }),
+        });
+    }
+
+    let assigned = {{ assigned_count }};
+    const total = {{ questions|length }};
+    const assignedEl = document.getElementById('assignedCount');
+    const unassignedEl = document.getElementById('unassignedCount');
+
+    function refreshCounts() {
+        assignedEl.textContent = assigned;
+        unassignedEl.textContent = total - assigned;
+    }
+
+    document.querySelectorAll('.question-topic-select').forEach(sel => {
+        sel.addEventListener('change', function () {
+            const topicId = this.value ? parseInt(this.value) : null;
+            const questionPk = this.dataset.questionId;
+            const color = topicId ? this.options[this.selectedIndex].dataset.color : null;
+            const row = this.closest('.question-row');
+            const wasAssigned = row.dataset.assigned === '1';
+            const nowAssigned = !!topicId;
+
+            if (wasAssigned !== nowAssigned) {
+                assigned += nowAssigned ? 1 : -1;
+                row.dataset.assigned = nowAssigned ? '1' : '0';
+                refreshCounts();
+                applyFilter();
+            }
+            updateDot(questionPk, color);
+            assignTopic(questionPk, topicId);
+        });
+    });
+
+    // Initialise dots for already-assigned categories
+    document.querySelectorAll('.question-topic-select').forEach(sel => {
+        if (sel.value) {
+            updateDot(sel.dataset.questionId, sel.options[sel.selectedIndex].dataset.color);
+        }
+    });
+
+    // ── "Show only unassigned" filter ──────────────────────────────────────
+    const onlyUnassigned = document.getElementById('onlyUnassigned');
+    function applyFilter() {
+        const only = onlyUnassigned && onlyUnassigned.checked;
+        document.querySelectorAll('.question-row').forEach(row => {
+            row.classList.toggle('hidden', only && row.dataset.assigned === '1');
+        });
+    }
+    if (onlyUnassigned) onlyUnassigned.addEventListener('change', applyFilter);
+
+    // ── Create category ────────────────────────────────────────────────────
+    const createBtn = document.getElementById('createCategoryBtn');
+    const nameInput = document.getElementById('newCategoryName');
+    const colorInput = document.getElementById('newCategoryColor');
+    const errEl = document.getElementById('createCategoryError');
+
+    if (createBtn) {
+        createBtn.addEventListener('click', async () => {
+            const name = nameInput.value.trim();
+            const color = colorInput.value;
+            errEl.classList.add('hidden');
+            if (!name) {
+                errEl.textContent = 'Name is required.';
+                errEl.classList.remove('hidden');
+                return;
+            }
+            createBtn.disabled = true;
+            try {
+                const res = await fetch('{% url "dataLoader:topic_list" %}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ name, color }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    errEl.textContent = data.error || 'Error creating category.';
+                    errEl.classList.remove('hidden');
+                    return;
+                }
+                // Reload so the new category appears in every dropdown.
+                window.location.reload();
+            } catch (e) {
+                errEl.textContent = 'Network error.';
+                errEl.classList.remove('hidden');
+            } finally {
+                createBtn.disabled = false;
+            }
+        });
+    }
+
+    // ── Edit / delete existing categories ──────────────────────────────────
+    document.querySelectorAll('.category-edit-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const row = btn.closest('[data-topic-row]');
+            row.querySelector('.category-view').classList.add('hidden');
+            const editMode = row.querySelector('.category-edit-mode');
+            editMode.classList.remove('hidden');
+            editMode.classList.add('flex');
+            editMode.querySelector('.category-edit-name').focus();
+        });
+    });
+
+    document.querySelectorAll('.category-cancel-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const row = btn.closest('[data-topic-row]');
+            const editMode = row.querySelector('.category-edit-mode');
+            editMode.classList.add('hidden');
+            editMode.classList.remove('flex');
+            row.querySelector('.category-view').classList.remove('hidden');
+        });
+    });
+
+    document.querySelectorAll('.category-save-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const row = btn.closest('[data-topic-row]');
+            const pk = btn.dataset.pk;
+            const name = row.querySelector('.category-edit-name').value.trim();
+            const color = row.querySelector('.category-edit-color').value;
+            if (!name) { alert('Name is required.'); return; }
+            btn.disabled = true;
+            try {
+                const res = await fetch(`/dataloader/topics/${pk}/update/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ name, color }),
+                });
+                const data = await res.json();
+                if (!res.ok) { alert(data.error || 'Error saving category.'); btn.disabled = false; return; }
+                window.location.reload();
+            } catch (e) {
+                alert('Network error.');
+                btn.disabled = false;
+            }
+        });
+    });
+
+    document.querySelectorAll('.category-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const name = btn.dataset.name;
+            if (!confirm(`Delete category "${name}"? Questions using it will be uncategorized.`)) return;
+            try {
+                const res = await fetch(`/dataloader/topics/${btn.dataset.pk}/delete/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': CSRF },
+                });
+                if (!res.ok) { alert('Error deleting category.'); return; }
+                window.location.reload();
+            } catch (e) {
+                alert('Network error.');
+            }
+        });
+    });
+
+    // ── Per-question response colors ───────────────────────────────────────
+    const QCOLORS = {{ question_colors_json|safe }};
+    const PALETTES = JSON.parse(document.getElementById('colorPalettesData').textContent);
+    const DEFAULT5 = {'1':'#ef4444','2':'#f97316','3':'#eab308','4':'#84cc16','5':'#22c55e'};
+    const DEFAULT7 = {'1':'#ef4444','2':'#f97316','3':'#facc15','4':'#a3e635','5':'#22c55e','6':'#14b8a6','7':'#0ea5e9'};
+
+    function colorInputsHTML(cssClass, max, colors, defaults) {
+        let html = '';
+        for (let v = 1; v <= max; v++) {
+            const key = String(v);
+            const color = (colors && colors[key]) || defaults[key];
+            html += `<label class="flex flex-col items-center text-xs text-slate-600 gap-1">
+                        <span>${v}</span>
+                        <input type="color" class="${cssClass} w-8 h-8 rounded border border-slate-300 cursor-pointer"
+                               data-value="${key}" value="${color}">
+                     </label>`;
+        }
+        return html;
+    }
+
+    function paletteOptionsHTML() {
+        return Object.entries(PALETTES)
+            .map(([id, p]) => `<option value="${id}">${p.name}</option>`)
+            .join('');
+    }
+
+    function buildColorPanel(panel, qid) {
+        if (panel.dataset.built === '1') return;
+        const info = QCOLORS[qid] || {scale_max: 5, colors: {}};
+        const max = info.scale_max || 5;
+        const defaults = max >= 7 ? DEFAULT7 : DEFAULT5;
+
+        let html = '<div class="flex flex-wrap items-end gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">';
+        html += colorInputsHTML('qcolor-input', max, info.colors, defaults);
+        html += `<div class="flex items-center gap-2 ml-2">
+                    <button type="button" class="qcolor-save px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">Save</button>
+                    <button type="button" class="qcolor-default px-3 py-1.5 border border-slate-300 text-slate-600 text-sm rounded hover:bg-slate-100">Default gradient</button>
+                    <button type="button" class="qcolor-clear px-3 py-1.5 border border-amber-300 text-amber-700 text-sm rounded hover:bg-amber-50">Clear override</button>
+                 </div>`;
+        html += `<div class="flex items-center gap-2 ml-2">
+                    <select class="qcolor-load-palette text-sm border border-slate-300 rounded px-2 py-1.5">
+                        <option value="">Load palette…</option>
+                        ${paletteOptionsHTML()}
+                    </select>
+                    <button type="button" class="qcolor-save-palette px-3 py-1.5 border border-indigo-300 text-indigo-700 text-sm rounded hover:bg-indigo-50">Save as palette</button>
+                    <span class="qcolor-status text-xs text-slate-500"></span>
+                 </div>`;
+        html += '</div>';
+        panel.innerHTML = html;
+        panel.dataset.built = '1';
+
+        panel.querySelector('.qcolor-default').addEventListener('click', () => {
+            panel.querySelectorAll('.qcolor-input').forEach(inp => {
+                const d = defaults[inp.dataset.value];
+                if (d) inp.value = d;
+            });
+        });
+        panel.querySelector('.qcolor-save').addEventListener('click', () => saveColors(panel, qid, false));
+        panel.querySelector('.qcolor-clear').addEventListener('click', () => saveColors(panel, qid, true));
+
+        panel.querySelector('.qcolor-load-palette').addEventListener('change', function () {
+            const p = PALETTES[this.value];
+            if (!p) return;
+            const scaleKey = max >= 7 ? 'scale_7' : 'scale_5';
+            const paletteColors = (p.colors && p.colors[scaleKey]) || {};
+            panel.querySelectorAll('.qcolor-input').forEach(inp => {
+                const c = paletteColors[inp.dataset.value];
+                if (c) inp.value = c;
+            });
+        });
+
+        panel.querySelector('.qcolor-save-palette').addEventListener('click', async () => {
+            const status = panel.querySelector('.qcolor-status');
+            const name = prompt('Save these colors as a palette named:');
+            if (!name) return;
+            const colors = {};
+            panel.querySelectorAll('.qcolor-input').forEach(inp => { colors[inp.dataset.value] = inp.value; });
+            const scaleKey = max >= 7 ? 'scale_7' : 'scale_5';
+            status.textContent = 'Saving palette...';
+            try {
+                const res = await fetch('{% url "dataLoader:color_palette_list" %}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ name, colors: { [scaleKey]: colors } }),
+                });
+                const data = await res.json();
+                if (!res.ok) { status.textContent = data.error || 'Error'; return; }
+                status.textContent = 'Palette saved';
+                PALETTES[String(data.palette.id)] = data.palette;
+                document.querySelectorAll('.qcolor-load-palette').forEach(sel => {
+                    sel.innerHTML = '<option value="">Load palette…</option>' + paletteOptionsHTML();
+                });
+            } catch (e) { status.textContent = 'Network error'; }
+        });
+    }
+
+    async function saveColors(panel, qid, clear) {
+        const status = panel.querySelector('.qcolor-status');
+        const colors = {};
+        if (!clear) {
+            panel.querySelectorAll('.qcolor-input').forEach(inp => { colors[inp.dataset.value] = inp.value; });
+        }
+        status.textContent = 'Saving...';
+        try {
+            const res = await fetch(`/dataloader/surveys/${SURVEY_PK}/questions/${qid}/colors/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ colors }),
+            });
+            const data = await res.json();
+            if (!res.ok) { status.textContent = data.error || 'Error'; return; }
+            status.textContent = clear ? 'Cleared' : 'Saved';
+            window.location.reload();
+        } catch (e) {
+            status.textContent = 'Network error';
+        }
+    }
+
+    document.querySelectorAll('.qcolor-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const qid = btn.dataset.questionId;
+            const row = document.querySelector(`.qcolor-row[data-qcolor-row="${qid}"]`);
+            if (!row) return;
+            if (row.classList.contains('hidden')) {
+                buildColorPanel(row.querySelector('.qcolor-panel'), qid);
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
+        });
+    });
+
+    // ── Saved color palettes management ────────────────────────────────────
+    const newPalette5 = document.getElementById('newPalette5');
+    const newPalette7 = document.getElementById('newPalette7');
+    if (newPalette5) newPalette5.innerHTML = colorInputsHTML('new-palette-5', 5, null, DEFAULT5);
+    if (newPalette7) newPalette7.innerHTML = colorInputsHTML('new-palette-7', 7, null, DEFAULT7);
+
+    const addPaletteBtn = document.getElementById('addPaletteBtn');
+    const paletteError = document.getElementById('paletteError');
+    if (addPaletteBtn) {
+        addPaletteBtn.addEventListener('click', async () => {
+            const name = document.getElementById('newPaletteName').value.trim();
+            paletteError.classList.add('hidden');
+            if (!name) { paletteError.textContent = 'Name is required.'; paletteError.classList.remove('hidden'); return; }
+            const s5 = {}, s7 = {};
+            newPalette5.querySelectorAll('input').forEach(i => { s5[i.dataset.value] = i.value; });
+            newPalette7.querySelectorAll('input').forEach(i => { s7[i.dataset.value] = i.value; });
+            addPaletteBtn.disabled = true;
+            try {
+                const res = await fetch('{% url "dataLoader:color_palette_list" %}', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ name, colors: { scale_5: s5, scale_7: s7 } }),
+                });
+                const data = await res.json();
+                if (!res.ok) { paletteError.textContent = data.error || 'Error'; paletteError.classList.remove('hidden'); return; }
+                window.location.reload();
+            } catch (e) {
+                paletteError.textContent = 'Network error.';
+                paletteError.classList.remove('hidden');
+            } finally {
+                addPaletteBtn.disabled = false;
+            }
+        });
+    }
+
+    document.querySelectorAll('.palette-edit-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const row = btn.closest('[data-palette-row]');
+            const editMode = row.querySelector('.palette-edit-mode');
+            const p = PALETTES[btn.dataset.pk] || {colors: {}};
+            row.querySelector('.palette-edit-5').innerHTML = colorInputsHTML('palette-edit-input-5', 5, p.colors.scale_5, DEFAULT5);
+            row.querySelector('.palette-edit-7').innerHTML = colorInputsHTML('palette-edit-input-7', 7, p.colors.scale_7, DEFAULT7);
+            editMode.classList.remove('hidden');
+            editMode.classList.add('flex');
+        });
+    });
+
+    document.querySelectorAll('.palette-cancel-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const editMode = btn.closest('[data-palette-row]').querySelector('.palette-edit-mode');
+            editMode.classList.add('hidden');
+            editMode.classList.remove('flex');
+        });
+    });
+
+    document.querySelectorAll('.palette-save-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const row = btn.closest('[data-palette-row]');
+            const pk = btn.dataset.pk;
+            const name = row.querySelector('.palette-edit-name').value.trim();
+            const s5 = {}, s7 = {};
+            row.querySelector('.palette-edit-5').querySelectorAll('input').forEach(i => { s5[i.dataset.value] = i.value; });
+            row.querySelector('.palette-edit-7').querySelectorAll('input').forEach(i => { s7[i.dataset.value] = i.value; });
+            try {
+                const res = await fetch(`/dataloader/palettes/${pk}/update/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ name, colors: { scale_5: s5, scale_7: s7 } }),
+                });
+                const data = await res.json();
+                if (!res.ok) { alert(data.error || 'Error saving palette.'); return; }
+                window.location.reload();
+            } catch (e) { alert('Network error.'); }
+        });
+    });
+
+    document.querySelectorAll('.palette-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            if (!confirm(`Delete palette "${btn.dataset.name}"?`)) return;
+            try {
+                const res = await fetch(`/dataloader/palettes/${btn.dataset.pk}/delete/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': CSRF },
+                });
+                if (!res.ok) { alert('Error deleting palette.'); return; }
+                window.location.reload();
+            } catch (e) { alert('Network error.'); }
+        });
+    });
+
+    document.querySelectorAll('.palette-apply-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const p = PALETTES[btn.dataset.pk];
+            if (!p) return;
+            if (!confirm(`Apply palette "${p.name}" to ALL questions of this survey?`)) return;
+            try {
+                const res = await fetch(`/dataloader/surveys/${SURVEY_PK}/colors/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                    body: JSON.stringify({ colors: p.colors }),
+                });
+                const data = await res.json();
+                if (!res.ok) { alert(data.error || 'Error applying palette.'); return; }
+                window.location.reload();
+            } catch (e) { alert('Network error.'); }
+        });
+    });
+});
+</script>
+{% endif %}
+{% endblock %}

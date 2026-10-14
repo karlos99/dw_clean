@@ -982,6 +982,9 @@ def _cfg_from_post(post):
         'sort_col':          post.get('sort_col', ''),
         'sort_dir':          post.get('sort_dir', 'asc'),
         'limit':             _parse_int(post.get('limit'), None),
+        # Config-only key with no builder UI field; preserved so editing a
+        # Top-N chart does not silently expand it to every category.
+        'top_n':             _parse_int(post.get('top_n'), None),
         # Visual options
         'palette':           post.get('palette', ''),
         'legend_pos':        legend_pos if legend_pos else ('bottom' if show_legend else 'hidden'),
@@ -1363,6 +1366,14 @@ def chart_save_api(request):
     else:
         chart = SavedChart(owner=request.user)
 
+    # Preserve config keys the builder form does not manage (e.g. keys added by
+    # the seed or a future builder field) instead of silently dropping them.
+    if chart.pk and isinstance(chart.config, dict):
+        _managed = set(config.keys())
+        for _k, _v in chart.config.items():
+            if _k not in _managed:
+                config[_k] = _v
+
     chart.name                     = name
     chart.description              = description
     chart.chart_type               = chart_type
@@ -1718,6 +1729,10 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
 
     # ── Cache miss: run the full pipeline ─────────────────────────
     chart_cfg = _effective_chart_cfg(chart)
+    # True when ClickHouse pushed the aggregation down; its compact rows are
+    # chart-specific and must never be written to the shared per-dataset row
+    # cache (a sibling chart would then read the wrong compact columns).
+    used_aggregate = False
     try:
         if result is not None:
             # Data cache hit — skip SQL, jump to rendering
@@ -1855,7 +1870,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
             error = result['error']
         else:
             # Save data cache (30 min TTL — confirmed acceptable staleness window)
-            if data_cached is None and result.get('rows'):
+            if data_cached is None and result.get('rows') and not used_aggregate:
                 cache.set(data_cache_key, result, timeout=1800)
             chart_cfg['is_embed'] = is_embed
             option = build_option(result.get('rows', []), chart.column_defs, chart_cfg)

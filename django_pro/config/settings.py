@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'coursecatalog.apps.CoursecatalogConfig',
     'desi.apps.DesiConfig',
     'dataviz.apps.DatavizConfig',
+    'ccgi.apps.CcgiConfig',
     'dataLoader.apps.DataloaderConfig',
     'clickhouse_utils',
     # Allauth

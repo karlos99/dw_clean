@@ -12,8 +12,9 @@ from django.urls import reverse
 import csv
 import json
 
-from studata.models import CurrentStudent, Result, School as StudataSchool, Schedule, TeacherAccess, Test
+from studata.models import CurrentStudent, Result, School as StudataSchool, Schedule, Test
 from landing.utils import get_project_config
+from users.models import UNRESTRICTED_ROLE_NAMES
 from .models import (
     Accommodation,
     AccommodationCategory,
@@ -68,14 +69,22 @@ def _is_project_admin(user):
     return user.roles.filter(name='Project Admin').exists() if hasattr(user, 'roles') else False
 
 
-def _is_teacher(user):
-    """Return whether the user's active role is Teacher."""
+def _is_roster_teacher(user):
+    """
+    Whether the user is confined to their own roster as a Teacher.
+
+    Membership-based: a school-wide role (e.g. Testing Coordinator, School
+    Admin) takes precedence even when the user also holds the Teacher role.
+    Those users see the teacher/staff picker and reveal a staff member's
+    periods only after selecting that staff; a pure classroom teacher instead
+    gets their own periods filter automatically.
+    """
     if not user.is_authenticated:
         return False
-    active_role = getattr(user, 'active_role', None)
-    if active_role:
-        return active_role.name == 'Teacher'
-    return user.roles.filter(name='Teacher').exists() if hasattr(user, 'roles') else False
+    role_names = user.role_names()
+    if any(name in UNRESTRICTED_ROLE_NAMES or 'District' in name for name in role_names):
+        return False
+    return 'Teacher' in role_names
 
 
 def _has_role(user, name):
@@ -110,6 +119,13 @@ def _is_504_student(student):
     if student is None:
         return False
     return str(getattr(student, 'in_504', '') or '').strip() in ('Y', '1')
+
+
+def _is_sped_student(student):
+    """Whether a student is in special education (sped = 'Y'/'1')."""
+    if student is None:
+        return False
+    return str(getattr(student, 'sped', '') or '').strip() in ('Y', '1')
 
 
 def _is_504_admin(user):
@@ -281,16 +297,31 @@ def _eval_result_criterion(criterion, student):
     test_keys = list(tests.values_list('test_group_key', flat=True))
 
     field = criterion.result_field or 'pl'
+    oi_key = (criterion.result_other_info_key or '').strip()
+    if field == 'additional_info' and not oi_key:
+        return False, f"{label}: no additional-info category selected"
+    field_label = criterion.get_result_field_display()
+    if field == 'additional_info':
+        field_label = f"Additional Info ({oi_key})"
     values = []
     if test_keys:
         results = Result.objects.filter(ssid=ssid, test_group_key__in=test_keys)
         if criterion.school_year:
             results = results.filter(school_year=criterion.school_year.strip())
-        values = [
-            _normalize_result_value(v)
-            for v in results.values_list(field, flat=True)
-            if _normalize_result_value(v) != ''
-        ]
+        if field == 'additional_info':
+            for info in results.values_list('other_info', flat=True):
+                raw_v = info.get(oi_key) if isinstance(info, dict) else None
+                if isinstance(raw_v, (dict, list)):
+                    continue
+                normalized = _normalize_result_value(raw_v)
+                if normalized != '':
+                    values.append(normalized)
+        else:
+            values = [
+                _normalize_result_value(v)
+                for v in results.values_list(field, flat=True)
+                if _normalize_result_value(v) != ''
+            ]
 
     op = criterion.result_operator or 'in'
     raw = (criterion.result_value or '').strip()
@@ -314,10 +345,20 @@ def _eval_result_criterion(criterion, student):
                 f is not None and low_f <= f <= high_f
                 for f in (_result_to_float(v) for v in values)
             )
+    elif op == 'gt':
+        threshold = _result_to_float(raw)
+        match = threshold is not None and any(
+            f is not None and f > threshold for f in (_result_to_float(v) for v in values)
+        )
     elif op == 'gte':
         threshold = _result_to_float(raw)
         match = threshold is not None and any(
             f is not None and f >= threshold for f in (_result_to_float(v) for v in values)
+        )
+    elif op == 'lt':
+        threshold = _result_to_float(raw)
+        match = threshold is not None and any(
+            f is not None and f < threshold for f in (_result_to_float(v) for v in values)
         )
     elif op == 'lte':
         threshold = _result_to_float(raw)
@@ -326,7 +367,7 @@ def _eval_result_criterion(criterion, student):
         )
 
     reason = None if match else (
-        f"{label} {criterion.get_result_field_display()} must be "
+        f"{label} {field_label} must be "
         f"{criterion.get_result_operator_display()} '{raw}' "
         f"(found: {', '.join(values) if values else '(none)'})"
     )
@@ -479,6 +520,88 @@ def check_criteria(criteria_list, student):
     return False, flattened_reasons
 
 
+def _is_caa_assessment(assessment):
+    """Whether ``assessment`` is an alternate (CAA) assessment."""
+    name = (getattr(assessment, 'name', '') or '').strip().lower()
+    return name == 'caa' or name.startswith('caa ') or name.startswith('caa-')
+
+
+def _caaspp_source_assessment(caa_assessment, all_assessments):
+    """
+    The CAASPP (non-CAA) assessment whose grade rules a CAA test follows.
+
+    Matched by subject (e.g. CAA math -> Smarter Math, CAA science -> CAST),
+    preferring the variant that matches the CAA name's "(nonwriting)" suffix,
+    then active assessments, then the simplest name.
+    """
+    subject = (getattr(caa_assessment, 'subject', '') or '').strip().lower()
+    wants_nonwriting = 'nonwriting' in (getattr(caa_assessment, 'name', '') or '').lower()
+    candidates = [
+        ast for ast in all_assessments
+        if not _is_caa_assessment(ast)
+        and (getattr(ast, 'subject', '') or '').strip().lower() == subject
+    ]
+    if not candidates:
+        return None
+
+    def sort_key(ast):
+        name = (getattr(ast, 'name', '') or '').strip().lower()
+        is_nonwriting = 'nonwriting' in name
+        return (
+            is_nonwriting == wants_nonwriting,
+            bool(getattr(ast, 'is_active', False)),
+            -len(name),
+        )
+
+    return max(candidates, key=sort_key)
+
+
+def build_effective_assessment_criteria(assessment, all_assessments):
+    """
+    Criteria to evaluate for an assessment's eligibility.
+
+    CAA (alternate) assessments follow the same grade rules as their
+    corresponding CAASPP assessment: the CAA's own grade criteria are dropped
+    and replaced with the matching CAASPP assessment's grade criteria, while
+    every non-grade CAA criterion (e.g. SPED = 'Y') is preserved.
+    """
+    criteria = list(assessment.criteria.all())
+    if not _is_caa_assessment(assessment):
+        return criteria
+
+    source = _caaspp_source_assessment(assessment, all_assessments)
+    if source is None:
+        return criteria
+
+    source_grade = [c for c in source.criteria.all() if c.field_name == 'grade']
+    if not source_grade:
+        return criteria
+
+    own_non_grade = [c for c in criteria if c.field_name != 'grade']
+    return own_non_grade + source_grade
+
+
+def filter_assessments_by_grade(assessments, all_assessments, student):
+    """
+    Drop assessments whose (effective) grade rules the student fails.
+
+    SEIS-assigned tests are authoritative, but must still respect the same
+    grade restrictions applied to non-SEIS test assignments. Assessments with
+    no grade rule are always kept.
+    """
+    kept = []
+    for ast in assessments:
+        criteria = build_effective_assessment_criteria(ast, all_assessments)
+        grade_criteria = [c for c in criteria if c.field_name == 'grade']
+        if not grade_criteria:
+            kept.append(ast)
+            continue
+        eligible, _ = check_criteria(grade_criteria, student)
+        if eligible:
+            kept.append(ast)
+    return kept
+
+
 def hidden_from_student_list_ids():
     """Designated supports hidden from the student workspace by project admin."""
     return set(
@@ -529,7 +652,7 @@ def default_support_locks(student):
           'option_ids': set(...),          # option ids to show pre-selected
           'support_ids': set(...),         # support ids that become read-only
           'direct_support_ids': set(...),  # locked supports with no options
-          'managers': {support_id: label}, # lock reason (managed-by label)
+          'managers': {support_id: label}, # lock reason (matched rule name)
         }
     """
     locks = {
@@ -577,8 +700,11 @@ def default_support_locks(student):
         if support is None:
             continue
         locks['support_ids'].add(support.id)
+        # The lock tag in the student workspace shows the rule that assigned
+        # the option(s), falling back to the support's managed-by label.
         locks['managers'].setdefault(
-            support.id, support.get_managed_by_display() or 'Managed'
+            support.id,
+            chosen.name or support.get_managed_by_display() or 'Managed',
         )
         options = list(chosen.options.all())
         if options:
@@ -745,13 +871,13 @@ def _teacher_option_rows(school_year, student_keys):
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT DISTINCT ta.staff_name, cs.school_state_id, cs.grade
-                    FROM teacher_access_list ta
-                    JOIN current_student cs ON cs.stu_annual_key = ta.stu_annual_key
-                    WHERE ta.school_year = %s
+                    SELECT DISTINCT sl.staff_name, cs.school_state_id, cs.grade
+                    FROM schedule_list sl
+                    JOIN current_student cs ON cs.stu_annual_key = sl.stu_annual_key
+                    WHERE sl.school_year = %s
                       AND cs.school_year = %s
-                      AND ta.staff_name IS NOT NULL AND ta.staff_name <> ''
-                      AND ta.stu_annual_key = ANY(%s)
+                      AND sl.staff_name IS NOT NULL AND sl.staff_name <> ''
+                      AND sl.stu_annual_key = ANY(%s)
                     """,
                     [school_year, school_year, keys],
                 )
@@ -770,6 +896,29 @@ def _period_sort_key(value):
     """Sort periods numerically when possible ('1' < '2' < '10'), else by text."""
     text = str(value).strip()
     return (0, int(text)) if text.isdigit() else (1, text)
+
+
+def _teacher_staff_names(user, school_state_id, school_year):
+    """Staff names scheduled for this user's ``staff_id`` (for the period filter)."""
+    staff_id = getattr(user, 'staff_id', None)
+    if not staff_id:
+        return []
+    try:
+        with transaction.atomic():
+            qs = Schedule.objects.filter(
+                staff_employee_id=staff_id, school_year=school_year
+            )
+            if school_state_id:
+                qs = qs.filter(state_school_id=school_state_id)
+            names = {
+                str(name).strip()
+                for name in qs.exclude(staff_name__isnull=True).exclude(staff_name='')
+                .values_list('staff_name', flat=True)
+                if str(name).strip()
+            }
+    except Exception:
+        return []
+    return sorted(names, key=str.casefold)
 
 
 def _schedule_periods(school_year, school_state_id, staff_name, student_keys=None):
@@ -805,16 +954,23 @@ def _schedule_periods(school_year, school_state_id, staff_name, student_keys=Non
 
 
 def _schedule_student_keys(school_year, school_state_id, period, staff_name='', student_keys=None):
-    """Student annual keys scheduled for ``period`` with the given staff."""
-    if not school_state_id or not period:
+    """
+    Student annual keys scheduled with the given staff (and ``period`` when set).
+
+    ``period=''`` returns the full roster for the staff across all their periods,
+    which is how a classroom teacher's own DESI access is derived (see
+    ``User.get_accessible_student_keys``). The coordinator's per-teacher filter
+    uses the same source so its counts match what the teacher sees.
+    """
+    if not school_year or (not period and not staff_name):
         return []
     try:
         with transaction.atomic():
-            qs = Schedule.objects.filter(
-                school_year=school_year,
-                state_school_id=school_state_id,
-                period=period,
-            )
+            qs = Schedule.objects.filter(school_year=school_year)
+            if school_state_id:
+                qs = qs.filter(state_school_id=school_state_id)
+            if period:
+                qs = qs.filter(period=period)
             if student_keys:
                 qs = qs.filter(stu_annual_key__in=student_keys)
             if staff_name:
@@ -843,6 +999,21 @@ def _get_student_list_context(request):
     active_school = global_active_school
     school_filter_id = request.GET.get('school', '')
 
+    # A user scoped to exactly one school gets it pre-selected in the search, so
+    # the student list (and any period filter) is scoped without an extra step.
+    # Unrestricted users (superusers, Project/District roles) are never
+    # auto-scoped.
+    if not school_filter_id and active_school is None:
+        user_schools = getattr(request.user, 'schools', None)
+        if (
+            isinstance(user_schools, list)
+            and len(user_schools) == 1
+            and user_schools[0]
+            and not _is_project_admin(request.user)
+            and not _has_district_role(request.user)
+        ):
+            school_filter_id = user_schools[0]
+
     if school_filter_id and not active_school:
         user_schools = getattr(request.user, 'schools', None)
         if not user_schools or school_filter_id in user_schools:
@@ -855,6 +1026,15 @@ def _get_student_list_context(request):
 
     students_qs = get_visible_students(request.user, active_school=active_school)
     students_qs = students_qs.filter(school_year=school_year)
+    # DESI only works with currently enrolled students.
+    students_qs = students_qs.filter(status='Active')
+
+    # Scope to the active/selected school for every role. A teacher's roster is
+    # schedule-based and would otherwise ignore the school context, making their
+    # count differ from a coordinator filtering to that same teacher.
+    scoped_school_id = getattr(active_school, 'state_id', '') or school_filter_id
+    if scoped_school_id:
+        students_qs = students_qs.filter(school_state_id=scoped_school_id)
 
     # Build teacher choices from the students visible in the selected school/year,
     # then optionally narrow the student list to that teacher's students.
@@ -887,16 +1067,18 @@ def _get_student_list_context(request):
                 else teacher_options_by_filter.get(f'::{grade_filter}', teacher_options_by_filter.get('::', [])),
             )
             if teacher_filter:
-                # Resolve the teacher's student keys to a plain list. Using a
-                # nested teacher_access subquery here made the paginator's
-                # COUNT/SELECT (combined with the period IN list) fall back to a
-                # very slow plan.
-                teacher_student_keys = list(
-                    TeacherAccess.objects.filter(
-                        school_year=school_year,
-                        staff_name__iexact=teacher_filter,
-                        stu_annual_key__in=students_qs.values('stu_annual_key'),
-                    ).values_list('stu_annual_key', flat=True).distinct()
+                # Resolve the teacher's roster from the schedule table (the same
+                # source the teacher's own DESI access is derived from) instead
+                # of the teacher-access view, which can lag the schedule and
+                # produce a different count than the teacher sees. The result is
+                # materialized to a plain list so the paginator's COUNT/SELECT
+                # does not fall back to a slow nested-subquery plan.
+                teacher_student_keys = _schedule_student_keys(
+                    school_year,
+                    current_school,
+                    '',
+                    teacher_filter,
+                    students_qs.values('stu_annual_key'),
                 )
                 students_qs = students_qs.filter(stu_annual_key__in=teacher_student_keys)
     except Exception:
@@ -906,14 +1088,28 @@ def _get_student_list_context(request):
         if teacher_filter:
             students_qs = students_qs.none()
 
-    # Non-elementary schools schedule by period. When a school and teacher are
-    # chosen, offer a period filter sourced from the schedule table (the periods
-    # for that staff member's students), then narrow the student list to it.
-    selected_school_id = school_filter_id or getattr(active_school, 'state_id', '') or ''
+    # Non-elementary schools schedule by period. The period filter is offered
+    # only once the school is explicitly selected (via the school filter/dropdown
+    # or a locked active school) and the staff member is known:
+    #   * a classroom teacher resolves to their own schedule once the school is
+    #     chosen (they have no teacher picker);
+    #   * a school-wide user (e.g. Testing Coordinator) picks a teacher, and that
+    #     staff member's periods are then revealed.
+    # A single accessible school is NOT auto-applied: the user must select it.
+    period_school = active_school
+    if period_school is None and school_filter_id:
+        period_school = StudataSchool.objects.filter(state_id=school_filter_id).first()
+    selected_school_id = school_filter_id or getattr(period_school, 'state_id', '') or ''
+
+    effective_teacher_name = teacher_filter
+    if not effective_teacher_name and _is_roster_teacher(request.user):
+        staff_names = _teacher_staff_names(request.user, selected_school_id, school_year)
+        effective_teacher_name = staff_names[0] if staff_names else ''
+
     periods = []
-    if selected_school_id and teacher_filter and not _is_elementary_school(active_school):
+    if selected_school_id and effective_teacher_name and not _is_elementary_school(period_school):
         periods = _schedule_periods(
-            school_year, selected_school_id, teacher_filter, teacher_student_keys
+            school_year, selected_school_id, effective_teacher_name, teacher_student_keys or None
         )
     show_period_filter = bool(periods)
 
@@ -921,7 +1117,7 @@ def _get_student_list_context(request):
         period_filter = ''
     if period_filter:
         period_keys = _schedule_student_keys(
-            school_year, selected_school_id, period_filter, teacher_filter, teacher_student_keys
+            school_year, selected_school_id, period_filter, effective_teacher_name, teacher_student_keys or None
         )
         students_qs = students_qs.filter(stu_annual_key__in=period_keys)
 
@@ -969,8 +1165,15 @@ def _get_student_list_context(request):
 
     for student in page_obj:
         seis_assigned = seis_assigned_by_ssid.get(student.ssid, []) if student.ssid else []
+        # SEIS names the tests, but they must also satisfy the same grade rules
+        # used for non-SEIS test assignments.
+        if seis_assigned:
+            seis_assigned = filter_assessments_by_grade(
+                seis_assigned, all_assessments, student
+            )
         if seis_assigned:
             student.is_seis = True
+            student.is_sped = False
             student.eligible_count = 0
             student.completed_count = 0
             student.assessment_statuses = [
@@ -978,17 +1181,22 @@ def _get_student_list_context(request):
                     'assessment': ast,
                     'is_completed': False,
                     'is_seis': True,
+                    'is_sped': False,
                 }
                 for ast in seis_assigned
             ]
         else:
             eligible_ids = []
             for ast in all_year_assessments:
-                eligible, _ = check_criteria(ast.criteria.all(), student)
+                eligible, _ = check_criteria(
+                    build_effective_assessment_criteria(ast, all_assessments), student
+                )
                 if eligible:
                     eligible_ids.append(ast.id)
 
+            is_sped = _is_sped_student(student)
             student.is_seis = False
+            student.is_sped = is_sped
             student.eligible_count = len(eligible_ids)
             student_completed_ids = completions_map.get(student.stu_annual_key, set())
             student.completed_count = len(student_completed_ids.intersection(set(eligible_ids)))
@@ -997,13 +1205,14 @@ def _get_student_list_context(request):
                     'assessment': ast,
                     'is_completed': ast.id in student_completed_ids,
                     'is_seis': False,
+                    'is_sped': is_sped,
                 }
                 for ast in all_year_assessments
                 if ast.id in eligible_ids
             ]
         student.global_accommodations = global_acc_map.get(student.stu_annual_key, [])
 
-    grade_base = CurrentStudent.objects.filter(school_year=school_year)
+    grade_base = CurrentStudent.objects.filter(school_year=school_year, status='Active')
     if school_filter_id:
         grade_base = grade_base.filter(school_state_id=school_filter_id)
     elif active_school:
@@ -1022,7 +1231,9 @@ def _get_student_list_context(request):
     school_ids = [s.state_id for s in available_schools if getattr(s, 'state_id', None)]
     for school_id in school_ids:
         grade_options_by_school[school_id] = list(
-            CurrentStudent.objects.filter(school_year=school_year, school_state_id=school_id)
+            CurrentStudent.objects.filter(
+                school_year=school_year, school_state_id=school_id, status='Active'
+            )
             .exclude(grade__isnull=True).exclude(grade='')
             .values_list('grade', flat=True).distinct().order_by('grade')
         )
@@ -1051,7 +1262,7 @@ def _get_student_list_context(request):
         'global_active_school': global_active_school,
         'school_locked': bool(global_active_school),
         'is_project_admin': _is_project_admin(request.user),
-        'show_teacher_filter': not _is_teacher(request.user),
+        'show_teacher_filter': not _is_roster_teacher(request.user),
         'students_qs_raw': students_qs,
         'has_multiple_schools': has_multiple_schools,
         'grade_options_by_school_json': json.dumps(grade_options_by_school),
@@ -1528,9 +1739,12 @@ def coordinator_entered_csv(request):
         'Student Name',
         'Grade',
         'Teachers',
-        'Supports Entered',
+        'CAASPP ELA',
+        'CAASPP Math',
+        'CAASPP Science',
+        'ELPAC Supports',
         'From SEIS',
-        'Completed Assessments',
+        'Assigned Assessments',
         'Updated By',
         'Updated At',
     ])
@@ -1540,7 +1754,10 @@ def coordinator_entered_csv(request):
             row['student_name'],
             row['grade'],
             row['teachers'],
-            row['supports'],
+            row['supports_caaspp_ela'],
+            row['supports_caaspp_math'],
+            row['supports_caaspp_science'],
+            row['supports_elpac'],
             row['from_seis'],
             row['completions'],
             row['updated_by'],
@@ -2776,12 +2993,37 @@ def _get_test_option_values():
     }
 
 
-# Result assessments offered in the criteria builder (PL comparison).
-# Values map to (Test.test_name | Test.subject); an empty subject matches all.
+# Result assessments offered in the criteria builder. The subject is chosen
+# separately; an empty subject matches all subjects. Only the state assessments
+# are offered; their subjects, Additional Info categories, and PL values are
+# pulled from the result data for the selected program/year.
 RESULT_ASSESSMENT_CHOICES = [
-    {'value': 'CAASPP|', 'label': 'CAASPP'},
-    {'value': 'ELPAC_summative|', 'label': 'ELPAC Summative'},
+    {'value': 'CAASPP', 'label': 'CAASPP'},
+    {'value': 'ELPAC_summative', 'label': 'ELPAC Summative'},
+    {'value': 'CAA', 'label': 'CAA'},
 ]
+
+
+def _result_subjects_by_assessment():
+    """Map each offered assessment to its distinct result subjects."""
+    allowed = {c['value'] for c in RESULT_ASSESSMENT_CHOICES}
+    mapping = {}
+    try:
+        rows = (
+            Test.objects.exclude(test_name__isnull=True).exclude(test_name='')
+            .values_list('test_name', 'subject').distinct()
+        )
+    except Exception:
+        rows = []
+    for name, subject in rows:
+        name = (name or '').strip()
+        subject = (subject or '').strip()
+        if name not in allowed:
+            continue
+        if not subject or subject.lower() == 'nan':
+            continue
+        mapping.setdefault(name, set()).add(subject)
+    return {name: sorted(subjects, key=str.casefold) for name, subjects in mapping.items()}
 
 
 def _schedule_criteria_options():
@@ -2797,7 +3039,7 @@ def _schedule_criteria_options():
     try:
         with transaction.atomic():
             for school_id, staff in (
-                TeacherAccess.objects.exclude(staff_name__isnull=True).exclude(staff_name='')
+                Schedule.objects.exclude(staff_name__isnull=True).exclude(staff_name='')
                 .values_list('state_school_id', 'staff_name').distinct()
             ):
                 name = (staff or '').strip()
@@ -2895,6 +3137,7 @@ def support_default_rule_form(request, id=None):
         r_subjects = request.POST.getlist('crit_test_subject[]')
         r_years = request.POST.getlist('crit_school_year[]')
         r_fields = request.POST.getlist('crit_result_field[]')
+        r_oi_keys = request.POST.getlist('crit_result_other_info_key[]')
         r_ops = request.POST.getlist('crit_result_operator[]')
         r_vals = request.POST.getlist('crit_result_value[]')
         s_schools = request.POST.getlist('crit_school[]')
@@ -2921,14 +3164,29 @@ def support_default_rule_form(request, id=None):
                 logic = 'AND'
             if ctype == 'result':
                 test_name, test_subject = _assessment_parts(idx)
+                # The field dropdown uses 'oi:<key>' to select an Additional Info
+                # category; PL/SS stay as-is. A separate category input is still
+                # accepted for backwards compatibility.
+                raw_field = _at(r_fields, idx).strip() or 'pl'
+                oi_key = _at(r_oi_keys, idx).strip()
+                if raw_field.startswith('oi:'):
+                    result_field = 'additional_info'
+                    oi_key = raw_field[3:].strip()
+                elif raw_field in ('pl', 'ss', 'additional_info'):
+                    result_field = raw_field
+                else:
+                    result_field = 'pl'
                 if not (test_name and _at(r_vals, idx).strip()):
+                    continue
+                if result_field == 'additional_info' and not oi_key:
                     continue
                 SupportDefaultRuleCriteria.objects.create(
                     rule=rule, criterion_type='result', logic_operator=logic, order=db_index,
                     test_name=test_name,
                     test_subject=test_subject,
                     school_year=_at(r_years, idx).strip(),
-                    result_field=_at(r_fields, idx).strip() or 'pl',
+                    result_field=result_field,
+                    result_other_info_key=oi_key if result_field == 'additional_info' else '',
                     result_operator=_at(r_ops, idx).strip() or 'in',
                     result_value=_at(r_vals, idx).strip(),
                 )
@@ -2994,6 +3252,7 @@ def support_default_rule_form(request, id=None):
         'embed': embed,
         'form_action': form_action,
         'result_assessment_choices': RESULT_ASSESSMENT_CHOICES,
+        'result_subjects_by_assessment_json': json.dumps(_result_subjects_by_assessment()),
     }
     context.update(_get_test_option_values())
     schools, staff_by_school, periods = _schedule_criteria_options()
@@ -3005,6 +3264,93 @@ def support_default_rule_form(request, id=None):
     template = ('desi/partials/support_default_rule_body.html' if embed
                 else 'desi/support_default_rule_form.html')
     return render(request, template, context)
+
+
+@login_required
+def support_default_rule_result_options(request):
+    """
+    JSON categories/values for the Additional Info result-criterion dropdowns.
+
+    Categories are the distinct ``results.other_info`` JSON keys for the chosen
+    assessment/year; each maps to the distinct non-blank values (its levels).
+    """
+    if not _is_project_admin(request.user):
+        return JsonResponse({'categories': {}, 'pl_values': []}, status=403)
+
+    year = (request.GET.get('year') or '').strip()
+    assessment = (request.GET.get('assessment') or '').strip()
+    if '|' in assessment:
+        test_name, _, subject = assessment.partition('|')
+    else:
+        test_name, subject = assessment, ''
+    test_name = test_name.strip()
+    subject = subject.strip() if subject.strip().lower() != 'nan' else ''
+    if not test_name:
+        return JsonResponse({'categories': {}, 'pl_values': []})
+
+    categories = {}
+    pl_values = []
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                where = ["r.other_info IS NOT NULL", "t.test_name = %s"]
+                params = [test_name]
+                if subject:
+                    where.append("t.subject = %s")
+                    params.append(subject)
+                if year:
+                    where.append("r.school_year = %s")
+                    params.append(year)
+                cursor.execute(
+                    f"""
+                    SELECT k.key, (r.other_info->>k.key) AS val
+                    FROM results r
+                    JOIN tests t ON t.test_group_key = r.test_group_key
+                    CROSS JOIN LATERAL jsonb_object_keys(r.other_info) AS k(key)
+                    WHERE {' AND '.join(where)}
+                    """,
+                    params,
+                )
+                for key, val in cursor.fetchall():
+                    key = str(key or '').strip()
+                    if not key:
+                        continue
+                    value = str(val).strip() if val is not None else ''
+                    if not value:
+                        continue
+                    categories.setdefault(key, set()).add(value)
+
+                pl_where = ["r.pl IS NOT NULL", "r.pl <> ''", "t.test_name = %s"]
+                pl_params = [test_name]
+                if subject:
+                    pl_where.append("t.subject = %s")
+                    pl_params.append(subject)
+                if year:
+                    pl_where.append("r.school_year = %s")
+                    pl_params.append(year)
+                cursor.execute(
+                    f"""
+                    SELECT DISTINCT r.pl
+                    FROM results r
+                    JOIN tests t ON t.test_group_key = r.test_group_key
+                    WHERE {' AND '.join(pl_where)}
+                    """,
+                    pl_params,
+                )
+                pl_values = sorted(
+                    {str(row[0]).strip() for row in cursor.fetchall() if row[0] is not None and str(row[0]).strip()},
+                    key=_period_sort_key,
+                )
+    except Exception:
+        return JsonResponse({'categories': {}, 'pl_values': []})
+
+    # Cap the payload so a wide import (e.g. a benchmark file with 100+ keys)
+    # cannot bloat the form response.
+    trimmed = {
+        key: sorted(vals, key=str.casefold)[:300]
+        for key, vals in sorted(categories.items(), key=lambda kv: kv[0].casefold())[:500]
+    }
+    return JsonResponse({'categories': trimmed, 'pl_values': pl_values})
 
 
 @login_required
@@ -3178,7 +3524,7 @@ def clone_assessment(request, id):
     return redirect('desi:admin_dashboard')
 
 
-def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True, seis_option_map=None, seis_managed_assessments=None, default_locks=None, seis_readonly=False):
+def _build_assign_accommodations_context(student, stu_annual_key, eligible_assessments, assessments, failed_rules_map, student_option_ids, selected_support_ids=None, can_edit=True, seis_option_map=None, seis_managed_assessments=None, default_locks=None, seis_readonly=False, sped_readonly=False):
     """
     Build workspace context for the DESI accommodation editor.
 
@@ -3434,6 +3780,7 @@ def _build_assign_accommodations_context(student, stu_annual_key, eligible_asses
         'has_seis': bool(seis_count),
         'seis_count': seis_count,
         'seis_readonly': bool(seis_readonly),
+        'sped_readonly': bool(sped_readonly),
     }
 
 
@@ -3489,14 +3836,25 @@ def assign_accommodations(request, stu_annual_key):
     # Any student present in the SEIS source is read-only. When the SEIS rows
     # name specific tests, only those tests show (SEIS-authoritative); when they
     # name no test (``No_Test``), the regular tests show but remain read-only.
+    #
+    # A student marked SPED (``sped`` = 'Y'/'1') is treated the same way even
+    # when they have no SEIS rows: they keep their normal test assignments but
+    # the workspace is read-only.
     student_in_seis = bool(student.ssid and fetch_seis_rows(student.ssid))
-    effective_can_edit = can_edit and not student_in_seis
+    is_sped = _is_sped_student(student)
+    student_readonly = student_in_seis or is_sped
+    effective_can_edit = can_edit and not student_readonly
 
     if request.method == 'POST' and not effective_can_edit:
         if student_in_seis:
             messages.error(
                 request,
                 "This student's supports are managed in SEIS and are read-only.",
+            )
+        elif is_sped:
+            messages.error(
+                request,
+                "This student is marked SPED; supports are read-only.",
             )
         else:
             messages.error(
@@ -3505,13 +3863,16 @@ def assign_accommodations(request, stu_annual_key):
             )
         return redirect(reverse('desi:assign_accommodations', args=[stu_annual_key]))
 
-    # Pull active assessments (color-coded consistently per assessment)
-    assessments = list(Assessment.objects.filter(is_active=True).prefetch_related(
+    # Pull active assessments (color-coded consistently per assessment). The
+    # full list (including inactive) is kept so CAA tests can resolve their
+    # CAASPP grade-rule source.
+    all_assessments = list(Assessment.objects.prefetch_related(
         'criteria',
         'supported_options__accommodation__depends_on_option',
         'supported_options__accommodation__dependency_assessments',
         'supported_options__accommodation__resources',
     ).order_by('order', 'name', 'id'))
+    assessments = [ast for ast in all_assessments if ast.is_active]
     for index, ast in enumerate(assessments):
         ast.card_color = ASSESSMENT_CARD_COLORS[index % len(ASSESSMENT_CARD_COLORS)]
 
@@ -3519,7 +3880,9 @@ def assign_accommodations(request, stu_annual_key):
     eligible_assessments = []
     failed_rules_map = {}
     for ast in assessments:
-        eligible, failed_rules = check_criteria(ast.criteria.all(), student)
+        eligible, failed_rules = check_criteria(
+            build_effective_assessment_criteria(ast, all_assessments), student
+        )
         failed_rules_map[ast.id] = failed_rules
         if eligible:
             eligible_assessments.append(ast)
@@ -3538,10 +3901,10 @@ def assign_accommodations(request, stu_annual_key):
     seis_managed_assessments = []
     seis_assigned = []
     if student.ssid:
-        all_assessments = list(
-            Assessment.objects.prefetch_related('criteria', 'supported_options__accommodation').order_by('order', 'name', 'id')
-        )
         seis_assigned = seis_assigned_assessments(student.ssid, all_assessments)
+        # SEIS names the tests, but they must still respect the same grade
+        # restrictions applied to non-SEIS test assignments.
+        seis_assigned = filter_assessments_by_grade(seis_assigned, all_assessments, student)
         if seis_assigned:
             seis_managed_assessments = list(seis_assigned)
             raw_map, _ = build_seis_option_map(student.ssid, seis_assigned)
@@ -3691,6 +4054,7 @@ def assign_accommodations(request, stu_annual_key):
                 seis_managed_assessments=seis_managed_assessments,
                 default_locks=default_locks,
                 seis_readonly=student_in_seis,
+                sped_readonly=is_sped,
             )
             list_context.update(context)
 
@@ -3772,6 +4136,7 @@ def assign_accommodations(request, stu_annual_key):
         seis_managed_assessments=seis_managed_assessments,
         default_locks=default_locks,
         seis_readonly=student_in_seis,
+        sped_readonly=is_sped,
     )
 
     if is_htmx:
