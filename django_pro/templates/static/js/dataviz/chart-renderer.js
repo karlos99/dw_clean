@@ -435,7 +435,232 @@
     return _esc(s);
   }
 
+  function _csvEscape(val) {
+    var s = val == null ? '' : String(val);
+    if (/[",\r\n]/.test(s)) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function _tableCellExportText(cell, percentColumns, colIndex) {
+    var cellVal = cell;
+    if (cell && typeof cell === 'object' && cell.val !== undefined) {
+      cellVal = cell.val;
+    }
+    if (cellVal === null || cellVal === undefined || String(cellVal).trim() === '') {
+      return '';
+    }
+    if (percentColumns.indexOf(colIndex) >= 0) {
+      return String(cellVal) + '%';
+    }
+    return String(cellVal);
+  }
+
+  function _buildSummaryTableCsv(option) {
+    var colHeaders = option.col_headers || [];
+    var colHeaderGroups = option.col_header_groups || [];
+    var rows = option.rows || [];
+    var totalRow = option.total_row || [];
+    var rowLabels = option.row_labels || [option.row_label || 'Row'];
+    var numRowLbls = option.num_row_labels || rowLabels.length || 1;
+    var showRowTotals = option.st_show_row_totals !== false;
+    var showColTotals = option.st_show_col_totals !== false;
+    var percentColumns = option.percent_columns || [];
+    var lines = [];
+
+    function pushRow(cells) {
+      lines.push(cells.map(_csvEscape).join(','));
+    }
+
+    if (colHeaderGroups.length > 1) {
+      var groupRow = [];
+      for (var rl = 0; rl < numRowLbls; rl++) {
+        groupRow.push(rl === 0 ? String(rowLabels[rl] || '') : '');
+      }
+      for (var g = 0; g < colHeaderGroups.length; g++) {
+        var grp = colHeaderGroups[g];
+        var label = grp && grp.label != null ? String(grp.label) : '';
+        var span = (grp && grp.headers && grp.headers.length) || 1;
+        groupRow.push(label);
+        for (var gs = 1; gs < span; gs++) {
+          groupRow.push('');
+        }
+      }
+      if (showRowTotals) {
+        groupRow.push('');
+      }
+      pushRow(groupRow);
+      var headerRow = [];
+      for (var rl2 = 0; rl2 < numRowLbls; rl2++) {
+        headerRow.push('');
+      }
+      for (var hi = 0; hi < colHeaders.length; hi++) {
+        headerRow.push(String(colHeaders[hi] || ''));
+      }
+      if (showRowTotals) {
+        headerRow.push('Total');
+      }
+      pushRow(headerRow);
+    } else {
+      var singleHeader = [];
+      for (var rl3 = 0; rl3 < numRowLbls; rl3++) {
+        singleHeader.push(String(rowLabels[rl3] || ''));
+      }
+      for (var ci = 0; ci < colHeaders.length; ci++) {
+        singleHeader.push(String(colHeaders[ci] || ''));
+      }
+      if (showRowTotals) {
+        singleHeader.push('Total');
+      }
+      pushRow(singleHeader);
+    }
+
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r];
+      var rowVals = row.slice(0, numRowLbls);
+      var cells = showRowTotals ? row.slice(numRowLbls, row.length - 1) : row.slice(numRowLbls);
+      var rTotal = showRowTotals ? row[row.length - 1] : null;
+      var out = [];
+      for (var rv = 0; rv < numRowLbls; rv++) {
+        out.push(String(rowVals[rv] || ''));
+      }
+      for (var c = 0; c < cells.length; c++) {
+        out.push(_tableCellExportText(cells[c], percentColumns, c));
+      }
+      if (showRowTotals) {
+        out.push(rTotal == null ? '' : String(rTotal));
+      }
+      pushRow(out);
+    }
+
+    if (showColTotals && totalRow.length) {
+      var totalHasGrand = option.total_row_has_grand_total !== false;
+      var totalValueEnd = totalHasGrand ? totalRow.length - 1 : totalRow.length;
+      var totalOut = [];
+      for (var t = 0; t < totalRow.length; t++) {
+        var tv = totalRow[t];
+        if (t >= numRowLbls && t < totalValueEnd) {
+          var totalColIdx = t - numRowLbls;
+          if (percentColumns.indexOf(totalColIdx) >= 0 && tv !== '' && tv != null) {
+            totalOut.push(String(tv) + '%');
+          } else {
+            totalOut.push(tv == null ? '' : String(tv));
+          }
+        } else {
+          totalOut.push(tv == null ? '' : String(tv));
+        }
+      }
+      pushRow(totalOut);
+    }
+
+    return lines.join('\r\n') + '\r\n';
+  }
+
+  function _tableExportBaseName(container, option) {
+    var title = String(option.title_text || '').trim();
+    if (title) {
+      return title.replace(/[^\w\s-]+/g, '').trim().replace(/\s+/g, '_').slice(0, 80) || 'chart_table';
+    }
+    var chartId = container && container.dataset ? container.dataset.chartId : '';
+    if (chartId && chartId !== 'preview') {
+      return 'chart_' + chartId + '_table';
+    }
+    return 'chart_table';
+  }
+
+  function _downloadBlob(filename, blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function _exportSummaryTableCsv(container, option) {
+    var csv = _buildSummaryTableCsv(option);
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    _downloadBlob(_tableExportBaseName(container, option) + '.csv', blob);
+  }
+
+  function _ensureHtml2Canvas() {
+    if (typeof window.html2canvas === 'function') {
+      return Promise.resolve(window.html2canvas);
+    }
+    return new Promise(function (resolve, reject) {
+      var existing = document.querySelector('script[data-dv-html2canvas]');
+      if (existing) {
+        existing.addEventListener('load', function () { resolve(window.html2canvas); });
+        existing.addEventListener('error', reject);
+        return;
+      }
+      var s = document.createElement('script');
+      s.src = '/static/vendor/html2canvas/html2canvas.min.js';
+      s.defer = true;
+      s.dataset.dvHtml2canvas = '1';
+      s.onload = function () { resolve(window.html2canvas); };
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  function _exportSummaryTablePng(container) {
+    var root = container.querySelector('.dv-table-export-root');
+    if (!root) return;
+    _ensureHtml2Canvas().then(function (html2canvas) {
+      return html2canvas(root, {
+        backgroundColor: '#ffffff',
+        scale: Math.min(2, window.devicePixelRatio || 1),
+        useCORS: true,
+        logging: false,
+        onclone: function (_doc, clone) {
+          var scroll = clone.querySelector('.overflow-auto');
+          if (scroll) {
+            scroll.style.overflow = 'visible';
+            scroll.style.maxHeight = 'none';
+            scroll.style.height = 'auto';
+          }
+        },
+      });
+    }).then(function (canvas) {
+      canvas.toBlob(function (blob) {
+        if (!blob) return;
+        var option = container._tableExportOption || {};
+        _downloadBlob(_tableExportBaseName(container, option) + '.png', blob);
+      }, 'image/png');
+    }).catch(function () {
+      window.alert('Could not save table image. Try again or use CSV export.');
+    });
+  }
+
+  function _attachTableExportToolbar(container, option) {
+    if (option.show_toolbox === false) return;
+    var toolbar = container.querySelector('.dv-table-toolbar');
+    if (!toolbar) return;
+    var csvBtn = toolbar.querySelector('[data-dv-export="csv"]');
+    var pngBtn = toolbar.querySelector('[data-dv-export="png"]');
+    if (csvBtn) {
+      csvBtn.addEventListener('click', function (evt) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        _exportSummaryTableCsv(container, option);
+      });
+    }
+    if (pngBtn) {
+      pngBtn.addEventListener('click', function (evt) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        _exportSummaryTablePng(container);
+      });
+    }
+  }
+
   function _renderSummaryTable(container, option) {
+    container._tableExportOption = option;
     const colHeaders = option.col_headers || [];
     const colKeys    = option.col_header_raw || colHeaders;
     const percentColumns = option.percent_columns || [];
@@ -479,7 +704,15 @@
     const colThStyleAttr = colHeaderWidthStyle ? (' style="' + colHeaderWidthStyle.trim() + '"') : '';
     const tableLayoutStyle = colHeaderWidthStyle ? ' style="table-layout:fixed;width:100%"' : '';
     const colTdWidthClass = colHeaderWidthStyle ? ' max-w-0 overflow-hidden' : '';
-    let html = '<div class="flex flex-col w-full h-full min-h-[200px]">';
+    const showToolbox = option.show_toolbox !== false;
+    const toolbarBtnClass = 'px-2 py-0.5 text-[10px] font-semibold rounded border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 shadow-sm';
+    let html = '<div class="dv-table-export-root flex flex-col w-full h-full min-h-[200px] bg-white">';
+    if (showToolbox) {
+      html += '<div class="dv-table-toolbar flex justify-end gap-1 px-2 pt-1 shrink-0">'
+           + '<button type="button" class="' + toolbarBtnClass + '" data-dv-export="csv" title="Download table as CSV">CSV</button>'
+           + '<button type="button" class="' + toolbarBtnClass + '" data-dv-export="png" title="Save table as PNG image">PNG</button>'
+           + '</div>';
+    }
     html += '<div class="dv-table-title text-center font-semibold text-slate-800 px-3 pt-2 pb-1 shrink-0"'
          + (titleShow ? ' style="font-size:' + titleSize + 'px"' : ' style="display:none"') + '>'
          + _esc(titleText) + '</div>';
@@ -621,6 +854,7 @@
     html += '</tbody></table></div></div>';
 
     container.innerHTML = html;
+    _attachTableExportToolbar(container, option);
 
     // Attach drill-through click handlers on drillable cells
     if (canDrill) {
