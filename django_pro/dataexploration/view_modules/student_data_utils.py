@@ -2149,7 +2149,7 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
     student_info = get_student_info_cached(ssid, timeout=timeout, user_id=user_id)
     try:
         from landing.utils import get_summary_sections
-        summary_sections = get_summary_sections()
+        summary_sections = get_summary_sections(getattr(request, 'user', None))
     except Exception:
         summary_sections = {
             'tests': True, 'grades': True, 'diploma': True, 'ag': True,

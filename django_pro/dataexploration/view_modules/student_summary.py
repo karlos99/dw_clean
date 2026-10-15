@@ -51,7 +51,7 @@ class StudentTestSummaryView(LoginRequiredMixin, ListView):
         context['student_details'] = get_student_details_cached(ssid, user_id=user_id)
         try:
             from landing.utils import get_summary_sections
-            context['summary_sections'] = get_summary_sections()
+            context['summary_sections'] = get_summary_sections(getattr(self.request, 'user', None))
         except Exception:
             context['summary_sections'] = {
                 'tests': True, 'grades': True, 'diploma': True, 'ag': True,

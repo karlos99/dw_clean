@@ -13,6 +13,15 @@ def index(request):
         cfg = get_project_config()
         home_charts_enabled = bool(getattr(cfg, 'enable_home_charts', True))
 
+        HOME_PAGE_WIDTH_CLASSES = {
+            'standard': 'max-w-7xl',
+            'wide': 'max-w-screen-2xl',
+            'extra_wide': 'max-w-[1800px]',
+            'full': 'max-w-full',
+        }
+        home_page_width = getattr(cfg, 'home_page_width', 'standard') or 'standard'
+        home_page_width_class = HOME_PAGE_WIDTH_CLASSES.get(home_page_width, 'max-w-7xl')
+
         home_dashboard_json = 'null'
         home_slots_json = '[]'
         slots = []
@@ -114,6 +123,8 @@ def index(request):
             'home_forced_chart_ids': home_forced_chart_ids,
             'home_forced_chart_ids_json': json.dumps(home_forced_chart_ids),
             'home_show_chart_location': bool(getattr(cfg, 'home_show_chart_location', True)),
+            'home_page_width': home_page_width,
+            'home_page_width_class': home_page_width_class,
             'user_schools': user_schools,
             'active_school_id': active_school_id,
             'active_school_name': active_school.school_name if active_school else '',
@@ -175,6 +186,9 @@ def project_settings(request):
         cfg.enabled_columns = enabled_columns if enabled_columns else None
         cfg.enabled_dataset_tables = enabled_tables if enabled_tables else None
         cfg.enable_home_charts = request.POST.get('enable_home_charts') == 'on'
+        home_page_width = request.POST.get('home_page_width', 'standard')
+        if home_page_width in ('standard', 'wide', 'extra_wide', 'full'):
+            cfg.home_page_width = home_page_width
         cfg.home_show_chart_location = request.POST.get('home_show_chart_location') == 'on'
         cfg.disabled_school_years = request.POST.getlist('disabled_school_years')
 
@@ -190,13 +204,41 @@ def project_settings(request):
             cfg.home_max_charts = 0
         cfg.enable_course_program_columns = request.POST.get('enable_course_program_columns') == 'on'
 
-        # Student summary section visibility
-        for field in (
-            'summary_show_tests', 'summary_show_grades', 'summary_show_diploma',
-            'summary_show_ag', 'summary_show_on_track', 'summary_show_cte',
-            'summary_show_recognition', 'summary_show_flags',
-        ):
-            setattr(cfg, field, request.POST.get(field) == 'on')
+        # Student summary access rules (Option 1: Explicit Access Policies)
+        raw_access_rules = request.POST.get('summary_access_rules_json', '')
+        try:
+            access_rules = _json.loads(raw_access_rules) if raw_access_rules.strip() else {}
+        except (ValueError, TypeError):
+            access_rules = {}
+
+        if isinstance(access_rules, dict) and access_rules:
+            # Clean roles and emails for each module
+            cleaned_rules = {}
+            for key in ('tests', 'grades', 'diploma', 'ag', 'on_track', 'cte', 'recognition', 'flags'):
+                r = access_rules.get(key)
+                if isinstance(r, dict):
+                    mode = r.get('mode', 'all')
+                    if mode not in ('all', 'restricted', 'disabled'):
+                        mode = 'all'
+                    roles = [str(role).strip() for role in r.get('roles', []) if str(role).strip()]
+                    emails = [str(em).strip().lower() for em in r.get('emails', []) if str(em).strip()]
+                    cleaned_rules[key] = {
+                        'mode': mode,
+                        'roles': roles,
+                        'emails': emails,
+                    }
+            cfg.summary_access_rules = cleaned_rules
+        else:
+            cfg.summary_access_rules = {}
+
+        # Keep legacy boolean fields synchronized
+        from landing.utils import SUMMARY_SECTION_FIELDS
+        for key, field in SUMMARY_SECTION_FIELDS.items():
+            rule = cfg.summary_access_rules.get(key) if cfg.summary_access_rules else None
+            if rule and isinstance(rule, dict) and 'mode' in rule:
+                setattr(cfg, field, rule.get('mode') != 'disabled')
+            else:
+                setattr(cfg, field, request.POST.get(field) == 'on')
 
         # Diploma on-track expected credits per subject per grade
         from dataexploration.view_modules.student_data_utils import DIPLOMA_ON_TRACK_SUBJECTS
@@ -255,20 +297,47 @@ def project_settings(request):
                 row_years.append(0)
         diploma_expected_rows.append({'index': index, 'subject': subject, 'years': row_years})
 
-    summary_sections = [
-        ('Content tabs', [
-            {'field': 'summary_show_tests', 'label': 'Tests', 'help': 'Assessment records (state tests, SAT, AP, …).', 'checked': bool(cfg.summary_show_tests)},
-            {'field': 'summary_show_grades', 'label': 'Grades', 'help': 'Course grades / marks by year and semester.', 'checked': bool(cfg.summary_show_grades)},
-            {'field': 'summary_show_diploma', 'label': 'Diploma', 'help': 'DSUSD diploma requirements and progress.', 'checked': bool(cfg.summary_show_diploma)},
-            {'field': 'summary_show_ag', 'label': 'UC/CSU A-G', 'help': 'A-G course requirements.', 'checked': bool(cfg.summary_show_ag)},
-            {'field': 'summary_show_on_track', 'label': 'On Track', 'help': 'Grade-level A-G and diploma progress benchmarks (grades 9–11).', 'checked': bool(cfg.summary_show_on_track)},
-            {'field': 'summary_show_cte', 'label': 'CTE Pathways', 'help': 'Career & technical education pathways.', 'checked': bool(cfg.summary_show_cte)},
-        ]),
-        ('Header indicators', [
-            {'field': 'summary_show_recognition', 'label': 'Academic recognition', 'help': 'Summa / Magna / Cum Laude badge from unweighted GPA.', 'checked': bool(cfg.summary_show_recognition)},
-            {'field': 'summary_show_flags', 'label': 'Support flags', 'help': 'SPED, 504, ELL, GATE, foster, homeless, … badges.', 'checked': bool(cfg.summary_show_flags)},
-        ]),
+    from users.models import Role
+    available_roles = list(Role.objects.values_list('name', flat=True).order_by('name'))
+
+    MODULE_INFO = [
+        ('tests', 'Tests', 'Assessment records (state tests, SAT, AP, …).', 'Content tabs'),
+        ('grades', 'Grades', 'Course grades / marks by year and semester.', 'Content tabs'),
+        ('diploma', 'Diploma', 'DSUSD diploma requirements and progress.', 'Content tabs'),
+        ('ag', 'UC/CSU A-G', 'A-G course requirements.', 'Content tabs'),
+        ('on_track', 'On Track', 'Grade-level A-G and diploma progress benchmarks (grades 9–11).', 'Content tabs'),
+        ('cte', 'CTE Pathways', 'Career & technical education pathways.', 'Content tabs'),
+        ('recognition', 'Academic recognition', 'Summa / Magna / Cum Laude badge from unweighted GPA.', 'Header indicators'),
+        ('flags', 'Support flags', 'SPED, 504, ELL, GATE, foster, homeless, … badges.', 'Header indicators'),
     ]
+
+    configured_rules = cfg.summary_access_rules or {}
+    summary_modules = []
+    summary_rules_data = {}
+
+    for key, label, help_text, group in MODULE_INFO:
+        rule = configured_rules.get(key)
+        if isinstance(rule, dict) and 'mode' in rule:
+            mode = rule.get('mode', 'all')
+            roles = rule.get('roles', [])
+            emails = rule.get('emails', [])
+        else:
+            legacy_val = getattr(cfg, f'summary_show_{key}', True)
+            mode = 'all' if legacy_val else 'disabled'
+            roles = []
+            emails = []
+
+        summary_rules_data[key] = {
+            'mode': mode,
+            'roles': roles,
+            'emails': emails,
+        }
+        summary_modules.append({
+            'key': key,
+            'label': label,
+            'help': help_text,
+            'group': group,
+        })
 
     context = {
         'cfg': cfg,
@@ -284,6 +353,7 @@ def project_settings(request):
         'dataset_tables':              TABLE_CHOICES,
         'enabled_dataset_tables':      cfg.enabled_dataset_tables or [],
         'enable_home_charts':          cfg.enable_home_charts,
+        'home_page_width':             getattr(cfg, 'home_page_width', 'standard') or 'standard',
         'home_show_chart_location':    bool(getattr(cfg, 'home_show_chart_location', True)),
         'disabled_school_years':       [str(sy) for sy in (cfg.disabled_school_years or [])],
         'chart_choices':               chart_choices,
@@ -291,7 +361,10 @@ def project_settings(request):
         'home_forced_charts':          home_forced,
         'home_forced_charts_json':     _json.dumps(home_forced),
         'home_max_charts':             int(cfg.home_max_charts or 0),
-        'summary_sections':            summary_sections,
+        'summary_modules':             summary_modules,
+        'summary_access_rules_json':   _json.dumps(summary_rules_data),
+        'available_roles':             available_roles,
+        'available_roles_json':        _json.dumps(available_roles),
         'diploma_expected_rows':       diploma_expected_rows,
     }
     return render(request, 'landing/project_settings.html', context)

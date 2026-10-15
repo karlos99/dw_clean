@@ -65,7 +65,7 @@ class ProjectConfigAdmin(admin.ModelAdmin):
         }),
         ('Home Dashboard', {
             'fields': (
-                'enable_home_charts', 'home_show_chart_location',
+                'enable_home_charts', 'home_page_width', 'home_show_chart_location',
                 'home_forced_charts', 'home_max_charts',
             ),
         }),

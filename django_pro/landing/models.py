@@ -51,6 +51,20 @@ class ProjectConfig(models.Model):
     )
 
     # ── Home dashboard ──────────────────────────────────────────────────────
+    HOME_PAGE_WIDTH_CHOICES = [
+        ('standard', 'Standard (1280px)'),
+        ('wide', 'Wide (1536px)'),
+        ('extra_wide', 'Extra Wide (1800px)'),
+        ('full', 'Full Width (Fluid)'),
+    ]
+
+    home_page_width = models.CharField(
+        max_length=20,
+        choices=HOME_PAGE_WIDTH_CHOICES,
+        default='standard',
+        help_text="Controls the maximum container width of the home dashboard page.",
+    )
+
     enable_home_charts = models.BooleanField(
         default=True,
         help_text="Allow users to build a personalized charts dashboard on the home page (drag charts from the User Charts panel).",
@@ -139,6 +153,15 @@ class ProjectConfig(models.Model):
     summary_show_flags = models.BooleanField(
         default=True,
         help_text="Show the support flags row (SPED, 504, ELL, …) in the student summary header.",
+    )
+    summary_access_rules = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Granular access rules for student summary modules, keyed by module key "
+            "(tests, grades, diploma, ag, on_track, cte, recognition, flags). "
+            "Format: {\"flags\": {\"mode\": \"restricted\", \"roles\": [\"504_Admin\"], \"emails\": [\"user@example.com\"]}}"
+        ),
     )
 
     diploma_expected_credits = models.JSONField(
