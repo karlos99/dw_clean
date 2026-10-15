@@ -5,7 +5,7 @@
 {% block title %}{{ page.title }} – DataViz{% endblock %}
 
 {% block extra_head %}
-<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+{% include 'partials/vendor_echarts.html' %}
 <style>
   /* Responsive grid: 12-col on desktop, single-col on mobile.
      Matches builder GridStack: cellHeight=80px, margin=8px, overflow=hidden */
@@ -498,7 +498,7 @@
 
     // SWR Instant Client Cache: Check sessionStorage for instant rendering
     try {
-      const cacheKey = `dv_chart_v3_${cid}_${filterKey}`;
+      const cacheKey = `dv_chart_v4_${cid}_${filterKey}`;
       const cached = sessionStorage.getItem(cacheKey);
       if (cached) {
         const item = JSON.parse(cached);
@@ -546,7 +546,7 @@
           slot.innerHTML = payload.html;
           needsInit = true;
           try {
-            const cacheKey = `dv_chart_v3_${cid}_${filterKey}`;
+            const cacheKey = `dv_chart_v4_${cid}_${filterKey}`;
             sessionStorage.setItem(cacheKey, JSON.stringify({ html: payload.html, etag: payload.etag }));
           } catch (e) {}
         } else {

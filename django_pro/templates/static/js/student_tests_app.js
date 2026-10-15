@@ -2193,6 +2193,8 @@ document.addEventListener('DOMContentLoaded', () => {
             event.preventDefault();
             const cteOverlayEl = document.getElementById('student-cte-overlay');
             if (cteOverlayEl) hideOverlay(cteOverlayEl);
+            const detailsOverlayEl = document.getElementById('student-details-overlay');
+            if (detailsOverlayEl) hideOverlay(detailsOverlayEl);
             hideOverlay(summaryOverlayEl);
             if (summaryOverlayBodyEl) summaryOverlayBodyEl.innerHTML = '';
             return;
@@ -2214,6 +2216,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const openDetailsEl = event.target.closest('[data-action="open-student-details"]');
+        if (openDetailsEl) {
+            event.preventDefault();
+            const detailsOverlayEl = document.getElementById('student-details-overlay');
+            if (detailsOverlayEl) showOverlay(detailsOverlayEl);
+            return;
+        }
+
+        const closeDetailsEl = event.target.closest('[data-action="close-student-details"]');
+        if (closeDetailsEl) {
+            event.preventDefault();
+            const detailsOverlayEl = document.getElementById('student-details-overlay');
+            if (detailsOverlayEl) hideOverlay(detailsOverlayEl);
+            return;
+        }
+
 
     });
 
@@ -2222,6 +2240,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const cteOverlayEl = document.getElementById('student-cte-overlay');
         if (cteOverlayEl && !cteOverlayEl.classList.contains('hidden')) {
             hideOverlay(cteOverlayEl);
+            return;
+        }
+        const detailsOverlayEl = document.getElementById('student-details-overlay');
+        if (detailsOverlayEl && !detailsOverlayEl.classList.contains('hidden')) {
+            hideOverlay(detailsOverlayEl);
             return;
         }
         if (summaryOverlayEl && !summaryOverlayEl.classList.contains('hidden')) {

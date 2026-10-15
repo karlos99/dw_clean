@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load socialaccount %}
+{% load static socialaccount %}
 
 {% block title %}Login - DS Data{% endblock %}
 
@@ -75,7 +75,7 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" defer></script>
+<script src="{% static 'vendor/three/three-r128.min.js' %}" defer></script>
 
 <script>
   const ANIMATION_SPEED = 3.5; // Controls the speed of the animation

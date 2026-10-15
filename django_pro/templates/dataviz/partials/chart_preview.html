@@ -6,6 +6,8 @@
 {# In standalone context (chart builder preview), enforce a min-height so ECharts has room. #}
 <div class="chart-container w-full{% if not embed %} min-h-[460px]{% endif %}"
      data-chart-option="{{ option_json|default:'{}' }}"
+     data-col-header-wrap="{% if table_col_header_wrap %}1{% else %}0{% endif %}"
+     {% if table_col_header_width %}data-col-header-width="{{ table_col_header_width }}"{% endif %}
      data-chart-id="{{ chart_id }}"
      data-drill-enabled="{{ drill_enabled|default:'0' }}"
      data-drill-source="{{ drill_source|default:'' }}"
