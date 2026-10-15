@@ -5,15 +5,7 @@
 {% block title %}DataViz{% endblock %}
 
 {% block extra_head %}
-<script src="https://code.highcharts.com/highcharts.js"></script>
-<script src="https://code.highcharts.com/highcharts-more.js"></script>
-<script src="https://code.highcharts.com/modules/heatmap.js"></script>
-<script src="https://code.highcharts.com/modules/treemap.js"></script>
-<script src="https://code.highcharts.com/modules/funnel.js"></script>
-<script src="https://code.highcharts.com/modules/solid-gauge.js"></script>
-<script src="https://code.highcharts.com/modules/histogram-bellcurve.js"></script>
-<script src="https://code.highcharts.com/modules/exporting.js"></script>
-<script src="https://code.highcharts.com/modules/accessibility.js"></script>
+{% include 'partials/vendor_highcharts.html' %}
 <script>
     {% include 'static/js/dataviz_utils.js' %}
     {% include 'static/js/dataviz_chart_renderer.js' %}

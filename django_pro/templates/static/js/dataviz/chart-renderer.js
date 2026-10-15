@@ -192,6 +192,19 @@
       return;
     }
 
+    // Table column layout: also on data-* so embed/page renders stay in sync
+    // with saved config even when render HTML was cached before option JSON
+    // included these keys.
+    if (container.dataset.colHeaderWrap === '1') {
+      option.col_header_wrap = true;
+    }
+    if (container.dataset.colHeaderWidth) {
+      var parsedHdrW = Number(container.dataset.colHeaderWidth);
+      if (Number.isFinite(parsedHdrW) && parsedHdrW > 0) {
+        option.col_header_width = parsedHdrW;
+      }
+    }
+
     // Message option: show guidance/error text instead of a chart
     if (option && option.__is_message__) {
       var msgClass = option.__is_error__ ? 'bg-red-50 border-red-200 text-red-700' : 'bg-amber-50 border-amber-200 text-amber-800';
@@ -414,6 +427,14 @@
       .replace(/"/g, '&quot;');
   }
 
+  function _tableHeaderLabelHtml(text, allowWrap) {
+    var s = String(text);
+    if (allowWrap && s.indexOf('\n') >= 0) {
+      return s.split('\n').map(_esc).join('<br>');
+    }
+    return _esc(s);
+  }
+
   function _renderSummaryTable(container, option) {
     const colHeaders = option.col_headers || [];
     const colKeys    = option.col_header_raw || colHeaders;
@@ -444,6 +465,20 @@
     const titleShow = option.title_show !== false && !!titleText;
     const subText = String(option.subtitle_text || '').trim();
     const subShow = option.subtitle_show === true && !!subText;
+    const colHeaderWrap = option.col_header_wrap === true;
+    var colHeaderWidth = Number(option.col_header_width);
+    if (colHeaderWrap && !Number.isFinite(colHeaderWidth)) {
+      colHeaderWidth = 88;
+    }
+    const colHeaderWidthStyle = (colHeaderWrap && Number.isFinite(colHeaderWidth) && colHeaderWidth > 0)
+      ? (' max-width:' + colHeaderWidth + 'px;width:' + colHeaderWidth + 'px;')
+      : '';
+    const colThWrapClass = colHeaderWrap
+      ? 'whitespace-normal break-words leading-tight align-bottom'
+      : 'whitespace-nowrap';
+    const colThStyleAttr = colHeaderWidthStyle ? (' style="' + colHeaderWidthStyle.trim() + '"') : '';
+    const tableLayoutStyle = colHeaderWidthStyle ? ' style="table-layout:fixed;width:100%"' : '';
+    const colTdWidthClass = colHeaderWidthStyle ? ' max-w-0 overflow-hidden' : '';
     let html = '<div class="flex flex-col w-full h-full min-h-[200px]">';
     html += '<div class="dv-table-title text-center font-semibold text-slate-800 px-3 pt-2 pb-1 shrink-0"'
          + (titleShow ? ' style="font-size:' + titleSize + 'px"' : ' style="display:none"') + '>'
@@ -451,7 +486,21 @@
     html += '<p class="dv-table-subtitle text-center font-normal text-slate-500 px-4 pb-2 shrink-0"'
          + (subShow ? ' style="font-size:11px;line-height:1.45;white-space:pre-wrap"' : ' style="display:none"') + '>'
          + _esc(subText) + '</p>';
-    html += '<div class="overflow-auto w-full flex-1 min-h-0"><table class="min-w-full text-xs border-collapse">';
+    html += '<div class="overflow-auto w-full flex-1 min-h-0"><table class="min-w-full text-xs border-collapse"' + tableLayoutStyle + '>';
+
+    if (colHeaderWidthStyle) {
+      html += '<colgroup>';
+      for (var rlCol = 0; rlCol < numRowLbls; rlCol++) {
+        html += '<col style="width:120px">';
+      }
+      for (var ci = 0; ci < colHeaders.length; ci++) {
+        html += '<col style="' + colHeaderWidthStyle.trim() + '">';
+      }
+      if (showRowTotals) {
+        html += '<col style="width:72px">';
+      }
+      html += '</colgroup>';
+    }
 
     // Header rows (single row, or two rows if col_header_groups present)
     html += '<thead>';
@@ -465,8 +514,8 @@
       }
       for (var g = 0; g < colHeaderGroups.length; g++) {
         var grp = colHeaderGroups[g];
-        html += '<th class="bg-slate-100 border border-slate-200 px-2 py-1 text-center font-semibold text-slate-500 whitespace-nowrap" colspan="' + grp.headers.length + '">'
-             + _esc(String(grp.label)) + '</th>';
+        html += '<th class="bg-slate-100 border border-slate-200 px-2 py-1 text-center font-semibold text-slate-500 ' + (colHeaderWrap ? colThWrapClass : 'whitespace-nowrap') + '" colspan="' + grp.headers.length + '">'
+             + _tableHeaderLabelHtml(grp.label, colHeaderWrap) + '</th>';
       }
       if (showRowTotals) {
         html += '<th class="bg-slate-200 border border-slate-200 px-2 py-1.5 text-center font-bold text-slate-700 whitespace-nowrap" rowspan="2">Total</th>';
@@ -474,8 +523,8 @@
       html += '</tr><tr>';
       // Value header row
       for (var i = 0; i < colHeaders.length; i++) {
-        html += '<th class="bg-slate-100 border border-slate-200 px-2 py-1.5 text-center font-semibold text-slate-600 whitespace-nowrap">'
-             + _esc(String(colHeaders[i])) + '</th>';
+        html += '<th class="bg-slate-100 border border-slate-200 px-2 py-1.5 text-center font-semibold text-slate-600 ' + colThWrapClass + '"' + colThStyleAttr + '>'
+             + _tableHeaderLabelHtml(colHeaders[i], colHeaderWrap) + '</th>';
       }
       html += '</tr>';
     } else {
@@ -487,7 +536,7 @@
              + _esc(String(rowLabels[rl] || '')) + '</th>';
       }
       for (var i = 0; i < colHeaders.length; i++) {
-        html += '<th class="bg-slate-100 border border-slate-200 px-2 py-1.5 text-center font-semibold text-slate-600 whitespace-nowrap">' + _esc(String(colHeaders[i])) + '</th>';
+        html += '<th class="bg-slate-100 border border-slate-200 px-2 py-1.5 text-center font-semibold text-slate-600 ' + colThWrapClass + '"' + colThStyleAttr + '>' + _tableHeaderLabelHtml(colHeaders[i], colHeaderWrap) + '</th>';
       }
       if (showRowTotals) {
         html += '<th class="bg-slate-200 border border-slate-200 px-2 py-1.5 text-center font-bold text-slate-700 whitespace-nowrap">Total</th>';
@@ -532,9 +581,9 @@
           var rvKey = rowVals.join(SEPS);
           var cvKey = cc ? (cc + SEPS + cv) : cv;
           var calcAttr = cc ? ' data-calc-id="' + _esc(cc) + '"' : '';
-          html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100"' + titleAttr + ' data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '"' + calcAttr + '>' + displayCellVal + '</td>';
+          html += '<td class="border border-slate-200 px-2 py-1 text-center font-medium text-sky-700 cursor-pointer hover:bg-sky-100' + colTdWidthClass + '"' + titleAttr + ' data-rv="' + _esc(rvKey) + '" data-cv="' + _esc(cvKey) + '"' + calcAttr + '>' + displayCellVal + '</td>';
         } else {
-          html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500"' + titleAttr + '>' + (hasDisplayValue ? displayCellVal : '<span class="text-slate-300">\u2014</span>') + '</td>';
+          html += '<td class="border border-slate-200 px-2 py-1 text-center text-slate-500' + colTdWidthClass + '"' + titleAttr + '>' + (hasDisplayValue ? displayCellVal : '<span class="text-slate-300">\u2014</span>') + '</td>';
         }
       }
       if (showRowTotals) {
