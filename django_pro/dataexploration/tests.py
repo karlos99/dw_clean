@@ -61,6 +61,90 @@ class TemplateCompilationTests(SimpleTestCase):
 	def test_student_orbit_header_compiles(self):
 		get_template("dataexploration/partials/student_orbit_header.html")
 
+	def test_student_orbit_header_respects_summary_sections_disabled(self):
+		from django.template.loader import render_to_string
+		context = {
+			'ssid': '12345',
+			'student_info': {
+				'ssid': '12345',
+				'student_id': '1001',
+				'full_name': 'Test Student',
+				'ell_status': 'EO',
+				'school': 'Test High School',
+				'school_short_name': 'Test HS',
+				'grade': '10',
+				'school_year': '2024-2025',
+			},
+			'student_details': {
+				'has_any': True,
+				'summary': {'weighted_gpa': '3.8'},
+				'requirements': {
+					'diploma': [{'label': 'Standard Diploma', 'rows': [], 'met_count': 10, 'row_count': 10}],
+					'ag': [{'label': 'UC/CSU', 'rows': [], 'met_count': 6, 'row_count': 7}],
+				},
+			},
+			'student_cte_details': {
+				'has_any': True,
+				'current': [{'cte_pathway': 'Health', 'pathway_status': 'In Progress'}],
+			},
+			'summary_sections': {
+				'diploma': False,
+				'ag': False,
+				'cte': False,
+				'recognition': False,
+				'flags': False,
+			},
+		}
+		html = render_to_string("dataexploration/partials/student_orbit_header.html", context)
+		self.assertNotIn("node === 'diploma'", html)
+		self.assertNotIn("node === 'ag'", html)
+		self.assertNotIn("node === 'cte'", html)
+		self.assertNotIn("UC/CSU A-G", html)
+		self.assertNotIn("Diploma Requirements", html)
+		self.assertNotIn("CTE Pathways", html)
+
+	def test_student_orbit_header_renders_when_summary_sections_enabled(self):
+		from django.template.loader import render_to_string
+		context = {
+			'ssid': '12345',
+			'student_info': {
+				'ssid': '12345',
+				'student_id': '1001',
+				'full_name': 'Test Student',
+				'ell_status': 'EO',
+				'school': 'Test High School',
+				'school_short_name': 'Test HS',
+				'grade': '10',
+				'school_year': '2024-2025',
+			},
+			'student_details': {
+				'has_any': True,
+				'summary': {'weighted_gpa': '3.8'},
+				'requirements': {
+					'diploma': [{'label': 'Standard Diploma', 'rows': [], 'met_count': 10, 'row_count': 10}],
+					'ag': [{'label': 'UC/CSU', 'rows': [], 'met_count': 6, 'row_count': 7}],
+				},
+			},
+			'student_cte_details': {
+				'has_any': True,
+				'current': [{'cte_pathway': 'Health', 'pathway_status': 'In Progress'}],
+			},
+			'summary_sections': {
+				'diploma': True,
+				'ag': True,
+				'cte': True,
+				'recognition': True,
+				'flags': True,
+			},
+		}
+		html = render_to_string("dataexploration/partials/student_orbit_header.html", context)
+		self.assertIn("node === 'diploma'", html)
+		self.assertIn("node === 'ag'", html)
+		self.assertIn("node === 'cte'", html)
+		self.assertIn("UC/CSU A-G", html)
+		self.assertIn("Diploma Requirements", html)
+		self.assertIn("CTE Pathways", html)
+
 	def test_dataexploration_manage_default_columns_compiles(self):
 		get_template("dataexploration/manage_default_columns.html")
 
