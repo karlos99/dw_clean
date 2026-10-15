@@ -13,6 +13,7 @@ without rebuilding the image.
 | `alpine/` | Alpine.js + collapse plugin (`base.html`) |
 | `echarts/` | ECharts charts (`partials/vendor_echarts.html`) |
 | `gridstack/` | Dashboard/page grids (`partials/vendor_gridstack.html`) |
+| `html2canvas/` | Summary-table PNG export (`partials/vendor_echarts.html`) |
 | `highcharts/` | Legacy DataViz builder (`partials/vendor_highcharts.html`) |
 | `htmx/` | HTMX (`base.html`) |
 | `sortable/` | Drag-and-drop lists (DESI admin) |

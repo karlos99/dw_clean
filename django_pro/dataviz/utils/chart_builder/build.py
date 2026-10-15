@@ -310,6 +310,7 @@ def build_option(rows: list, col_defs: dict, cfg: dict) -> dict:
             option['title_font_size'] = int(cfg.get('title_font_size', 16) or 16)
         except (TypeError, ValueError):
             option['title_font_size'] = 16
+        option['show_toolbox'] = cfg.get('show_toolbox', True) is not False
         if cfg.get('chart_type') == 'dynamic_summary_table':
             option['col_header_wrap'] = cfg.get('dyn_col_header_wrap') in (True, 1, '1', 'true', 'True')
             _hdr_w = cfg.get('dyn_col_header_width')
