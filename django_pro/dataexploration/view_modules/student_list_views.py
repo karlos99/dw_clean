@@ -724,22 +724,26 @@ def _load_students(request):
     cursor_raw = request.GET.get('cursor', '')
     cursor_value = decode_cursor(cursor_raw) if cursor_raw else None
 
+    CORE_FILTER_KEYS = {
+        'search', 'school_year', 'grade', 'status',
+        'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
+    }
     filters_json = request.GET.get('filters', '')
     filters = {}
     if filters_json:
         try:
             filters = json.loads(filters_json)
-        except:
+        except Exception:
             filters = saved_filters.copy()
     else:
         # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
         filters = {
             k: v for k, v in saved_filters.items()
-            if k not in [
-                'search', 'school_year', 'grade', 'status',
-                'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
-            ]
+            if k not in CORE_FILTER_KEYS
         }
+
+    if isinstance(filters, dict):
+        filters = {k: v for k, v in filters.items() if k not in CORE_FILTER_KEYS}
 
     schedule_marks_filters = parse_schedule_marks_filters(
         request, saved_filters, column_filters=filters, user=request.user,

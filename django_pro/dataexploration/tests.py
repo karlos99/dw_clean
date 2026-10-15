@@ -1929,3 +1929,51 @@ class StudentDetailsTests(SimpleTestCase):
 		self.assertEqual(math['projected_total'], 10.0)
 		# The displayed current schedule remains the active term only.
 		self.assertEqual(len(out['current_schedule']), 1)
+
+
+class ExportFiltersTests(SimpleTestCase):
+	def test_core_filter_keys_stripped_from_column_filters(self):
+		"""Verify school_year, grade, status, search, and schedule keys are stripped from column filters."""
+		from dataexploration.view_modules.export_views import export_students_csv
+		from dataexploration.models import SavedQuery
+		from unittest.mock import MagicMock, patch
+		from django.test import RequestFactory
+		import json
+
+		factory = RequestFactory()
+		filters_dict = {
+			'school_year': '2023-2024',
+			'grade': ['06', '07'],
+			'status': 'Active',
+			'search': 'Smith',
+			'schedule_period': ['1'],
+			'markall_2023_2024_Fine_Arts': ['exclude:Art'],
+		}
+		req = factory.get(
+			f'/dataexploration/api/students/export-csv/?filters={json.dumps(filters_dict)}'
+		)
+		user = MagicMock()
+		user.is_authenticated = True
+		user.is_superuser = True
+		user.get_accessible_student_keys.return_value = None
+		req.user = user
+
+		with patch('dataexploration.view_modules.export_views.apply_column_filters') as mock_apply:
+			with patch('dataexploration.view_modules.export_views.connections') as mock_conn:
+				mock_cursor = MagicMock()
+				mock_cursor.fetchall.return_value = []
+				mock_cursor.description = [('ssid',)]
+				mock_conn.__getitem__.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+				resp = export_students_csv(req)
+				# Consume the stream
+				list(resp.streaming_content)
+
+				self.assertTrue(mock_apply.called)
+				# The 3rd argument to apply_column_filters is filters_without_cp
+				passed_filters = mock_apply.call_args[0][2]
+				self.assertNotIn('school_year', passed_filters)
+				self.assertNotIn('grade', passed_filters)
+				self.assertNotIn('status', passed_filters)
+				self.assertNotIn('search', passed_filters)
+				self.assertNotIn('schedule_period', passed_filters)

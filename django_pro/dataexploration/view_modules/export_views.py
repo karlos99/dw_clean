@@ -3,9 +3,12 @@
 from django.contrib.auth.decorators import login_required
 from django.http import StreamingHttpResponse
 from django.db import connections
+from django.core.cache import cache
 import json
 import csv
 import hashlib
+
+_MAX_SPAN_CACHE_TTL = 1800
 
 from ..models import SavedQuery, StudentList
 from ..catalog_columns import (
@@ -166,22 +169,30 @@ def export_students_csv(request):
     sort_by = request.GET.get('sort_by', '') or saved_config.get('sort_by', '')
     sort_dir = request.GET.get('sort_dir', 'asc').lower()
 
+    CORE_FILTER_KEYS = {
+        'search', 'school_year', 'grade', 'status',
+        'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
+    }
+
     filters_json = request.GET.get('filters', '')
     filters = {}
     if filters_json:
         try:
             filters = json.loads(filters_json)
-        except:
-            filters = saved_filters.copy()
-    else:
-        # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
-        filters = {
-            k: v for k, v in saved_filters.items()
-            if k not in [
-                'search', 'school_year', 'grade', 'status',
-                'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
-            ]
-        }
+        except Exception:
+            filters = {}
+
+    if not filters and saved_filters:
+        filters = saved_filters.copy()
+
+    if isinstance(filters, dict):
+        filters = {k: v for k, v in filters.items() if k not in CORE_FILTER_KEYS}
+
+    # If saved query defines umbrella course/assessment filters that were not sent in filters, preserve them
+    if saved_filters and isinstance(filters, dict):
+        for k, v in saved_filters.items():
+            if str(k).startswith(('markall_', 'apall_')) and k not in filters:
+                filters[k] = v
 
     schedule_marks_filters = parse_schedule_marks_filters(
         request, saved_filters, column_filters=filters, user=request.user,
@@ -289,6 +300,20 @@ def export_students_csv(request):
                         continue
             new_selected.append(c)
         selected_columns = new_selected
+
+    # Drop saved filters on individual AP subject PL columns when their "All Results" umbrella is selected
+    if isinstance(filters, dict) and apall_years:
+        filters = {
+            k: v for k, v in filters.items()
+            if not (isinstance(k, str) and k.startswith('ap_') and not k.startswith('apaward_') and not k.startswith('apawards_all_') and not k.startswith('apall_'))
+        }
+
+    # Drop saved filters on individual mark columns when their "All Marks" umbrella is selected
+    if isinstance(filters, dict) and markall_years:
+        filters = {
+            k: v for k, v in filters.items()
+            if not (isinstance(k, str) and k.startswith('mark_') and not k.startswith('markall_'))
+        }
 
     def _apall_subject_excludes(year):
         if not isinstance(filters, dict):
@@ -792,28 +817,47 @@ def export_students_csv(request):
                 # the user deselected). Mirrors load_students.
                 markall_max = {}
                 if markall_years:
-                    with connections['default'].cursor() as markall_cursor:
-                        for (year, subject), umbrella in markall_years.items():
-                            course_filter_sql, course_extra_params = markall_course_filter_parts(
-                                subject, _markall_course_picker_for_umbrella(umbrella)
-                            )
-                            markall_cursor.execute(
-                                f"""
-                                SELECT COALESCE(MAX(cnt), 0)
-                                FROM (
-                                    SELECT sm.ssid, COUNT(DISTINCT sm.course_name) AS cnt
-                                    FROM student_marks_list sm
-                                    INNER JOIN current_student cs ON sm.ssid = cs.ssid
-                                    {join_sql}
-                                    WHERE {where_sql}
-                                      AND sm.school_year = %s AND sm.subject = %s
-                                      {course_filter_sql}
-                                    GROUP BY sm.ssid
-                                ) t
-                                """,
+                    _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+                    for (year, subject), umbrella in markall_years.items():
+                        course_filter_sql, course_extra_params = markall_course_filter_parts(
+                            subject, _markall_course_picker_for_umbrella(umbrella)
+                        )
+                        markall_cache_key = (
+                            f"dataexp:markall_max:{_sync_v}:"
+                            + hashlib.md5(json.dumps({
+                                'where': where_sql,
+                                'params': [str(p) for p in params],
+                                'join': join_sql,
+                                'year': year,
+                                'subject': subject,
+                                'cf': course_filter_sql,
+                                'cep': [str(p) for p in course_extra_params],
+                            }, sort_keys=True).encode()).hexdigest()
+                        )
+                        max_val = cache.get(markall_cache_key)
+                        if max_val is None:
+                            ch_query = f"""
+                            SELECT COALESCE(MAX(cnt), 0)
+                            FROM (
+                                SELECT sm.ssid, COUNT(DISTINCT sm.course_name) AS cnt
+                                FROM analytics_student_marks sm
+                                INNER JOIN current_student cs ON sm.ssid = cs.ssid
+                                {join_sql}
+                                WHERE {where_sql}
+                                  AND sm.school_year = %s AND sm.subject = %s
+                                  {course_filter_sql}
+                                GROUP BY sm.ssid
+                            ) t
+                            """
+                            pg_query = ch_query.replace('analytics_student_marks', 'student_marks_list')
+                            res = _fetchall_ch_or_pg(
+                                ch_query,
                                 params + [year, subject] + course_extra_params,
+                                pg_sql=pg_query,
                             )
-                            markall_max[(year, subject)] = min(int(markall_cursor.fetchone()[0] or 0), 10)
+                            max_val = min(int(res[0][0] or 0), 10) if res else 0
+                            cache.set(markall_cache_key, max_val, _MAX_SPAN_CACHE_TTL)
+                        markall_max[(year, subject)] = max_val
 
                     new_selected = []
                     for c in export_cols:
@@ -839,34 +883,64 @@ def export_students_csv(request):
                 # ── AP "All Results" expansion (filtered population) ───────
                 apall_max = {}
                 if apall_years:
-                    with connections['default'].cursor() as apall_cursor:
-                        for year in apall_years:
-                            excludes = _apall_subject_excludes(year)
-                            exclude_clause = ""
-                            exclude_params = []
-                            if excludes:
-                                placeholders = ", ".join(["%s"] * len(excludes))
-                                exclude_clause = f" AND e.name NOT IN ({placeholders})"
-                                exclude_params = sorted(excludes)
-                            apall_cursor.execute(
-                                f"""
-                                SELECT COALESCE(MAX(cnt), 0)
-                                FROM (
-                                    SELECT r.ssid, COUNT(*) AS cnt
-                                    FROM "dataLoader_apexamresult" r
-                                    INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
-                                    INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
-                                    INNER JOIN current_student cs ON r.ssid = cs.ssid
-                                    {join_sql}
-                                    WHERE {where_sql}
-                                      AND r.admin_year = %s AND il.is_published = true
-                                      {exclude_clause}
-                                    GROUP BY r.ssid
-                                ) t
-                                """,
+                    _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
+                    for year in apall_years:
+                        excludes = _apall_subject_excludes(year)
+                        exclude_clause = ""
+                        exclude_params = []
+                        if excludes:
+                            placeholders = ", ".join(["%s"] * len(excludes))
+                            exclude_clause = f" AND e.name NOT IN ({placeholders})"
+                            exclude_params = sorted(excludes)
+                        apall_cache_key = (
+                            f"dataexp:apall_max:{_sync_v}:"
+                            + hashlib.md5(json.dumps({
+                                'where': where_sql,
+                                'params': [str(p) for p in params],
+                                'join': join_sql,
+                                'year': year,
+                                'excl': exclude_clause,
+                                'exp': [str(p) for p in exclude_params],
+                            }, sort_keys=True).encode()).hexdigest()
+                        )
+                        max_val = cache.get(apall_cache_key)
+                        if max_val is None:
+                            ch_query = f"""
+                            SELECT COALESCE(MAX(cnt), 0)
+                            FROM (
+                                SELECT r.ssid, COUNT(*) AS cnt
+                                FROM analytics_ap_exam_results r
+                                INNER JOIN current_student cs ON r.ssid = cs.ssid
+                                {join_sql}
+                                WHERE {where_sql}
+                                  AND r.admin_year = %s
+                                  {exclude_clause.replace('e.name', 'r.exam_name')}
+                                GROUP BY r.ssid
+                            ) t
+                            """
+                            pg_query = f"""
+                            SELECT COALESCE(MAX(cnt), 0)
+                            FROM (
+                                SELECT r.ssid, COUNT(*) AS cnt
+                                FROM "dataLoader_apexamresult" r
+                                INNER JOIN "dataLoader_apexamcode" e ON r.exam_id = e.code
+                                INNER JOIN "dataLoader_apimportlog" il ON r.import_log_id = il.id
+                                INNER JOIN current_student cs ON r.ssid = cs.ssid
+                                {join_sql}
+                                WHERE {where_sql}
+                                  AND r.admin_year = %s AND il.is_published = true
+                                  {exclude_clause}
+                                GROUP BY r.ssid
+                            ) t
+                            """
+                            res = _fetchall_ch_or_pg(
+                                ch_query,
                                 params + [year] + exclude_params,
+                                pg_sql=pg_query,
                             )
-                            apall_max[year] = min(int(apall_cursor.fetchone()[0] or 0), 10)
+                            max_val = min(int(res[0][0] or 0), 10) if res else 0
+                            cache.set(apall_cache_key, max_val, _MAX_SPAN_CACHE_TTL)
+                        apall_max[year] = max_val
 
                     new_selected = []
                     for c in export_cols:
@@ -1071,10 +1145,15 @@ def export_students_csv(request):
                             chunk_ssids = [str(s.get('ssid') or '').strip() for s in chunk_students if str(s.get('ssid') or '').strip()]
                             chunk_ids = [str(s.get('student_id') or '').strip() for s in chunk_students if str(s.get('student_id') or '').strip()]
                             if chunk_ssids or chunk_ids:
+                                _live_marks_by_year = {}
                                 for (year, subject), umbrella in markall_years.items():
                                     n = markall_max.get((year, subject), 0)
+                                    if n <= 0:
+                                        continue
                                     picker = _markall_course_picker_for_umbrella(umbrella)
-                                    live_rows = _fetch_marks_live_from_alt(chunk_ssids, chunk_ids, [year])
+                                    if year not in _live_marks_by_year:
+                                        _live_marks_by_year[year] = _fetch_marks_live_from_alt(chunk_ssids, chunk_ids, [year])
+                                    live_rows = _live_marks_by_year[year]
                                     by_ssid, by_student_id = group_marks_by_ssid_course(
                                         live_rows,
                                         subject=subject,
