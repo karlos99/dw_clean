@@ -100,6 +100,58 @@ class ProjectConfig(models.Model):
         ),
     )
 
+    # ── Student Summary ────────────────────────────────────────────────────────
+    # Controls which sections appear in the student summary overlay/page.
+    summary_show_tests = models.BooleanField(
+        default=True,
+        help_text="Show the Tests tab (all assessment records) in the student summary.",
+    )
+    summary_show_grades = models.BooleanField(
+        default=True,
+        help_text="Show the Grades tab (course grades/marks) in the student summary.",
+    )
+    summary_show_diploma = models.BooleanField(
+        default=True,
+        help_text="Show the Diploma requirements tab in the student summary.",
+    )
+    summary_show_ag = models.BooleanField(
+        default=True,
+        help_text="Show the UC/CSU A-G requirements tab in the student summary.",
+    )
+    summary_show_on_track = models.BooleanField(
+        default=True,
+        help_text=(
+            "Show the On Track tab (A-G + diploma progress benchmarks) for "
+            "high-school students in grades 9-11."
+        ),
+    )
+    summary_show_cte = models.BooleanField(
+        default=True,
+        help_text="Show the CTE pathways tab in the student summary.",
+    )
+    summary_show_recognition = models.BooleanField(
+        default=True,
+        help_text=(
+            "Show the current academic recognition badge (Summa/Magna/Cum Laude) "
+            "in the student summary header."
+        ),
+    )
+    summary_show_flags = models.BooleanField(
+        default=True,
+        help_text="Show the support flags row (SPED, 504, ELL, …) in the student summary header.",
+    )
+
+    diploma_expected_credits = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Expected diploma credits per subject per grade for the On Track view, "
+            "keyed by subject (e.g. {\"English\": [10, 10, 10, 10], \"Math\": [10, 10, 5, 5]}). "
+            "The four values are grades 9, 10, 11, 12. Null uses evenly distributed "
+            "defaults from the DSUSD diploma requirements."
+        ),
+    )
+
     # ── Audit ──────────────────────────────────────────────────────────────────
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

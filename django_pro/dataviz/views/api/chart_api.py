@@ -21,7 +21,7 @@ from clickhouse_utils.timing import timed_fn
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '16'
+_CHART_PIPELINE_VERSION = '17'
 _timing_log = logging.getLogger('analytics.timing')
 
 # One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
@@ -975,6 +975,8 @@ def _cfg_from_post(post):
         'dyn_drill_calc':    post.get('dyn_drill_calc', ''),
         'dyn_totals_only':   post.get('dyn_totals_only', '0') == '1',
         'dyn_display_type':  post.get('dyn_display_type', 'table'),
+        'dyn_col_header_wrap': post.get('dyn_col_header_wrap', '0') == '1',
+        'dyn_col_header_width': _parse_int(post.get('dyn_col_header_width'), None),
         # Dates (date_series) fields
         'ds_date_col':       post.get('ds_date_col', ''),
         'ds_date_bucket':    post.get('ds_date_bucket', 'day'),
@@ -1066,6 +1068,28 @@ def _cfg_from_post(post):
     }
 
 
+def _chart_partial_table_layout(cfg: dict, option: dict | None = None) -> dict:
+    """Layout flags for summary/dynamic summary tables (HTML + data-* attrs)."""
+    wrap = isinstance(option, dict) and option.get('col_header_wrap') is True
+    width = option.get('col_header_width') if isinstance(option, dict) else None
+    if cfg.get('chart_type') == 'dynamic_summary_table':
+        if not wrap:
+            wrap = cfg.get('dyn_col_header_wrap') in (True, 1, '1', 'true', 'True')
+        if width is None or width == '':
+            _hdr_w = cfg.get('dyn_col_header_width')
+            if _hdr_w is not None and _hdr_w != '':
+                try:
+                    w = int(_hdr_w)
+                    if w > 0:
+                        width = w
+                except (TypeError, ValueError):
+                    pass
+    return {
+        'table_col_header_wrap': wrap,
+        'table_col_header_width': width if width not in (None, '') else '',
+    }
+
+
 @login_required
 @require_POST
 def chart_preview_api(request):
@@ -1106,6 +1130,7 @@ def chart_preview_api(request):
                 return render(request, 'dataviz/partials/chart_preview.html', {
                     'option_json': json.dumps(option), 'chart_id': 'preview',
                     'query_columns_json': json.dumps(query_columns),
+                    **_chart_partial_table_layout(cfg, option),
                 })
             except Exception as exc:
                 return _error(str(exc))
@@ -1296,6 +1321,7 @@ def chart_preview_api(request):
             'drill_source':       'chart_builder' if _chart_id else '',
             'drill_source_id':    str(_chart_id) if _chart_id else '',
             'drill_source_name':  'Chart Builder' if _chart_id else '',
+            **_chart_partial_table_layout(cfg, option),
         })
     except Exception as exc:
         return _error(f'Chart error: {exc}')
@@ -1733,6 +1759,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
     # chart-specific and must never be written to the shared per-dataset row
     # cache (a sibling chart would then read the wrong compact columns).
     used_aggregate = False
+    option = None
     try:
         if result is not None:
             # Data cache hit — skip SQL, jump to rendering
@@ -1881,6 +1908,8 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
         option_json = '{}'
         error = str(exc)
 
+    table_layout = _chart_partial_table_layout(chart_cfg, option)
+
     ctx = {
         'option_json':       option_json,
         'chart_id':          chart.pk,
@@ -1890,6 +1919,7 @@ def _render_saved_chart(chart_id, pf_filters: dict, drill_source='', drill_sourc
         'drill_source_name': drill_source_name,
         'error':             error,
         'embed':             is_embed,
+        **table_layout,
     }
     html = render_to_string('dataviz/partials/chart_preview.html', ctx, request=request)
 

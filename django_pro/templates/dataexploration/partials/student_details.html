@@ -1,0 +1,193 @@
+{# Student record/transcript from student_rpc. Expects `student_details`. #}
+{% if student_details.has_any %}
+{% with s=student_details.summary %}
+<div class="space-y-5" x-data="{ tab: 'courses', plan: '{{ student_details.default_plan }}' }">
+    <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+        <div class="px-4 py-3 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+            <div class="min-w-0">
+                <h4 class="text-sm font-bold text-slate-900 truncate">{{ s.student_name|default:student_name }}</h4>
+                <p class="text-[11px] text-slate-500">
+                    Grade {{ s.grade|default:"-" }}
+                    · {{ s.school_name|default:"-" }}
+                    · {{ s.school_year|default:"-" }}
+                    {% if s.counselor_name %}· Counselor: {{ s.counselor_name }}{% endif %}
+                </p>
+            </div>
+            {% if s.graduation_status %}<span class="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-800">{{ s.graduation_status }}</span>{% endif %}
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 divide-x divide-slate-100">
+            <div class="p-4">
+                <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Weighted GPA</p>
+                <p class="mt-1 text-xl font-bold text-slate-900">{{ s.weighted_gpa|default:"—" }}</p>
+            </div>
+            <div class="p-4">
+                <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Unweighted GPA</p>
+                <p class="mt-1 text-xl font-bold text-slate-900">{{ s.unweighted_gpa|default:"—" }}</p>
+            </div>
+            <div class="p-4">
+                <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Expected Graduation</p>
+                <p class="mt-1 text-xl font-bold text-slate-900">{{ s.expected_graduation_year|default:"—" }}</p>
+            </div>
+        </div>
+    </div>
+
+    {% if student_details.current_schedule %}
+    <div class="rounded-xl border border-slate-200 bg-white overflow-hidden" x-data="{ open: true }">
+        <button type="button" @click="open = !open"
+            class="w-full px-4 py-2.5 bg-slate-50 flex items-center justify-between gap-2 text-left hover:bg-slate-100 transition-colors">
+            <span class="flex items-center gap-2">
+                <svg class="h-3.5 w-3.5 text-slate-500 transition-transform duration-200" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+                <span class="text-xs font-bold text-slate-800">Current Schedule</span>
+            </span>
+            <span class="text-[10px] font-medium text-slate-500">
+                <span class="font-semibold text-emerald-700">{{ student_details.current_schedule|length }}</span> course(s) · earned semesters count toward requirements, the rest are projected
+            </span>
+        </button>
+        <div x-show="open" x-collapse class="divide-y divide-slate-100 border-t border-slate-100">
+            {% regroup student_details.current_schedule by term as term_groups %}
+            {% for group in term_groups %}
+            <div class="px-4 py-3">
+                <div class="mb-2 text-[11px] font-semibold text-slate-600">{{ group.grouper }}</div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full">
+                        <tbody class="divide-y divide-slate-50">
+                            {% for course in group.list %}
+                            <tr>
+                                <td class="py-1.5 pr-3 text-[11px] text-slate-400 whitespace-nowrap">{% if course.period %}P{{ course.period }}{% endif %}</td>
+                                <td class="py-1.5 pr-3">
+                                    <div class="flex flex-wrap items-center gap-1.5">
+                                        <span class="text-xs text-slate-800">{{ course.course_title }}</span>
+                                        {% if course.ag_letter %}<span class="rounded border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-700" title="UC/CSU A-G area">{{ course.ag_letter }}</span>{% endif %}
+                                        {% if course.diploma_area %}<span class="rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700" title="Diploma area">{{ course.diploma_area }}</span>{% endif %}
+                                    </div>
+                                    {% if course.staff_name %}<div class="text-[10px] text-slate-400">{{ course.staff_name }}</div>{% endif %}
+                                </td>
+                                <td class="py-1.5 px-3 text-center whitespace-nowrap">
+                                    <span class="inline-flex min-w-[2rem] justify-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-bold text-slate-800">{{ course.mark|default:"—" }}</span>
+                                </td>
+                                <td class="py-1.5 px-3 text-right text-[11px] text-slate-600 whitespace-nowrap">{% if course.credits is not None %}{{ course.credits|floatformat:"-2" }} cr{% endif %}</td>
+                                <td class="py-1.5 pl-3 text-right whitespace-nowrap">
+                                    {% if course.earned %}<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-semibold text-emerald-800">Earned</span>{% else %}<span class="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-semibold text-amber-800">Projected</span>{% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="flex flex-wrap gap-1 border-b border-slate-200">
+        <button type="button" @click="tab = 'courses'"
+            :class="tab === 'courses' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-700'"
+            class="px-3 py-2 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap">Course History</button>
+        {% for rt in student_details.requirement_tabs %}
+        <button type="button" @click="tab = '{{ rt.key }}'"
+            :class="tab === '{{ rt.key }}' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-700'"
+            class="px-3 py-2 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap">{{ rt.label }}</button>
+        {% endfor %}
+    </div>
+
+    <div x-show="tab === 'courses'" class="space-y-4">
+        {% if student_details.course_history %}
+            {% for year in student_details.course_history %}
+            <div class="rounded-xl border border-slate-200 bg-white overflow-hidden" x-data="{ open: {{ forloop.first|yesno:'true,false' }} }">
+                <button type="button" @click="open = !open"
+                    class="w-full px-4 py-2.5 bg-slate-50 flex items-center justify-between gap-2 text-left hover:bg-slate-100 transition-colors">
+                    <span class="flex items-center gap-2">
+                        <svg class="h-3.5 w-3.5 text-slate-500 transition-transform duration-200" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                        <span class="text-xs font-bold text-slate-800">{{ year.school_year|default:"—" }}</span>
+                    </span>
+                    <span class="text-[10px] font-medium text-slate-500">{{ year.course_count }} course(s) · {{ year.credits_earned|floatformat:"-2" }} credits</span>
+                </button>
+                <div x-show="open" x-collapse class="divide-y divide-slate-100 border-t border-slate-100">
+                    {% for term in year.terms %}
+                    <div class="px-4 py-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-semibold text-slate-600">{{ term.term }}</span>
+                            {% if term.gpa is not None %}<span class="text-[10px] text-slate-500">Term GPA {{ term.gpa|floatformat:"2" }}</span>{% endif %}
+                        </div>
+                        <div class="mt-2 overflow-x-auto">
+                            <table class="min-w-full">
+                                <thead>
+                                    <tr class="text-[10px] uppercase tracking-wider text-slate-400">
+                                        <th class="py-1 pr-3 text-left font-semibold">Course</th>
+                                        <th class="py-1 px-3 text-left font-semibold">Course ID</th>
+                                        <th class="py-1 px-3 text-center font-semibold">Mark</th>
+                                        <th class="py-1 pl-3 text-right font-semibold">Credits</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-50">
+                                    {% for course in term.courses %}
+                                    <tr>
+                                        <td class="py-1.5 pr-3">
+                                            <div class="flex flex-wrap items-center gap-1.5">
+                                                <span class="text-xs text-slate-800">{{ course.course_title }}</span>
+                                                {% if course.ag_letter %}<span class="rounded border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-700" title="UC/CSU A-G area">{{ course.ag_letter }}</span>{% endif %}
+                                                {% if course.diploma_area %}<span class="rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700" title="Diploma area">{{ course.diploma_area }}</span>{% endif %}
+                                            </div>
+                                        </td>
+                                        <td class="py-1.5 px-3 text-[11px] text-slate-500">{{ course.course_id|default:"—" }}</td>
+                                        <td class="py-1.5 px-3 text-center">
+                                            <span class="inline-flex min-w-[2rem] justify-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-bold text-slate-800">{{ course.mark|default:"—" }}</span>
+                                        </td>
+                                        <td class="py-1.5 pl-3 text-right text-[11px] text-slate-600">{% if course.credits is not None %}{{ course.credits|floatformat:"-2" }}{% else %}—{% endif %}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+        <p class="text-sm text-slate-500">No course history on record.</p>
+        {% endif %}
+    </div>
+
+    {% for rt in student_details.requirement_tabs %}
+    <div x-show="tab === '{{ rt.key }}'" class="space-y-4">
+        {% if rt.plans %}
+            {% if rt.plans|length > 1 %}
+            <div class="flex flex-wrap gap-1.5">
+                {% for plan in rt.plans %}
+                <button type="button" @click="plan = '{{ plan.key }}'"
+                    :class="plan === '{{ plan.key }}' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'"
+                    class="rounded-full px-3 py-1 text-[11px] font-semibold">{{ plan.display_label|default:plan.label }}</button>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% for plan in rt.plans %}
+            <div x-show="{% if rt.plans|length > 1 %}plan === '{{ plan.key }}'{% else %}true{% endif %}"
+                class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                <div class="px-4 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-2">
+                    <div>
+                        <h5 class="text-xs font-bold text-slate-800">{{ plan.display_label|default:plan.label }}</h5>
+                        {% if plan.requirement_set and plan.requirement_set != plan.label %}<p class="text-[10px] text-slate-500">{{ plan.requirement_set }}</p>{% endif %}
+                    </div>
+                    {% if plan.totals %}
+                    <span class="text-[10px] font-medium text-slate-500">{{ plan.totals.comp_credits|floatformat:"-2" }} / {{ plan.totals.req_credits|floatformat:"-2" }} credits</span>
+                    {% endif %}
+                </div>
+                {% include "dataexploration/partials/student_requirement_table.html" with plan=plan %}
+            </div>
+            {% endfor %}
+        {% else %}
+        <p class="text-sm text-slate-500">No {{ rt.label }} requirements on record.</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endwith %}
+{% else %}
+<p class="text-sm text-slate-500">No detailed record on file for this student.</p>
+{% endif %}

@@ -3498,6 +3498,25 @@ class DynamicSummaryTableOptionTests(TestCase):
             ['6', 1.0, 500.0],
         ])
 
+    def test_dynamic_summary_table_col_header_wrap_in_build_option(self):
+        from dataviz.utils.chart_builder import build_option
+
+        rows = [
+            {'grade': '5', 'school': 'A', 'ssid': '1'},
+            {'grade': '5', 'school': 'B', 'ssid': '2'},
+        ]
+        cfg = {
+            'chart_type': 'dynamic_summary_table',
+            'dyn_row_cols': ['grade'],
+            'dyn_col_cols': ['school'],
+            'dyn_agg_func': 'count',
+            'dyn_col_header_wrap': True,
+            'dyn_col_header_width': 72,
+        }
+        option = build_option(rows, {}, cfg)
+        self.assertTrue(option.get('col_header_wrap'))
+        self.assertEqual(option.get('col_header_width'), 72)
+
     def test_dynamic_summary_table_calculations_totals_only_and_hidden_columns(self):
         import polars as pl
         from dataviz.utils.chart_builder import _dynamic_summary_table_option

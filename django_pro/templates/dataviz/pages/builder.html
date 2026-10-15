@@ -4,10 +4,8 @@
 {% block title %}Page Builder – DataViz{% endblock %}
 
 {% block extra_head %}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack.min.css"/>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack-extra.min.css"/>
-<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gridstack@11.5.1/dist/gridstack-all.js"></script>
+{% include 'partials/vendor_gridstack.html' %}
+{% include 'partials/vendor_echarts.html' %}
 <style>
   .grid-stack { min-height: 80px !important; }
   .grid-stack-item-content { overflow: hidden; }

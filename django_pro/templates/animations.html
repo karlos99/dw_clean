@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,11 +9,18 @@
         body { margin: 0; overflow: hidden; background-color: #fcfbf9; }
         canvas { display: block; }
     </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "{% static 'vendor/three/three.module.js' %}"
+        }
+    }
+    </script>
 </head>
 <body>
 
 <script type="module">
-    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import * as THREE from 'three';
 
     // --- Configuration ---
     const PARTICLE_COUNT = 450; 

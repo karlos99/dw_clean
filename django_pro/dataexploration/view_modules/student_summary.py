@@ -13,8 +13,10 @@ from .student_data_utils import (
     get_test_records_cached,
     get_student_marks_cached,
     get_student_cte_details_cached,
+    get_student_details_cached,
     get_student_summary_partial_html_cached,
     pivot_student_marks,
+    filter_display_marks,
     _resolve_ssid,
 )
 
@@ -39,13 +41,22 @@ class StudentTestSummaryView(LoginRequiredMixin, ListView):
         context['student_info'] = get_student_info_cached(ssid, user_id=user_id)
         context['student_name'] = context['student_info'].get('full_name')
         context['test_records'] = get_test_records_cached(ssid, user_id=user_id)
-        marks = get_student_marks_cached(ssid, user_id=user_id)
+        marks = filter_display_marks(get_student_marks_cached(ssid, user_id=user_id))
         context['student_marks'] = marks
         context['student_marks_grid'] = pivot_student_marks(marks)
         context['student_cte_details'] = get_student_cte_details_cached(
             ssid, user_id=user_id,
             current_school_year=context.get('student_info', {}).get('school_year') or '',
         )
+        context['student_details'] = get_student_details_cached(ssid, user_id=user_id)
+        try:
+            from landing.utils import get_summary_sections
+            context['summary_sections'] = get_summary_sections()
+        except Exception:
+            context['summary_sections'] = {
+                'tests': True, 'grades': True, 'diploma': True, 'ag': True,
+                'on_track': True, 'cte': True, 'recognition': True, 'flags': True,
+            }
         return context
 
 

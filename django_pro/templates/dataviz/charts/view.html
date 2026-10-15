@@ -3,7 +3,7 @@
 
 {% block title %}{{ chart.name }} – DataViz{% endblock %}
 {% block extra_head %}
-<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+{% include 'partials/vendor_echarts.html' %}
 {% endblock %}
 
 {% block content %}

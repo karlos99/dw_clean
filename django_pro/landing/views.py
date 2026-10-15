@@ -190,6 +190,28 @@ def project_settings(request):
             cfg.home_max_charts = 0
         cfg.enable_course_program_columns = request.POST.get('enable_course_program_columns') == 'on'
 
+        # Student summary section visibility
+        for field in (
+            'summary_show_tests', 'summary_show_grades', 'summary_show_diploma',
+            'summary_show_ag', 'summary_show_on_track', 'summary_show_cte',
+            'summary_show_recognition', 'summary_show_flags',
+        ):
+            setattr(cfg, field, request.POST.get(field) == 'on')
+
+        # Diploma on-track expected credits per subject per grade
+        from dataexploration.view_modules.student_data_utils import DIPLOMA_ON_TRACK_SUBJECTS
+        expected_credits = {}
+        for index, subject in enumerate(DIPLOMA_ON_TRACK_SUBJECTS):
+            years = []
+            for year in range(4):
+                raw = request.POST.get(f'de_{index}_{year}')
+                try:
+                    years.append(max(0, int(round(float(raw)))))
+                except (TypeError, ValueError):
+                    years.append(0)
+            expected_credits[subject] = years
+        cfg.diploma_expected_credits = expected_credits or None
+
         cfg.updated_by = request.user
         cfg.save()
 
@@ -216,6 +238,38 @@ def project_settings(request):
     )
     home_forced = [int(c) for c in (cfg.home_forced_charts or [])]
 
+    from dataexploration.view_modules.student_data_utils import (
+        DIPLOMA_ON_TRACK_SUBJECTS, default_diploma_expected_credits,
+    )
+    _expected_defaults = default_diploma_expected_credits()
+    _expected_configured = cfg.diploma_expected_credits or {}
+    diploma_expected_rows = []
+    for index, subject in enumerate(DIPLOMA_ON_TRACK_SUBJECTS):
+        years = _expected_configured.get(subject) or _expected_defaults.get(subject) or [0, 0, 0, 0]
+        years = (list(years) + [0, 0, 0, 0])[:4]
+        row_years = []
+        for value in years:
+            try:
+                row_years.append(max(0, int(round(float(value)))))
+            except (TypeError, ValueError):
+                row_years.append(0)
+        diploma_expected_rows.append({'index': index, 'subject': subject, 'years': row_years})
+
+    summary_sections = [
+        ('Content tabs', [
+            {'field': 'summary_show_tests', 'label': 'Tests', 'help': 'Assessment records (state tests, SAT, AP, …).', 'checked': bool(cfg.summary_show_tests)},
+            {'field': 'summary_show_grades', 'label': 'Grades', 'help': 'Course grades / marks by year and semester.', 'checked': bool(cfg.summary_show_grades)},
+            {'field': 'summary_show_diploma', 'label': 'Diploma', 'help': 'DSUSD diploma requirements and progress.', 'checked': bool(cfg.summary_show_diploma)},
+            {'field': 'summary_show_ag', 'label': 'UC/CSU A-G', 'help': 'A-G course requirements.', 'checked': bool(cfg.summary_show_ag)},
+            {'field': 'summary_show_on_track', 'label': 'On Track', 'help': 'Grade-level A-G and diploma progress benchmarks (grades 9–11).', 'checked': bool(cfg.summary_show_on_track)},
+            {'field': 'summary_show_cte', 'label': 'CTE Pathways', 'help': 'Career & technical education pathways.', 'checked': bool(cfg.summary_show_cte)},
+        ]),
+        ('Header indicators', [
+            {'field': 'summary_show_recognition', 'label': 'Academic recognition', 'help': 'Summa / Magna / Cum Laude badge from unweighted GPA.', 'checked': bool(cfg.summary_show_recognition)},
+            {'field': 'summary_show_flags', 'label': 'Support flags', 'help': 'SPED, 504, ELL, GATE, foster, homeless, … badges.', 'checked': bool(cfg.summary_show_flags)},
+        ]),
+    ]
+
     context = {
         'cfg': cfg,
         'school_years': school_years,
@@ -237,6 +291,8 @@ def project_settings(request):
         'home_forced_charts':          home_forced,
         'home_forced_charts_json':     _json.dumps(home_forced),
         'home_max_charts':             int(cfg.home_max_charts or 0),
+        'summary_sections':            summary_sections,
+        'diploma_expected_rows':       diploma_expected_rows,
     }
     return render(request, 'landing/project_settings.html', context)
 

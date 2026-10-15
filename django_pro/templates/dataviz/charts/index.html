@@ -3,7 +3,7 @@
 {% block title %}Charts – DataViz{% endblock %}
 
 {% block extra_head %}
-<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+{% include 'partials/vendor_echarts.html' %}
 <style>
   .chart-row.is-selected {
     border-color: #3b82f6;

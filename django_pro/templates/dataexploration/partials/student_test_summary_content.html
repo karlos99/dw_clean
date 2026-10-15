@@ -1,351 +1,639 @@
 <div class="{% if embedded %}px-0 py-0{% else %}max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6{% endif %}">
     {% if not embedded %}
-    <div class="flex items-start justify-between gap-4 mb-4">
+    <div class="mb-4 flex items-start justify-between gap-4">
         <div>
-            <h2 class="text-2xl font-bold text-slate-900">Student Summary</h2>
+            <h2 class="text-2xl font-bold tracking-tight text-slate-900">Student Summary</h2>
             {% if student_info %}
-            <p class="mt-1 text-sm text-slate-600">{{ student_info.full_name }} (SSID: {{ ssid }})</p>
+            <p class="mt-1 text-sm text-slate-600">{{ student_info.full_name }}{% if ssid %} · SSID {{ ssid }}{% endif %}</p>
             {% endif %}
         </div>
         <button type="button" data-action="close-student-summary"
-            class="px-3 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Close</button>
+            class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:border-slate-400 hover:text-slate-900">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            Close
+        </button>
     </div>
     {% endif %}
 
     {% if student_info %}
-    <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-5 mb-6">
-        <div class="flex items-start gap-5 mb-5">
-            <img src="{% url 'studata:picture' ssid %}"
-                 alt="{% if student_info.full_name %}Photo of {{ student_info.full_name }}{% else %}Student photo{% endif %}"
-                 width="96" height="96"
-                 class="h-24 w-24 shrink-0 rounded-full object-cover bg-slate-100 ring-1 ring-slate-200">
-            <div class="min-w-0 flex-1">
-                <h3 class="text-xl font-semibold text-slate-900 truncate">{{ student_info.full_name|default:"Student Information" }}</h3>
-                <p class="mt-1 text-sm text-slate-600">
-                    Grade {{ student_info.grade|default:"-" }}
-                    · {{ student_info.school_short_name|default:student_info.school|truncatewords:3|default:"-" }}
-                    · {{ student_info.school_year|default:"-" }}
-                    · {{ student_info.status|default:"-" }}
-                </p>
-                <p class="mt-0.5 text-xs text-slate-500">
-                    ID {{ student_info.student_id|default:"-" }}
-                    · SSID {{ student_info.ssid|default:ssid }}
-                </p>
-                <div class="mt-2 flex flex-wrap gap-1.5">
-                    {% if student_info.ell_status and student_info.ell_status|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">ELL{% if student_info.ell_status|upper != 'Y' %} {{ student_info.ell_status }}{% endif %}</span>{% endif %}
-                    {% if student_info.sped and student_info.sped|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-800">SPED{% if student_info.sped|upper != 'Y' %} {{ student_info.sped }}{% endif %}</span>{% endif %}
-                    {% if student_info.in_504 and student_info.in_504|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">504{% if student_info.in_504|upper != 'Y' %} {{ student_info.in_504 }}{% endif %}</span>{% endif %}
-                    {% if student_info.gate and student_info.gate|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">GATE{% if student_info.gate|upper != 'Y' %} {{ student_info.gate }}{% endif %}</span>{% endif %}
-                    {% if student_info.sed and student_info.sed|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">SED{% if student_info.sed|upper != 'Y' %} {{ student_info.sed }}{% endif %}</span>{% endif %}
-                    {% if student_info.foster and student_info.foster|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">Foster{% if student_info.foster|upper != 'Y' %} {{ student_info.foster }}{% endif %}</span>{% endif %}
-                    {% if student_info.homeless and student_info.homeless|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-800">Homeless{% if student_info.homeless|upper != 'Y' %} {{ student_info.homeless }}{% endif %}</span>{% endif %}
-                    {% if student_info.migrant and student_info.migrant|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-800">Migrant{% if student_info.migrant|upper != 'Y' %} {{ student_info.migrant }}{% endif %}</span>{% endif %}
-                    {% if student_info.dli and student_info.dli|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-800">DLI{% if student_info.dli|upper != 'Y' %} {{ student_info.dli }}{% endif %}</span>{% endif %}
-                    {% if student_info.suspension_indicator and student_info.suspension_indicator|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800">Suspension{% if student_info.suspension_indicator|upper != 'Y' %} {{ student_info.suspension_indicator }}{% endif %}</span>{% endif %}
-                    {% if student_info.ltel and student_info.ltel|upper != 'N' %}<span class="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800">LTEL{% if student_info.ltel|upper != 'Y' %} {{ student_info.ltel }}{% endif %}</span>{% endif %}
-                </div>
-            </div>
-            {% if student_cte_details.has_any %}
-            <button type="button" data-action="open-student-cte"
-                class="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700">
+    <div x-data="{ tab: 'profile', node: null, plan: '{{ student_details.default_plan }}' }" @keydown.escape.window="node = null">
+        {% include "dataexploration/partials/student_orbit_header.html" %}
+
+        <!-- Tabs -->
+        <div class="mb-4 flex flex-wrap gap-1 border-b border-slate-200">
+            <button type="button" @click="tab = 'profile'; node = null"
+                :class="tab === 'profile' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'"
+                class="inline-flex items-center gap-1.5 border-b-2 -mb-px px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0"></path></svg>
+                Profile
+            </button>
+            {% if summary_sections.tests %}
+            <button type="button" @click="tab = 'tests'; node = null"
+                :class="tab === 'tests' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'"
+                class="inline-flex items-center gap-1.5 border-b-2 -mb-px px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Tests
+                <span class="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{{ test_records|length }}</span>
+            </button>
+            {% endif %}
+            {% if summary_sections.grades %}
+            <button type="button" @click="tab = 'grades'; node = null"
+                :class="tab === 'grades' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'"
+                class="inline-flex items-center gap-1.5 border-b-2 -mb-px px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                Grades
+                <span class="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{{ student_marks|length }}</span>
+            </button>
+            {% endif %}
+            {% if student_details.has_any and student_details.requirements.diploma and summary_sections.diploma %}
+            <button type="button" @click="tab = 'diploma'; node = null"
+                :class="tab === 'diploma' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'"
+                class="inline-flex items-center gap-1.5 border-b-2 -mb-px px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M22 10L12 5 2 10l10 5 10-5zM6 12v5c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5v-5"></path></svg>
+                Diploma
+            </button>
+            {% endif %}
+            {% if student_details.has_any and student_details.requirements.ag and summary_sections.ag %}
+            <button type="button" @click="tab = 'ag'; node = null"
+                :class="tab === 'ag' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'"
+                class="inline-flex items-center gap-1.5 border-b-2 -mb-px px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3l9 4-9 4-9-4 9-4zM6 11v4.5c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5V11"></path></svg>
+                A-G
+            </button>
+            {% endif %}
+            {% if student_details.on_track and summary_sections.on_track %}
+            <button type="button" @click="tab = 'on_track'; node = null"
+                :class="tab === 'on_track' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'"
+                class="inline-flex items-center gap-1.5 border-b-2 -mb-px px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                On Track
+                {% if student_details.on_track.lacking_count %}
+                <span class="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">{{ student_details.on_track.lacking_count }}</span>
+                {% endif %}
+            </button>
+            {% endif %}
+            {% if student_cte_details.has_any and summary_sections.cte %}
+            <button type="button" @click="tab = 'cte'; node = null"
+                :class="tab === 'cte' ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700'"
+                class="inline-flex items-center gap-1.5 border-b-2 -mb-px px-3.5 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" stroke-width="2"></rect><line x1="8" y1="21" x2="16" y2="21" stroke-width="2"></line><line x1="12" y1="17" x2="12" y2="21" stroke-width="2"></line></svg>
                 CTE
             </button>
             {% endif %}
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-5">
-            <div>
-                <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Demographics</h4>
-                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
-                    <div>
-                        <dt class="text-xs text-slate-500">Student ID</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.student_id|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">SSID</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.ssid|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Grade</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.grade|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Gender</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.gender|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Race</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.race|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Birth Date</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.birth_date|date:"m/d/Y"|default:"-" }}</dd>
-                    </div>
-                </dl>
-            </div>
+        <!-- ============ PROFILE TAB ============ -->
+        <div x-show="tab === 'profile'" x-cloak>
+            <div class="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:items-start">
 
-            <div>
-                <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">School Information</h4>
-                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
-                    <div>
-                        <dt class="text-xs text-slate-500">School</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.school_short_name|default:student_info.school|truncatewords:3 }}</dd>
+                <!-- Demographics -->
+                <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div class="flex items-center gap-3 border-b border-slate-100 px-5 py-3.5">
+                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0"></path></svg>
+                        </span>
+                        <div class="min-w-0 flex-1">
+                            <h3 class="text-sm font-semibold text-slate-800">Demographics</h3>
+                            <p class="truncate text-[11px] text-slate-500">Grade {{ student_info.grade|default:"-" }}{% if student_info.gender %} · {{ student_info.gender }}{% endif %}</p>
+                        </div>
                     </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">School State ID</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.school_state_id|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">School Year</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.school_year|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Status</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.status|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Attendance Rate</dt>
-                        <dd class="text-sm font-medium text-slate-900">{% if student_info.atendace_rate %}{{ student_info.atendace_rate }}%{% else %}-{% endif %}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Instructional Setting</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.instructional_setting|default:"-" }}</dd>
-                    </div>
-                </dl>
-            </div>
+                    <dl class="grid grid-cols-2 gap-x-4 gap-y-4 px-5 py-4 sm:grid-cols-3">
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Student ID</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.student_id|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">SSID</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.ssid|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Grade</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.grade|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Gender</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.gender|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Race</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.race|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Birth Date</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.birth_date|date:"m/d/Y"|default:"-" }}</dd></div>
+                    </dl>
+                </section>
 
-            <div>
-                <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Language &amp; Programs</h4>
-                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
-                    <div>
-                        <dt class="text-xs text-slate-500">ELL Status</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.ell_status|default:"-" }}</dd>
+                <!-- School Information -->
+                <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div class="flex items-center gap-3 border-b border-slate-100 px-5 py-3.5">
+                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"></path></svg>
+                        </span>
+                        <div class="min-w-0 flex-1">
+                            <h3 class="text-sm font-semibold text-slate-800">School Information</h3>
+                            <p class="truncate text-[11px] text-slate-500">{{ student_info.school_short_name|default:student_info.school|default:"-" }}</p>
+                        </div>
                     </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">LTEL</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.ltel|default:"-" }}</dd>
+                    <div class="border-b border-slate-100 px-5 py-3.5">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">School</p>
+                        <p class="mt-0.5 text-sm font-semibold text-slate-900">{{ student_info.school_short_name|default:student_info.school|default:"-" }}</p>
+                        {% if student_info.school and student_info.school_short_name and student_info.school != student_info.school_short_name %}
+                        <p class="mt-0.5 text-[11px] text-slate-500">{{ student_info.school }}</p>
+                        {% endif %}
                     </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">FEP Date</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.fep_date|date:"m/d/Y"|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">DSUSD FEP</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.dsusd_fep|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">US Enter Date</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.us_enter_date|date:"m/d/Y"|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">State Enter Date</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.state_enter_date|date:"m/d/Y"|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Special Program</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.special_program_code|default:"-" }}</dd>
-                    </div>
-                </dl>
-            </div>
+                    <dl class="grid grid-cols-2 gap-x-4 gap-y-4 px-5 py-4 sm:grid-cols-3">
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">School State ID</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.school_state_id|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">School Year</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.school_year|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Status</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.status|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Attendance Rate</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{% if student_info.atendace_rate %}{{ student_info.atendace_rate }}%{% else %}-{% endif %}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Instructional Setting</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.instructional_setting|default:"-" }}</dd></div>
+                    </dl>
+                </section>
 
-            <div>
-                <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Special Services &amp; Indicators</h4>
-                <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
-                    <div>
-                        <dt class="text-xs text-slate-500">SPED</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.sped|default:"-" }}</dd>
+                <!-- Language & Programs -->
+                <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div class="flex items-center gap-3 border-b border-slate-100 px-5 py-3.5">
+                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3s-4.5 4.03-4.5 9 2.015 9 4.5 9zM3.6 9h16.8M3.6 15h16.8"></path></svg>
+                        </span>
+                        <div class="min-w-0 flex-1">
+                            <h3 class="text-sm font-semibold text-slate-800">Language &amp; Programs</h3>
+                            <p class="truncate text-[11px] text-slate-500">ELL {{ student_info.ell_status|default:"-" }}</p>
+                        </div>
                     </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">504 Plan</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.in_504|default:"-" }}</dd>
+                    <dl class="grid grid-cols-2 gap-x-4 gap-y-4 px-5 py-4 sm:grid-cols-3">
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">ELL Status</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.ell_status|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">LTEL</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.ltel|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">FEP Date</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.fep_date|date:"m/d/Y"|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">DSUSD FEP</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.dsusd_fep|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">US Enter Date</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.us_enter_date|date:"m/d/Y"|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">State Enter Date</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.state_enter_date|date:"m/d/Y"|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Special Program</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.special_program_code|default:"-" }}</dd></div>
+                    </dl>
+                </section>
+
+                <!-- Special Services & Indicators -->
+                <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div class="flex items-center gap-3 border-b border-slate-100 px-5 py-3.5">
+                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"></path></svg>
+                        </span>
+                        <div class="min-w-0 flex-1">
+                            <h3 class="text-sm font-semibold text-slate-800">Special Services &amp; Indicators</h3>
+                            <p class="truncate text-[11px] text-slate-500">SPED {{ student_info.sped|default:"-" }} · 504 {{ student_info.in_504|default:"-" }}</p>
+                        </div>
                     </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">GATE</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.gate|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">SED</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.sed|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Foster</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.foster|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Homeless</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.homeless|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Migrant</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.migrant|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">DLI</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.dli|default:"-" }}</dd>
-                    </div>
-                    <div>
-                        <dt class="text-xs text-slate-500">Suspension</dt>
-                        <dd class="text-sm font-medium text-slate-900">{{ student_info.suspension_indicator|default:"-" }}</dd>
-                    </div>
-                </dl>
+                    <dl class="grid grid-cols-2 gap-x-4 gap-y-4 px-5 py-4 sm:grid-cols-3">
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">SPED</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.sped|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">504 Plan</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.in_504|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">GATE</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.gate|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">SED</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.sed|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Foster</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.foster|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Homeless</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.homeless|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Migrant</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.migrant|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">DLI</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.dli|default:"-" }}</dd></div>
+                        <div><dt class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Suspension</dt><dd class="mt-0.5 text-sm font-medium text-slate-900">{{ student_info.suspension_indicator|default:"-" }}</dd></div>
+                    </dl>
+                </section>
             </div>
         </div>
+
+        <!-- ============ TESTS TAB ============ -->
+        <div x-show="tab === 'tests' && {{ summary_sections.tests|yesno:'true,false' }}" x-cloak class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-200">
+                <h3 class="text-base font-semibold text-slate-900">All Test Records</h3>
+                <p class="text-sm text-slate-600 mt-0.5">{{ test_records|length }} test record(s) found</p>
+            </div>
+
+            {% if test_records %}
+            {% regroup test_records by school_year as year_list %}
+            <div class="flex flex-col">
+                {% for year in year_list %}
+                <div class="border-b border-slate-200 last:border-b-0" x-data="{ expanded: false }">
+                    <div class="bg-slate-50 px-6 py-3 border-y border-slate-100 flex justify-between items-center cursor-pointer hover:bg-slate-100 transition-colors" @click="expanded = !expanded">
+                         <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-slate-500 transition-transform duration-200" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                            <h4 class="font-bold text-slate-800 flex items-center gap-2">
+                                <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                                {{ year.grouper }}
+                            </h4>
+                        </div>
+                        <span class="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">{{ year.list|length }} Tests</span>
+                    </div>
+                    <div class="overflow-x-auto" x-show="expanded" x-collapse x-cloak>
+                        <table class="min-w-full divide-y divide-slate-100">
+                            <thead class="bg-white">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Test Name</th>
+                                    <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Subject</th>
+                                    <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Grade</th>
+                                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-blue-50/30">Level (PL)</th>
+                                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-blue-50/30">Score (SS)</th>
+                                    <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-purple-50/30">DFP</th>
+                                    <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Window</th>
+                                    <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">School</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-slate-50">
+                                {% for record in year.list %}
+                                <tr class="hover:bg-slate-50 transition-colors">
+                                    <td class="px-6 py-3 whitespace-nowrap text-sm font-medium text-slate-900">{{ record.test_name|default:"-" }}</td>
+                                    <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-600">{{ record.subject|default:"-" }}</td>
+                                    <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-600">{{ record.grade|default:"-" }}</td>
+                                    <td class="px-6 py-3 whitespace-nowrap bg-blue-50/10">
+                                        <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full
+                                            {% if record.pl == '4' or record.pl == 'Advanced' or record.pl == 'Standard Exceeded' %}bg-green-100 text-green-800 border border-green-200
+                                            {% elif record.pl == '3' or record.pl == 'Proficient' or record.pl == 'Standard Met' %}bg-blue-100 text-blue-800 border border-blue-200
+                                            {% elif record.pl == '2' or record.pl == 'Basic' or record.pl == 'Standard Nearly Met' %}bg-yellow-100 text-yellow-800 border border-yellow-200
+                                            {% elif record.pl == '1' or record.pl == 'Below Basic' or record.pl == 'Standard Not Met' %}bg-red-100 text-red-800 border border-red-200
+                                            {% else %}bg-slate-100 text-slate-800 border border-slate-200{% endif %}">
+                                            {{ record.pl|default:"-" }}
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-3 whitespace-nowrap text-sm font-bold text-slate-900 bg-blue-50/10">{{ record.ss|default:"-" }}</td>
+                                    <td class="px-6 py-3 whitespace-nowrap bg-purple-50/10">
+                                        {% if record.test_name == 'CAASPP' and record.other_info and record.other_info.dfp is not None %}
+                                        <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                                            DFP {{ record.other_info.dfp }}
+                                        </span>
+                                        {% else %}
+                                        <span class="text-xs text-slate-400">-</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="px-6 py-3 whitespace-nowrap text-xs text-slate-500">{{ record.test_window|default:"-" }}</td>
+                                    <td class="px-6 py-3 whitespace-nowrap text-xs text-slate-500">{{ record.school_short_name|default:record.school|truncatewords:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="px-6 py-12 text-center">
+                <p class="text-slate-500">No test records found for this student.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- ============ GRADES TAB ============ -->
+        <div x-show="tab === 'grades' && {{ summary_sections.grades|yesno:'true,false' }}" x-cloak class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-200">
+                <h3 class="text-base font-semibold text-slate-900">Course Grades / Marks</h3>
+                <p class="text-sm text-slate-600 mt-0.5">{{ student_marks|length }} mark(s) found</p>
+            </div>
+
+            {% if student_marks_grid %}
+            <div class="flex flex-col">
+                {% for year in student_marks_grid %}
+                <div class="border-b border-slate-200 last:border-b-0" x-data="{ expanded: false }">
+                    <div class="bg-slate-50 px-6 py-3 border-y border-slate-100 flex justify-between items-center cursor-pointer hover:bg-slate-100 transition-colors" @click="expanded = !expanded">
+                         <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-slate-500 transition-transform duration-200" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                            <h4 class="font-bold text-slate-800 flex items-center gap-2">
+                                <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                                {{ year.school_year }}
+                            </h4>
+                        </div>
+                        <span class="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">{{ year.courses|length }} Classes</span>
+                    </div>
+                    <div class="overflow-x-auto" x-show="expanded" x-collapse x-cloak>
+                        <table class="min-w-full divide-y divide-slate-100">
+                            <thead class="bg-white">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider sticky left-0 bg-white z-10">Class</th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Teacher</th>
+                                    {% for period in year.periods %}
+                                    <th class="px-3 py-3 text-center text-xs font-bold uppercase tracking-wider {% if period|lower == 'live' %}text-slate-900 bg-blue-50/50{% else %}text-slate-700 bg-blue-50/30{% endif %}">{{ period }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-slate-50">
+                                {% for course in year.courses %}
+                                <tr class="hover:bg-slate-50 transition-colors">
+                                    <td class="px-4 py-3 whitespace-nowrap sticky left-0 bg-white hover:bg-slate-50">
+                                        <div class="text-sm font-medium text-slate-900">{{ course.course_name|default:"-" }}</div>
+                                        <div class="text-xs text-slate-500">{{ course.subject|default:"-" }}</div>
+                                    </td>
+                                    <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500">{{ course.staff_name|default:"-" }}</td>
+                                    {% for cell in course.cells %}
+                                    <td class="px-3 py-3 whitespace-nowrap text-center {% if cell.period|lower == 'live' %}bg-blue-50/20{% endif %}">
+                                        {% if cell.mark %}
+                                        <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full
+                                            {% if cell.tone == 'green' %}bg-green-100 text-green-800 border border-green-200
+                                            {% elif cell.tone == 'blue' %}bg-blue-100 text-blue-800 border border-blue-200
+                                            {% elif cell.tone == 'yellow' %}bg-yellow-100 text-yellow-800 border border-yellow-200
+                                            {% elif cell.tone == 'red' %}bg-red-100 text-red-800 border border-red-200
+                                            {% else %}bg-slate-100 text-slate-800 border border-slate-200{% endif %}">
+                                            {{ cell.mark }}
+                                        </span>
+                                        {% else %}
+                                        <span class="text-xs text-slate-300">—</span>
+                                        {% endif %}
+                                    </td>
+                                    {% endfor %}
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="px-6 py-12 text-center">
+                <p class="text-slate-500">No course grades/marks found for this student.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- ============ DIPLOMA TAB ============ -->
+        {% if student_details.has_any and student_details.requirements.diploma %}
+        <div x-show="tab === 'diploma' && {{ summary_sections.diploma|yesno:'true,false' }}" x-cloak class="space-y-3">
+            {% if student_details.requirements.diploma|length > 1 %}
+            <div class="flex flex-wrap items-center gap-1.5">
+                <span class="mr-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Diploma option</span>
+                {% for plan in student_details.requirements.diploma %}
+                <button type="button" @click="plan = '{{ plan.key }}'"
+                    :class="plan === '{{ plan.key }}' ? 'border-indigo-500 text-indigo-700' : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:text-slate-800'"
+                    class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors">
+                    <span class="h-1.5 w-1.5 rounded-full" :class="plan === '{{ plan.key }}' ? 'bg-indigo-500' : 'bg-slate-300'"></span>
+                    {{ plan.display_label|default:plan.label }}
+                </button>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% for plan in student_details.requirements.diploma %}
+            <div x-show="{% if student_details.requirements.diploma|length > 1 %}plan === '{{ plan.key }}'{% else %}true{% endif %}"
+                class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div class="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+                    <div class="min-w-0">
+                        <h5 class="text-sm font-bold text-slate-800">{{ plan.display_label|default:plan.label }}</h5>
+                        {% if plan.requirement_set or plan.pathway_credits %}<p class="text-[10px] text-slate-500">{{ plan.requirement_set }}{% if plan.requirement_set and plan.pathway_credits %} · {% endif %}{% if plan.pathway_credits %}{{ plan.pathway_credits }} credits{% endif %}</p>{% endif %}
+                    </div>
+                    <span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{{ plan.met_count }}/{{ plan.row_count }} met</span>
+                </div>
+                {% include "dataexploration/partials/student_requirement_table.html" with plan=plan %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- ============ A-G TAB ============ -->
+        {% if student_details.has_any and student_details.requirements.ag %}
+        <div x-show="tab === 'ag' && {{ summary_sections.ag|yesno:'true,false' }}" x-cloak class="space-y-4">
+            {% for plan in student_details.requirements.ag %}
+            <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div class="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+                    <div class="min-w-0">
+                        <h5 class="text-sm font-bold text-slate-800">{{ plan.display_label|default:plan.label }}</h5>
+                        {% if plan.requirement_set %}<p class="text-[10px] text-slate-500">{{ plan.requirement_set }}</p>{% endif %}
+                    </div>
+                    <span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{{ plan.met_count }}/{{ plan.row_count }} met</span>
+                </div>
+                {% include "dataexploration/partials/student_requirement_table.html" with plan=plan %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- ============ ON TRACK TAB ============ -->
+        {% if student_details.on_track %}
+        {% with ot=student_details.on_track.ag dp=student_details.on_track.diploma %}
+        <div x-show="tab === 'on_track' && {{ summary_sections.on_track|yesno:'true,false' }}" x-cloak class="space-y-3">
+            <div class="rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div class="relative flex flex-wrap items-center justify-between gap-3 p-5" x-data="{ srcOpen: false }">
+                    <div class="min-w-0">
+                        <h3 class="text-base font-bold text-slate-900">UC/CSU A-G On Track</h3>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            CSU A-G progress benchmark for grade {{ ot.grade }}, including current schedule
+                            <button type="button" @click="srcOpen = !srcOpen"
+                                    class="ml-0.5 inline-flex items-center gap-0.5 font-medium text-indigo-600 underline underline-offset-2 hover:text-indigo-700"
+                                    aria-haspopup="dialog">
+                                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12v-.008z"></path></svg>
+                                benchmark logic
+                            </button>
+                        </p>
+                        <div x-show="srcOpen" x-cloak @click.outside="srcOpen = false" x-transition
+                             class="absolute left-5 z-20 mt-2 w-[22rem] max-w-[calc(100vw-3rem)] rounded-xl border border-slate-200 bg-white p-4 text-left shadow-xl">
+                            <p class="text-xs font-bold text-slate-800">A-G Progress Benchmarks for CSU</p>
+                            <p class="mt-1 text-[11px] text-slate-500">Minimum on-track A-G units expected by the end of each grade (1 unit = 1 year):</p>
+                            <div class="mt-2 grid grid-cols-4 gap-1 text-center">
+                                <div class="rounded-md bg-slate-50 py-1"><p class="text-[9px] uppercase tracking-wider text-slate-400">Grade 9</p><p class="text-sm font-bold text-slate-800">4</p></div>
+                                <div class="rounded-md bg-slate-50 py-1"><p class="text-[9px] uppercase tracking-wider text-slate-400">Grade 10</p><p class="text-sm font-bold text-slate-800">7</p></div>
+                                <div class="rounded-md bg-slate-50 py-1"><p class="text-[9px] uppercase tracking-wider text-slate-400">Grade 11</p><p class="text-sm font-bold text-slate-800">11</p></div>
+                                <div class="rounded-md bg-slate-50 py-1"><p class="text-[9px] uppercase tracking-wider text-slate-400">Grade 12</p><p class="text-sm font-bold text-slate-800">15</p></div>
+                            </div>
+                            <table class="mt-2 w-full text-[10px]">
+                                <thead>
+                                    <tr class="text-slate-400">
+                                        <th class="text-left font-semibold">Subject area (years)</th>
+                                        <th class="text-center font-semibold">9</th>
+                                        <th class="text-center font-semibold">10</th>
+                                        <th class="text-center font-semibold">11</th>
+                                        <th class="text-center font-semibold">12</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="text-slate-600">
+                                    <tr><td>A · History / Social Science</td><td class="text-center">–</td><td class="text-center">–</td><td class="text-center">1</td><td class="text-center">2</td></tr>
+                                    <tr><td>B · English</td><td class="text-center">1</td><td class="text-center">2</td><td class="text-center">3</td><td class="text-center">4</td></tr>
+                                    <tr><td>C · Math</td><td class="text-center">1</td><td class="text-center">2</td><td class="text-center">3</td><td class="text-center">3</td></tr>
+                                    <tr><td>D · Laboratory Science</td><td class="text-center">–</td><td class="text-center">–</td><td class="text-center">1</td><td class="text-center">2</td></tr>
+                                    <tr><td>E · Language Other Than English</td><td class="text-center">–</td><td class="text-center">–</td><td class="text-center">1</td><td class="text-center">2</td></tr>
+                                    <tr><td>F · Visual &amp; Performing Arts</td><td class="text-center">–</td><td class="text-center">–</td><td class="text-center">–</td><td class="text-center">1</td></tr>
+                                    <tr><td>G · College Prep Elective</td><td class="text-center">–</td><td class="text-center">–</td><td class="text-center">–</td><td class="text-center">1</td></tr>
+                                </tbody>
+                            </table>
+                            <p class="mt-2 text-[10px] text-slate-400">"On track" / "Ahead" / "Behind" compares the student's earned + scheduled A-G years with these benchmarks.</p>
+                            <a href="https://resourcehub.cacollegeguidance.org/wp-content/uploads/2025/03/A-G-Progress-Benchmarks-for-CSU_March-2025_FINAL.pdf"
+                               target="_blank" rel="noopener noreferrer"
+                               class="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-700">
+                                View the official benchmark chart (PDF)
+                                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.5 6H6.75A2.25 2.25 0 004.5 8.25v9A2.25 2.25 0 006.75 19.5h9a2.25 2.25 0 002.25-2.25V10.5M13.5 6h6m-6 0v6m6-6L9 15"></path></svg>
+                            </a>
+                        </div>
+                    </div>
+                    {% if ot.on_track %}
+                    <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        On track
+                    </span>
+                    {% else %}
+                    <span class="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-800 ring-1 ring-rose-200">
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m0 3.75h.008M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Behind
+                    </span>
+                    {% endif %}
+                </div>
+                <div class="grid grid-cols-2 divide-x divide-y divide-slate-100 border-t border-slate-100 sm:grid-cols-4 sm:divide-y-0">
+                    <div class="p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Units expected</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ ot.units_expected }}</p>
+                    </div>
+                    <div class="p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Units earned</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ ot.units_earned|floatformat:"-2" }}</p>
+                    </div>
+                    <div class="p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Units projected</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ ot.units_projected|floatformat:"-2" }}</p>
+                    </div>
+                    <div class="p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Units behind</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums {% if ot.units_shortfall > 0 %}text-rose-600{% else %}text-emerald-600{% endif %}">{{ ot.units_shortfall|floatformat:"-2" }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div class="border-b border-slate-100 px-4 py-3">
+                    <h5 class="text-sm font-bold text-slate-800">A-G areas by end of grade {{ ot.grade }}</h5>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-100">
+                        <thead>
+                            <tr class="bg-white text-[10px] uppercase tracking-wider text-slate-400">
+                                <th class="px-4 py-2 text-left font-semibold">Area</th>
+                                <th class="px-4 py-2 text-right font-semibold">Expected</th>
+                                <th class="px-4 py-2 text-right font-semibold">Earned</th>
+                                <th class="px-4 py-2 text-right font-semibold">Projected</th>
+                                <th class="px-4 py-2 text-center font-semibold">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-50">
+                            {% for a in ot.areas %}
+                            <tr>
+                                <td class="px-4 py-2"><span class="text-xs font-medium text-slate-800">{{ a.label }}</span></td>
+                                <td class="px-4 py-2 text-right text-xs tabular-nums text-slate-600">{{ a.expected_years }} yr</td>
+                                <td class="px-4 py-2 text-right text-xs tabular-nums text-slate-600">{{ a.earned_years|floatformat:"-2" }} yr</td>
+                                <td class="px-4 py-2 text-right text-xs tabular-nums text-slate-600">{{ a.projected_years|floatformat:"-2" }} yr</td>
+                                <td class="px-4 py-2 text-center">
+                                    {% if a.status == 'behind' %}
+                                    <span class="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-800">Behind {{ a.shortfall_years|floatformat:"-2" }} yr</span>
+                                    {% elif a.status == 'ahead' %}
+                                    <span class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">Ahead</span>
+                                    {% else %}
+                                    <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">On track</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {% if ot.lacking %}
+            <div class="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                <p class="text-xs font-bold text-rose-800">A-G areas to focus on to get back on track</p>
+                <ul class="mt-2 space-y-1">
+                    {% for a in ot.lacking %}
+                    <li class="flex flex-wrap items-center gap-x-2 text-xs text-rose-800">
+                        <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                        <span class="font-semibold">{{ a.label }}</span>
+                        <span class="text-rose-600">— behind {{ a.shortfall_years|floatformat:"-2" }} year(s) (projected {{ a.projected_years|floatformat:"-2" }}/{{ a.expected_years }} yr expected)</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            <!-- Diploma on track -->
+            {% if dp %}
+            <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div class="flex flex-wrap items-center justify-between gap-3 p-5">
+                    <div class="min-w-0">
+                        <h3 class="text-base font-bold text-slate-900">{{ dp.label }} On Track</h3>
+                        <p class="mt-0.5 text-xs text-slate-500">DSUSD credit benchmark pro-rated for grade {{ student_details.on_track.grade }}, including current schedule</p>
+                    </div>
+                    {% if dp.on_track %}
+                    <span class="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        On track
+                    </span>
+                    {% else %}
+                    <span class="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-800 ring-1 ring-rose-200">
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3.75m0 3.75h.008M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Behind
+                    </span>
+                    {% endif %}
+                </div>
+                <div class="grid grid-cols-2 divide-x divide-y divide-slate-100 border-t border-slate-100 sm:grid-cols-4 sm:divide-y-0">
+                    <div class="p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Credits expected</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ dp.credits_expected }}</p>
+                    </div>
+                    <div class="p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Credits earned</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ dp.credits_earned }}</p>
+                    </div>
+                    <div class="p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Credits projected</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ dp.credits_projected }}</p>
+                    </div>
+                    <div class="p-4">
+                        <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Credits behind</p>
+                        <p class="mt-0.5 text-xl font-bold tabular-nums {% if dp.credits_shortfall > 0 %}text-rose-600{% else %}text-emerald-600{% endif %}">{{ dp.credits_shortfall }}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div class="border-b border-slate-100 px-4 py-3">
+                    <h5 class="text-sm font-bold text-slate-800">Diploma areas by end of grade {{ student_details.on_track.grade }}</h5>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-100">
+                        <thead>
+                            <tr class="bg-white text-[10px] uppercase tracking-wider text-slate-400">
+                                <th class="px-4 py-2 text-left font-semibold">Area</th>
+                                <th class="px-4 py-2 text-right font-semibold">Expected</th>
+                                <th class="px-4 py-2 text-right font-semibold">Earned</th>
+                                <th class="px-4 py-2 text-right font-semibold">Projected</th>
+                                <th class="px-4 py-2 text-center font-semibold">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-50">
+                            {% for a in dp.areas %}
+                            <tr>
+                                <td class="px-4 py-2"><span class="text-xs font-medium text-slate-800">{{ a.label }}</span></td>
+                                <td class="px-4 py-2 text-right text-xs tabular-nums text-slate-600">{{ a.expected_credits }} cr</td>
+                                <td class="px-4 py-2 text-right text-xs tabular-nums text-slate-600">{{ a.earned_credits }} cr</td>
+                                <td class="px-4 py-2 text-right text-xs tabular-nums text-slate-600">{{ a.projected_credits }} cr</td>
+                                <td class="px-4 py-2 text-center">
+                                    {% if a.status == 'behind' %}
+                                    <span class="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-800">Behind {{ a.shortfall_credits }} cr</span>
+                                    {% elif a.status == 'not_started' %}
+                                    <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Not started</span>
+                                    {% elif a.status == 'ahead' %}
+                                    <span class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-800">Ahead</span>
+                                    {% else %}
+                                    <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">On track</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% if dp.lacking %}
+            <div class="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                <p class="text-xs font-bold text-rose-800">Diploma areas to focus on to get back on track</p>
+                <ul class="mt-2 space-y-1">
+                    {% for a in dp.lacking %}
+                    <li class="flex flex-wrap items-center gap-x-2 text-xs text-rose-800">
+                        <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                        <span class="font-semibold">{{ a.label }}</span>
+                        <span class="text-rose-600">— behind {{ a.shortfall_credits }} credit(s) (earned {{ a.earned_credits }}, projected {{ a.projected_credits }}, expected {{ a.expected_credits }})</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endwith %}
+        {% endif %}
+
+        <!-- ============ CTE TAB ============ -->
+        {% if student_cte_details.has_any and summary_sections.cte %}
+        <div x-show="tab === 'cte' && {{ summary_sections.cte|yesno:'true,false' }}" x-cloak>
+            <div class="rounded-xl border border-slate-200 bg-white p-5">
+                {% include "dataexploration/partials/student_cte_details.html" %}
+            </div>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
-
-    <!-- Test Records Section -->
-    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mb-6">
-        <div class="px-6 py-4 border-b border-slate-200">
-            <h3 class="text-lg font-semibold text-slate-900">All Test Records</h3>
-            <p class="text-sm text-slate-600 mt-1">{{ test_records|length }} test record(s) found</p>
-        </div>
-
-        {% if test_records %}
-        {% regroup test_records by school_year as year_list %}
-        <div class="flex flex-col">
-            {% for year in year_list %}
-            <div class="border-b border-slate-200 last:border-b-0" x-data="{ expanded: {{ forloop.first|yesno:'true,false' }} }">
-                <div class="bg-slate-50 px-6 py-3 border-y border-slate-100 flex justify-between items-center cursor-pointer hover:bg-slate-100 transition-colors" @click="expanded = !expanded">
-                     <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4 text-slate-500 transition-transform duration-200" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                        </svg>
-                        <h4 class="font-bold text-slate-800 flex items-center gap-2">
-                            <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                            {{ year.grouper }}
-                        </h4>
-                    </div>
-                    <span class="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">{{ year.list|length }} Tests</span>
-                </div>
-                <div class="overflow-x-auto" x-show="expanded" x-collapse {% if not forloop.first %}style="display: none;"{% endif %}>
-                    <table class="min-w-full divide-y divide-slate-100">
-                        <thead class="bg-white">
-                            <tr>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Test Name</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Subject</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Grade</th>
-                                <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-blue-50/30">Level (PL)</th>
-                                <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-blue-50/30">Score (SS)</th>
-                                <th class="px-6 py-3 text-left text-xs font-bold text-slate-700 uppercase tracking-wider bg-purple-50/30">DFP</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Window</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">School</th>
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-slate-50">
-                            {% for record in year.list %}
-                            <tr class="hover:bg-slate-50 transition-colors">
-                                <td class="px-6 py-3 whitespace-nowrap text-sm font-medium text-slate-900">{{ record.test_name|default:"-" }}</td>
-                                <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-600">{{ record.subject|default:"-" }}</td>
-                                <td class="px-6 py-3 whitespace-nowrap text-sm text-slate-600">{{ record.grade|default:"-" }}</td>
-                                <td class="px-6 py-3 whitespace-nowrap bg-blue-50/10">
-                                    <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full
-                                        {% if record.pl == '4' or record.pl == 'Advanced' or record.pl == 'Standard Exceeded' %}bg-green-100 text-green-800 border border-green-200
-                                        {% elif record.pl == '3' or record.pl == 'Proficient' or record.pl == 'Standard Met' %}bg-blue-100 text-blue-800 border border-blue-200
-                                        {% elif record.pl == '2' or record.pl == 'Basic' or record.pl == 'Standard Nearly Met' %}bg-yellow-100 text-yellow-800 border border-yellow-200
-                                        {% elif record.pl == '1' or record.pl == 'Below Basic' or record.pl == 'Standard Not Met' %}bg-red-100 text-red-800 border border-red-200
-                                        {% else %}bg-slate-100 text-slate-800 border border-slate-200{% endif %}">
-                                        {{ record.pl|default:"-" }}
-                                    </span>
-                                </td>
-                                <td class="px-6 py-3 whitespace-nowrap text-sm font-bold text-slate-900 bg-blue-50/10">{{ record.ss|default:"-" }}</td>
-                                <td class="px-6 py-3 whitespace-nowrap bg-purple-50/10">
-                                    {% if record.test_name == 'CAASPP' and record.other_info and record.other_info.dfp is not None %}
-                                    <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full bg-purple-100 text-purple-800 border border-purple-200">
-                                        DFP {{ record.other_info.dfp }}
-                                    </span>
-                                    {% else %}
-                                    <span class="text-xs text-slate-400">-</span>
-                                    {% endif %}
-                                </td>
-                                <td class="px-6 py-3 whitespace-nowrap text-xs text-slate-500">{{ record.test_window|default:"-" }}</td>
-                                <td class="px-6 py-3 whitespace-nowrap text-xs text-slate-500">{{ record.school_short_name|default:record.school|truncatewords:2 }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="px-6 py-12 text-center">
-            <p class="text-slate-500">No test records found for this student.</p>
-        </div>
-        {% endif %}
-    </div>
-
-    <!-- Student Marks Section -->
-    <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-        <div class="px-6 py-4 border-b border-slate-200">
-            <h3 class="text-lg font-semibold text-slate-900">Course Grades / Marks</h3>
-            <p class="text-sm text-slate-600 mt-1">{{ student_marks|length }} mark(s) found</p>
-        </div>
-
-        {% if student_marks_grid %}
-        <div class="flex flex-col">
-            {% for year in student_marks_grid %}
-            <div class="border-b border-slate-200 last:border-b-0" x-data="{ expanded: {{ forloop.first|yesno:'true,false' }} }">
-                <div class="bg-slate-50 px-6 py-3 border-y border-slate-100 flex justify-between items-center cursor-pointer hover:bg-slate-100 transition-colors" @click="expanded = !expanded">
-                     <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4 text-slate-500 transition-transform duration-200" :class="{ 'rotate-180': expanded }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                        </svg>
-                        <h4 class="font-bold text-slate-800 flex items-center gap-2">
-                            <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
-                            {{ year.school_year }}
-                        </h4>
-                    </div>
-                    <span class="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">{{ year.courses|length }} Classes</span>
-                </div>
-                <div class="overflow-x-auto" x-show="expanded" x-collapse {% if not forloop.first %}style="display: none;"{% endif %}>
-                    <table class="min-w-full divide-y divide-slate-100">
-                        <thead class="bg-white">
-                            <tr>
-                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider sticky left-0 bg-white z-10">Class</th>
-                                <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Teacher</th>
-                                {% for period in year.periods %}
-                                <th class="px-3 py-3 text-center text-xs font-bold uppercase tracking-wider {% if period|lower == 'live' %}text-slate-900 bg-blue-50/50{% else %}text-slate-700 bg-blue-50/30{% endif %}">{{ period }}</th>
-                                {% endfor %}
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-slate-50">
-                            {% for course in year.courses %}
-                            <tr class="hover:bg-slate-50 transition-colors">
-                                <td class="px-4 py-3 whitespace-nowrap sticky left-0 bg-white hover:bg-slate-50">
-                                    <div class="text-sm font-medium text-slate-900">{{ course.course_name|default:"-" }}</div>
-                                    <div class="text-xs text-slate-500">{{ course.subject|default:"-" }}</div>
-                                </td>
-                                <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-500">{{ course.staff_name|default:"-" }}</td>
-                                {% for cell in course.cells %}
-                                <td class="px-3 py-3 whitespace-nowrap text-center {% if cell.period|lower == 'live' %}bg-blue-50/20{% endif %}">
-                                    {% if cell.mark %}
-                                    <span class="px-2.5 py-0.5 inline-flex text-xs font-bold rounded-full
-                                        {% if cell.tone == 'green' %}bg-green-100 text-green-800 border border-green-200
-                                        {% elif cell.tone == 'blue' %}bg-blue-100 text-blue-800 border border-blue-200
-                                        {% elif cell.tone == 'yellow' %}bg-yellow-100 text-yellow-800 border border-yellow-200
-                                        {% elif cell.tone == 'red' %}bg-red-100 text-red-800 border border-red-200
-                                        {% else %}bg-slate-100 text-slate-800 border border-slate-200{% endif %}">
-                                        {{ cell.mark }}
-                                    </span>
-                                    {% else %}
-                                    <span class="text-xs text-slate-300">—</span>
-                                    {% endif %}
-                                </td>
-                                {% endfor %}
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="px-6 py-12 text-center">
-            <p class="text-slate-500">No course grades/marks found for this student.</p>
-        </div>
-        {% endif %}
-    </div>
 
     {% if student_cte_details.has_any %}
     <div id="student-cte-overlay" class="hidden fixed inset-0 z-[60]" aria-hidden="true">
@@ -358,10 +646,37 @@
                         <p class="text-xs text-slate-500 mt-0.5">{{ student_name|default:"Student" }} · {{ student_cte_details.current|length }} current · {{ student_cte_details.past_completers|length }} past completer(s)</p>
                     </div>
                     <button type="button" data-action="close-student-cte"
-                        class="shrink-0 px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50">Close</button>
+                        class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-slate-400 hover:text-slate-900">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        Close
+                    </button>
                 </div>
                 <div class="p-5 max-h-[75vh] overflow-y-auto">
                     {% include "dataexploration/partials/student_cte_details.html" %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if student_details.has_any %}
+    <div id="student-details-overlay" class="hidden fixed inset-0 z-[60]" aria-hidden="true">
+        <div class="absolute inset-0 bg-slate-900/50" data-action="close-student-details"></div>
+        <div class="absolute inset-0 flex items-start justify-center p-4 sm:p-6 overflow-y-auto">
+            <div class="w-full max-w-5xl bg-white rounded-xl shadow-xl ring-1 ring-slate-200 my-4">
+                <div class="flex items-start justify-between gap-4 px-5 py-4 border-b border-slate-200">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900">Student Details</h3>
+                        <p class="text-xs text-slate-500 mt-0.5">{{ student_name|default:"Student" }} · Record &amp; transcript</p>
+                    </div>
+                    <button type="button" data-action="close-student-details"
+                        class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:border-slate-400 hover:text-slate-900">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        Close
+                    </button>
+                </div>
+                <div class="p-5 max-h-[75vh] overflow-y-auto">
+                    {% include "dataexploration/partials/student_details.html" %}
                 </div>
             </div>
         </div>

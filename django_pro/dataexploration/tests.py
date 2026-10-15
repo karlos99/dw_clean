@@ -55,6 +55,12 @@ class TemplateCompilationTests(SimpleTestCase):
 	def test_student_test_summary_content_compiles(self):
 		get_template("dataexploration/partials/student_test_summary_content.html")
 
+	def test_student_details_compiles(self):
+		get_template("dataexploration/partials/student_details.html")
+
+	def test_student_orbit_header_compiles(self):
+		get_template("dataexploration/partials/student_orbit_header.html")
+
 	def test_dataexploration_manage_default_columns_compiles(self):
 		get_template("dataexploration/manage_default_columns.html")
 
@@ -217,17 +223,46 @@ class StudentMarksGridTests(SimpleTestCase):
 		]
 		grid = pivot_student_marks(marks)
 		self.assertEqual([y['school_year'] for y in grid], ['2025-2026', '2024-2025'])
-		self.assertEqual(grid[0]['periods'], ['Q1', 'Q2', 'Live'])
+		# The live (in-progress) grade is hidden; only marking periods show.
+		self.assertEqual(grid[0]['periods'], ['Q1', 'Q2'])
 		self.assertEqual(len(grid[0]['courses']), 2)
 		alg = next(c for c in grid[0]['courses'] if c['course_name'] == 'Algebra I')
 		self.assertEqual(alg['subject'], 'Math')
 		self.assertEqual(alg['staff_name'], 'Smith')
-		self.assertEqual([c['mark'] for c in alg['cells']], ['B', 'B+', 'A-'])
-		self.assertEqual(alg['cells'][2]['tone'], 'green')
+		self.assertEqual([c['mark'] for c in alg['cells']], ['B', 'B+'])
+		self.assertEqual(alg['cells'][1]['tone'], 'blue')
+
+	def test_pivot_hides_live_and_progress_periods(self):
+		from dataexploration.view_modules.student_data_utils import pivot_student_marks
+
+		marks = [
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Live', 'mark': 'A-', 'staff_name': 'Smith'},
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Progress', 'mark': 'B', 'staff_name': 'Smith'},
+			{'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra I',
+			 'mark_period': 'Semester 1', 'mark': 'B+', 'staff_name': 'Smith'},
+		]
+		grid = pivot_student_marks(marks)
+		self.assertEqual(grid[0]['periods'], ['Semester 1'])
+		alg = grid[0]['courses'][0]
+		self.assertEqual([c['mark'] for c in alg['cells']], ['B+'])
 
 	def test_pivot_empty(self):
 		from dataexploration.view_modules.student_data_utils import pivot_student_marks
 		self.assertEqual(pivot_student_marks([]), [])
+
+	def test_filter_display_marks_drops_live_and_progress(self):
+		from dataexploration.view_modules.student_data_utils import filter_display_marks
+
+		marks = [
+			{'mark_period': 'Live', 'mark': 'A'},
+			{'mark_period': 'Progress', 'mark': 'B'},
+			{'mark_period': 'Semester 1', 'mark': 'B+'},
+			{'mark_period': 'Semester 2', 'mark': 'A-'},
+		]
+		out = filter_display_marks(marks)
+		self.assertEqual([m['mark_period'] for m in out], ['Semester 1', 'Semester 2'])
 
 
 class TestMetadataMatchesTests(SimpleTestCase):
@@ -834,3 +869,979 @@ class StudentCteDetailsTests(SimpleTestCase):
 			out = mod._fetch_student_cte_details('123')
 
 		self.assertEqual(out, {'current': [], 'past_completers': [], 'has_any': False})
+
+
+class StudentDetailsTests(SimpleTestCase):
+	def _row(self):
+		from types import SimpleNamespace
+
+		return SimpleNamespace(
+			ssid='123',
+			student_name='Alvarado, Destiny Diane',
+			grade='11',
+			school_name='Shadow Hills HS',
+			school_year='2026-2027',
+			counselor_name='Smith',
+			weighted_gpa='3.413800000',
+			unweighted_gpa='3.275900000',
+			class_rank='140',
+			class_size='418',
+			expected_graduation_year='2028',
+			graduation_status='Class of 2028',
+			course_history=[
+				{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+				 'course_title': 'Math I CP', 'course_id': '2213SIA', 'display_mark': 'B-',
+				 'display_completed': 5.0, 'term_gpa': 3.571428},
+				{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM2',
+				 'course_title': 'Math I CP', 'course_id': '2213SIA', 'display_mark': 'B',
+				 'display_completed': 5.0, 'term_gpa': 3.6},
+				{'school_year_range': '2025-2026', 'school_year': 2025, 'term_code': 'SEM1',
+				 'course_title': 'English II', 'course_id': '1042', 'display_mark': 'A',
+				 'display_completed': 5.0, 'term_gpa': 4.0},
+			],
+			graduation_requirements=[
+				{'requirement_set': 'District Graduation', 'grad_plan': 'DS High School',
+				 'sort_order': 101, 'subject_area': 'Economics', 'req_credits': 5.0,
+				 'comp_credits': 0.0, 'wip_credits': 0.0, 'needed_credits': 5.0},
+				{'requirement_set': 'District Graduation', 'grad_plan': 'DS High School',
+				 'sort_order': 99, 'subject_area': 'TOTALS', 'req_credits': 220.0,
+				 'comp_credits': 120.0, 'wip_credits': 0.0, 'needed_credits': 100.0},
+				{'requirement_set': 'District Graduation', 'grad_plan': 'Alt Edu High School Diploma.',
+				 'sort_order': 101, 'subject_area': 'Economics', 'req_credits': 5.0,
+				 'comp_credits': 5.0, 'wip_credits': 0.0, 'needed_credits': 0.0},
+				{'requirement_set': 'District Graduation', 'grad_plan': 'Alt Edu High School Diploma.',
+				 'sort_order': 99, 'subject_area': 'TOTALS', 'req_credits': 130.0,
+				 'comp_credits': 120.0, 'wip_credits': 0.0, 'needed_credits': 10.0},
+			],
+			uc_requirements=[],
+			csu_requirements=[],
+		)
+
+	def test_build_student_details_summary_and_course_history(self):
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		out = _build_student_details(self._row())
+
+		self.assertTrue(out['has_any'])
+		self.assertEqual(out['summary']['weighted_gpa'], '3.41')
+		self.assertEqual(out['summary']['unweighted_gpa'], '3.28')
+		self.assertEqual(out['summary']['rank_display'], '140 of 418')
+		self.assertEqual(out['summary']['expected_graduation_year'], '2028')
+
+		years = [y['school_year'] for y in out['course_history']]
+		self.assertEqual(years, ['2025-2026', '2024-2025'])
+		y2024 = out['course_history'][1]
+		self.assertEqual(y2024['course_count'], 2)
+		self.assertEqual(y2024['credits_earned'], 10.0)
+		self.assertEqual([t['term'] for t in y2024['terms']], ['Semester 1', 'Semester 2'])
+
+		plans = out['requirements']['diploma']
+		self.assertEqual(
+			[p['label'] for p in plans],
+			['DS High School', 'Alt Edu High School Diploma'],
+		)
+		self.assertEqual(out['default_plan'], 'ds-high-school')
+		ds = plans[0]
+		self.assertEqual(ds['display_label'], 'DS High School Diploma')
+		self.assertEqual(ds['requirement_set'], 'District Graduation')
+		self.assertEqual(ds['pathway_credits'], 220)
+		self.assertEqual(len(ds['rows']), 7)
+		self.assertEqual(ds['totals']['req_credits'], 220.0)
+		self.assertFalse(ds['rows'][0]['met'])
+		alt = plans[1]
+		self.assertEqual(alt['display_label'], 'Alternative Education Diploma')
+		self.assertEqual(alt['pathway_credits'], 200)
+		self.assertEqual(alt['totals']['req_credits'], 200.0)
+		# Economics completed credits roll up into Social Studies.
+		alt_social = next(r for r in alt['rows'] if r['subject_area'] == 'Social Studies')
+		self.assertEqual(alt_social['comp_credits'], 5.0)
+		self.assertEqual([t['key'] for t in out['requirement_tabs']], ['diploma', 'ag'])
+		self.assertEqual(out['requirement_tabs'][1]['label'], 'UC/CSU A-G')
+
+	def test_academic_recognition_and_high_school(self):
+		from dataexploration.view_modules.student_data_utils import (
+			_academic_recognition, _is_high_school_grade,
+		)
+
+		self.assertEqual(_academic_recognition('4.00'), 'Summa Cum Laude')
+		self.assertEqual(_academic_recognition('4.25'), 'Summa Cum Laude')
+		self.assertEqual(_academic_recognition('3.99'), 'Magna Cum Laude')
+		self.assertEqual(_academic_recognition('3.75'), 'Magna Cum Laude')
+		self.assertEqual(_academic_recognition('3.74'), 'Cum Laude')
+		self.assertEqual(_academic_recognition('3.50'), 'Cum Laude')
+		self.assertEqual(_academic_recognition('3.49'), '')
+		self.assertEqual(_academic_recognition(None), '')
+
+		for grade in ('9', '09', '10', '11', '12', 'Grade 11'):
+			self.assertTrue(_is_high_school_grade(grade), msg=grade)
+		for grade in ('8', '6', 'K', '', None):
+			self.assertFalse(_is_high_school_grade(grade), msg=str(grade))
+
+	def test_summary_includes_academic_recognition_for_high_school(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		def make_row(grade, gpa):
+			return SimpleNamespace(
+				ssid='1', student_name='X', grade=grade, school_name='S', school_year='2025-2026',
+				counselor_name='', weighted_gpa=None, unweighted_gpa=gpa, class_rank=None,
+				class_size=None, expected_graduation_year='', graduation_status='',
+				course_history=[], graduation_requirements=[], uc_requirements=[],
+				csu_requirements=[], current_schedule=None,
+			)
+
+		hs = _build_student_details(make_row('11', '3.8'))['summary']
+		self.assertEqual(hs['academic_recognition'], 'Magna Cum Laude')
+		self.assertTrue(hs['is_high_school'])
+		summa = _build_student_details(make_row('12', '4.0'))['summary']
+		self.assertEqual(summa['academic_recognition'], 'Summa Cum Laude')
+		# Middle school is not eligible for the recognition.
+		ms = _build_student_details(make_row('8', '4.0'))['summary']
+		self.assertEqual(ms['academic_recognition'], '')
+		self.assertFalse(ms['is_high_school'])
+
+	def test_ag_on_track_benchmarks(self):
+		from dataexploration.view_modules.student_data_utils import (
+			_ag_on_track, _CSU_AG_PATTERN,
+		)
+
+		def plan(comp):
+			rows = [
+				{'subject_area': label, 'comp_credits': comp.get(letter, 0.0)}
+				for letter, label, _years in _CSU_AG_PATTERN
+			]
+			return [{'rows': rows}]
+
+		# Grade 9: English + Math (B/C) plus two extra A-G units = 4 units.
+		ot = _ag_on_track(plan({'B': 10.0, 'C': 10.0, 'D': 10.0, 'E': 10.0}), 9)
+		self.assertEqual(ot['units_expected'], 4)
+		self.assertEqual(ot['units_earned'], 4.0)
+		self.assertTrue(ot['on_track'])
+		self.assertEqual(ot['lacking'], [])
+
+		# Grade 10: only English done -> behind in B (1 yr) and C (2 yrs).
+		ot = _ag_on_track(plan({'B': 10.0}), 10)
+		self.assertEqual(ot['units_expected'], 7)
+		self.assertFalse(ot['on_track'])
+		self.assertEqual(
+			{a['letter']: a['shortfall_years'] for a in ot['lacking']},
+			{'B': 1.0, 'C': 2.0},
+		)
+
+		# Grade 11: all required areas met but only 9 of 11 units -> behind on units.
+		ot = _ag_on_track(
+			plan({'A': 10.0, 'B': 30.0, 'C': 30.0, 'D': 10.0, 'E': 10.0}), 11
+		)
+		self.assertEqual(ot['units_earned'], 9.0)
+		self.assertEqual(ot['units_shortfall'], 2.0)
+		self.assertEqual(ot['lacking'], [])
+		self.assertFalse(ot['on_track'])
+		self.assertEqual(ot['grade'], 11)
+
+	def test_on_track_only_for_grades_9_to_11(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		def make_row(grade):
+			return SimpleNamespace(
+				ssid='1', student_name='X', grade=grade, school_name='S', school_year='2025-2026',
+				counselor_name='', weighted_gpa=None, unweighted_gpa='3.0', class_rank=None,
+				class_size=None, expected_graduation_year='', graduation_status='',
+				course_history=[], graduation_requirements=[], uc_requirements=[],
+				csu_requirements=[], current_schedule=None,
+			)
+
+		self.assertIsNotNone(_build_student_details(make_row('9'))['on_track'])
+		self.assertIsNotNone(_build_student_details(make_row('10'))['on_track'])
+		self.assertIsNotNone(_build_student_details(make_row('11'))['on_track'])
+		self.assertIsNone(_build_student_details(make_row('12'))['on_track'])
+		self.assertIsNone(_build_student_details(make_row('8'))['on_track'])
+
+	def test_ag_on_track_includes_current_schedule(self):
+		from dataexploration.view_modules.student_data_utils import (
+			_ag_on_track, _CSU_AG_PATTERN,
+		)
+
+		def plan(by_letter):
+			rows = []
+			for letter, label, _years in _CSU_AG_PATTERN:
+				data = by_letter.get(letter, {})
+				comp = data.get('comp', 0.0)
+				rows.append({
+					'subject_area': label,
+					'comp_credits': comp,
+					'projected_total': data.get('projected', comp),
+					'scheduled_current': data.get('scheduled', 0.0),
+				})
+			return [{'rows': rows}]
+
+		# Grade 10: English completed (1 yr); Math is 0 earned but 2 yrs scheduled.
+		ot = _ag_on_track(plan({
+			'B': {'comp': 10.0},
+			'C': {'comp': 0.0, 'projected': 20.0, 'scheduled': 20.0},
+		}), 10)
+		self.assertEqual(ot['units_earned'], 1.0)
+		self.assertEqual(ot['units_projected'], 3.0)
+		math = next(a for a in ot['areas'] if a['letter'] == 'C')
+		self.assertEqual(math['earned_years'], 0.0)
+		self.assertEqual(math['projected_years'], 2.0)
+		self.assertEqual(math['status'], 'on_track')  # projected meets the grade-10 benchmark
+
+	def test_diploma_on_track_uses_expected_per_year(self):
+		from dataexploration.view_modules.student_data_utils import (
+			_diploma_on_track, default_diploma_expected_credits,
+		)
+
+		# Defaults reflect when subjects start (Social Studies starts grade 10,
+		# Math must start grade 9) and use whole 5-credit units.
+		defaults = default_diploma_expected_credits()
+		self.assertEqual(defaults['English'], [10, 10, 10, 10])
+		self.assertEqual(defaults['Math'], [10, 10, 10, 0])
+		self.assertEqual(defaults['Social Studies'], [0, 10, 10, 10])
+		self.assertEqual(defaults['Electives'], [20, 10, 15, 25])
+		self.assertTrue(all(v % 5 == 0 for years in defaults.values() for v in years))
+
+		plan = [{
+			'display_label': 'DS High School Diploma',
+			'pathway_credits': 220,
+			'rows': [
+				{'subject_area': 'English', 'req_credits': 40.0, 'projected_total': 30.0,
+				 'counted_credits': 30.0},
+				{'subject_area': 'Math', 'req_credits': 30.0, 'projected_total': 10.0,
+				 'counted_credits': 10.0},
+			],
+		}]
+		ot = _diploma_on_track(plan, 11)  # by end of grade 11
+		# English expected 30 (10+10+10); Math expected 30 (10+10+10).
+		self.assertEqual(ot['credits_expected'], 60)
+		self.assertEqual(ot['credits_earned'], 40)
+		self.assertEqual(ot['credits_projected'], 40)
+		self.assertEqual(ot['credits_shortfall'], 20)
+		eng = next(a for a in ot['areas'] if a['label'] == 'English')
+		self.assertEqual(eng['expected_credits'], 30)
+		self.assertEqual(eng['status'], 'on_track')
+		math = next(a for a in ot['areas'] if a['label'] == 'Math')
+		self.assertEqual(math['expected_credits'], 30)
+		self.assertEqual(math['status'], 'behind')
+		self.assertFalse(ot['on_track'])
+
+		# A custom configuration overrides the defaults.
+		custom = {'English': [20, 20, 0, 0], 'Math': [0, 0, 0, 0]}
+		ot2 = _diploma_on_track(plan, 11, expected_credits=custom)
+		eng2 = next(a for a in ot2['areas'] if a['label'] == 'English')
+		# English cumulative through grade 11 = 40 of weight 40 -> full 40 expected.
+		self.assertEqual(eng2['expected_credits'], 40)
+		self.assertTrue(all(a['expected_credits'] % 5 == 0 for a in ot2['areas']))
+
+	def test_diploma_on_track_subject_not_started_is_not_behind(self):
+		from dataexploration.view_modules.student_data_utils import _diploma_on_track
+
+		# Social Studies starts in grade 10, so a 9th grader is not behind in it.
+		plan = [{
+			'display_label': 'DS High School Diploma',
+			'pathway_credits': 220,
+			'rows': [
+				{'subject_area': 'English', 'req_credits': 40.0, 'projected_total': 10.0,
+				 'counted_credits': 10.0},
+				{'subject_area': 'Social Studies', 'req_credits': 30.0, 'projected_total': 0.0,
+				 'counted_credits': 0.0},
+			],
+		}]
+		ot = _diploma_on_track(plan, 9)
+		social = next(a for a in ot['areas'] if a['label'] == 'Social Studies')
+		self.assertEqual(social['expected_credits'], 0)
+		self.assertEqual(social['status'], 'not_started')
+		self.assertNotIn(social, ot['lacking'])
+		# It is not counted as a shortfall...
+		self.assertEqual(ot['credits_shortfall'], 0)
+		# ...but by grade 11 the subject is expected and a missing one is behind.
+		ot11 = _diploma_on_track(plan, 11)
+		social11 = next(a for a in ot11['areas'] if a['label'] == 'Social Studies')
+		self.assertEqual(social11['status'], 'behind')
+		self.assertIn(social11, ot11['lacking'])
+
+	def test_requirement_plans_met_and_percent(self):
+		from dataexploration.view_modules.student_data_utils import _student_requirement_plans
+
+		sets = _student_requirement_plans([
+			{'requirement_set': 'CSU', 'grad_plan': 'California State University',
+			 'sort_order': 2, 'subject_area': 'B. English', 'req_credits': 40.0,
+			 'comp_credits': 40.0, 'wip_credits': 0.0, 'needed_credits': 0.0},
+			{'requirement_set': 'CSU', 'grad_plan': 'California State University',
+			 'sort_order': 3, 'subject_area': 'C. Mathematics', 'req_credits': 30.0,
+			 'comp_credits': 20.0, 'wip_credits': 10.0, 'needed_credits': 10.0},
+		])
+		rows = sets[0]['rows']
+		self.assertEqual(len(rows), 2)
+		self.assertTrue(rows[0]['met'])
+		self.assertEqual(rows[0]['percent'], 100)
+		self.assertFalse(rows[1]['met'])
+		self.assertEqual(rows[1]['percent'], 67)
+		self.assertIsNone(sets[0]['totals'])
+
+	def test_build_student_details_handles_missing_json(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		row = SimpleNamespace(
+			ssid='123', student_name=None, grade=None, school_name=None,
+			school_year=None, counselor_name=None, weighted_gpa=None,
+			unweighted_gpa=None, class_rank=None, class_size=None,
+			expected_graduation_year=None, graduation_status=None,
+			course_history=None, graduation_requirements=None,
+			uc_requirements=None, csu_requirements=None,
+		)
+		out = _build_student_details(row)
+		self.assertEqual(out['course_history'], [])
+		self.assertEqual(out['requirements']['ag'], [])
+		self.assertEqual(out['summary']['rank_display'], '')
+
+	def test_fetch_student_details_empty_when_no_row(self):
+		from unittest.mock import patch
+
+		import dataexploration.view_modules.student_data_utils as mod
+
+		with patch.object(mod, '_resolve_ssid', return_value='123'), \
+			patch.object(mod, 'CurrentStudent') as cs, \
+			patch('studata.models.StudentRpc') as rpc:
+			cs.objects.filter.return_value.order_by.return_value.first.return_value = None
+			rpc.objects.filter.return_value.first.return_value = None
+			out = mod._fetch_student_details('123')
+
+		self.assertFalse(out['has_any'])
+		self.assertEqual(out['course_history'], [])
+		self.assertEqual(out['requirement_tabs'], [])
+
+	def test_fetch_student_details_returns_built_row(self):
+		from unittest.mock import patch
+
+		import dataexploration.view_modules.student_data_utils as mod
+
+		with patch.object(mod, '_resolve_ssid', return_value='123'), \
+			patch('studata.models.StudentRpc') as rpc:
+			rpc.objects.filter.return_value.first.return_value = self._row()
+			out = mod._fetch_student_details('123')
+
+		self.assertTrue(out['has_any'])
+		self.assertEqual(out['summary']['class_rank'], '140')
+
+	def test_normalize_mark(self):
+		from dataexploration.view_modules.student_data_utils import _normalize_mark
+
+		self.assertEqual(_normalize_mark('A-'), 'A-')
+		self.assertEqual(_normalize_mark('A-W'), 'A-')
+		self.assertEqual(_normalize_mark('A+W'), 'A+')
+		self.assertEqual(_normalize_mark('AW'), 'A')
+		self.assertEqual(_normalize_mark('FR'), 'F')
+		self.assertEqual(_normalize_mark('PC'), 'P')
+		self.assertEqual(_normalize_mark('D+R'), 'D+')
+		self.assertEqual(_normalize_mark(''), '')
+		self.assertEqual(_normalize_mark(None), '')
+
+	def test_ag_area_helpers(self):
+		from dataexploration.view_modules.student_data_utils import _ag_areas, _ag_letter
+
+		self.assertEqual(_ag_letter('GA'), 'G')
+		self.assertEqual(_ag_letter('D'), 'D')
+		self.assertEqual(_ag_letter(''), '')
+		self.assertEqual(_ag_areas('D', 'G'), ['D', 'G'])
+		self.assertEqual(_ag_areas('GO', 'G'), ['G'])
+		self.assertEqual(_ag_areas('', None), [])
+
+	def test_course_history_ag_tags_and_requirement_by_year(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		row = SimpleNamespace(
+			ssid='1', student_name='X', grade='11', school_name='S', school_year='2026-2027',
+			counselor_name='', weighted_gpa=None, unweighted_gpa=None, class_rank=None,
+			class_size=None, expected_graduation_year='2028', graduation_status='',
+			course_history=[
+				{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+				 'course_title': 'Biology CP', 'course_id': 'C1', 'display_mark': 'AW',
+				 'display_completed': 5.0, 'term_gpa': 3.0},
+				{'school_year_range': '2025-2026', 'school_year': 2025, 'term_code': 'SEM1',
+				 'course_title': 'Biology CP', 'course_id': 'C1', 'display_mark': 'B+',
+				 'display_completed': 5.0, 'term_gpa': 3.3},
+			],
+			graduation_requirements=[],
+			uc_requirements=[
+				{'requirement_set': 'UC A-G', 'grad_plan': 'University of California',
+				 'sort_order': 4, 'subject_area': 'D. Laboratory Science', 'req_credits': 20.0,
+				 'comp_credits': 10.0, 'wip_credits': 0.0, 'needed_credits': 10.0},
+			],
+			csu_requirements=[
+				{'requirement_set': 'CSU', 'grad_plan': 'California State University',
+				 'sort_order': 4, 'subject_area': 'D. Laboratory Science', 'req_credits': 20.0,
+				 'comp_credits': 10.0, 'wip_credits': 0.0, 'needed_credits': 10.0},
+			],
+		)
+		ag_map = {'C1': {'uc': ['D', 'G'], 'csu': ['D', 'G']}}
+		out = _build_student_details(row, ag_map=ag_map)
+
+		self.assertEqual([y['school_year'] for y in out['course_history']], ['2025-2026', '2024-2025'])
+		y2024 = out['course_history'][1]['terms'][0]['courses'][0]
+		self.assertEqual(y2024['mark'], 'A')
+		self.assertEqual(y2024['uc_areas'], ['D', 'G'])
+		self.assertEqual(y2024['csu_areas'], ['D', 'G'])
+
+		ag_plan = out['requirements']['ag'][0]
+		self.assertEqual(ag_plan['row_count'], 7)
+		self.assertEqual(
+			[r['subject_area'] for r in ag_plan['rows']],
+			['A. History and Social Science', 'B. English', 'C. Mathematics',
+			 'D. Laboratory Science', 'E. Language Other Than English',
+			 'F. Visual and Performing Arts', 'G. College Preparatory Elective'],
+		)
+		# CSU pattern: 1 year == 10 credits (A=2, B=4, C=3, D=2, E=2, F=1, G=1).
+		self.assertEqual(
+			[r['req_credits'] for r in ag_plan['rows']],
+			[20.0, 40.0, 30.0, 20.0, 20.0, 10.0, 10.0],
+		)
+		ag_row = next(r for r in ag_plan['rows'] if r['subject_area'].startswith('D.'))
+		self.assertEqual(ag_row['req_years'], 2)
+		self.assertEqual([y['school_year'] for y in ag_row['by_year']], ['2025-2026', '2024-2025'])
+		self.assertEqual(ag_row['by_year'][0]['credits'], 5.0)
+		self.assertEqual(ag_row['by_year'][0]['courses'][0]['mark'], 'B+')
+		self.assertEqual(ag_row['by_year'][1]['courses'][0]['mark'], 'A')
+
+	def test_ag_allocation_overflow_to_g(self):
+		from dataexploration.view_modules.student_data_utils import _ag_credit_allocation
+
+		course_history = [
+			{'school_year': '2024-2025', 'terms': [
+				{'courses': [
+					{'course_title': 'Art I', 'mark': 'A', 'credits': 10.0, 'csu_areas': ['F', 'G']},
+				]},
+			]},
+			{'school_year': '2025-2026', 'terms': [
+				{'courses': [
+					{'course_title': 'Art II', 'mark': 'B', 'credits': 10.0, 'csu_areas': ['F', 'G']},
+				]},
+			]},
+		]
+		plans = [{'rows': [
+			{'subject_area': 'F. Visual and Performing Arts', 'req_credits': 10.0},
+			{'subject_area': 'G. College-Preparatory Elective', 'req_credits': 20.0},
+		]}]
+		alloc = _ag_credit_allocation(course_history, [], plans)
+		# The first course satisfies F; the second course falls through to G.
+		self.assertEqual([y['credits'] for y in alloc['F']], [10.0])
+		self.assertEqual(alloc['F'][0]['school_year'], '2024-2025')
+		self.assertEqual([y['credits'] for y in alloc['G']], [10.0])
+		self.assertEqual(alloc['G'][0]['school_year'], '2025-2026')
+		# Each course represents exactly one A-G letter.
+		self.assertEqual(course_history[0]['terms'][0]['courses'][0]['ag_letter'], 'F')
+		self.assertEqual(course_history[1]['terms'][0]['courses'][0]['ag_letter'], 'G')
+
+	def test_ag_mark_passes_c_minus_or_better(self):
+		from dataexploration.view_modules.student_data_utils import _ag_mark_passes
+
+		for mark in ('A', 'A-', 'B+', 'C', 'C-', 'P', 'CR', '', None):
+			self.assertTrue(_ag_mark_passes(mark), msg=f"{mark!r} should pass")
+		for mark in ('D+', 'D', 'D-', 'F', 'U', 'NC'):
+			self.assertFalse(_ag_mark_passes(mark), msg=f"{mark!r} should fail")
+
+	def test_ag_allocation_lists_d_f_without_credit(self):
+		from dataexploration.view_modules.student_data_utils import _ag_credit_allocation
+
+		course_history = [
+			{'school_year': '2024-2025', 'terms': [{'courses': [
+				{'course_title': 'English I', 'mark': 'D', 'credits': 10.0, 'csu_areas': ['B']},
+				{'course_title': 'Math I', 'mark': 'C-', 'credits': 10.0, 'csu_areas': ['C']},
+				{'course_title': 'Biology', 'mark': 'F', 'credits': 10.0, 'csu_areas': ['D']},
+			]}]},
+		]
+		plans = [{'rows': [
+			{'subject_area': 'B. English', 'req_credits': 40.0},
+			{'subject_area': 'C. Mathematics', 'req_credits': 30.0},
+			{'subject_area': 'D. Laboratory Science', 'req_credits': 20.0},
+		]}]
+		alloc = _ag_credit_allocation(course_history, [], plans)
+		courses = course_history[0]['terms'][0]['courses']
+		# D/F are still assigned to their area and listed, but earn no credit.
+		self.assertEqual(courses[0]['ag_letter'], 'B')
+		self.assertFalse(courses[0]['ag_credit'])
+		self.assertEqual(courses[1]['ag_letter'], 'C')
+		self.assertTrue(courses[1]['ag_credit'])
+		self.assertEqual(courses[2]['ag_letter'], 'D')
+		self.assertFalse(courses[2]['ag_credit'])
+		# Only the C- course contributes credits.
+		self.assertEqual([y['credits'] for y in alloc['C']], [10.0])
+		self.assertEqual([y['credits'] for y in alloc['B']], [0.0])
+		self.assertEqual([y['credits'] for y in alloc['D']], [0.0])
+		self.assertFalse(alloc['B'][0]['courses'][0]['credit_ok'])
+		self.assertEqual(alloc['B'][0]['courses'][0]['name'], 'English I')
+
+	def test_ag_plan_lists_d_course_without_counting_credit(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		row = SimpleNamespace(
+			ssid='1', student_name='X', grade='11', school_name='S', school_year='2026-2027',
+			counselor_name='', weighted_gpa=None, unweighted_gpa=None, class_rank=None,
+			class_size=None, expected_graduation_year='', graduation_status='',
+			course_history=[
+				{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+				 'course_title': 'English I', 'course_id': 'E1', 'display_mark': 'D',
+				 'display_completed': 10.0, 'term_gpa': 1.0},
+			],
+			graduation_requirements=[],
+			uc_requirements=[],
+			csu_requirements=[
+				{'requirement_set': 'CSU', 'grad_plan': 'California State University',
+				 'sort_order': 2, 'subject_area': 'B. English', 'req_credits': 40.0,
+				 'comp_credits': 10.0, 'wip_credits': 0.0, 'needed_credits': 30.0},
+			],
+			current_schedule=None,
+		)
+		out = _build_student_details(
+			row, ag_map={'E1': {'uc': ['B'], 'csu': ['B'], 'subject': 'English'}}
+		)
+		eng = next(r for r in out['requirements']['ag'][0]['rows']
+		           if r['subject_area'].startswith('B.'))
+		# The district reported 10 credits, but a D earns none of it.
+		self.assertEqual(eng['comp_credits'], 0.0)
+		self.assertEqual(eng['counted_credits'], 0.0)
+		listed = eng['by_year'][0]['courses'][0]
+		self.assertEqual(listed['name'], 'English I')
+		self.assertFalse(listed['credit_ok'])
+
+	def test_ag_allocation_ignores_grade_for_scheduled_courses(self):
+		from dataexploration.view_modules.student_data_utils import _ag_credit_allocation
+
+		schedule = [
+			{'school_year': '2026-2027', 'term': 'Semester 1', 'course_title': 'English III',
+			 'mark': '', 'credits': 5.0, 'csu_areas': ['B'], 'earned': False},
+		]
+		plans = [{'rows': [{'subject_area': 'B. English', 'req_credits': 40.0}]}]
+		alloc = _ag_credit_allocation([], schedule, plans)
+		self.assertEqual(schedule[0]['ag_letter'], 'B')
+		self.assertEqual([y['credits'] for y in alloc['B']], [5.0])
+
+	def test_current_schedule_parsing_and_integration(self):
+		from dataexploration.view_modules.student_data_utils import (
+			_student_ag_plans, _student_current_schedule,
+		)
+
+		raw = [
+			{'course_id': 'C1', 'course_title': 'Sculpture I', 'term_code': 'S1', 'period': 1,
+			 'credit': 5.0, 'report_card_grade': 'C+', 'mark_status': 'Current',
+			 'school_year_range': '2026-2027', 'csu_area_1': 'F', 'csu_area_2': 'G',
+			 'school_name': 'S', 'staff_name': 'Evans'},
+			{'course_id': 'C2', 'course_title': 'English III', 'term_code': 'S1', 'period': 2,
+			 'credit': 5.0, 'report_card_grade': 'A', 'school_year_range': '2026-2027',
+			 'csu_area_1': 'B', 'school_name': 'S'},
+		]
+		items = _student_current_schedule(raw, {})
+		self.assertEqual(len(items), 2)
+		self.assertEqual(items[0]['term'], 'Semester 1')
+		# Live/current grades are hidden; only final (semester) grades show.
+		self.assertEqual(items[0]['mark'], '')
+		self.assertFalse(items[0]['earned'])
+		self.assertEqual(items[1]['csu_areas'], ['B'])
+
+		final_rows = _student_current_schedule(
+			[{**raw[0], 'mark_status': 'Final', 'report_card_grade': 'B'}], {}
+		)
+		# Scheduled courses show credits only (no mark), but are still "earned".
+		self.assertEqual(final_rows[0]['mark'], '')
+		self.assertTrue(final_rows[0]['earned'])
+
+		# Allocation assigns each in-progress course a single letter and groups it.
+		plans = _student_ag_plans([
+			{'requirement_set': 'CSU', 'grad_plan': 'California State University',
+			 'sort_order': 6, 'subject_area': 'F. Visual and Performing Arts',
+			 'req_credits': 10.0, 'comp_credits': 0.0, 'wip_credits': 5.0, 'needed_credits': 10.0},
+			{'requirement_set': 'CSU', 'grad_plan': 'California State University',
+			 'sort_order': 2, 'subject_area': 'B. English',
+			 'req_credits': 40.0, 'comp_credits': 0.0, 'wip_credits': 5.0, 'needed_credits': 40.0},
+		], [], items)
+		self.assertEqual(items[0]['ag_letter'], 'F')
+		self.assertEqual(items[1]['ag_letter'], 'B')
+		f_row = next(r for r in plans[0]['rows'] if r['subject_area'].startswith('F.'))
+		self.assertEqual(len(f_row['in_progress']), 1)
+		self.assertEqual(f_row['in_progress'][0]['course_title'], 'Sculpture I')
+		self.assertTrue(f_row['by_year'][0]['in_progress'])
+		self.assertEqual(f_row['pct_completed'], 0)
+		self.assertGreater(f_row['pct_in_progress'], 0)
+
+	def test_merge_projection_schedule_dedupes_by_identity(self):
+		from dataexploration.view_modules.student_data_utils import _merge_projection_schedule
+
+		current = [{'course_id': 'E1', 'course_title': 'English III', 'period': '01'}]
+		# Same course, different period spelling -> deduped.
+		same = [{'course_id': 'E1', 'course_title': 'English III', 'period': '1',
+		         'school_year': '2026-2027'}]
+		self.assertEqual(len(_merge_projection_schedule(current, same)), 1)
+		# A different course is added.
+		other = [{'course_id': 'M2', 'course_title': 'Math II', 'period': '2',
+		          'school_year': '2026-2027'}]
+		self.assertEqual(len(_merge_projection_schedule(current, other)), 2)
+		# A course already recorded in the same year's history is skipped.
+		history = {'2026-2027': {('code', 'e1')}}
+		self.assertEqual(len(_merge_projection_schedule([], same, history)), 0)
+
+	def test_current_schedule_skips_left_without_semester_mark(self):
+		from dataexploration.view_modules.student_data_utils import _student_current_schedule
+
+		raw = [
+			# Same class twice: one enrollment left mid-term with no semester mark.
+			{'course_id': 'U1', 'course_title': 'US History', 'term_code': 'S1', 'period': 1,
+			 'credit': 5.0, 'report_card_grade': '', 'mark_status': '',
+			 'school_year_range': '2025-2026', 'leave_date': '2025-10-15'},
+			{'course_id': 'U1', 'course_title': 'US History', 'term_code': 'S1', 'period': 1,
+			 'credit': 5.0, 'report_card_grade': 'B', 'mark_status': 'Final',
+			 'school_year_range': '2025-2026'},
+			# A leave date plus a final mark is a completed class — keep it.
+			{'course_id': 'E1', 'course_title': 'English III', 'term_code': 'S1', 'period': 2,
+			 'credit': 5.0, 'report_card_grade': 'A', 'mark_status': 'Final',
+			 'school_year_range': '2025-2026', 'leave_date': '2025-12-20'},
+		]
+		items = _student_current_schedule(raw, {})
+		self.assertEqual(
+			[(i['course_title'], i['mark']) for i in items],
+			[('US History', ''), ('English III', '')],
+		)
+
+	def test_dropped_current_schedule_identities(self):
+		from dataexploration.view_modules.student_data_utils import _dropped_current_schedule_identities
+
+		raw = [
+			{'course_id': 'U1', 'course_title': 'US History', 'mark_status': '',
+			 'leave_date': '2025-10-15'},
+			{'course_id': 'E1', 'course_title': 'English III', 'mark_status': 'Final',
+			 'report_card_grade': 'A', 'leave_date': '2025-12-20'},
+			{'course_id': 'M1', 'course_title': 'Math I', 'mark_status': ''},
+		]
+		dropped = _dropped_current_schedule_identities(raw)
+		self.assertIn(('code', 'u1'), dropped)
+		self.assertNotIn(('code', 'e1'), dropped)
+		self.assertNotIn(('code', 'm1'), dropped)
+
+	def test_dropped_schedule_rows_are_removed(self):
+		from dataexploration.view_modules.student_data_utils import (
+			_student_current_schedule, _dropped_current_schedule_identities,
+		)
+
+		raw = [
+			{'course_id': 'E1', 'course_title': 'English III', 'term_code': 'S1', 'period': 1,
+			 'credit': 5.0, 'report_card_grade': 'B', 'mark_status': 'Final',
+			 'school_year_range': '2025-2026', 'schedule_status': 'Active'},
+			{'course_id': 'M1', 'course_title': 'Math II', 'term_code': 'S1', 'period': 2,
+			 'credit': 5.0, 'report_card_grade': '', 'mark_status': '',
+			 'school_year_range': '2025-2026', 'schedule_status': 'Dropped'},
+			{'course_id': 'H1', 'course_title': 'US History', 'term_code': 'S1', 'period': 3,
+			 'credit': 5.0, 'report_card_grade': '', 'mark_status': 'Withdrawn',
+			 'school_year_range': '2025-2026'},
+			{'course_id': 'S1', 'course_title': 'Biology', 'term_code': 'S1', 'period': 4,
+			 'credit': 5.0, 'report_card_grade': '', 'mark_status': '',
+			 'school_year_range': '2025-2026', 'enrollment_status': 'Left District'},
+		]
+		items = _student_current_schedule(raw, {})
+		self.assertEqual([i['course_title'] for i in items], ['English III'])
+		dropped = _dropped_current_schedule_identities(raw)
+		self.assertIn(('code', 'm1'), dropped)
+		self.assertIn(('code', 'h1'), dropped)
+		self.assertIn(('code', 's1'), dropped)
+		self.assertNotIn(('code', 'e1'), dropped)
+
+	def test_course_history_dedupes_by_title_and_skips_left(self):
+		from dataexploration.view_modules.student_data_utils import _student_course_history
+
+		raw = [
+			# Same class with two course ids in one term -> merged, counted once.
+			{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+			 'course_id': 'M1A', 'course_title': 'Math I', 'display_mark': 'B',
+			 'display_completed': 5.0, 'term_gpa': 3.0},
+			{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+			 'course_id': 'M1B', 'course_title': 'Math I', 'display_mark': 'B',
+			 'display_completed': 5.0, 'term_gpa': 3.0},
+			# Left enrollment with no mark -> dropped.
+			{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM2',
+			 'course_id': 'M2', 'course_title': 'Math II', 'display_mark': '',
+			 'display_completed': 0.0, 'term_gpa': 0.0, 'leave_date': '2025-03-01'},
+		]
+		out = _student_course_history(raw, {})
+		self.assertEqual([t['term'] for t in out[0]['terms']], ['Semester 1'])
+		term = out[0]['terms'][0]
+		self.assertEqual(len(term['courses']), 1)
+		self.assertEqual(term['courses'][0]['course_title'], 'Math I')
+		self.assertEqual(term['courses'][0]['credits'], 5.0)
+		self.assertEqual(out[0]['credits_earned'], 5.0)
+
+	def test_current_schedule_dedupes_same_course_in_term(self):
+		from dataexploration.view_modules.student_data_utils import _student_current_schedule
+
+		raw = [
+			{'course_id': 'U1', 'course_title': 'US History', 'term_code': 'S1', 'period': 1,
+			 'credit': 5.0, 'report_card_grade': 'C', 'mark_status': 'Final',
+			 'school_year_range': '2025-2026'},
+			{'course_id': 'U2', 'course_title': 'US History', 'term_code': 'S1', 'period': 2,
+			 'credit': 5.0, 'report_card_grade': 'B', 'mark_status': 'Final',
+			 'school_year_range': '2025-2026'},
+		]
+		items = _student_current_schedule(raw, {})
+		self.assertEqual(len(items), 1)
+		self.assertEqual(items[0]['course_title'], 'US History')
+
+	def test_diploma_does_not_double_count_history_and_schedule(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		row = SimpleNamespace(
+			ssid='1', student_name='X', grade='11', school_name='S', school_year='2025-2026',
+			counselor_name='', weighted_gpa=None, unweighted_gpa=None, class_rank=None,
+			class_size=None, expected_graduation_year='', graduation_status='',
+			course_history=[
+				{'school_year_range': '2025-2026', 'school_year': 2025, 'term_code': 'SEM1',
+				 'course_title': 'Math I', 'course_id': 'M1', 'display_mark': 'B',
+				 'display_completed': 5.0, 'term_gpa': 3.0},
+			],
+			graduation_requirements=[
+				{'requirement_set': 'District Graduation', 'grad_plan': 'DS High School',
+				 'sort_order': 102, 'subject_area': 'Math', 'req_credits': 30.0,
+				 'comp_credits': 5.0, 'wip_credits': 0.0, 'needed_credits': 25.0},
+			],
+			uc_requirements=[], csu_requirements=[],
+			current_schedule=[
+				# Same course and term as the transcript, listed again as final.
+				{'course_id': 'M1', 'course_title': 'Math I', 'term_code': 'SEM1', 'period': 1,
+				 'credit': 5.0, 'report_card_grade': 'B', 'mark_status': 'Final',
+				 'school_year_range': '2025-2026', 'csu_area_1': 'C'},
+			],
+		)
+		out = _build_student_details(
+			row, ag_map={'M1': {'subject': 'Mathematics', 'csu': ['C']}}
+		)
+		math = next(r for r in out['requirements']['diploma'][0]['rows']
+		            if r['subject_area'] == 'Math')
+		self.assertEqual(math['comp_credits'], 5.0)
+		self.assertEqual(math['counted_credits'], 5.0)
+		# The displayed current schedule is the RPC column (kept as-is)...
+		self.assertEqual(len(out['current_schedule']), 1)
+		# ...but the projection does not double-count it against the transcript.
+		self.assertEqual(math['scheduled_current'], 0.0)
+
+	def test_apply_prediction_earned_vs_projected(self):
+		from dataexploration.view_modules.student_data_utils import _apply_prediction
+
+		row = {'subject_area': 'B. English', 'req_credits': 40.0, 'comp_credits': 20.0,
+		       'needed_credits': 20.0, 'percent': 50}
+		courses = [
+			{'course_title': 'English III', 'credits': 5.0, 'earned': True},
+			{'course_title': 'English III', 'credits': 5.0, 'earned': False},
+			{'course_title': 'English III', 'credits': 5.0, 'earned': False},
+		]
+		_apply_prediction(row, courses)
+		self.assertEqual(row['earned_current'], 5.0)
+		self.assertEqual(row['scheduled_current'], 10.0)
+		self.assertEqual(row['counted_credits'], 25.0)
+		self.assertEqual(row['needed_after'], 15.0)
+		self.assertEqual(row['projected_total'], 35.0)
+		self.assertEqual(row['projection_status'], 'Not Met')
+		self.assertEqual(row['pct_earned'], 62)
+		self.assertEqual(row['pct_earned'] + row['pct_projected'], 88)
+
+		row2 = {'subject_area': 'F.', 'req_credits': 10.0, 'comp_credits': 0.0,
+		        'needed_credits': 10.0, 'percent': 0}
+		_apply_prediction(row2, [{'course_title': 'Art I', 'credits': 10.0, 'earned': False}])
+		self.assertEqual(row2['projection_status'], 'Scheduled')
+
+		row3 = {'subject_area': 'D.', 'req_credits': 20.0, 'comp_credits': 20.0,
+		        'needed_credits': 0.0, 'percent': 100}
+		_apply_prediction(row3, [])
+		self.assertEqual(row3['projection_status'], 'Met')
+
+	def test_course_history_merges_sections_with_multiple_marks(self):
+		from dataexploration.view_modules.student_data_utils import _student_course_history
+
+		raw = [
+			{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+			 'course_id': '1087A', 'course_title': 'Designated ELD Newcomer 11',
+			 'display_mark': 'C-', 'display_completed': 5.0, 'term_gpa': 2.0},
+			{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+			 'course_id': '1087A', 'course_title': 'Designated ELD Newcomer 11',
+			 'display_mark': 'B', 'display_completed': 5.0, 'term_gpa': 2.0},
+			{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+			 'course_id': '1087A', 'course_title': 'Designated ELD Newcomer 11',
+			 'display_mark': 'B', 'display_completed': 5.0, 'term_gpa': 2.0},
+		]
+		out = _student_course_history(raw, {})
+		year = out[0]
+		self.assertEqual(year['course_count'], 1)
+		self.assertEqual(year['credits_earned'], 5.0)
+		course = year['terms'][0]['courses'][0]
+		self.assertEqual(course['mark'], 'C- / B')
+		self.assertEqual(course['credits'], 5.0)
+
+	def test_diploma_earned_from_course_history_when_district_zero(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		row = SimpleNamespace(
+			ssid='1', student_name='X', grade='11', school_name='S', school_year='2026-2027',
+			counselor_name='', weighted_gpa=None, unweighted_gpa=None, class_rank=None,
+			class_size=None, expected_graduation_year='2028', graduation_status='',
+			course_history=[
+				{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+				 'course_title': 'Spanish I CP', 'course_id': '4611A', 'display_mark': 'A',
+				 'display_completed': 5.0, 'term_gpa': 4.0},
+				{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM2',
+				 'course_title': 'Spanish I CP', 'course_id': '4611B', 'display_mark': 'A',
+				 'display_completed': 5.0, 'term_gpa': 4.0},
+			],
+			graduation_requirements=[
+				{'requirement_set': 'District Graduation', 'grad_plan': 'DS High School',
+				 'sort_order': 104, 'subject_area': 'Fine Arts/WL/CTE', 'req_credits': 10.0,
+				 'comp_credits': 0.0, 'wip_credits': 0.0, 'needed_credits': 10.0},
+			],
+			uc_requirements=[], csu_requirements=[], current_schedule=None,
+		)
+		ag_map = {
+			'4611A': {'uc': [], 'csu': [], 'subject': 'Fine Arts'},
+			'4611B': {'uc': [], 'csu': [], 'subject': 'Fine Arts'},
+		}
+		out = _build_student_details(row, ag_map=ag_map)
+		plan = out['requirements']['diploma'][0]
+		# DSUSD Standard Diploma: 7 categories totalling 220 credits.
+		self.assertEqual(plan['display_label'], 'DS High School Diploma')
+		self.assertEqual(
+			[(r['subject_area'], r['req_credits']) for r in plan['rows']],
+			[('English', 40.0), ('Math', 30.0), ('Social Studies', 30.0), ('Science', 20.0),
+			 ('Physical Education', 20.0), ('Fine Art, CTE, or World Language (LOTE)', 10.0),
+			 ('Electives', 70.0)],
+		)
+		self.assertEqual(sum(r['req_credits'] for r in plan['rows']), 220.0)
+		r = next(x for x in plan['rows'] if x['subject_area'] == 'Fine Art, CTE, or World Language (LOTE)')
+		self.assertEqual(r['comp_credits'], 10.0)
+		self.assertEqual(r['counted_credits'], 10.0)
+		self.assertEqual(r['needed_after'], 0.0)
+		self.assertEqual(r['projection_status'], 'Met')
+
+	def test_dsusd_continuation_diploma_uses_200_credits(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		row = SimpleNamespace(
+			ssid='1', student_name='X', grade='12', school_name='S', school_year='2026-2027',
+			counselor_name='', weighted_gpa=None, unweighted_gpa=None, class_rank=None,
+			class_size=None, expected_graduation_year='2028', graduation_status='',
+			course_history=[],
+			graduation_requirements=[
+				{'requirement_set': 'District Graduation', 'grad_plan': 'Alt Edu High School Diploma',
+				 'sort_order': 101, 'subject_area': 'English', 'req_credits': 40.0,
+				 'comp_credits': 40.0, 'wip_credits': 0.0, 'needed_credits': 0.0},
+				{'requirement_set': 'District Graduation', 'grad_plan': 'Alt Edu High School Diploma',
+				 'sort_order': 102, 'subject_area': 'US History', 'req_credits': 10.0,
+				 'comp_credits': 10.0, 'wip_credits': 0.0, 'needed_credits': 0.0},
+				{'requirement_set': 'District Graduation', 'grad_plan': 'Alt Edu High School Diploma',
+				 'sort_order': 103, 'subject_area': 'Economics', 'req_credits': 10.0,
+				 'comp_credits': 5.0, 'wip_credits': 0.0, 'needed_credits': 5.0},
+			],
+			uc_requirements=[], csu_requirements=[], current_schedule=None,
+		)
+		plan = _build_student_details(row, ag_map={})['requirements']['diploma'][0]
+		self.assertEqual(plan['display_label'], 'Alternative Education Diploma')
+		self.assertEqual(plan['pathway_credits'], 200)
+		required = {r['subject_area']: r['req_credits'] for r in plan['rows']}
+		self.assertEqual(required['Electives'], 50.0)
+		self.assertEqual(sum(required.values()), 200.0)
+		# Social Studies aggregates US History (10) + Economics (5).
+		social = next(r for r in plan['rows'] if r['subject_area'] == 'Social Studies')
+		self.assertEqual(social['comp_credits'], 15.0)
+
+	def test_diploma_science_lists_courses_for_counted_credits(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import (
+			_build_student_details, _diploma_area_for,
+		)
+
+		self.assertEqual(_diploma_area_for('Biology', []), 'Life Science')
+		self.assertEqual(_diploma_area_for('Chemistry', []), 'Physical Science')
+		self.assertEqual(_diploma_area_for('Social Science', []), 'Social Studies')
+		self.assertEqual(_diploma_area_for('', ['D']), 'Science')
+		self.assertEqual(_diploma_area_for('', ['B']), 'English')
+
+		row = SimpleNamespace(
+			ssid='1', student_name='X', grade='11', school_name='S', school_year='2026-2027',
+			counselor_name='', weighted_gpa=None, unweighted_gpa=None, class_rank=None,
+			class_size=None, expected_graduation_year='', graduation_status='',
+			course_history=[
+				{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM1',
+				 'course_title': 'Biology', 'course_id': 'B1', 'display_mark': 'B',
+				 'display_completed': 10.0, 'term_gpa': 3.0},
+				{'school_year_range': '2024-2025', 'school_year': 2024, 'term_code': 'SEM2',
+				 'course_title': 'Chemistry', 'course_id': 'C1', 'display_mark': 'C',
+				 'display_completed': 10.0, 'term_gpa': 2.0},
+			],
+			graduation_requirements=[
+				{'requirement_set': 'District Graduation', 'grad_plan': 'DS High School',
+				 'sort_order': 104, 'subject_area': 'Science', 'req_credits': 20.0,
+				 'comp_credits': 20.0, 'wip_credits': 0.0, 'needed_credits': 0.0},
+			],
+			uc_requirements=[], csu_requirements=[], current_schedule=None,
+		)
+		ag_map = {
+			'B1': {'subject': 'Biology', 'csu': ['D']},
+			'C1': {'subject': 'Chemistry', 'csu': ['D']},
+		}
+		out = _build_student_details(row, ag_map=ag_map)
+		science = next(r for r in out['requirements']['diploma'][0]['rows']
+		               if r['subject_area'] == 'Science')
+		self.assertEqual(science['comp_credits'], 20.0)
+		names = [c['name'] for y in science['by_year'] for c in y['courses']]
+		self.assertIn('Biology', names)
+		self.assertIn('Chemistry', names)
+
+	def test_projection_counts_full_year_schedule(self):
+		from types import SimpleNamespace
+
+		from dataexploration.view_modules.student_data_utils import _build_student_details
+
+		row = SimpleNamespace(
+			ssid='1', student_name='X', grade='11', school_name='S', school_year='2026-2027',
+			counselor_name='', weighted_gpa=None, unweighted_gpa=None, class_rank=None,
+			class_size=None, expected_graduation_year='', graduation_status='',
+			course_history=[],
+			graduation_requirements=[
+				{'requirement_set': 'District Graduation', 'grad_plan': 'DS High School',
+				 'sort_order': 102, 'subject_area': 'Math', 'req_credits': 30.0,
+				 'comp_credits': 0.0, 'wip_credits': 0.0, 'needed_credits': 30.0},
+			],
+			uc_requirements=[], csu_requirements=[],
+			current_schedule=[
+				{'course_id': 'M1', 'course_title': 'Math I', 'term_code': 'S1', 'period': 1,
+				 'credit': 5.0, 'report_card_grade': 'B', 'mark_status': 'Current',
+				 'school_year_range': '2026-2027', 'csu_area_1': 'C', 'staff_name': 'T'},
+			],
+		)
+		# M1 repeats the active term (deduped); M2 is the other term of the year.
+		schedule_courses = [
+			{'school_year': '2026-2027', 'term': 'Scheduled', 'term_code': '', 'period': 1,
+			 'course_title': 'Math I', 'course_id': 'M1', 'mark': '', 'mark_status': '',
+			 'earned': False, 'credits': 5.0, 'staff_name': 'T', 'csu_areas': ['C'],
+			 'subject': 'Mathematics', 'diploma_area': 'Math', 'ag_letter': '', 'from_schedule': True},
+			{'school_year': '2026-2027', 'term': 'Scheduled', 'term_code': '', 'period': 2,
+			 'course_title': 'Math II', 'course_id': 'M2', 'mark': '', 'mark_status': '',
+			 'earned': False, 'credits': 5.0, 'staff_name': 'T', 'csu_areas': ['C'],
+			 'subject': 'Mathematics', 'diploma_area': 'Math', 'ag_letter': '', 'from_schedule': True},
+		]
+		out = _build_student_details(
+			row, ag_map={'M1': {'subject': 'Mathematics'}}, schedule_courses=schedule_courses
+		)
+		math = next(r for r in out['requirements']['diploma'][0]['rows']
+		            if r['subject_area'] == 'Math')
+		self.assertEqual(math['scheduled_current'], 10.0)
+		self.assertEqual(math['projected_total'], 10.0)
+		# The displayed current schedule remains the active term only.
+		self.assertEqual(len(out['current_schedule']), 1)

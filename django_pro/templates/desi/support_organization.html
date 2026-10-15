@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Support Organization - DESI - DS Data{% endblock %}
 
@@ -131,7 +132,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script src="{% static 'vendor/sortable/Sortable.min.js' %}"></script>
 <script>
     function confirmDeleteSection(categoryId, categoryName) {
         if (confirm(`Are you sure you want to remove the section "${categoryName}"?\n\nAny supports in this section will be moved to Uncategorized (non-section).`)) {
