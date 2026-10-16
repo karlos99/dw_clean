@@ -20,6 +20,7 @@ from ..catalog_columns import (
     split_course_program_filters,
 )
 from ..constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
+from ..mtss_columns import is_mtss_column, apply_mtss_columns
 from ..column_utils import (
     _get_display_name,
     export_csv_cell,
@@ -360,10 +361,15 @@ def export_students_csv(request):
         [c for c in selected_columns if is_course_program_column(c)]
         + [k for k in filter_keys if is_course_program_column(k)]
     ))
+    selected_mtss_cols = list(set(
+        [c for c in selected_columns if is_mtss_column(c)]
+        + [k for k in filter_keys if is_mtss_column(k)]
+    ))
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
         and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
+        and not is_mtss_column(c)
         and c in COLUMN_DEFINITIONS
         and c not in VIRTUAL_COLUMNS
     ]
@@ -984,7 +990,7 @@ def export_students_csv(request):
                 if (test_cols_info or selected_mark_cols or markall_years or selected_survey_cols) and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
                 if (selected_mark_cols or markall_years or selected_course_prog_cols) and 'stu_annual_key' not in query_base_cols:
                     query_base_cols.insert(0, 'stu_annual_key')
-                if selected_course_prog_cols and 'school_year' not in query_base_cols:
+                if (selected_course_prog_cols or selected_mtss_cols) and 'school_year' not in query_base_cols:
                     query_base_cols.insert(0, 'school_year')
                 
                 base_col_selects = []
@@ -1055,6 +1061,9 @@ def export_students_csv(request):
 
                     if selected_course_prog_cols:
                         apply_course_program_columns(chunk_students, selected_course_prog_cols)
+
+                    if selected_mtss_cols:
+                        apply_mtss_columns(chunk_students, selected_mtss_cols, active_school_year=school_year)
 
                     if sat_infos:
                         try:

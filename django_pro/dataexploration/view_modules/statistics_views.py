@@ -29,6 +29,11 @@ from .column_management import (
     json_list_key_for_column,
     append_json_list_filter,
 )
+from ..mtss_columns import (
+    is_mtss_column,
+    canonical_mtss_column,
+)
+
 
 @login_required
 def get_column_statistics(request):
@@ -1016,8 +1021,28 @@ def get_column_statistics(request):
                 """
                 q_params = base_params + [sat_info['year']]
 
+            # --- MTSS Columns ---
+            elif is_mtss_column(col):
+                mtss_field = canonical_mtss_column(col)
+                if not mtss_field:
+                    continue
+                is_string_stats_column = True
+                query = f"""
+                    SELECT m.{mtss_field} as val, COUNT(*) as cnt
+                    FROM mtss_data m
+                    JOIN current_student cs ON m.ssid = cs.ssid
+                        AND (m.school_year = cs.school_year OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4) OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4))
+                    {join_sql}
+                    WHERE {where_sql}
+                      AND m.{mtss_field} IS NOT NULL AND m.{mtss_field} <> ''
+                    GROUP BY val
+                    ORDER BY val
+                """
+                q_params = base_params
+
             # --- Standard Columns ---
             else:
+
                 expr, _ = get_column_expression(col, db_columns, enroll_columns, needs_enroll, needs_students, needs_eht)
                 if not expr: continue
                 

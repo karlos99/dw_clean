@@ -43,6 +43,15 @@ COLUMN_DEFINITIONS = {
     "suspension_indicator": "Suspension",
     "avid": "AVID",
     "avid_type": "AVID Type",
+
+    # MTSS
+    "plan_type": "Plan Type",
+    "area_of_concern": "Area of Concern",
+    "learning_gap": "Learning Gap",
+    "plan_name": "Plan Name",
+    "support_start_date": "Support Start Date",
+    "support_end_date": "Support End Date",
+    "case_id": "Case ID",
 }
 
 # Static column categories (non-test columns)
@@ -66,8 +75,13 @@ COLUMN_CATEGORIES = {
     "performance": {
         "title": "Performance & Behavior",
         "columns": ["atendace_rate", "suspension_indicator"]
+    },
+    "mtss": {
+        "title": "MTSS",
+        "columns": ["plan_type", "area_of_concern", "learning_gap", "plan_name", "support_start_date", "support_end_date", "case_id"]
     }
 }
+
 
 # Default visible columns
 DEFAULT_COLUMNS = ["student_name", "ssid", "grade", "school_year", "status"]

@@ -70,6 +70,18 @@
                     </label>
                     {% endfor %}
                 </div>
+
+                {% if column_categories.mtss %}
+                <h2 class="text-sm font-semibold text-slate-700 uppercase tracking-wide mt-6 mb-3">MTSS</h2>
+                <div class="space-y-2">
+                    {% for col in column_categories.mtss.columns %}
+                    <label class="flex items-center space-x-2">
+                        <input type="checkbox" name="columns" value="{{ col }}" {% if col in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                        <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                {% endif %}
             </div>
 
             <div>

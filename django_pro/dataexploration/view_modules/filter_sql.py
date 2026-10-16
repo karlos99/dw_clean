@@ -18,6 +18,11 @@ from .column_management import (
     json_list_key_for_column,
     append_json_list_filter,
 )
+from ..mtss_columns import (
+    is_mtss_column,
+    canonical_mtss_column,
+)
+
 
 
 def normalize_filter_param(col, value):
@@ -527,8 +532,32 @@ def apply_column_filters(
                 where_clauses.append(f"({' OR '.join(conditions)})")
             continue
 
+        if is_mtss_column(col):
+            mtss_field = canonical_mtss_column(col)
+            if not mtss_field:
+                continue
+            sub_base = (
+                "SELECT m.ssid FROM mtss_data m "
+                "WHERE (m.school_year = cs.school_year "
+                "OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4) "
+                "OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4)) "
+            )
+            conditions = []
+            if real_values:
+                conditions.append(f"cs.ssid IN ({sub_base}AND m.{mtss_field} = ANY(%s))")
+                params.append([str(v) for v in real_values])
+            if has_blank:
+                conditions.append(
+                    f"(cs.ssid NOT IN ({sub_base}) OR "
+                    f"cs.ssid IN ({sub_base}AND (m.{mtss_field} IS NULL OR m.{mtss_field} = '')))"
+                )
+            if conditions:
+                where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
         json_key = json_list_key_for_column(col)
         if json_key:
+
             append_json_list_filter(where_clauses, params, values, json_key)
             continue
 

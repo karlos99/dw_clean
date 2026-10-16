@@ -196,6 +196,27 @@
                 </div>
                 {% endif %}
 
+                {% if column_categories.mtss %}
+                <div id="mtss-category-wrapper" class="border-b border-slate-100 pb-2" data-mtss-years="{{ mtss_years_json|default:'[]'|escapejs }}">
+                    <button data-toggle-category="mtss"
+                        class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded transition-colors">
+                        <span class="text-xs font-semibold uppercase tracking-wider text-slate-700">{{ column_categories.mtss.title }}</span>
+                        <span data-caret="closed" class="text-slate-400">▶</span>
+                        <span data-caret="open" class="hidden text-slate-400">▼</span>
+                    </button>
+                    <div data-category="mtss" class="ml-4 mt-1 space-y-1 hidden">
+                        {% for col in column_categories.mtss.columns %}
+                        <label class="flex items-center space-x-2 p-1.5 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                            <input type="checkbox" data-column="{{ col }}"
+                                class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4">
+                            <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+
                 <!-- Dynamic column structures. Loaded once by the client
                      (student_tests_app.js refreshColumnStructures) for the active
                      filters. Rendering the full selector server-side used to

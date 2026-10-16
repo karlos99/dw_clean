@@ -49,6 +49,13 @@ from ..catalog_columns import (
     _apply_one_course_program_filter_clickhouse,
 )
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, VIRTUAL_COLUMNS
+from ..mtss_columns import (
+    is_mtss_column,
+    canonical_mtss_column,
+    get_mtss_school_years,
+    apply_mtss_columns,
+)
+
 from ..utils import (
     can_user_view_query,
     get_user_folders,
@@ -369,8 +376,12 @@ class StudentWithTestsListView(LoginRequiredMixin, ListView):
         context['default_columns'] = default_columns
         context['default_columns_json'] = json.dumps(default_columns)
         context['column_definitions_json'] = json.dumps(enabled_defs)
+        mtss_years = get_mtss_school_years()
+        context['mtss_years'] = mtss_years
+        context['mtss_years_json'] = json.dumps(mtss_years)
         
         # Handle Saved Query
+
         saved_query_id = self.request.GET.get('saved_query')
         query_config = {}
         if saved_query_id:
@@ -1176,6 +1187,10 @@ def _load_students(request):
             [c for c in selected_columns if is_course_program_column(c)]
             + [k for k in filter_keys if is_course_program_column(k)]
         ))
+        selected_mtss_cols = list(set(
+            [c for c in selected_columns if is_mtss_column(c)]
+            + [k for k in filter_keys if is_mtss_column(k)]
+        ))
         selected_ap_cols = list(set(
             [c for c in selected_columns if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_') and not c.startswith('apall_')] +
             [k for k in filter_keys if isinstance(k, str) and k.startswith('ap_') and not k.startswith('apaward_') and not k.startswith('apawards_all_') and not k.startswith('apall_')]
@@ -1204,9 +1219,11 @@ def _load_students(request):
             c for c in selected_columns
             if isinstance(c, str)
             and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
+            and not is_mtss_column(c)
             and c in COLUMN_DEFINITIONS
             and c not in VIRTUAL_COLUMNS
         ]
+
 
         # Build test column metadata from DB to avoid parsing issues (e.g. multi-word subjects)
         with timed('dataexp_metadata'):
@@ -1491,6 +1508,9 @@ def _load_students(request):
         if (mark_cols_info or 'elem_teacher_name' in base_cols or selected_course_prog_cols) and 'stu_annual_key' not in base_cols:
             base_cols.insert(0, 'stu_annual_key')
 
+        if selected_mtss_cols and 'school_year' not in base_cols:
+            base_cols.append('school_year')
+
         # Marks "All Marks" fetch needs stu_annual_key to join marks per course
         if markall_years and 'stu_annual_key' not in base_cols:
             base_cols.insert(0, 'stu_annual_key')
@@ -1713,6 +1733,37 @@ def _load_students(request):
                         )
                         order_by_expr = "_sort._v"
                         params.append(sat_info['year'])
+            elif is_mtss_column(sort_by):
+                mtss_field = canonical_mtss_column(sort_by)
+                if mtss_field:
+                    if school_year:
+                        sy_concrete = resolve_school_year(school_year) if isinstance(school_year, str) else [resolve_school_year(y) for y in school_year]
+                        sy_list = sy_concrete if isinstance(sy_concrete, list) else [sy_concrete]
+                        expanded_years = set()
+                        for y in sy_list:
+                            expanded_years.add(str(y))
+                            expanded_years.add(str(y)[:4])
+                            if len(str(y)) == 4 and str(y).isdigit():
+                                expanded_years.add(f"{y}-{int(y)+1}")
+                        sort_join_sql = (
+                            " LEFT JOIN ("
+                            f" SELECT m.ssid AS _k, string_agg(DISTINCT m.{mtss_field}, ', ') AS _v"
+                            " FROM mtss_data m"
+                            " WHERE m.school_year = ANY(%s)"
+                            " GROUP BY m.ssid"
+                            " ) _sort ON _sort._k = cs.ssid"
+                        )
+                        order_by_expr = "nullif(_sort._v, '')"
+                        params.append(list(expanded_years))
+                    else:
+                        sort_join_sql = (
+                            " LEFT JOIN ("
+                            f" SELECT m.ssid AS _k, string_agg(DISTINCT m.{mtss_field}, ', ') AS _v"
+                            " FROM mtss_data m"
+                            " GROUP BY m.ssid"
+                            " ) _sort ON _sort._k = cs.ssid"
+                        )
+                        order_by_expr = "nullif(_sort._v, '')"
 
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
         # Put blank/missing assessment values at the end for both directions.
@@ -1721,11 +1772,13 @@ def _load_students(request):
         course_prog_sort = bool(
             sort_by and course_program_columns_enabled() and is_course_program_column(sort_by)
         )
+        mtss_sort = bool(sort_by and is_mtss_column(sort_by))
         is_dynamic_sort = bool(sort_by) and (
             sort_by in test_col_map
             or sort_by in mark_col_map
             or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_'))
             or course_prog_sort
+            or mtss_sort
         )
         order_nulls_sql = ' NULLS LAST' if is_dynamic_sort else ''
         # sort_join placeholders come before WHERE in the SQL, so they must
@@ -1810,7 +1863,10 @@ def _load_students(request):
                 cols = cached_result['columns']
                 unordered_students = {}
                 for row_dict in cached_result['rows']:
-                    unordered_students[row_dict.get('ssid')] = row_dict
+                    row_ssid = row_dict.get('ssid')
+                    row_sy = row_dict.get('school_year')
+                    if row_ssid not in unordered_students or (sy_params and row_sy in sy_params):
+                        unordered_students[row_ssid] = row_dict
                 
                 # Reconstruct ordered list
                 students = []
@@ -2061,6 +2117,25 @@ def _load_students(request):
 
             students.sort(key=_course_prog_sort_key, reverse=_reverse)
 
+        mtss_cols_to_fill = list(selected_mtss_cols)
+        if mtss_sort:
+            for col in (sort_by, canonical_mtss_column(sort_by) or ''):
+                if col and is_mtss_column(col) and col not in mtss_cols_to_fill:
+                    mtss_cols_to_fill.append(col)
+        if mtss_cols_to_fill and students:
+            apply_mtss_columns(students, mtss_cols_to_fill, active_school_year=school_year)
+        if mtss_sort and students:
+            _sort_canonical = canonical_mtss_column(sort_by) or sort_by
+            _reverse = sort_dir == 'desc'
+
+            def _mtss_sort_key(row):
+                val = row.get(_sort_canonical) or row.get(sort_by) or ''
+                if val == '—':
+                    val = ''
+                return str(val).lower()
+
+            students.sort(key=_mtss_sort_key, reverse=_reverse)
+
         # Fast fetch elem_teacher_name if requested but not joined
         if 'elem_teacher_name' in base_cols and not needs_eht and student_keys:
             q_eht = """
@@ -2220,6 +2295,29 @@ def _load_students(request):
                         LIMIT 100
                     """
                     option_tasks.append((col, cache_key, _make_json_option_task(options_query, option_params)))
+                    continue
+
+                if is_mtss_column(col):
+                    mtss_field = canonical_mtss_column(col)
+                    if mtss_field:
+                        options_query = f"""
+                            SELECT DISTINCT m.{mtss_field}
+                            FROM mtss_data m
+                            JOIN current_student cs ON m.ssid = cs.ssid
+                                AND (m.school_year = cs.school_year OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4) OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4))
+                            {join_sql}
+                            WHERE {option_where_sql}
+                              AND m.{mtss_field} IS NOT NULL AND m.{mtss_field} <> ''
+                            ORDER BY m.{mtss_field} ASC
+                            LIMIT 50
+                        """
+                        def _make_mtss_task(q, p):
+                            def _fetch():
+                                with connection.cursor() as cur:
+                                    cur.execute(q, p)
+                                    return [r[0] for r in cur.fetchall() if r[0]]
+                            return _fetch
+                        option_tasks.append((col, cache_key, _make_mtss_task(options_query, option_params)))
                     continue
 
                 expr = base_col_expressions.get(col)
@@ -2708,6 +2806,72 @@ def _load_students(request):
                             options_query, options_params,
                             check_blank_query, option_params + [ap_info['year']]),
                     ))
+
+            # Add filter options for MTSS columns
+            for col_key in selected_mtss_cols:
+                canonical = canonical_mtss_column(col_key)
+                if not canonical:
+                    continue
+
+                if isinstance(filters, dict) and col_key in filters:
+                    other_filters = {k: v for k, v in filters.items() if k != col_key}
+                else:
+                    other_filters = filters
+
+                cache_key = _get_filter_cache_key(col_key, other_filters)
+                cached_values = cache.get(cache_key)
+                if cached_values is not None:
+                    filter_options[col_key] = cached_values
+                    continue
+
+                option_where = list(base_where_clauses)
+                option_params = list(base_params)
+                apply_column_filters(
+                    option_where, option_params, other_filters, test_col_map, mark_col_map,
+                    db_columns, enroll_columns, needs_enroll, False, False,
+                    ap_exam_infos, ap_award_infos,
+                )
+                option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+
+                options_query = f"""
+                    SELECT DISTINCT m.{canonical} AS v
+                    FROM mtss_data m
+                    INNER JOIN current_student cs ON m.ssid = cs.ssid
+                    {join_sql}
+                    WHERE {option_where_sql}
+                      AND (m.school_year = cs.school_year
+                           OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4)
+                           OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4))
+                      AND m.{canonical} IS NOT NULL AND m.{canonical} <> ''
+                    ORDER BY v ASC
+                    LIMIT 50
+                """
+                options_params = list(option_params)
+
+                check_blank_query = f"""
+                    SELECT 1
+                    FROM current_student cs
+                    {join_sql}
+                    WHERE {option_where_sql}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM mtss_data m
+                          WHERE m.ssid = cs.ssid
+                            AND (m.school_year = cs.school_year
+                                 OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4)
+                                 OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4))
+                            AND m.{canonical} IS NOT NULL AND m.{canonical} <> ''
+                      )
+                    LIMIT 1
+                """
+                check_params = list(option_params)
+
+                option_tasks.append((
+                    col_key, cache_key,
+                    _make_options_with_blank_task(
+                        options_query, options_params,
+                        check_blank_query, check_params, use_pg=True,
+                    ),
+                ))
 
             # Execute all queued columns concurrently and merge the results.
             for col_key, cache_key, values in _run_option_tasks(option_tasks):

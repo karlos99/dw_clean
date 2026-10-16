@@ -1149,8 +1149,10 @@ document.addEventListener('DOMContentLoaded', () => {
             // ignore
         } finally {
             stateRestored = true;
+            syncMtssVisibility();
         }
     };
+
 
     const appendStudentQueryParams = (url, { includeEmptyFilters = false } = {}) => {
         const urlParams = new URLSearchParams(window.location.search);
@@ -1680,14 +1682,19 @@ document.addEventListener('DOMContentLoaded', () => {
         return String(value).replace(/[^a-zA-Z0-9_\-]/g, '_');
     };
 
-    const DATE_COLUMNS = new Set(['birth_date', 'us_enter_date', 'fep_date']);
+    const DATE_COLUMNS = new Set(['birth_date', 'us_enter_date', 'fep_date', 'support_start_date', 'support_end_date']);
     const isDateLikeString = (value) => {
         if (typeof value !== 'string') return false;
         return /^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(value);
     };
     const formatDateForDisplay = (value) => {
-        if (!isDateLikeString(value)) return value;
-        const datePart = value.slice(0, 10);
+        if (!value) return value;
+        const str = String(value);
+        if (str.includes(',')) {
+            return str.split(',').map(s => formatDateForDisplay(s.trim())).join(', ');
+        }
+        if (!isDateLikeString(str)) return value;
+        const datePart = str.slice(0, 10);
         const d = new Date(`${datePart}T00:00:00`);
         if (Number.isNaN(d.getTime())) return datePart;
         try {
@@ -2732,9 +2739,54 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    const syncMtssVisibility = () => {
+        const wrapper = document.getElementById('mtss-category-wrapper');
+        if (!wrapper) return;
+        const mtssYearsRaw = wrapper.getAttribute('data-mtss-years');
+        if (!mtssYearsRaw) return;
+        let mtssYears = [];
+        try {
+            mtssYears = JSON.parse(mtssYearsRaw);
+        } catch (e) {
+            return;
+        }
+        const currentSyRaw = document.getElementById('school_year')?.value || '';
+        const currentSy = resolveRelativeSchoolYear(currentSyRaw);
+        const isVisible = Boolean(
+            (!currentSy && mtssYears.length > 0) ||
+            (currentSy && (
+                mtssYears.includes(currentSy) ||
+                mtssYears.some(y => (currentSy.startsWith(y) || y.startsWith(currentSy)))
+            ))
+        );
+        wrapper.classList.toggle('hidden', !isVisible);
+        if (!isVisible) {
+            const mtssCols = [
+                'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
+                'support_start_date', 'support_end_date', 'case_id'
+            ];
+            let changed = false;
+            mtssCols.forEach(col => {
+                const normCol = normaliseKey(col);
+                if (selectedColumns.some(c => normaliseKey(c) === normCol)) {
+                    selectedColumns = selectedColumns.filter(c => normaliseKey(c) !== normCol);
+                    if (filters[col]) delete filters[col];
+                    changed = true;
+                }
+            });
+            wrapper.querySelectorAll('input[data-column]').forEach(cb => {
+                cb.checked = false;
+            });
+            if (changed) {
+                renderSelectedColumns();
+            }
+        }
+    };
+
     const schoolYearSelect = document.getElementById('school_year');
     if (schoolYearSelect) {
         schoolYearSelect.addEventListener('change', () => {
+            syncMtssVisibility();
             if (scheduleFiltersEligible) {
                 updateScheduleFilterChrome();
                 if (scheduleFilterBarOpen) {
@@ -2747,6 +2799,7 @@ document.addEventListener('DOMContentLoaded', () => {
             triggerLoadData();
         });
     }
+
 
     if (scheduleFiltersEligible) {
         initScheduleMultiSelectDropdowns();
@@ -3430,8 +3483,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
+    syncMtssVisibility();
     renderSelectedColumns();
     renderSelectedStudentCount();
+
     restoreViewState();
     try {
         const sidebarOpen = sessionStorage.getItem('columnSidebarOpen') === 'true';

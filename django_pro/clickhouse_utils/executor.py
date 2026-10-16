@@ -69,7 +69,9 @@ _PG_ONLY_TABLE_MARKERS = (
     # reference them must run on PostgreSQL or ClickHouse raises "Unknown table
     # expression identifier".
     'dataloader_',
+    'mtss_data',
 )
+
 
 
 def _sql_uses_pg_add_data_key(sql: str) -> bool:
