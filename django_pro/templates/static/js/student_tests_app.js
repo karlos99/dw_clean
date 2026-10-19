@@ -2763,7 +2763,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isVisible) {
             const mtssCols = [
                 'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
-                'support_start_date', 'support_end_date', 'case_id'
+                'support_start_date', 'support_end_date', 'case_id',
+                'outcome', 'outcome_action',
             ];
             let changed = false;
             mtssCols.forEach(col => {

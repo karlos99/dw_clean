@@ -52,6 +52,8 @@ COLUMN_DEFINITIONS = {
     "support_start_date": "Support Start Date",
     "support_end_date": "Support End Date",
     "case_id": "Case ID",
+    "outcome": "Outcome",
+    "outcome_action": "Outcome Action",
 }
 
 # Static column categories (non-test columns)
@@ -77,8 +79,12 @@ COLUMN_CATEGORIES = {
         "columns": ["atendace_rate", "suspension_indicator"]
     },
     "mtss": {
-        "title": "MTSS",
-        "columns": ["plan_type", "area_of_concern", "learning_gap", "plan_name", "support_start_date", "support_end_date", "case_id"]
+        "title": "MTSS (Tier 2)",
+        "columns": [
+            "plan_type", "area_of_concern", "learning_gap", "plan_name",
+            "support_start_date", "support_end_date", "case_id",
+            "outcome", "outcome_action",
+        ],
     }
 }
 

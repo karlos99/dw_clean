@@ -265,14 +265,8 @@ def project_settings(request):
     settings_defs, settings_cats = merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
     all_col_keys = list(settings_defs.keys())
 
-    from dataviz.utils.compiler import get_db_tables
-    db_tables = get_db_tables()
-    TABLE_CHOICES = []
-    for t in sorted(db_tables.keys()):
-        label = t.replace('_', ' ').title()
-        if label == 'Users User':
-            label = 'Users/User'
-        TABLE_CHOICES.append((t, label))
+    from dataviz.utils.compiler import dataset_table_choices
+    TABLE_CHOICES = dataset_table_choices()
 
     from dataviz.models import SavedChart
     chart_choices = list(

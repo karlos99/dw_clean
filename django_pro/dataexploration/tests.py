@@ -2024,15 +2024,17 @@ class MtssDataExplorationTests(TestCase):
 					support_start_date text,
 					support_end_date text,
 					plan_name text,
-					case_id text
+					case_id text,
+					outcome text,
+					outcome_action text
 				)
 			""")
 			cur.execute("DELETE FROM mtss_data")
 			cur.execute("""
-				INSERT INTO mtss_data (ssid, school_year, plan_type, area_of_concern, learning_gap, plan_name, support_start_date, support_end_date, case_id) VALUES
-				('1317443220', '2026', 'Tier 2', 'Academics', 'Foundational Reading Skills: Phonics', '2nd Grade: Academics Cycle 1', '2026-09-14', '2026-10-23', '1828'),
-				('1352209140', '2026', 'Tier 2', 'Academics', 'Mathematics: Number Sense', '4th Grade Power Math', '2026-09-14', '2026-11-09', '1772'),
-				('1352209140', '2026', 'Tier 2', 'Social Emotional', 'Cognitive Skills: Mindset', 'Growth Mindset', '2026-09-24', '2026-10-29', '1824')
+				INSERT INTO mtss_data (ssid, school_year, plan_type, area_of_concern, learning_gap, plan_name, support_start_date, support_end_date, case_id, outcome, outcome_action) VALUES
+				('1317443220', '2026', 'Tier 2', 'Academics', 'Foundational Reading Skills: Phonics', '2nd Grade: Academics Cycle 1', '2026-09-14', '2026-10-23', '1828', 'Met', 'Continue monitoring'),
+				('1352209140', '2026', 'Tier 2', 'Academics', 'Mathematics: Number Sense', '4th Grade Power Math', '2026-09-14', '2026-11-09', '1772', 'Partial', 'Extend support'),
+				('1352209140', '2026', 'Tier 2', 'Social Emotional', 'Cognitive Skills: Mindset', 'Growth Mindset', '2026-09-24', '2026-10-29', '1824', 'Met', 'Close case')
 			""")
 
 	def setUp(self):
@@ -2047,6 +2049,7 @@ class MtssDataExplorationTests(TestCase):
 		all_mtss_cols = (
 			'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
 			'support_start_date', 'support_end_date', 'case_id',
+			'outcome', 'outcome_action',
 		)
 		for col in all_mtss_cols:
 			self.assertIn(col, COLUMN_DEFINITIONS)
@@ -2054,7 +2057,7 @@ class MtssDataExplorationTests(TestCase):
 			self.assertEqual(canonical_mtss_column(col), col)
 
 		self.assertIn('mtss', COLUMN_CATEGORIES)
-		self.assertEqual(COLUMN_CATEGORIES['mtss']['title'], 'MTSS')
+		self.assertEqual(COLUMN_CATEGORIES['mtss']['title'], 'MTSS (Tier 2)')
 		self.assertEqual(
 			COLUMN_CATEGORIES['mtss']['columns'],
 			list(all_mtss_cols),
@@ -2087,6 +2090,7 @@ class MtssDataExplorationTests(TestCase):
 		cols = [
 			'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
 			'support_start_date', 'support_end_date', 'case_id',
+			'outcome', 'outcome_action',
 		]
 		apply_mtss_columns(students, cols, active_school_year='2026-2027')
 
@@ -2098,6 +2102,8 @@ class MtssDataExplorationTests(TestCase):
 		self.assertEqual(students[0]['support_start_date'], '2026-09-14')
 		self.assertEqual(students[0]['support_end_date'], '2026-10-23')
 		self.assertEqual(students[0]['case_id'], '1828')
+		self.assertEqual(students[0]['outcome'], 'Met')
+		self.assertEqual(students[0]['outcome_action'], 'Continue monitoring')
 
 		# Student 2: multiple plans aggregated
 		self.assertEqual(students[1]['plan_type'], 'Tier 2')
@@ -2138,7 +2144,9 @@ class MtssDataExplorationTests(TestCase):
 		for col in (
 			'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
 			'support_start_date', 'support_end_date', 'case_id',
+			'outcome', 'outcome_action',
 		):
 			self.assertIn(col, defs)
 			self.assertIn(col, cats['mtss']['columns'])
+		self.assertEqual(cats['mtss']['title'], 'MTSS (Tier 2)')
 

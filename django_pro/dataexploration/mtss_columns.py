@@ -15,6 +15,8 @@ MTSS_DEFINITIONS = {
     'support_start_date': 'Support Start Date',
     'support_end_date': 'Support End Date',
     'case_id': 'Case ID',
+    'outcome': 'Outcome',
+    'outcome_action': 'Outcome Action',
 }
 
 MTSS_ALIASES = {
@@ -25,10 +27,12 @@ MTSS_ALIASES = {
     'mtss_support_start_date': 'support_start_date',
     'mtss_support_end_date': 'support_end_date',
     'mtss_case_id': 'case_id',
+    'mtss_outcome': 'outcome',
+    'mtss_outcome_action': 'outcome_action',
 }
 
 MTSS_CATEGORY = {
-    'title': 'MTSS',
+    'title': 'MTSS (Tier 2)',
     'columns': list(MTSS_DEFINITIONS.keys()),
 }
 
@@ -114,7 +118,9 @@ def fetch_mtss_data_for_students(students: list[dict]) -> tuple[dict[tuple[str, 
                string_agg(DISTINCT m.plan_name, ', ' ORDER BY m.plan_name) FILTER (WHERE m.plan_name IS NOT NULL AND m.plan_name <> ''),
                string_agg(DISTINCT m.support_start_date, ', ' ORDER BY m.support_start_date) FILTER (WHERE m.support_start_date IS NOT NULL AND m.support_start_date <> ''),
                string_agg(DISTINCT m.support_end_date, ', ' ORDER BY m.support_end_date) FILTER (WHERE m.support_end_date IS NOT NULL AND m.support_end_date <> ''),
-               string_agg(DISTINCT m.case_id, ', ' ORDER BY m.case_id) FILTER (WHERE m.case_id IS NOT NULL AND m.case_id <> '')
+               string_agg(DISTINCT m.case_id, ', ' ORDER BY m.case_id) FILTER (WHERE m.case_id IS NOT NULL AND m.case_id <> ''),
+               string_agg(DISTINCT m.outcome, ', ' ORDER BY m.outcome) FILTER (WHERE m.outcome IS NOT NULL AND m.outcome <> ''),
+               string_agg(DISTINCT m.outcome_action, ', ' ORDER BY m.outcome_action) FILTER (WHERE m.outcome_action IS NOT NULL AND m.outcome_action <> '')
         FROM mtss_data m
         WHERE m.ssid = ANY(%s)
         GROUP BY m.ssid, m.school_year
@@ -125,7 +131,11 @@ def fetch_mtss_data_for_students(students: list[dict]) -> tuple[dict[tuple[str, 
     try:
         with connection.cursor() as cur:
             cur.execute(query, [list(ssids)])
-            for ssid, sy, plan_type, area_of_concern, learning_gap, plan_name, start_date, end_date, case_id in cur.fetchall():
+            for row in cur.fetchall():
+                (
+                    ssid, sy, plan_type, area_of_concern, learning_gap, plan_name,
+                    start_date, end_date, case_id, outcome, outcome_action,
+                ) = row
                 record = {
                     'plan_type': plan_type or '',
                     'area_of_concern': area_of_concern or '',
@@ -134,6 +144,8 @@ def fetch_mtss_data_for_students(students: list[dict]) -> tuple[dict[tuple[str, 
                     'support_start_date': start_date or '',
                     'support_end_date': end_date or '',
                     'case_id': case_id or '',
+                    'outcome': outcome or '',
+                    'outcome_action': outcome_action or '',
                 }
                 ssid_str = str(ssid).strip()
                 sy_str = str(sy).strip()

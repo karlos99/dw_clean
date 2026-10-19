@@ -138,24 +138,87 @@
 
     <!-- Visual Canvas Workspace -->
     <div x-show="sourceMode === 'visual'" class="grid grid-cols-1 lg:grid-cols-4 gap-8 mb-8">
-        <!-- Sidebar Table Toolbox -->
-        <div class="lg:col-span-1 space-y-6">
-            <div class="bg-white border border-slate-200 shadow p-6 rounded-none sticky top-6">
-                <h3 class="text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">Table Toolbox</h3>
-                <p class="text-xs text-slate-400 mb-4 leading-relaxed">Drag tables from this list onto the canvas on the right to start building your query.</p>
-                
-                <div class="space-y-2">
-                    <template x-for="tbl in tablesList" :key="tbl">
-                        <div class="p-3 border border-slate-200 bg-slate-50 hover:bg-slate-100 cursor-grab active:cursor-grabbing select-none flex items-center justify-between transition"
-                             draggable="true"
-                             @dragstart="onDragStart($event, tbl)">
-                            <div class="flex items-center space-x-2">
-                                <svg class="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
-                                <span class="text-xs font-bold text-slate-700 font-mono" x-text="tbl"></span>
-                            </div>
-                            <span class="text-[10px] text-slate-400 font-sans border border-slate-200 px-1 py-0.5 bg-white uppercase">Table</span>
+        <!-- Sidebar Table Toolbox (scrollable) -->
+        <div class="lg:col-span-1">
+            <div class="bg-white border border-slate-200 shadow rounded-none sticky top-6 flex flex-col max-h-[min(36rem,calc(100vh-5rem))] lg:max-h-[calc(100vh-5.5rem)]">
+                <div class="shrink-0 px-4 pt-4 pb-3 border-b border-slate-100">
+                    <h3 class="text-xs font-bold text-slate-900 uppercase tracking-widest">Table Toolbox</h3>
+                    <p class="text-[11px] text-slate-400 mt-1 leading-relaxed">Scroll this list and drag items onto the canvas. Place a student table first, then Data Loader sources.</p>
+                </div>
+
+                <div class="overflow-y-auto overscroll-contain flex-1 min-h-0 px-4 py-3 space-y-5">
+                    <section>
+                        <h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 sticky top-0 bg-white py-1 z-10">Database tables</h4>
+                        <div class="space-y-1.5">
+                            <template x-for="tbl in tablesList" :key="tbl">
+                                <div class="p-2.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 cursor-grab active:cursor-grabbing select-none flex items-center justify-between transition"
+                                     draggable="true"
+                                     @dragstart="onDragStart($event, tbl)">
+                                    <div class="flex items-center space-x-2 min-w-0">
+                                        <svg class="h-3.5 w-3.5 text-slate-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" /></svg>
+                                        <span class="text-[11px] font-bold text-slate-700 font-mono truncate" x-text="tbl"></span>
+                                    </div>
+                                    <span class="text-[9px] text-slate-400 border border-slate-200 px-1 py-0.5 bg-white uppercase shrink-0">Table</span>
+                                </div>
+                            </template>
                         </div>
-                    </template>
+                    </section>
+
+                    <section>
+                        <h4 class="text-[10px] font-bold text-indigo-700 uppercase tracking-widest mb-2 sticky top-0 bg-white py-1 z-10">Data Loader</h4>
+                        <template x-if="dataloaderBlocked.length">
+                            <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 p-2 mb-2" x-text="'Enable in Project Settings: ' + dataloaderBlocked.join(', ')"></p>
+                        </template>
+                        <div x-show="dlLoading" class="text-xs text-slate-400 italic">Loading…</div>
+
+                        <div x-show="!dlLoading" class="space-y-3">
+                            <template x-for="group in surveyGroups" :key="group.group_id">
+                                <div class="border border-indigo-200 bg-white overflow-hidden">
+                                    <button type="button"
+                                            @click="toggleSurveyGroup(group.group_id)"
+                                            class="w-full text-left px-3 py-2.5 bg-indigo-50/90 hover:bg-indigo-100/90 border-b border-indigo-100 transition">
+                                        <div class="flex items-start justify-between gap-2">
+                                            <div class="min-w-0">
+                                                <div class="text-xs font-bold text-indigo-950 leading-snug" x-text="group.title"></div>
+                                                <div class="text-[10px] font-semibold text-indigo-700 mt-0.5" x-text="group.subtitle"></div>
+                                            </div>
+                                            <span class="text-[9px] text-indigo-600 font-bold uppercase shrink-0 pt-0.5" x-text="(group.items || []).length + ' import' + ((group.items || []).length === 1 ? '' : 's')"></span>
+                                        </div>
+                                        <span class="text-[9px] text-slate-500 mt-1 inline-block" x-text="isSurveyGroupOpen(group.group_id) ? 'Click to collapse' : 'Click to expand'"></span>
+                                    </button>
+                                    <div x-show="isSurveyGroupOpen(group.group_id)" class="p-1.5 space-y-1 bg-indigo-50/30">
+                                        <template x-for="item in (group.items || [])" :key="item.drag_id">
+                                            <div class="p-2 border border-indigo-100 bg-white hover:bg-indigo-50 cursor-grab active:cursor-grabbing select-none flex items-center gap-2 transition"
+                                                 draggable="true"
+                                                 @dragstart="onDragStartDataLoader($event, item)">
+                                                <svg class="h-3.5 w-3.5 text-indigo-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" /></svg>
+                                                <div class="min-w-0 flex-1">
+                                                    <div class="text-[11px] font-semibold text-slate-800 leading-tight" x-text="item.short_label"></div>
+                                                    <div class="text-[9px] text-slate-500" x-text="(item.question_count || 0) + ' questions'"></div>
+                                                </div>
+                                                <span class="text-[8px] text-indigo-600 font-bold uppercase border border-indigo-200 px-1 py-0.5 shrink-0">Drag</span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <div class="space-y-1.5 pt-1 border-t border-slate-200">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Assessments</p>
+                                <template x-for="item in dataloaderFixedItems" :key="item.drag_id">
+                                    <div class="p-2.5 border border-indigo-200 bg-indigo-50/40 hover:bg-indigo-50 cursor-grab active:cursor-grabbing select-none flex items-center justify-between transition"
+                                         draggable="true"
+                                         @dragstart="onDragStartDataLoader($event, item)">
+                                        <div class="flex items-center space-x-2 min-w-0">
+                                            <svg class="h-3.5 w-3.5 text-indigo-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7" /></svg>
+                                            <span class="text-[11px] font-semibold text-indigo-900" x-text="item.label"></span>
+                                        </div>
+                                        <span class="text-[9px] text-indigo-600 font-bold uppercase border border-indigo-200 px-1 py-0.5 bg-white shrink-0">DL</span>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
         </div>
@@ -251,18 +314,27 @@
                                   <div class="px-3 py-2 border-b flex items-center justify-between cursor-move shrink-0"
                                        :class="node.isBase ? 'bg-blue-50' : 'bg-slate-50'">
                                       <div class="flex items-center space-x-1 min-w-0">
-                                          <span class="text-[10px] font-bold uppercase tracking-wider font-mono text-slate-800 truncate" x-text="node.table"></span>
+                                          <span class="text-[10px] font-bold uppercase tracking-wider font-mono text-slate-800 truncate" x-text="node.dlLabel || node.table"></span>
                                           <template x-if="node.isBase">
                                               <span class="bg-blue-600 text-white text-[8px] font-bold uppercase py-0.5 px-1 tracking-wider">Base</span>
+                                          </template>
+                                          <template x-if="node.isDataLoader">
+                                              <span class="bg-indigo-600 text-white text-[8px] font-bold uppercase py-0.5 px-1 tracking-wider">DL</span>
                                           </template>
                                       </div>
                                       
                                       <div class="flex space-x-2 shrink-0">
+                                          <button @click.stop="openDataLoaderModalForJoin(node)"
+                                                  class="text-indigo-500 hover:text-indigo-700"
+                                                  title="Edit Data Loader link (columns & school year)"
+                                                  x-show="node.isDataLoader">
+                                              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                          </button>
                                           <!-- Join Trigger Link -->
                                           <button @click.stop="triggerJoinLink(node)" 
                                                   class="text-slate-400 hover:text-indigo-600" 
                                                   title="Join to another table"
-                                                  x-show="canJoinFrom(node)">
+                                                  x-show="canJoinFrom(node) && !node.isDataLoader">
                                               <svg class="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
                                           </button>
                                           
@@ -330,7 +402,10 @@
                 <tbody class="divide-y divide-slate-200 bg-white">
                     <template x-for="(join, index) in joins" :key="index">
                         <tr>
-                            <td class="px-4 py-3 whitespace-nowrap font-mono font-bold text-slate-800" x-text="join.table"></td>
+                            <td class="px-4 py-3 whitespace-nowrap font-mono font-bold text-slate-800">
+                                <span x-text="join.dl_label || join.table"></span>
+                                <span x-show="join.kind === 'dataloader' && join.school_year_join" class="block text-[10px] font-normal text-slate-500 font-sans" x-text="'Year: ' + join.school_year_join"></span>
+                            </td>
                             <td class="px-4 py-3 whitespace-nowrap">
                                 <span class="px-2 py-0.5 inline-flex text-[10px] leading-5 font-semibold bg-indigo-100 text-indigo-800 uppercase tracking-wider" x-text="join.join_type + ' join'"></span>
                             </td>
@@ -586,14 +661,13 @@
     </div>
 
     <!-- Configure Join Modal -->
-    <div class="fixed z-50 inset-0 overflow-y-auto" x-show="joinModalOpen" style="display: none;" x-transition>
-        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="closeJoinModal()">
-                <div class="absolute inset-0 bg-slate-500 opacity-75"></div>
-            </div>
-            <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
-            
-            <div class="inline-block align-middle bg-white border border-slate-200 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full rounded-none">
+    <div class="fixed z-[100] inset-0 overflow-y-auto" x-show="joinModalOpen" style="display: none;" x-cloak>
+        <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+            <div class="fixed inset-0 bg-slate-500/75 transition-opacity" aria-hidden="true" @click="closeJoinModal()"></div>
+            <div class="relative z-10 inline-block w-full align-bottom bg-white border border-slate-200 text-left overflow-hidden shadow-xl sm:my-8 sm:align-middle sm:max-w-lg sm:w-full rounded-none pointer-events-auto"
+                 role="dialog"
+                 aria-modal="true"
+                 @click.stop>
                 <div class="bg-white px-6 py-6 border-b border-slate-100 flex justify-between items-center">
                     <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Configure Table Join</h3>
                     <button @click="closeJoinModal()" class="text-slate-400 hover:text-slate-500">
@@ -683,6 +757,65 @@
                         <button @click="closeJoinModal()" class="px-4 py-2 border border-slate-300 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 rounded-none transition">Cancel</button>
                         <button @click="saveJoinModalConfig()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-none transition">Establish Join</button>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Loader join modal (drag onto canvas) -->
+    <div class="fixed z-[100] inset-0 overflow-y-auto" x-show="dataLoaderModalOpen" style="display: none;" x-cloak>
+        <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+            <div class="fixed inset-0 bg-slate-500/75 transition-opacity" aria-hidden="true" @click="closeDataLoaderModal()"></div>
+            <div class="relative z-10 inline-block w-full align-bottom bg-white border border-slate-200 text-left overflow-hidden shadow-xl sm:my-8 sm:max-w-lg sm:w-full sm:align-middle rounded-none pointer-events-auto"
+                 role="dialog"
+                 aria-modal="true"
+                 @click.stop>
+                <div class="px-6 py-4 border-b border-slate-100">
+                    <h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Join Data Loader Source</h3>
+                    <p class="text-xs text-slate-500 mt-1" x-text="dataLoaderModalSpec ? (dataLoaderModalSpec.display_name || dataLoaderModalSpec.label) : ''"></p>
+                </div>
+                <div class="px-6 py-4 space-y-4 text-sm">
+                    <div class="bg-slate-50 border border-slate-200 p-3 text-xs">
+                        <span class="font-bold text-slate-500 uppercase tracking-wider block mb-1">Student link</span>
+                        <span class="font-mono text-slate-800" x-text="baseTable ? (baseTable + '.ssid = ' + (dataLoaderModalSpec?.table || '?') + '.ssid') : ''"></span>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">School year</label>
+                        <select x-model="dataLoaderModalSchoolYear" class="w-full text-xs border border-slate-300 py-2 px-2">
+                            <option value="match_base">Match base row school year</option>
+                            <option value="ssid_only">SSID only (no year match on join)</option>
+                            <template x-for="yr in (dataloaderCatalog?.school_years || [])" :key="'yr-' + yr">
+                                <option :value="yr" x-text="'Fixed year: ' + yr"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div x-show="dataLoaderModalSpec && dataLoaderModalSpec.link_type === 'survey'">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Survey questions</label>
+                        <div class="max-h-40 overflow-y-auto border border-slate-100 p-2 space-y-1">
+                            <template x-for="q in (dataLoaderModalSpec?.questions || [])" :key="q.key">
+                                <label class="flex items-start gap-2 text-[11px] cursor-pointer">
+                                    <input type="checkbox" class="mt-0.5" :value="q.key" x-model="dataLoaderModalQuestionKeys">
+                                    <span x-text="q.label"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                    <div x-show="dataLoaderModalSpec && dataLoaderModalSpec.link_type !== 'survey'">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Columns</label>
+                        <div class="max-h-40 overflow-y-auto border border-slate-100 p-2 space-y-1">
+                            <template x-for="col in (dataLoaderModalSpec?.columns || [])" :key="col">
+                                <label class="flex items-center gap-2 text-[11px] cursor-pointer" x-show="col !== 'ssid'">
+                                    <input type="checkbox" :value="col" x-model="dataLoaderModalColumnKeys">
+                                    <span class="font-mono" x-text="col"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+                <div class="px-6 py-4 bg-slate-50 flex justify-end gap-2">
+                    <button type="button" @click="closeDataLoaderModal()" class="px-4 py-2 border border-slate-300 text-xs font-semibold rounded-none">Cancel</button>
+                    <button type="button" @click="confirmDataLoaderJoin()" class="px-4 py-2 bg-indigo-600 text-white text-xs font-bold uppercase rounded-none"
+                            x-text="dataLoaderEditingTable ? 'Update link' : 'Join to canvas'"></button>
                 </div>
             </div>
         </div>
@@ -921,6 +1054,20 @@
             schema: {{ schema_json|safe }},
             tablesList: {{ tables|safe }},
 
+            dataloaderCatalog: null,
+            surveyGroups: [],
+            dataloaderFixedItems: [],
+            surveyGroupOpen: {},
+            dataloaderBlocked: [],
+            dlLoading: false,
+            dataLoaderModalOpen: false,
+            dataLoaderModalSpec: null,
+            dataLoaderModalSchoolYear: 'match_base',
+            dataLoaderModalQuestionKeys: [],
+            dataLoaderModalColumnKeys: [],
+            dataLoaderPendingDrop: null,
+            dataLoaderEditingTable: null,
+
             // Computed: how many columns have a user-set alias
             get effectiveColumns() {
                 return this.sourceMode === 'sql' ? this.sqlColumns : this.columns;
@@ -976,7 +1123,12 @@
                             { on_left: j.on_left, on_right: j.on_right }
                         ];
                     }
+                    if (j.kind === 'dataloader') {
+                        this.registerDataLoaderSchema(j, this.columnsForTable(j.table));
+                    }
                 });
+
+                this.loadDataLoaderCatalog();
                 
                 // Set up canvas nodes from active tables/joins
                 if (this.baseTable) {
@@ -996,7 +1148,9 @@
                             table: j.table,
                             x: 40 + (index + 1) * 260,
                             y: 120 + (index % 2) * 80,
-                            isBase: false
+                            isBase: false,
+                            isDataLoader: j.kind === 'dataloader',
+                            dlLabel: j.dl_label || (j.kind === 'dataloader' ? j.link_type : ''),
                         });
                     });
                 }
@@ -1026,6 +1180,277 @@
                 return `"${tbl}"."${col}"`;
             },
             
+            loadDataLoaderCatalog() {
+                this.dlLoading = true;
+                fetch("{% url 'dataviz:dataloader_links_catalog' %}")
+                    .then(r => r.json())
+                    .then(data => {
+                        this.dataloaderCatalog = data.catalog || {};
+                        this.surveyGroups = data.survey_groups || [];
+                        this.dataloaderFixedItems = data.fixed_loader_items || [];
+                        this.dataloaderBlocked = data.blocked_tables || [];
+                        this.ensureDataLoaderSchemasFromCatalog();
+                        this.joins.forEach(j => {
+                            if (j.kind === 'dataloader') {
+                                this.registerDataLoaderSchema(j, this.columnsForTable(j.table));
+                            }
+                        });
+                        (this.surveyGroups || []).forEach(g => {
+                            if (this.surveyGroupOpen[g.group_id] === undefined) {
+                                this.surveyGroupOpen[g.group_id] = true;
+                            }
+                        });
+                    })
+                    .catch(() => {
+                        this.dataloaderCatalog = {};
+                        this.surveyGroups = [];
+                        this.dataloaderFixedItems = [];
+                    })
+                    .finally(() => { this.dlLoading = false; });
+            },
+
+            onDragStartDataLoader(event, item) {
+                event.dataTransfer.setData('application/dataloader', JSON.stringify(item));
+                event.dataTransfer.effectAllowed = 'copy';
+            },
+
+            toggleSurveyGroup(groupId) {
+                this.surveyGroupOpen[groupId] = !this.isSurveyGroupOpen(groupId);
+            },
+
+            isSurveyGroupOpen(groupId) {
+                if (this.surveyGroupOpen[groupId] === undefined) {
+                    return true;
+                }
+                return !!this.surveyGroupOpen[groupId];
+            },
+
+            columnsForTable(tableName) {
+                const prefix = tableName + '.';
+                return this.columns.filter(c => c.startsWith(prefix)).map(c => c.slice(prefix.length));
+            },
+
+            ensureDataLoaderSchemasFromCatalog() {
+                (this.dataloaderFixedItems || []).forEach(item => {
+                    if (!item.table) return;
+                    const cols = new Set(this.schema[item.table] || []);
+                    (item.columns || []).forEach(c => cols.add(c));
+                    this.schema[item.table] = Array.from(cols).sort();
+                });
+                const surveys = this.dataloaderCatalog?.surveys || [];
+                surveys.forEach(s => {
+                    const alias = s.link_id ? this.surveyVirtualAliasFromLinkId(s.link_id) : null;
+                    if (!alias) return;
+                    const cols = new Set(this.schema[alias] || []);
+                    (s.questions || []).forEach(q => cols.add(q.key));
+                    cols.add('ssid');
+                    cols.add('school_year');
+                    this.schema[alias] = Array.from(cols).sort();
+                });
+            },
+
+            surveyVirtualAliasFromLinkId(linkId) {
+                const join = this.joins.find(j => j.link_id === linkId && j.kind === 'dataloader');
+                return join ? join.table : null;
+            },
+
+            toolboxItemForJoin(join) {
+                if (!join || join.kind !== 'dataloader') return null;
+                if (join.link_type === 'survey') {
+                    return (this.dataloaderCatalog?.surveys || []).find(s => s.link_id === join.link_id) || {
+                        link_type: 'survey',
+                        link_id: join.link_id,
+                        label: join.dl_label || 'Survey',
+                        display_name: join.dl_label || 'Survey',
+                        questions: (join.columns || []).map(key => ({ key, label: key })),
+                    };
+                }
+                return (this.dataloaderFixedItems || []).find(i => i.link_type === join.link_type) || {
+                    link_type: join.link_type,
+                    table: join.table,
+                    label: join.dl_label || join.link_type,
+                    display_name: join.dl_label || join.link_type,
+                    columns: join.columns || [],
+                };
+            },
+
+            openDataLoaderModal(item, dropCoords) {
+                this.dataLoaderEditingTable = null;
+                this.dataLoaderModalSpec = item;
+                this.dataLoaderPendingDrop = dropCoords;
+                this._populateDataLoaderModalFields(item, null);
+                this.dataLoaderModalOpen = true;
+            },
+
+            openDataLoaderModalForJoin(node) {
+                const join = this.joins.find(j => j.table === node.table && j.kind === 'dataloader');
+                if (!join) return;
+                const item = this.toolboxItemForJoin(join);
+                if (!item) return;
+                this.dataLoaderEditingTable = node.table;
+                this.dataLoaderModalSpec = { ...item, table: join.table };
+                this.dataLoaderPendingDrop = null;
+                this._populateDataLoaderModalFields(item, join);
+                this.dataLoaderModalOpen = true;
+            },
+
+            _populateDataLoaderModalFields(item, join) {
+                const yearFromJoin = join?.school_year_join || item.default_school_year || 'match_base';
+                this.dataLoaderModalSchoolYear = yearFromJoin;
+                if (item.link_type === 'survey') {
+                    const fromJoin = join?.columns || [];
+                    this.dataLoaderModalQuestionKeys = fromJoin.length
+                        ? [...fromJoin]
+                        : (item.questions || []).slice(0, 3).map(q => q.key);
+                } else if (join?.columns?.length) {
+                    this.dataLoaderModalColumnKeys = [...join.columns];
+                } else if (item.link_type === 'ap_results') {
+                    this.dataLoaderModalColumnKeys = ['exam_name', 'exam_grade', 'admin_year'].filter(
+                        c => (item.columns || []).includes(c)
+                    );
+                } else if (item.link_type === 'sat_results') {
+                    this.dataLoaderModalColumnKeys = ['total_score', 'ebrw_score', 'math_score', 'school_year'].filter(
+                        c => (item.columns || []).includes(c)
+                    );
+                } else {
+                    this.dataLoaderModalColumnKeys = (item.columns || []).filter(c => c !== 'ssid').slice(0, 5);
+                }
+            },
+
+            closeDataLoaderModal() {
+                this.dataLoaderModalOpen = false;
+                this.dataLoaderModalSpec = null;
+                this.dataLoaderPendingDrop = null;
+                this.dataLoaderEditingTable = null;
+            },
+
+            async confirmDataLoaderJoin() {
+                const item = this.dataLoaderModalSpec;
+                if (!item || !this.baseTable) return;
+                const selected = item.link_type === 'survey'
+                    ? [...this.dataLoaderModalQuestionKeys]
+                    : [...this.dataLoaderModalColumnKeys];
+                if (!selected.length) {
+                    this.errorMessage = 'Select at least one column or question.';
+                    return;
+                }
+                await this.attachDataLoaderLink(item.link_type, {
+                    link_id: item.link_id || '',
+                    columns: selected,
+                    label: item.display_name || item.label,
+                    table: item.table,
+                    school_year_join: this.dataLoaderModalSchoolYear,
+                    drop: this.dataLoaderPendingDrop,
+                    editingTable: this.dataLoaderEditingTable,
+                });
+                this.closeDataLoaderModal();
+            },
+
+            registerDataLoaderSchema(join, qualifiedColumns = []) {
+                const tbl = join.table;
+                if (!tbl) return;
+                const cols = new Set(this.schema[tbl] || []);
+                (join.columns || []).forEach(c => cols.add(c));
+                qualifiedColumns.forEach(c => {
+                    if (typeof c !== 'string') return;
+                    if (c.startsWith(tbl + '.')) {
+                        cols.add(c.slice(tbl.length + 1));
+                    } else if (!c.includes('.')) {
+                        cols.add(c);
+                    }
+                });
+                if (join.link_type === 'survey') {
+                    cols.add('ssid');
+                    cols.add('school_year');
+                } else if (join.link_type) {
+                    const fixed = (this.dataloaderFixedItems || []).find(i => i.link_type === join.link_type);
+                    (fixed?.columns || []).forEach(c => cols.add(c));
+                }
+                this.schema[tbl] = Array.from(cols).sort();
+            },
+
+            async attachDataLoaderLink(linkType, options = {}) {
+                if (!this.baseTable) {
+                    this.errorMessage = 'Set a base table on the canvas first.';
+                    return;
+                }
+                const body = {
+                    link_type: linkType,
+                    base_table: this.baseTable,
+                    link_id: options.link_id || '',
+                    selected_columns: options.columns || [],
+                    join_type: 'left',
+                    school_year_join: options.school_year_join || 'match_base',
+                };
+                const res = await fetch("{% url 'dataviz:dataloader_links_preview' %}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}',
+                    },
+                    body: JSON.stringify(body),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    this.errorMessage = data.error || 'Could not attach DataLoader source.';
+                    return;
+                }
+                const join = data.join;
+                join.dl_label = options.label || linkType;
+                if (!join.columns?.length && options.columns?.length) {
+                    join.columns = [...options.columns];
+                }
+                if (!join.conditions?.length && join.table && this.baseTable) {
+                    join.conditions = [{
+                        on_left: this.baseTable + '.ssid',
+                        on_right: join.table + '.ssid',
+                    }];
+                }
+                const tableName = join.table;
+                const qualified = data.columns || [];
+                const editingTable = options.editingTable;
+                if (editingTable && editingTable === tableName) {
+                    const idx = this.joins.findIndex(j => j.table === tableName && j.kind === 'dataloader');
+                    if (idx >= 0) {
+                        this.joins.splice(idx, 1, join);
+                    } else {
+                        this.joins.push(join);
+                    }
+                    this.columns = this.columns.filter(c => !c.startsWith(tableName + '.'));
+                } else {
+                    this.joins.push(join);
+                }
+                this.registerDataLoaderSchema(join, qualified);
+                const drop = options.drop;
+                const label = options.label || linkType;
+                let node = this.nodes.find(n => n.table === tableName);
+                if (!node) {
+                    const x = drop ? drop.x : 40 + this.nodes.length * 260;
+                    const y = drop ? drop.y : 120 + (this.nodes.length % 2) * 80;
+                    node = {
+                        id: 'node_' + Math.random().toString(36).substr(2, 9),
+                        table: tableName,
+                        x: Math.max(-2000, Math.min(x, 4000)),
+                        y: Math.max(-2000, Math.min(y, 4000)),
+                        isBase: false,
+                        isDataLoader: true,
+                        dlLabel: label,
+                    };
+                    this.nodes.push(node);
+                } else {
+                    node.isDataLoader = true;
+                    node.dlLabel = label;
+                }
+                qualified.forEach(c => {
+                    if (!this.columns.includes(c)) this.columns.push(c);
+                });
+                Object.entries(data.column_aliases || {}).forEach(([col, alias]) => {
+                    if (alias) this.columnMappings[col] = alias;
+                });
+                this.onColumnsChange();
+                this.errorMessage = '';
+            },
+
             getSortedColumns(tableName) {
                 const cols = this.schema[tableName] || [];
                 // Sort columns so key fields are pushed to the top
@@ -1104,9 +1529,39 @@
                 event.dataTransfer.setData('text/plain', tableName);
                 event.dataTransfer.effectAllowed = 'copy';
             },
+
+            _dropCoords(event) {
+                const canvas = event.currentTarget.closest('.canvas-grid');
+                if (!canvas) return null;
+                const canvasRect = canvas.getBoundingClientRect();
+                const localX = (event.clientX - canvasRect.left - this.pan.x) / this.zoom;
+                const localY = (event.clientY - canvasRect.top - this.pan.y) / this.zoom;
+                return {
+                    x: Math.max(-2000, Math.min(localX - 80, 4000)),
+                    y: Math.max(-2000, Math.min(localY - 20, 4000)),
+                };
+            },
             
             onDrop(event) {
                 event.preventDefault();
+                const dlRaw = event.dataTransfer.getData('application/dataloader');
+                if (dlRaw) {
+                    try {
+                        const item = JSON.parse(dlRaw);
+                        if (!this.baseTable || this.nodes.length === 0) {
+                            this.errorMessage = 'Drag a student table (e.g. current_student) onto the canvas first, then add Data Loader sources.';
+                            return;
+                        }
+                        if (item.table && this.nodes.some(n => n.table === item.table)) {
+                            this.errorMessage = 'This Data Loader source is already on the canvas.';
+                            return;
+                        }
+                        this.openDataLoaderModal(item, this._dropCoords(event));
+                    } catch (e) {
+                        console.error(e);
+                    }
+                    return;
+                }
                 const tableName = event.dataTransfer.getData('text/plain');
                 if (!tableName || !this.tablesList.includes(tableName)) return;
                 
@@ -1117,15 +1572,10 @@
                 }
                 
                 // Get offset coordinates inside canvas element relative to zoom/pan
-                const canvas = event.currentTarget.closest('.canvas-grid');
-                if (!canvas) return;
-                const canvasRect = canvas.getBoundingClientRect();
-                
-                const localX = (event.clientX - canvasRect.left - this.pan.x) / this.zoom;
-                const localY = (event.clientY - canvasRect.top - this.pan.y) / this.zoom;
-                
-                const x = localX - 80;
-                const y = localY - 20;
+                const coords = this._dropCoords(event);
+                if (!coords) return;
+                const x = coords.x;
+                const y = coords.y;
                 
                 const isBase = this.nodes.length === 0;
                 if (isBase) {
@@ -1354,6 +1804,13 @@
             
             editJoinConfig(index) {
                 const join = this.joins[index];
+                if (join.kind === 'dataloader') {
+                    const node = this.nodes.find(n => n.table === join.table);
+                    if (node) {
+                        this.openDataLoaderModalForJoin(node);
+                    }
+                    return;
+                }
                 this.editingJoinIndex = index;
                 
                 this.joiningTargetNode = this.nodes.find(n => n.table === join.table);
@@ -1377,6 +1834,15 @@
             
             deleteJoinConfig(index) {
                 if (confirm("Are you sure you want to delete this join relationship?")) {
+                    const join = this.joins[index];
+                    if (join?.kind === 'dataloader') {
+                        const node = this.nodes.find(n => n.table === join.table);
+                        if (node) {
+                            this.removeNode(node.id);
+                            this.closeJoinModal();
+                            return;
+                        }
+                    }
                     this.joins.splice(index, 1);
                     this.closeJoinModal();
                     this.onColumnsChange();
