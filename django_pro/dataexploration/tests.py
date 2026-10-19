@@ -337,17 +337,38 @@ class StudentMarksGridTests(SimpleTestCase):
 		from dataexploration.view_modules.student_data_utils import pivot_student_marks
 		self.assertEqual(pivot_student_marks([]), [])
 
-	def test_filter_display_marks_drops_live_and_progress(self):
+	def test_pivot_student_marks_includes_live_column(self):
+		from dataexploration.view_modules.student_data_utils import pivot_student_marks
+
+		marks = [
+			{
+				'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra 1',
+				'mark_period': 'Live', 'mark': 'A-', 'staff_name': 'Teacher A',
+			},
+			{
+				'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra 1',
+				'mark_period': 'Semester 1', 'mark': 'B+', 'staff_name': 'Teacher A',
+			},
+		]
+		grid = pivot_student_marks(marks)
+		self.assertEqual(len(grid), 1)
+		self.assertIn('Live', grid[0]['periods'])
+		self.assertIn('Semester 1', grid[0]['periods'])
+
+	def test_filter_display_marks_keeps_live_drops_progress(self):
 		from dataexploration.view_modules.student_data_utils import filter_display_marks
 
 		marks = [
 			{'mark_period': 'Live', 'mark': 'A'},
-			{'mark_period': 'Progress', 'mark': 'B'},
+			{'mark_period': 'Progress Report 1', 'mark': 'B'},
 			{'mark_period': 'Semester 1', 'mark': 'B+'},
 			{'mark_period': 'Semester 2', 'mark': 'A-'},
 		]
 		out = filter_display_marks(marks)
-		self.assertEqual([m['mark_period'] for m in out], ['Semester 1', 'Semester 2'])
+		self.assertEqual(
+			[m['mark_period'] for m in out],
+			['Live', 'Semester 1', 'Semester 2'],
+		)
 
 
 class TestMetadataMatchesTests(SimpleTestCase):

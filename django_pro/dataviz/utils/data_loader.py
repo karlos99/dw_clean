@@ -923,7 +923,8 @@ def _fetch_mark_data(cursor, mark_cols_info: list[dict], student_keys: list[str]
     """
     fetched_rows = _analytics_rows(sql, [student_keys, *params])
     if fetched_rows is None:
-        pg_sql = sql.replace('analytics_student_marks', 'student_marks_list')
+        from clickhouse_utils.marks_source_sql import pg_sql_from_ch_marks_sql
+        pg_sql = pg_sql_from_ch_marks_sql(sql)
         cursor.execute(pg_sql, [student_keys, *params])
         fetched_rows = [
             {

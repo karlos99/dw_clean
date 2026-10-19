@@ -1389,7 +1389,8 @@ def _load_students(request):
                         GROUP BY sm.ssid
                     ) t
                     """
-                    pg_query = ch_query.replace('analytics_student_marks', 'student_marks_list')
+                    from clickhouse_utils.marks_source_sql import pg_sql_from_ch_marks_sql
+                    pg_query = pg_sql_from_ch_marks_sql(ch_query)
                     res = _fetchall_ch_or_pg(
                         ch_query,
                         params + [year, subject] + course_extra_params,
