@@ -1,6 +1,11 @@
 """
 Django management command to sync data from PostgreSQL to ClickHouse.
 
+``student_marks_list`` in ClickHouse is always built by unnesting
+``student_marks_table_alt.mark_data`` (see ``marks_source_sql``), not from the
+PostgreSQL ``student_marks_list`` materialized view. Derived
+``analytics_student_marks`` / ``analytics_marks_metadata`` read that CH table.
+
 Usage:
     python manage.py sync_to_clickhouse              # incremental where possible
     python manage.py sync_to_clickhouse --full       # force atomic full reload

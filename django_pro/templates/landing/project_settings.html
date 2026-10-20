@@ -2,437 +2,821 @@
 {% load static %}
 {% load dataexploration_tags %}
 
-{% block title %}Project Settings{% endblock %}
+{% block title %}Project Settings — Administration{% endblock %}
 
 {% block content %}
-<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6" x-data="settingsPage()">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" x-data="settingsPage()" x-cloak>
 
-    <!-- Sticky save bar (always visible) -->
+    <!-- ══ Sticky Action Bar ════════════════════════════════════════════════ -->
     <div class="sticky top-[5.25rem] z-30 mb-6">
-        <div class="bg-white/95 backdrop-blur-sm rounded-xl shadow-sm ring-1 ring-slate-200 px-4 sm:px-5 py-3 flex items-center justify-between gap-3">
-            <div class="flex items-center gap-3 min-w-0">
-                <a href="{% url 'landing:index' %}" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition" aria-label="Back to dashboard">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        <div class="bg-white/95 backdrop-blur-md rounded-2xl shadow-sm ring-1 ring-slate-200/90 px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 transition-all">
+            <div class="flex items-center gap-3.5 min-w-0">
+                <a href="{% url 'landing:index' %}"
+                   class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-100/80 hover:text-slate-800 transition shadow-sm"
+                   title="Back to dashboard" aria-label="Back to dashboard">
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                 </a>
                 <div class="min-w-0">
-                    <h1 class="text-base font-bold text-slate-900">Project Settings</h1>
-                    <p class="text-xs text-slate-500 truncate">Site-wide defaults for school year and data explorer columns.</p>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-lg font-bold text-slate-900 tracking-tight">Project Settings</h1>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200">
+                            Admin System
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-500 truncate mt-0.5">Configure defaults for school years, home dashboard, explorer columns, and student summary modules.</p>
                 </div>
             </div>
-            <div class="flex items-center gap-3 shrink-0">
-                <span class="hidden sm:inline-flex items-center gap-1.5 text-xs font-medium text-amber-600" x-show="dirty" x-cloak>
-                    <span class="h-2 w-2 rounded-full bg-amber-500"></span>
-                    Unsaved changes
-                </span>
+
+            <div class="flex items-center gap-3 shrink-0 ml-auto sm:ml-0">
+                <!-- Unsaved Changes indicator with pulsating dot -->
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-800 ring-1 ring-slate-300"
+                     x-show="dirty" x-transition>
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-slate-600"></span>
+                    </span>
+                    <span>Unsaved changes</span>
+                </div>
+
+                <!-- Save Settings Button (Solid monotone dark) -->
                 <button type="submit" form="settings-form"
-                        class="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 shadow-sm transition-colors">
-                    Save Settings
+                        class="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-xl hover:bg-slate-800 active:bg-black focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 shadow-sm transition hover:shadow cursor-pointer">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+                    </svg>
+                    <span>Save Settings</span>
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- Flash messages -->
+    <!-- ══ Alerts & Flash Messages ═══════════════════════════════════════════ -->
     {% if messages %}
     <div class="mb-6 space-y-2">
         {% for msg in messages %}
-        <div class="flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium
-                    {% if msg.tags == 'success' %}bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200
-                    {% else %}bg-red-50 text-red-800 ring-1 ring-red-200{% endif %}">
-            {{ msg }}
+        <div class="flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium shadow-sm bg-white border border-slate-200 text-slate-800">
+            <svg class="w-5 h-5 text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span class="flex-1">{{ msg }}</span>
         </div>
         {% endfor %}
     </div>
     {% endif %}
 
-    <form method="post" id="settings-form" @change="markDirty()" @input="markDirty()">
+    <!-- ══ Tab Navigation Bar ═══════════════════════════════════════════════ -->
+    <div class="mb-6">
+        <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 p-2">
+            <nav class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5" aria-label="Settings Sections">
+
+                <!-- Tab 1: General -->
+                <button type="button" @click="setTab('general')"
+                        class="flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-200 focus:outline-none"
+                        :class="currentTab === 'general' ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition"
+                          :class="currentTab === 'general' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    </span>
+                    <div class="min-w-0 flex-1">
+                        <span class="block text-xs font-bold tracking-tight truncate" :class="currentTab === 'general' ? 'text-white' : 'text-slate-900'">General</span>
+                        <span class="block text-[11px] truncate mt-0.5" :class="currentTab === 'general' ? 'text-slate-300' : 'text-slate-400'">
+                            {% if cfg.default_school_year %}{{ cfg.default_school_year }}{% else %}School Years{% endif %}
+                        </span>
+                    </div>
+                </button>
+
+                <!-- Tab 2: Home Dashboard -->
+                <button type="button" @click="setTab('home')"
+                        class="flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-200 focus:outline-none"
+                        :class="currentTab === 'home' ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition"
+                          :class="currentTab === 'home' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                    </span>
+                    <div class="min-w-0 flex-1">
+                        <span class="block text-xs font-bold tracking-tight truncate" :class="currentTab === 'home' ? 'text-white' : 'text-slate-900'">Home Dashboard</span>
+                        <span class="block text-[11px] truncate mt-0.5" :class="currentTab === 'home' ? 'text-slate-300' : 'text-slate-400'">
+                            <span x-text="forcedIds.length + ' required charts'"></span>
+                        </span>
+                    </div>
+                </button>
+
+                <!-- Tab 3: Data Explorer -->
+                <button type="button" @click="setTab('explorer')"
+                        class="flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-200 focus:outline-none"
+                        :class="currentTab === 'explorer' ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition"
+                          :class="currentTab === 'explorer' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                    </span>
+                    <div class="min-w-0 flex-1">
+                        <span class="block text-xs font-bold tracking-tight truncate" :class="currentTab === 'explorer' ? 'text-white' : 'text-slate-900'">Data Explorer</span>
+                        <span class="block text-[11px] truncate mt-0.5" :class="currentTab === 'explorer' ? 'text-slate-300' : 'text-slate-400'">
+                            <span x-text="defaultCols.length + ' default columns'"></span>
+                        </span>
+                    </div>
+                </button>
+
+                <!-- Tab 4: Dataset Builder -->
+                <button type="button" @click="setTab('datasets')"
+                        class="flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-200 focus:outline-none"
+                        :class="currentTab === 'datasets' ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition"
+                          :class="currentTab === 'datasets' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18M9 17h6m-9 4h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    </span>
+                    <div class="min-w-0 flex-1">
+                        <span class="block text-xs font-bold tracking-tight truncate" :class="currentTab === 'datasets' ? 'text-white' : 'text-slate-900'">Dataset Builder</span>
+                        <span class="block text-[11px] truncate mt-0.5" :class="currentTab === 'datasets' ? 'text-slate-300' : 'text-slate-400'">
+                            {% if enabled_dataset_tables %}{{ enabled_dataset_tables|length }} tables{% else %}All tables allowed{% endif %}
+                        </span>
+                    </div>
+                </button>
+
+                <!-- Tab 5: Student Summary -->
+                <button type="button" @click="setTab('summary')"
+                        class="flex items-center gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-200 focus:outline-none col-span-2 sm:col-span-1"
+                        :class="currentTab === 'summary' ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'">
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition"
+                          :class="currentTab === 'summary' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                    </span>
+                    <div class="min-w-0 flex-1">
+                        <span class="block text-xs font-bold tracking-tight truncate" :class="currentTab === 'summary' ? 'text-white' : 'text-slate-900'">Student Summary</span>
+                        <span class="block text-[11px] truncate mt-0.5" :class="currentTab === 'summary' ? 'text-slate-300' : 'text-slate-400'">
+                            <span x-text="summaryRulesSummaryText()"></span>
+                        </span>
+                    </div>
+                </button>
+
+            </nav>
+        </div>
+    </div>
+
+    <!-- ══ Master Settings Form ═════════════════════════════════════════════ -->
+    <form method="post" id="settings-form" @change="markDirty()" @input="markDirty()" @submit="syncHiddenFields()">
         {% csrf_token %}
-        <!-- Hidden JSON fields populated by JS -->
+        <!-- Hidden JSON fields populated by Alpine sync handlers -->
         <input type="hidden" name="default_columns_json" id="default_columns_json">
         <input type="hidden" name="enabled_columns_json" id="enabled_columns_json">
         <input type="hidden" name="home_forced_charts_json" id="home_forced_charts_json">
+        <input type="hidden" name="summary_access_rules_json" id="summary_access_rules_json">
 
-        <div class="space-y-5">
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- TAB 1: GENERAL & SCHOOL YEARS                                      -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <div x-show="currentTab === 'general'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-6">
 
-            <!-- ══ General ═══════════════════════════════════════════════════ -->
-            <h2 class="px-1 text-xs font-bold uppercase tracking-widest text-slate-400">General</h2>
-
-            <!-- ── Section 1: School Year ─────────────────────────────────── -->
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden" x-data="{ open: true }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            <!-- Tab Header Banner (Solid white card, no gradients) -->
+            <div class="rounded-2xl bg-white border border-slate-200/90 p-6 shadow-xs">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 mb-2 border border-slate-200">
+                            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            Core Environment Configuration
                         </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Default School Year</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Reference year used by school-year aliases.</span>
-                        </span>
-                    </span>
-                    <svg class="h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                </button>
-
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100">
-                        <div class="max-w-xs">
-                            <label for="default_school_year" class="block text-sm font-medium text-slate-700 mb-1">Current Default</label>
-                            <select id="default_school_year" name="default_school_year"
-                                    class="block w-full rounded-lg border-slate-300 shadow-sm text-sm focus:border-blue-500 focus:ring-blue-500">
-                                <option value="">— Not Set —</option>
-                                {% for sy in school_years %}
-                                <option value="{{ sy }}" {% if sy == cfg.default_school_year %}selected{% endif %}>{{ sy }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-
-                        {% if cfg.updated_by %}
-                        <p class="mt-3 text-xs text-slate-400">
-                            Last updated by {{ cfg.updated_by.get_full_name|default:cfg.updated_by.email }} on {{ cfg.updated_at|date:"N j, Y, g:i a" }}
+                        <h2 class="text-xl font-bold text-slate-900 tracking-tight">School Year &amp; System Defaults</h2>
+                        <p class="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl">
+                            The reference school year drives relative year aliases across charts, views, and ClickHouse tables. You can also hide specific historical years from Data Explorer queries.
                         </p>
-                        {% endif %}
+                    </div>
+                    {% if cfg.updated_by %}
+                    <div class="bg-slate-50 rounded-xl px-4 py-2.5 text-xs text-slate-600 border border-slate-200 shrink-0">
+                        <span class="block text-[10px] uppercase font-bold tracking-wider text-slate-400">Last Modified</span>
+                        <span class="font-semibold text-slate-800">{{ cfg.updated_by.get_full_name|default:cfg.updated_by.email }}</span>
+                        <span class="block text-[10px] text-slate-500">{{ cfg.updated_at|date:"N j, Y, g:i a" }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Card 1: Default School Year -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex items-center gap-3">
+                    <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                        <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    </span>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">Default Reference School Year</h3>
+                        <p class="text-xs text-slate-500 mt-0.5">Primary year used to resolve relative year terms (e.g. This Year, Last Year, Two Years Prior).</p>
                     </div>
                 </div>
-            </section>
 
-            <!-- ── Section 2: Available School Years ───────────────────────── -->
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden" x-data="{ open: false }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                        </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Available School Years</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Hide school years from the Data Explorer. Students enrolled in a hidden year are not available.</span>
-                        </span>
-                    </span>
-                    <svg class="h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                </button>
-
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100">
-                        {% if school_years %}
-                        <p class="text-xs text-slate-500 mb-3">Check a year to <strong>hide</strong> its students from the Data Explorer.</p>
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
-                            {% for sy in school_years %}
-                            <label class="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-slate-50 transition-colors">
-                                <input type="checkbox" name="disabled_school_years" value="{{ sy }}"
-                                       {% if sy in disabled_school_years %}checked{% endif %}
-                                       class="rounded border-slate-300 text-red-600 focus:ring-red-500">
-                                <span class="text-sm text-slate-700 font-medium">{{ sy }}</span>
-                                {% if sy in disabled_school_years %}
-                                <span class="ml-auto text-[10px] px-1.5 py-0.5 bg-red-50 text-red-600 rounded">hidden</span>
-                                {% endif %}
+                <div class="p-6">
+                    <div class="grid md:grid-cols-2 gap-6 items-center">
+                        <div>
+                            <label for="default_school_year" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                                Current Active Default
                             </label>
-                            {% endfor %}
-                        </div>
-                        {% else %}
-                        <p class="text-xs text-slate-400 italic">No school years found.</p>
-                        {% endif %}
-                    </div>
-                </div>
-            </section>
-
-            <!-- ══ Home Dashboard ════════════════════════════════════════════ -->
-            <h2 class="px-1 pt-2 text-xs font-bold uppercase tracking-widest text-slate-400">Home Dashboard</h2>
-
-            <!-- ── Section 3: Home Dashboard ───────────────────────────────── -->
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden" x-data="{ open: true }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                        </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Home Dashboard Charts</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Allow users to build a personalized charts dashboard on the home page.</span>
-                        </span>
-                    </span>
-                    <svg class="h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                </button>
-
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100">
-                        <div class="space-y-4">
-                        <label class="flex items-start gap-3 cursor-pointer">
-                            <input type="checkbox" name="enable_home_charts" {% if enable_home_charts %}checked{% endif %}
-                                   class="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                            <span>
-                                <span class="block text-sm font-medium text-slate-700">Enable My Charts on the home page</span>
-                                <span class="block text-xs text-slate-500 mt-0.5">When enabled, users see the <strong>User Charts</strong> panel and can drag charts into their personalized home dashboard. When disabled, the home page hides the charts dashboard and the panel.</span>
-                            </span>
-                        </label>
-                        <label class="flex items-start gap-3 cursor-pointer">
-                            <input type="checkbox" name="home_show_chart_location" {% if home_show_chart_location %}checked{% endif %}
-                                   class="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                            <span>
-                                <span class="block text-sm font-medium text-slate-700">Show chart location (name bar)</span>
-                                <span class="block text-xs text-slate-500 mt-0.5">When enabled, every user's home charts show the chart name above the visual. When disabled, users see only the chart and its in-chart title.</span>
-                            </span>
-                        </label>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ── Section 4: Forced Home Charts ──────────────────────────── -->
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden"
-                     x-data="{ open: true, forcedSearch: '', ...forcedChartsManager() }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-                        </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Home Dashboard Required Charts</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Charts forced onto every user's home page. Users can rearrange them but cannot remove them.</span>
-                        </span>
-                    </span>
-                    <span class="flex items-center gap-3 shrink-0">
-                        <span class="text-xs font-medium text-slate-500" x-text="forcedIds.length + ' forced'"></span>
-                        <svg class="h-5 w-5 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                    </span>
-                </button>
-
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100">
-                        <div class="grid lg:grid-cols-2 gap-8">
-
-                            <!-- Choose forced charts -->
-                            <div>
-                                <h4 class="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-3">Select charts to force</h4>
-                                <div class="relative mb-3">
-                                    <input type="text" x-model="forcedSearch" placeholder="Search charts…"
-                                           class="w-full pl-7 pr-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
-                                    <svg class="w-3.5 h-3.5 absolute left-2 top-2 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                                </div>
-                                <div class="max-h-[340px] overflow-y-auto rounded-lg border border-slate-100 p-3 space-y-1.5">
-                                    <template x-for="c in filteredCharts" :key="c.id">
-                                        <label class="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-1.5 py-1 transition-colors">
-                                            <input type="checkbox" :value="c.id" :checked="isForced(c.id)" @change="toggle(c.id)"
-                                                   class="rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                                            <span class="text-sm text-slate-700 truncate" x-text="c.name"></span>
-                                            <span x-show="c.is_user_menu"
-                                                  class="ml-auto shrink-0 text-[9px] font-semibold uppercase tracking-wide bg-blue-50 text-blue-600 ring-1 ring-blue-200 px-1.5 py-px rounded">User Charts</span>
-                                        </label>
-                                    </template>
-                                    <p x-show="!filteredCharts.length" class="text-xs text-slate-400 italic py-4 text-center">No charts match your search.</p>
-                                </div>
-                                <p class="mt-2 text-[11px] text-slate-400">Forced charts are added to every user's home page automatically (only when <strong>My Charts</strong> is enabled). Users can drag, resize and rearrange them, but the remove button is hidden.</p>
-                            </div>
-
-                            <!-- Mockup + max charts -->
-                            <div>
-                                <h4 class="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-3">Preview — how they look on a user's home page</h4>
-
-                                <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-2.5">
-                                    <div class="rounded-lg bg-white ring-1 ring-slate-200 p-1.5" x-show="forcedIds.length">
-                                        <div class="grid grid-cols-2 gap-1.5">
-                                            <template x-for="(id, i) in forcedIds" :key="id">
-                                                <div class="rounded-md border border-slate-200 overflow-hidden bg-white">
-                                                    {% if home_show_chart_location %}
-                                                    <div class="flex items-center justify-between gap-1 px-2 py-1 border-b border-slate-100 bg-slate-50/80">
-                                                        <span class="flex items-center gap-1 min-w-0">
-                                                            <svg class="w-2.5 h-2.5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-                                                            <span class="text-[10px] font-semibold text-slate-600 truncate" x-text="chartName(id)"></span>
-                                                        </span>
-                                                        <span class="shrink-0 text-[8px] font-bold uppercase tracking-wide bg-amber-50 text-amber-700 ring-1 ring-amber-200 px-1 py-px rounded">Required</span>
-                                                    </div>
-                                                    {% endif %}
-                                                    <div class="h-16 px-2 py-1.5 flex items-end gap-1">
-                                                        <template x-for="j in [1,2,3,4,5]" :key="j">
-                                                            <div class="flex-1 rounded-t bg-slate-200/70" :style="'height:' + (30 + ((i * 7 + j * 13) % 45)) + '%'"></div>
-                                                        </template>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </div>
-                                    <div x-show="!forcedIds.length"
-                                         class="rounded-lg border-2 border-dashed border-slate-200 p-8 text-center">
-                                        <p class="text-xs font-medium text-slate-500">No forced charts selected</p>
-                                        <p class="text-[11px] text-slate-400 mt-1">Users will see only the charts they add themselves.</p>
-                                    </div>
-                                </div>
-
-                                <div class="mt-4 pt-4 border-t border-slate-100">
-                                    <label for="home_max_charts" class="block text-sm font-medium text-slate-700 mb-1">Max charts a user can add</label>
-                                    <div class="flex items-center gap-3">
-                                        <input type="number" id="home_max_charts" name="home_max_charts" min="0" step="1" value="{{ home_max_charts }}"
-                                               class="w-28 rounded-lg border-slate-300 shadow-sm text-sm focus:border-blue-500 focus:ring-blue-500">
-                                        <span class="text-xs text-slate-500">0 = unlimited. Required charts don't count toward this limit.</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ══ Data Explorer ═════════════════════════════════════════════ -->
-            <h2 class="px-1 pt-2 text-xs font-bold uppercase tracking-widest text-slate-400">Data Explorer</h2>
-
-            <!-- ── Course Programs (Data Explorer) ─────────────────────────── -->
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden" x-data="{ open: false }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-                        </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Course Programs (Data Explorer)</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Optional catalog &amp; CTE pathway columns from student schedules. Off by default.</span>
-                        </span>
-                    </span>
-                    <svg class="h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                </button>
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100 space-y-3">
-                        <label class="flex items-start gap-3 cursor-pointer">
-                            <input type="checkbox" name="enable_course_program_columns" {% if enable_course_program_columns %}checked{% endif %}
-                                   class="mt-1 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                            <span class="text-sm text-slate-700">
-                                <span class="font-semibold block">Enable Course Programs column group</span>
-                                <span class="text-xs text-slate-500">Adds a section below Performance &amp; Behavior with staff catalog tags/categories/disciplines/levels and synced CTE cluster/pathway/level (from <code class="text-[10px] bg-slate-100 px-1 rounded">coursecatalog_cte_pathways</code>). Values refresh when source tables update.</span>
-                            </span>
-                        </label>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ── Section 5: Default Visible Columns (with order) ─────────── -->
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden"
-                     x-data="{ open: true, ...defaultColumnManager() }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
-                        </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Default Visible Columns</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Columns pre-selected when a user opens the Data Explorer — reorder them here.</span>
-                        </span>
-                    </span>
-                    <span class="flex items-center gap-3 shrink-0">
-                        <span class="text-xs font-medium text-slate-500" x-text="defaultCols.length + ' selected'"></span>
-                        <svg class="h-5 w-5 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                    </span>
-                </button>
-
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100">
-                        <div class="grid lg:grid-cols-2 gap-8">
-
-                            <!-- Choose columns -->
-                            <div>
-                                <h4 class="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-3">Choose columns</h4>
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-5 max-h-[420px] overflow-y-auto pr-1 rounded-lg border border-slate-100 p-3">
-                                    {% for cat_key, cat in column_categories.items %}
-                                    <div>
-                                        <h5 class="text-xs font-semibold text-slate-500 mb-2">{{ cat.title }}</h5>
-                                        <div class="space-y-1.5">
-                                            {% for col in cat.columns %}
-                                            <label class="flex items-center gap-2 cursor-pointer">
-                                                <input type="checkbox" value="{{ col }}"
-                                                       :checked="defaultCols.includes('{{ col }}')"
-                                                       @change="toggleDefault('{{ col }}')"
-                                                       class="rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                                                <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
-                                            </label>
-                                            {% endfor %}
-                                        </div>
-                                    </div>
+                            <div class="relative max-w-sm">
+                                <select id="default_school_year" name="default_school_year"
+                                        class="block w-full rounded-xl border-slate-300 shadow-sm text-sm font-semibold text-slate-800 py-2.5 pl-3.5 pr-10 focus:border-slate-800 focus:ring-slate-800 bg-white">
+                                    <option value="">— Not Set —</option>
+                                    {% for sy in school_years %}
+                                    <option value="{{ sy }}" {% if sy == cfg.default_school_year %}selected{% endif %}>{{ sy }}</option>
                                     {% endfor %}
-                                </div>
+                                </select>
                             </div>
+                            <p class="mt-2.5 text-xs text-slate-500 leading-relaxed">
+                                When changed, the system recalculates and updates the <code class="text-[11px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono">relative_year</code> mapping in PostgreSQL and synchronizes the ClickHouse mirror database in real-time.
+                            </p>
+                        </div>
 
-                            <!-- Ordered default list -->
-                            <div>
-                                <h4 class="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-3">
-                                    Default order
-                                    <span class="ml-1 normal-case font-normal text-slate-400">— how columns appear</span>
-                                </h4>
-                                <div class="rounded-lg border border-slate-200 overflow-hidden" x-show="defaultCols.length">
-                                    <template x-for="(col, idx) in defaultCols" :key="col">
-                                        <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-100 last:border-b-0 hover:bg-slate-50/60 transition cursor-grab active:cursor-grabbing bg-white"
-                                             draggable="true"
-                                             @dragstart="defaultDragStart(idx)"
-                                             @dragover.prevent="defaultDragOver($event, idx)"
-                                             @dragend="defaultDragEnd()">
-                                            <svg class="w-4 h-4 shrink-0 text-slate-300" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/></svg>
-                                            <span class="flex-1 min-w-0 truncate text-sm text-slate-700" x-text="defaultLabel(col)"></span>
-                                            <span class="w-5 shrink-0 text-center text-[10px] font-semibold text-slate-400" x-text="idx + 1"></span>
-                                            <button type="button" @click="moveDefault(col, -1)" :disabled="idx === 0"
-                                                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:pointer-events-none">
-                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
-                                            </button>
-                                            <button type="button" @click="moveDefault(col, 1)" :disabled="idx === defaultCols.length - 1"
-                                                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:pointer-events-none">
-                                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                                            </button>
-                                            <button type="button" @click="removeDefault(col)"
-                                                    class="shrink-0 w-6 h-6 flex items-center justify-center rounded text-slate-300 hover:text-red-600 hover:bg-red-50">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                                            </button>
-                                        </div>
-                                    </template>
+                        <!-- Relative Year Preview Pill -->
+                        <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                            <span class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Automatic Relative Year Offsets</span>
+                            <div class="space-y-1.5 text-xs text-slate-600">
+                                <div class="flex justify-between items-center py-1 border-b border-slate-200/60">
+                                    <span class="font-medium text-slate-800">This School Year (offset 0)</span>
+                                    <span class="font-mono text-slate-900 font-bold">{% if cfg.default_school_year %}{{ cfg.default_school_year }}{% else %}Not set{% endif %}</span>
                                 </div>
-                                <div x-show="!defaultCols.length"
-                                     class="rounded-lg border border-dashed border-slate-300 p-6 text-center text-xs text-slate-400">
-                                    No default columns selected. Check columns on the left to add them here.
+                                <div class="flex justify-between items-center py-1 border-b border-slate-200/60">
+                                    <span class="text-slate-600">Last School Year (offset -1)</span>
+                                    <span class="font-mono text-slate-500">Automated</span>
+                                </div>
+                                <div class="flex justify-between items-center py-1">
+                                    <span class="text-slate-600">Prior Years (offsets -2 to -5)</span>
+                                    <span class="font-mono text-slate-500">Automated</span>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </section>
+            </div>
 
-            <!-- ── Section 6: Column Availability ─────────────────────────── -->
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden"
-                     x-data="{ open: false, ...enabledColumnManager() }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            <!-- Card 2: School Year Visibility -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"/></svg>
                         </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Column Availability</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Control which columns users can ever add to a data explorer view.</span>
-                        </span>
-                    </span>
-                    <svg class="h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">Available School Years (Explorer Visibility)</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Checked school years are hidden from the Data Explorer. Students enrolled only in hidden years will not appear.</p>
+                        </div>
+                    </div>
+
+                    <!-- Filter search -->
+                    <div class="relative w-full sm:w-64">
+                        <input type="text" x-model="yearSearch" placeholder="Search school years…"
+                               class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-700 focus:border-slate-700">
+                        <svg class="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    </div>
+                </div>
+
+                <div class="p-6">
+                    {% if school_years %}
+                    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {% for sy in school_years %}
+                        <label x-show="!yearSearch || '{{ sy|lower }}'.includes(yearSearch.toLowerCase())"
+                               class="flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer select-none
+                                      {% if sy in disabled_school_years %}border-slate-300 bg-slate-50 hover:bg-slate-100/70{% else %}border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300{% endif %}">
+                            <input type="checkbox" name="disabled_school_years" value="{{ sy }}"
+                                   {% if sy in disabled_school_years %}checked{% endif %}
+                                   class="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-slate-700">
+                            <span class="text-sm font-semibold text-slate-800">{{ sy }}</span>
+                            {% if sy in disabled_school_years %}
+                            <span class="ml-auto text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-slate-200 text-slate-700 rounded-md">
+                                Hidden
+                            </span>
+                            {% else %}
+                            <span class="ml-auto text-[10px] font-medium text-slate-400">
+                                Visible
+                            </span>
+                            {% endif %}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-xs text-slate-400 italic py-4">No school years found in the database.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Tab Footer Navigation (Solid monotone buttons) -->
+            <div class="flex items-center justify-between pt-2">
+                <span class="text-xs text-slate-400">Section 1 of 5</span>
+                <button type="button" @click="setTab('home')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition">
+                    <span>Next: Home Dashboard</span>
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                 </button>
+            </div>
+        </div>
 
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100">
-                        <div class="flex gap-2 mb-4">
-                            <button type="button" @click="enableAll()"
-                                    class="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm">
-                                Enable All
-                            </button>
-                            <button type="button" @click="disableAll()"
-                                    class="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 shadow-sm">
-                                Disable All
-                            </button>
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- TAB 2: HOME DASHBOARD                                              -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <div x-show="currentTab === 'home'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-6">
+
+            <!-- Tab Header Banner (Solid white card, no gradients) -->
+            <div class="rounded-2xl bg-white border border-slate-200/90 p-6 shadow-xs">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 mb-2 border border-slate-200">
+                            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>
+                            Personalized Workspaces &amp; Mandatory Layouts
+                        </span>
+                        <h2 class="text-xl font-bold text-slate-900 tracking-tight">Home Dashboard Configuration</h2>
+                        <p class="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl">
+                            Control user ability to create personalized home chart layouts, configure title bars, and pin mandatory organizational charts onto every user's landing page.
+                        </p>
+                    </div>
+                    <div class="bg-slate-50 rounded-xl px-4 py-2.5 text-xs text-slate-600 border border-slate-200 shrink-0">
+                        <span class="block text-[10px] uppercase font-bold tracking-wider text-slate-400">Required Charts</span>
+                        <span class="font-bold text-slate-800 text-base" x-text="forcedIds.length"></span>
+                        <span class="text-slate-500"> pinned to all users</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 1: Home Dashboard Controls -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex items-center gap-3">
+                    <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                        <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>
+                    </span>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">User Dashboard Capabilities</h3>
+                        <p class="text-xs text-slate-500 mt-0.5">General features and capacity limits for personalized home charts.</p>
+                    </div>
+                </div>
+
+                <div class="p-6 divide-y divide-slate-100 space-y-4">
+                    <!-- Toggle: Enable My Charts -->
+                    <label class="flex items-start gap-4 cursor-pointer pt-2 first:pt-0">
+                        <input type="checkbox" name="enable_home_charts" {% if enable_home_charts %}checked{% endif %}
+                               class="mt-1 h-5 w-5 rounded-lg border-slate-300 text-slate-900 focus:ring-slate-800">
+                        <div class="flex-1">
+                            <span class="block text-sm font-bold text-slate-900">Enable My Charts on the Home Page</span>
+                            <span class="block text-xs text-slate-500 mt-0.5 leading-relaxed">
+                                When enabled, users see the <strong>User Charts</strong> docking panel and can drag saved charts into their personal home dashboard. When disabled, the home page displays only site metrics.
+                            </span>
+                        </div>
+                    </label>
+
+                    <!-- Toggle: Show Chart Location Bar -->
+                    <label class="flex items-start gap-4 cursor-pointer pt-4">
+                        <input type="checkbox" name="home_show_chart_location" {% if home_show_chart_location %}checked{% endif %}
+                               class="mt-1 h-5 w-5 rounded-lg border-slate-300 text-slate-900 focus:ring-slate-800">
+                        <div class="flex-1">
+                            <span class="block text-sm font-bold text-slate-900">Show Chart Name &amp; Location Bar</span>
+                            <span class="block text-xs text-slate-500 mt-0.5 leading-relaxed">
+                                When enabled, each chart card on the home dashboard shows a dedicated header bar with the chart name and action controls. When disabled, only the chart graphic and in-chart title are displayed.
+                            </span>
+                        </div>
+                    </label>
+
+                    <!-- Input: Max Charts Per User -->
+                    <div class="pt-4 flex flex-wrap items-center justify-between gap-4">
+                        <div class="max-w-lg">
+                            <label for="home_max_charts" class="block text-sm font-bold text-slate-900">Maximum User Charts Allowed</label>
+                            <span class="block text-xs text-slate-500 mt-0.5 leading-relaxed">
+                                Cap the number of custom charts a user may pin to their dashboard. Enter <strong>0</strong> for unlimited charts. Required/forced charts do not count toward this limit.
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="number" id="home_max_charts" name="home_max_charts" min="0" step="1" value="{{ home_max_charts }}"
+                                   class="w-24 rounded-xl border-slate-300 shadow-sm text-sm font-bold text-center focus:border-slate-800 focus:ring-slate-800 py-2">
+                            <span class="text-xs font-semibold text-slate-500">charts</span>
+                        </div>
+                    </div>
+
+                    <!-- Option: Home Page Width Selection -->
+                    <div class="pt-5">
+                        <div class="mb-3">
+                            <label class="block text-sm font-bold text-slate-900">Dashboard Canvas Width</label>
+                            <span class="block text-xs text-slate-500 mt-0.5 leading-relaxed">
+                                Select the maximum container width for the home page dashboard. Wider containers allow the chart grid to stretch across large desktop monitors.
+                            </span>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+                            <!-- Standard (1280px) -->
+                            <label class="relative flex flex-col p-4 rounded-xl border cursor-pointer select-none transition-all"
+                                   :class="homePageWidth === 'standard' ? 'border-slate-800 bg-slate-50 ring-1 ring-slate-800' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/60'">
+                                <input type="radio" name="home_page_width" value="standard" x-model="homePageWidth" class="sr-only">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-bold uppercase tracking-wider text-slate-900">Standard</span>
+                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200">1280px</span>
+                                </div>
+                                <div class="w-full h-8 bg-slate-100 rounded-lg flex items-center justify-center mb-2 px-2 border border-slate-200/60">
+                                    <div class="w-2/3 h-3 bg-slate-400 rounded-sm"></div>
+                                </div>
+                                <p class="text-[11px] text-slate-500 leading-snug">Default balanced width (<code>max-w-7xl</code>). Ideal for laptops and compact screens.</p>
+                                <div class="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-semibold"
+                                     :class="homePageWidth === 'standard' ? 'text-slate-900' : 'text-slate-400'">
+                                    <span>Selected</span>
+                                    <span x-show="homePageWidth === 'standard'" class="w-2 h-2 rounded-full bg-slate-900"></span>
+                                </div>
+                            </label>
+
+                            <!-- Wide (1536px) -->
+                            <label class="relative flex flex-col p-4 rounded-xl border cursor-pointer select-none transition-all"
+                                   :class="homePageWidth === 'wide' ? 'border-slate-800 bg-slate-50 ring-1 ring-slate-800' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/60'">
+                                <input type="radio" name="home_page_width" value="wide" x-model="homePageWidth" class="sr-only">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-bold uppercase tracking-wider text-slate-900">Wide</span>
+                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200">1536px</span>
+                                </div>
+                                <div class="w-full h-8 bg-slate-100 rounded-lg flex items-center justify-center mb-2 px-2 border border-slate-200/60">
+                                    <div class="w-4/5 h-3 bg-slate-400 rounded-sm"></div>
+                                </div>
+                                <p class="text-[11px] text-slate-500 leading-snug">Widescreen width (<code>max-w-screen-2xl</code>). Gives charts generous extra breathing room.</p>
+                                <div class="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-semibold"
+                                     :class="homePageWidth === 'wide' ? 'text-slate-900' : 'text-slate-400'">
+                                    <span>Selected</span>
+                                    <span x-show="homePageWidth === 'wide'" class="w-2 h-2 rounded-full bg-slate-900"></span>
+                                </div>
+                            </label>
+
+                            <!-- Extra Wide (1800px) -->
+                            <label class="relative flex flex-col p-4 rounded-xl border cursor-pointer select-none transition-all"
+                                   :class="homePageWidth === 'extra_wide' ? 'border-slate-800 bg-slate-50 ring-1 ring-slate-800' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/60'">
+                                <input type="radio" name="home_page_width" value="extra_wide" x-model="homePageWidth" class="sr-only">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-bold uppercase tracking-wider text-slate-900">Extra Wide</span>
+                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200">1800px</span>
+                                </div>
+                                <div class="w-full h-8 bg-slate-100 rounded-lg flex items-center justify-center mb-2 px-2 border border-slate-200/60">
+                                    <div class="w-[92%] h-3 bg-slate-400 rounded-sm"></div>
+                                </div>
+                                <p class="text-[11px] text-slate-500 leading-snug">Expansive canvas (<code>max-w-[1800px]</code>). Optimized for 1440p and QHD monitors.</p>
+                                <div class="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-semibold"
+                                     :class="homePageWidth === 'extra_wide' ? 'text-slate-900' : 'text-slate-400'">
+                                    <span>Selected</span>
+                                    <span x-show="homePageWidth === 'extra_wide'" class="w-2 h-2 rounded-full bg-slate-900"></span>
+                                </div>
+                            </label>
+
+                            <!-- Full Width (Fluid) -->
+                            <label class="relative flex flex-col p-4 rounded-xl border cursor-pointer select-none transition-all"
+                                   :class="homePageWidth === 'full' ? 'border-slate-800 bg-slate-50 ring-1 ring-slate-800' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/60'">
+                                <input type="radio" name="home_page_width" value="full" x-model="homePageWidth" class="sr-only">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-bold uppercase tracking-wider text-slate-900">Full Width</span>
+                                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-100 text-slate-600 border border-slate-200">100% Fluid</span>
+                                </div>
+                                <div class="w-full h-8 bg-slate-100 rounded-lg flex items-center justify-center mb-2 px-1 border border-slate-200/60">
+                                    <div class="w-full h-3 bg-slate-400 rounded-sm flex items-center justify-between px-1">
+                                        <span class="text-[8px] text-white font-bold leading-none">&larr;</span>
+                                        <span class="text-[8px] text-white font-bold leading-none">&rarr;</span>
+                                    </div>
+                                </div>
+                                <p class="text-[11px] text-slate-500 leading-snug">Edge-to-edge fluid width (<code>max-w-full</code>). Expands across the entire display window.</p>
+                                <div class="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[10px] font-semibold"
+                                     :class="homePageWidth === 'full' ? 'text-slate-900' : 'text-slate-400'">
+                                    <span>Selected</span>
+                                    <span x-show="homePageWidth === 'full'" class="w-2 h-2 rounded-full bg-slate-900"></span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 2: Forced / Required Charts Manager -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                        </span>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">Mandatory Home Charts (Pinned Globally)</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Charts forced onto every user's home dashboard. Users can arrange them, but cannot delete them.</p>
+                        </div>
+                    </div>
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 ring-1 ring-slate-200">
+                        <span x-text="forcedIds.length + ' charts forced'"></span>
+                    </span>
+                </div>
+
+                <div class="p-6">
+                    <div class="grid lg:grid-cols-12 gap-8">
+
+                        <!-- Left: Search & Select Forced Charts (5 cols) -->
+                        <div class="lg:col-span-5 flex flex-col">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">Available Saved Charts</h4>
+                                <span class="text-xs text-slate-400" x-text="filteredCharts().length + ' available'"></span>
+                            </div>
+
+                            <!-- Search bar -->
+                            <div class="relative mb-3">
+                                <input type="text" x-model="forcedSearch" placeholder="Search charts by name…"
+                                       class="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-700 focus:border-slate-700">
+                                <svg class="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                            </div>
+
+                            <!-- Chart List -->
+                            <div class="max-h-[380px] overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100 p-1.5 bg-slate-50/50">
+                                <template x-for="c in filteredCharts()" :key="c.id">
+                                    <label class="flex items-center gap-3 p-2.5 rounded-lg hover:bg-white transition cursor-pointer"
+                                           :class="isForced(c.id) ? 'bg-slate-100/90 border border-slate-300/80 shadow-xs' : ''">
+                                        <input type="checkbox" :value="c.id" :checked="isForced(c.id)" @change="toggleForced(c.id)"
+                                               class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-700">
+                                        <div class="min-w-0 flex-1">
+                                            <span class="block text-xs font-semibold text-slate-800 truncate" x-text="c.name"></span>
+                                            <span class="block text-[10px] text-slate-400 uppercase font-mono tracking-wider" x-text="c.chart_type || 'chart'"></span>
+                                        </div>
+                                        <span x-show="c.is_user_menu"
+                                              class="shrink-0 text-[9px] font-bold uppercase tracking-wider bg-slate-200 text-slate-700 ring-1 ring-slate-300 px-1.5 py-0.5 rounded">
+                                            Menu
+                                        </span>
+                                    </label>
+                                </template>
+                                <p x-show="!filteredCharts().length" class="text-xs text-slate-400 italic py-8 text-center">No charts match your search query.</p>
+                            </div>
                         </div>
 
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-6">
+                        <!-- Right: Live Mockup Preview (7 cols) -->
+                        <div class="lg:col-span-7 flex flex-col">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">User Home Dashboard Live Mockup</h4>
+                                <span class="text-xs text-slate-400">Pinned layout preview</span>
+                            </div>
+
+                            <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 flex-1 min-h-[360px] flex flex-col justify-center">
+                                <div x-show="forcedIds.length" class="space-y-3">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <template x-for="(id, i) in forcedIds" :key="id">
+                                            <div class="rounded-xl border border-slate-200 overflow-hidden bg-white shadow-xs">
+                                                {% if home_show_chart_location %}
+                                                <div class="flex items-center justify-between gap-1.5 px-3 py-1.5 border-b border-slate-100 bg-slate-50">
+                                                    <span class="flex items-center gap-1.5 min-w-0">
+                                                        <svg class="w-3 h-3 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                                                        <span class="text-[11px] font-bold text-slate-700 truncate" x-text="chartName(id)"></span>
+                                                    </span>
+                                                    <span class="shrink-0 text-[8px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 ring-1 ring-slate-200 px-1.5 py-0.5 rounded">Required</span>
+                                                </div>
+                                                {% endif %}
+                                                <!-- Mini visual chart mockup bars (monotone) -->
+                                                <div class="h-20 px-3 py-2 flex items-end gap-1.5 bg-white">
+                                                    <template x-for="j in [1,2,3,4,5]" :key="j">
+                                                        <div class="flex-1 rounded-t-sm transition-all"
+                                                             :class="(j % 2 === 0) ? 'bg-slate-400' : 'bg-slate-300'"
+                                                             :style="'height:' + (25 + ((i * 11 + j * 17) % 65)) + '%'"></div>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <p class="text-[11px] text-slate-500 text-center pt-2">
+                                        These charts will appear at the top of every user's personalized dashboard view.
+                                    </p>
+                                </div>
+
+                                <div x-show="!forcedIds.length" class="text-center py-12 px-4">
+                                    <div class="flex h-12 w-12 mx-auto items-center justify-center rounded-2xl bg-slate-200/70 text-slate-500 mb-3">
+                                        <svg class="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                                    </div>
+                                    <h5 class="text-sm font-bold text-slate-700">No Required Charts Selected</h5>
+                                    <p class="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                                        Users will see a clean dashboard workspace containing only the charts they choose to drag and drop themselves.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab Footer Navigation (Solid monotone buttons) -->
+            <div class="flex items-center justify-between pt-2">
+                <button type="button" @click="setTab('general')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition">
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    <span>Previous: General</span>
+                </button>
+                <button type="button" @click="setTab('explorer')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition">
+                    <span>Next: Data Explorer</span>
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- TAB 3: DATA EXPLORER COLUMNS                                       -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <div x-show="currentTab === 'explorer'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-6">
+
+            <!-- Tab Header Banner (Solid white card, no gradients) -->
+            <div class="rounded-2xl bg-white border border-slate-200/90 p-6 shadow-xs">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 mb-2 border border-slate-200">
+                            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18M3 18h18M3 6h18"/></svg>
+                            Column Catalog &amp; Sequencing
+                        </span>
+                        <h2 class="text-xl font-bold text-slate-900 tracking-tight">Data Explorer Columns &amp; Defaults</h2>
+                        <p class="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl">
+                            Configure which columns are pre-selected in the Data Explorer, organize their default display order with drag-and-drop, and manage global column permissions.
+                        </p>
+                    </div>
+                    <div class="bg-slate-50 rounded-xl px-4 py-2.5 text-xs text-slate-600 border border-slate-200 shrink-0">
+                        <span class="block text-[10px] uppercase font-bold tracking-wider text-slate-400">Default Columns</span>
+                        <span class="font-bold text-slate-800 text-base" x-text="defaultCols.length"></span>
+                        <span class="text-slate-500"> active in table</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 1: Course Programs Column Group Toggle -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 p-5">
+                <label class="flex items-start gap-4 cursor-pointer">
+                    <input type="checkbox" name="enable_course_program_columns" {% if enable_course_program_columns %}checked{% endif %}
+                           class="mt-1 h-5 w-5 rounded-lg border-slate-300 text-slate-900 focus:ring-slate-800">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm font-bold text-slate-900">Enable Course Programs Column Group</span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 ring-1 ring-slate-200">
+                                Catalog Extension
+                            </span>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                            Adds an advanced section below Performance &amp; Behavior with staff catalog tags, course categories, disciplines, and synced CTE pathways from <code class="text-[11px] bg-slate-100 text-slate-700 px-1 rounded font-mono">coursecatalog_cte_pathways</code>.
+                        </p>
+                    </div>
+                </label>
+            </div>
+
+            <!-- Card 2: Default Visible Columns (Picker + Ordering) -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                        </span>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">Default Visible Columns &amp; Display Order</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Select columns to display on initial page load and arrange their sequence from left to right.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" @click="clearAllDefaults()" x-show="defaultCols.length"
+                                class="text-xs text-slate-500 hover:text-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition font-medium">
+                            Clear All
+                        </button>
+                        <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 ring-1 ring-slate-200">
+                            <span x-text="defaultCols.length + ' columns selected'"></span>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="p-6">
+                    <div class="grid lg:grid-cols-12 gap-8">
+
+                        <!-- Left Column: Choose Columns (6 cols) -->
+                        <div class="lg:col-span-6 flex flex-col">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">Available Columns by Category</h4>
+                            </div>
+
+                            <!-- Column Search Box -->
+                            <div class="relative mb-3">
+                                <input type="text" x-model="defaultColSearch" placeholder="Filter columns by name or keyword…"
+                                       class="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-700 focus:border-slate-700">
+                                <svg class="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                            </div>
+
+                            <!-- Categories list -->
+                            <div class="max-h-[460px] overflow-y-auto rounded-xl border border-slate-200 p-3 space-y-5 bg-slate-50/40">
+                                {% for cat_key, cat in column_categories.items %}
+                                <div x-show="categoryHasMatch({{ cat.columns|safe }})" class="space-y-2">
+                                    <div class="flex items-center justify-between pb-1 border-b border-slate-200">
+                                        <h5 class="text-xs font-bold text-slate-700 uppercase tracking-wider">{{ cat.title }}</h5>
+                                        <span class="text-[10px] text-slate-400 font-mono">{{ cat.columns|length }}</span>
+                                    </div>
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                        {% for col in cat.columns %}
+                                        <label x-show="!defaultColSearch || '{{ column_definitions|get_item:col|lower }}'.includes(defaultColSearch.toLowerCase().trim()) || '{{ col|lower }}'.includes(defaultColSearch.toLowerCase().trim())"
+                                               class="flex items-center gap-2 p-1.5 rounded-lg hover:bg-white transition cursor-pointer select-none"
+                                               :class="defaultCols.includes('{{ col }}') ? 'bg-slate-100 font-medium' : ''">
+                                            <input type="checkbox" value="{{ col }}"
+                                                   :checked="defaultCols.includes('{{ col }}')"
+                                                   @change="toggleDefault('{{ col }}')"
+                                                   class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-700">
+                                            <span class="text-xs text-slate-700 truncate" title="{{ column_definitions|get_item:col }}">{{ column_definitions|get_item:col }}</span>
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <!-- Right Column: Order of Default Columns (6 cols) -->
+                        <div class="lg:col-span-6 flex flex-col">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">Default Display Order (Left to Right)</h4>
+                                <span class="text-xs text-slate-400">Drag or use arrows to rearrange</span>
+                            </div>
+
+                            <div class="rounded-xl border border-slate-200 bg-white max-h-[505px] overflow-y-auto divide-y divide-slate-100 shadow-xs"
+                                 x-show="defaultCols.length">
+                                <template x-for="(col, idx) in defaultCols" :key="col">
+                                    <div class="flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-slate-50 transition cursor-grab active:cursor-grabbing group"
+                                         draggable="true"
+                                         @dragstart="defaultDragStart(idx)"
+                                         @dragover.prevent="defaultDragOver($event, idx)"
+                                         @dragend="defaultDragEnd()">
+                                        <!-- Grip handle -->
+                                        <svg class="w-4 h-4 text-slate-300 group-hover:text-slate-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/></svg>
+
+                                        <!-- Position badge -->
+                                        <span class="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[10px] font-bold text-slate-600 font-mono" x-text="idx + 1"></span>
+
+                                        <!-- Column Name -->
+                                        <span class="flex-1 min-w-0 text-xs font-semibold text-slate-800 truncate" x-text="defaultLabel(col)"></span>
+
+                                        <!-- Move Up button -->
+                                        <button type="button" @click="moveDefault(col, -1)" :disabled="idx === 0"
+                                                title="Move up"
+                                                class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-20 disabled:pointer-events-none transition">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                                        </button>
+
+                                        <!-- Move Down button -->
+                                        <button type="button" @click="moveDefault(col, 1)" :disabled="idx === defaultCols.length - 1"
+                                                title="Move down"
+                                                class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-20 disabled:pointer-events-none transition">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                        </button>
+
+                                        <!-- Remove button -->
+                                        <button type="button" @click="removeDefault(col)"
+                                                title="Remove from default list"
+                                                class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-slate-300 hover:text-slate-700 hover:bg-slate-100 transition">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <div x-show="!defaultCols.length"
+                                 class="rounded-xl border-2 border-dashed border-slate-200 p-12 text-center bg-slate-50/50">
+                                <p class="text-xs font-bold text-slate-500">No Default Columns Selected</p>
+                                <p class="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">
+                                    Check columns from the category list on the left to add them to the default Data Explorer view.
+                                </p>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 3: Global Column Availability (Permissions Allowlist) -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden" x-data="{ openAllowlist: false }">
+                <button type="button" @click="openAllowlist = !openAllowlist"
+                        class="w-full flex items-center justify-between gap-3 px-6 py-5 text-left hover:bg-slate-50/70 transition">
+                    <div class="flex items-center gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                        </span>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">Global Column Availability Allowlist</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Strictly restrict which columns users can ever select in the Data Explorer. (Advanced)</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs font-medium text-slate-500" x-text="enabledCols.length === ALL_COLS.length ? 'All Columns Allowed' : (enabledCols.length + ' allowed')"></span>
+                        <svg class="h-5 w-5 text-slate-400 transition-transform duration-200" :class="openAllowlist && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    </div>
+                </button>
+
+                <div x-show="openAllowlist" x-collapse>
+                    <div class="px-6 pb-6 pt-2 border-t border-slate-100">
+                        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                            <div class="flex gap-2">
+                                <button type="button" @click="enableAll()"
+                                        class="px-3.5 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 shadow-xs transition">
+                                    Enable All Columns
+                                </button>
+                                <button type="button" @click="disableAll()"
+                                        class="px-3.5 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 shadow-xs transition">
+                                    Disable All Columns
+                                </button>
+                            </div>
+                            <div class="relative w-full sm:w-64">
+                                <input type="text" x-model="enabledColSearch" placeholder="Filter allowlist columns…"
+                                       class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-700 focus:border-slate-700">
+                                <svg class="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                             {% for cat_key, cat in column_categories.items %}
-                            <div>
-                                <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{{ cat.title }}</h3>
-                                <div class="space-y-1.5">
+                            <div x-show="enabledCategoryHasMatch({{ cat.columns|safe }})" class="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/50">
+                                <h4 class="text-xs font-bold text-slate-600 uppercase tracking-wider pb-2 mb-2 border-b border-slate-200">{{ cat.title }}</h4>
+                                <div class="space-y-1.5 max-h-56 overflow-y-auto">
                                     {% for col in cat.columns %}
-                                    <label class="flex items-center gap-2 cursor-pointer">
+                                    <label x-show="!enabledColSearch || '{{ column_definitions|get_item:col|lower }}'.includes(enabledColSearch.toLowerCase().trim()) || '{{ col|lower }}'.includes(enabledColSearch.toLowerCase().trim())"
+                                           class="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-white transition text-xs">
                                         <input type="checkbox" x-model="enabledCols" value="{{ col }}"
-                                               class="rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                                        <span class="text-sm text-slate-700">{{ column_definitions|get_item:col }}</span>
+                                               class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-700">
+                                        <span class="text-slate-700 truncate">{{ column_definitions|get_item:col }}</span>
                                     </label>
                                     {% endfor %}
                                 </div>
@@ -441,202 +825,596 @@
                         </div>
                     </div>
                 </div>
-            </section>
+            </div>
 
-            <!-- ══ Dataset Builder ═══════════════════════════════════════════ -->
-            <h2 class="px-1 pt-2 text-xs font-bold uppercase tracking-widest text-slate-400">Dataset Builder</h2>
-
-            <!-- ── Section 7: Allowed Dataset Tables ─────────────────────── -->
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden" x-data="{ open: true }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18M9 17h6m-9 4h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                        </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Dataset Builder Tables</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Select which database tables can be queried and joined in the Dataset Builder. Leave <strong>all unchecked</strong> to allow every table.</span>
-                        </span>
-                    </span>
-                    <svg class="h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            <!-- Tab Footer Navigation (Solid monotone buttons) -->
+            <div class="flex items-center justify-between pt-2">
+                <button type="button" @click="setTab('home')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition">
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    <span>Previous: Home Dashboard</span>
                 </button>
+                <button type="button" @click="setTab('datasets')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition">
+                    <span>Next: Dataset Builder</span>
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+            </div>
+        </div>
 
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100">
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-                            {% for table_key, table_label in dataset_tables %}
-                            <label class="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-slate-50 transition-colors">
-                                <input type="checkbox" name="enabled_dataset_tables" value="{{ table_key }}"
-                                       {% if table_key in enabled_dataset_tables %}checked{% endif %}
-                                       class="rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                                <span class="text-sm text-slate-700 font-medium">{{ table_label }}</span>
-                            </label>
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- TAB 4: DATASET BUILDER TABLES                                      -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <div x-show="currentTab === 'datasets'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-6">
+
+            <!-- Tab Header Banner (Solid white card, no gradients) -->
+            <div class="rounded-2xl bg-white border border-slate-200/90 p-6 shadow-xs">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 mb-2 border border-slate-200">
+                            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+                            Data Warehouse Table Access Controls
+                        </span>
+                        <h2 class="text-xl font-bold text-slate-900 tracking-tight">Dataset Builder Permissions</h2>
+                        <p class="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl">
+                            Select which PostgreSQL database tables can be queried, joined, and analyzed by users in the interactive Dataset Builder.
+                        </p>
+                    </div>
+                    <div class="bg-slate-50 rounded-xl px-4 py-2.5 text-xs text-slate-600 border border-slate-200 shrink-0">
+                        <span class="block text-[10px] uppercase font-bold tracking-wider text-slate-400">Policy Mode</span>
+                        <span class="font-bold text-slate-800 text-base">{% if enabled_dataset_tables %}Explicit Allowlist{% else %}Unrestricted{% endif %}</span>
+                        <span class="block text-[10px] text-slate-500">{% if enabled_dataset_tables %}{{ enabled_dataset_tables|length }} tables checked{% else %}All tables allowed{% endif %}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card: Allowed Dataset Tables -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18M9 17h6m-9 4h12a2 2 0 002-2V7a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        </span>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">Allowed Database Tables</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Leave <strong>all tables unchecked</strong> to allow every database table by default.</p>
+                        </div>
+                    </div>
+
+                    <!-- Search filter -->
+                    <div class="relative w-full sm:w-64">
+                        <input type="text" x-model="tableSearch" placeholder="Search tables by name…"
+                               class="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-700 focus:border-slate-700">
+                        <svg class="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    </div>
+                </div>
+
+                <div class="p-6">
+                    <!-- Helper actions toolbar -->
+                    <div class="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200 mb-5">
+                        <div class="flex items-center gap-2">
+                            <button type="button" @click="checkAllTables(true)"
+                                    class="px-3 py-1 text-xs font-semibold text-slate-800 bg-white rounded-lg border border-slate-300 hover:bg-slate-100 shadow-xs transition">
+                                Select All
+                            </button>
+                            <button type="button" @click="checkAllTables(false)"
+                                    class="px-3 py-1 text-xs font-semibold text-slate-700 bg-white rounded-lg border border-slate-300 hover:bg-slate-100 shadow-xs transition">
+                                Clear All (Allow All)
+                            </button>
+                        </div>
+                        <p class="text-[11px] text-slate-600 font-medium">
+                            Tip: When no tables are checked, users are permitted to access all whitelisted warehouse tables.
+                        </p>
+                    </div>
+
+                    <!-- Responsive Table Grid -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {% for table_key, table_label in dataset_tables %}
+                        <label x-show="!tableSearch || '{{ table_label|lower }}'.includes(tableSearch.toLowerCase()) || '{{ table_key|lower }}'.includes(tableSearch.toLowerCase())"
+                               class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer select-none">
+                            <input type="checkbox" name="enabled_dataset_tables" value="{{ table_key }}"
+                                   {% if table_key in enabled_dataset_tables %}checked{% endif %}
+                                   class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-700 dataset-table-checkbox">
+                            <div class="min-w-0 flex-1">
+                                <span class="block text-xs font-bold text-slate-800 truncate">{{ table_label }}</span>
+                                <span class="block text-[10px] text-slate-400 font-mono truncate">{{ table_key }}</span>
+                            </div>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab Footer Navigation (Solid monotone buttons) -->
+            <div class="flex items-center justify-between pt-2">
+                <button type="button" @click="setTab('explorer')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition">
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    <span>Previous: Data Explorer</span>
+                </button>
+                <button type="button" @click="setTab('summary')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition">
+                    <span>Next: Student Summary</span>
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <!-- TAB 5: STUDENT SUMMARY                                             -->
+        <!-- ══════════════════════════════════════════════════════════════════ -->
+        <div x-show="currentTab === 'summary'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-6">
+
+            <!-- Tab Header Banner (Solid white card, no gradients) -->
+            <div class="rounded-2xl bg-white border border-slate-200/90 p-6 shadow-xs">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 mb-2 border border-slate-200">
+                            <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                            Student Profile Overlay &amp; Graduation Progress
+                        </span>
+                        <h2 class="text-xl font-bold text-slate-900 tracking-tight">Student Summary &amp; Diploma Benchmarks</h2>
+                        <p class="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl">
+                            Select which modules and recognition indicators appear on the student profile modal, and fine-tune expected graduation credits per subject and grade level.
+                        </p>
+                    </div>
+                    <div class="bg-slate-50 rounded-xl px-4 py-2.5 text-xs text-slate-600 border border-slate-200 shrink-0">
+                        <span class="block text-[10px] uppercase font-bold tracking-wider text-slate-400">Profile Tab</span>
+                        <span class="font-bold text-slate-800 text-base">Always Enabled</span>
+                        <span class="block text-[10px] text-slate-500">Demographics &amp; Programs</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 1: Summary Modules & Indicators (Option 1: Access Policy Cards) -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                            <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        </span>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">Student Summary Content Modules</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Define access policies per module based on user roles and specific email accounts. No confusing global master switches.</p>
+                        </div>
+                    </div>
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 ring-1 ring-slate-200"
+                          x-text="summaryRulesSummaryText()"></span>
+                </div>
+
+                <div class="p-6 space-y-8">
+
+                    <!-- Group 1: Content Tabs -->
+                    <div>
+                        <div class="flex items-center justify-between pb-2 mb-4 border-b border-slate-100">
+                            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500">Content Tabs (Summary Pages)</h4>
+                            <span class="text-xs text-slate-400">Tests, marks, requirements &amp; CTE</span>
+                        </div>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {% for m in summary_modules %}
+                            {% if m.group == 'Content tabs' %}
+                            <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs transition hover:border-slate-300">
+                                <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+                                    <div class="min-w-0 flex-1">
+                                        <span class="text-sm font-bold text-slate-900 block truncate">{{ m.label }}</span>
+                                        <span class="text-xs text-slate-500 block mt-0.5 leading-relaxed">{{ m.help }}</span>
+                                    </div>
+                                    <!-- Dynamic Status Badge -->
+                                    <div class="shrink-0">
+                                        <span x-show="getModuleMode('{{ m.key }}') === 'all'"
+                                              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-slate-600"></span>
+                                            Everyone
+                                        </span>
+                                        <span x-show="getModuleMode('{{ m.key }}') === 'restricted'"
+                                              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-900 text-white shadow-xs">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-white"></span>
+                                            <span x-text="restrictedBadgeText('{{ m.key }}')"></span>
+                                        </span>
+                                        <span x-show="getModuleMode('{{ m.key }}') === 'disabled'"
+                                              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-slate-50 text-slate-400 ring-1 ring-slate-200">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
+                                            Disabled
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- 3-button Access Policy selector -->
+                                <div class="pt-2">
+                                    <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Who can view this module?</span>
+                                    <div class="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200 w-full">
+                                        <button type="button" @click="setModuleMode('{{ m.key }}', 'all')"
+                                                class="flex-1 py-1.5 text-xs font-semibold rounded-lg transition"
+                                                :class="getModuleMode('{{ m.key }}') === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'">
+                                            Everyone
+                                        </button>
+                                        <button type="button" @click="setModuleMode('{{ m.key }}', 'restricted')"
+                                                class="flex-1 py-1.5 text-xs font-semibold rounded-lg transition"
+                                                :class="getModuleMode('{{ m.key }}') === 'restricted' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'">
+                                            Specific Roles &amp; Emails
+                                        </button>
+                                        <button type="button" @click="setModuleMode('{{ m.key }}', 'disabled')"
+                                                class="flex-1 py-1.5 text-xs font-semibold rounded-lg transition"
+                                                :class="getModuleMode('{{ m.key }}') === 'disabled' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'">
+                                            Disabled
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Collapsible drawer for 'restricted' mode -->
+                                <div x-show="getModuleMode('{{ m.key }}') === 'restricted'" x-collapse class="mt-4 pt-4 border-t border-slate-100 space-y-4">
+                                    <!-- Allowed Roles -->
+                                    <div>
+                                        <div class="flex items-center justify-between mb-1.5">
+                                            <span class="text-xs font-bold text-slate-700">Allowed System Roles</span>
+                                            <span class="text-[10px] text-slate-400">Click to grant</span>
+                                        </div>
+                                        <div class="flex flex-wrap gap-1.5">
+                                            <template x-for="role in AVAILABLE_ROLES" :key="role">
+                                                <button type="button" @click="toggleRole('{{ m.key }}', role)"
+                                                        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition cursor-pointer select-none"
+                                                        :class="hasRole('{{ m.key }}', role) ? 'bg-slate-900 text-white font-semibold ring-1 ring-slate-900 shadow-xs' : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200'">
+                                                    <span x-show="hasRole('{{ m.key }}', role)">
+                                                        <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                                    </span>
+                                                    <span x-text="role"></span>
+                                                </button>
+                                            </template>
+                                        </div>
+                                    </div>
+
+                                    <!-- Specific Email Allowlist -->
+                                    <div>
+                                        <div class="flex items-center justify-between mb-1.5">
+                                            <span class="text-xs font-bold text-slate-700">Specific Email Allowlist</span>
+                                            <span class="text-[10px] text-slate-400">Grant individual accounts</span>
+                                        </div>
+
+                                        <!-- Email tags -->
+                                        <div class="flex flex-wrap gap-1.5 mb-2" x-show="(summaryRules['{{ m.key }}']?.emails || []).length">
+                                            <template x-for="(email, eIdx) in (summaryRules['{{ m.key }}']?.emails || [])" :key="email">
+                                                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs bg-slate-100 text-slate-800 border border-slate-200">
+                                                    <span x-text="email"></span>
+                                                    <button type="button" @click="removeEmail('{{ m.key }}', eIdx)" class="text-slate-400 hover:text-slate-900" title="Remove email">
+                                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                                    </button>
+                                                </span>
+                                            </template>
+                                        </div>
+
+                                        <!-- Add email input -->
+                                        <div class="flex gap-2">
+                                            <input type="email" x-model="emailInputs['{{ m.key }}']" @keydown.enter.prevent="addEmail('{{ m.key }}')" placeholder="counselor@desertsands.us…"
+                                                   class="flex-1 px-3 py-1.5 text-xs rounded-xl border border-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-700 focus:border-slate-700">
+                                            <button type="button" @click="addEmail('{{ m.key }}')"
+                                                    class="px-3 py-1.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition">
+                                                + Add
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
                             {% endfor %}
                         </div>
                     </div>
+
+                    <!-- Group 2: Header Indicators -->
+                    <div>
+                        <div class="flex items-center justify-between pb-2 mb-4 border-b border-slate-100">
+                            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500">Header Indicators (Profile Banner)</h4>
+                            <span class="text-xs text-slate-400">Recognition &amp; student support badges</span>
+                        </div>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {% for m in summary_modules %}
+                            {% if m.group == 'Header indicators' %}
+                            <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs transition hover:border-slate-300">
+                                <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+                                    <div class="min-w-0 flex-1">
+                                        <span class="text-sm font-bold text-slate-900 block truncate">{{ m.label }}</span>
+                                        <span class="text-xs text-slate-500 block mt-0.5 leading-relaxed">{{ m.help }}</span>
+                                    </div>
+                                    <!-- Dynamic Status Badge -->
+                                    <div class="shrink-0">
+                                        <span x-show="getModuleMode('{{ m.key }}') === 'all'"
+                                              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-slate-600"></span>
+                                            Everyone
+                                        </span>
+                                        <span x-show="getModuleMode('{{ m.key }}') === 'restricted'"
+                                              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-900 text-white shadow-xs">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-white"></span>
+                                            <span x-text="restrictedBadgeText('{{ m.key }}')"></span>
+                                        </span>
+                                        <span x-show="getModuleMode('{{ m.key }}') === 'disabled'"
+                                              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-slate-50 text-slate-400 ring-1 ring-slate-200">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
+                                            Disabled
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- 3-button Access Policy selector -->
+                                <div class="pt-2">
+                                    <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Who can view this indicator?</span>
+                                    <div class="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200 w-full">
+                                        <button type="button" @click="setModuleMode('{{ m.key }}', 'all')"
+                                                class="flex-1 py-1.5 text-xs font-semibold rounded-lg transition"
+                                                :class="getModuleMode('{{ m.key }}') === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'">
+                                            Everyone
+                                        </button>
+                                        <button type="button" @click="setModuleMode('{{ m.key }}', 'restricted')"
+                                                class="flex-1 py-1.5 text-xs font-semibold rounded-lg transition"
+                                                :class="getModuleMode('{{ m.key }}') === 'restricted' ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'">
+                                            Specific Roles &amp; Emails
+                                        </button>
+                                        <button type="button" @click="setModuleMode('{{ m.key }}', 'disabled')"
+                                                class="flex-1 py-1.5 text-xs font-semibold rounded-lg transition"
+                                                :class="getModuleMode('{{ m.key }}') === 'disabled' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'">
+                                            Disabled
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Collapsible drawer for 'restricted' mode -->
+                                <div x-show="getModuleMode('{{ m.key }}') === 'restricted'" x-collapse class="mt-4 pt-4 border-t border-slate-100 space-y-4">
+                                    <!-- Allowed Roles -->
+                                    <div>
+                                        <div class="flex items-center justify-between mb-1.5">
+                                            <span class="text-xs font-bold text-slate-700">Allowed System Roles</span>
+                                            <span class="text-[10px] text-slate-400">Click to grant</span>
+                                        </div>
+                                        <div class="flex flex-wrap gap-1.5">
+                                            <template x-for="role in AVAILABLE_ROLES" :key="role">
+                                                <button type="button" @click="toggleRole('{{ m.key }}', role)"
+                                                        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition cursor-pointer select-none"
+                                                        :class="hasRole('{{ m.key }}', role) ? 'bg-slate-900 text-white font-semibold ring-1 ring-slate-900 shadow-xs' : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200'">
+                                                    <span x-show="hasRole('{{ m.key }}', role)">
+                                                        <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                                    </span>
+                                                    <span x-text="role"></span>
+                                                </button>
+                                            </template>
+                                        </div>
+                                    </div>
+
+                                    <!-- Specific Email Allowlist -->
+                                    <div>
+                                        <div class="flex items-center justify-between mb-1.5">
+                                            <span class="text-xs font-bold text-slate-700">Specific Email Allowlist</span>
+                                            <span class="text-[10px] text-slate-400">Grant individual accounts</span>
+                                        </div>
+
+                                        <!-- Email tags -->
+                                        <div class="flex flex-wrap gap-1.5 mb-2" x-show="(summaryRules['{{ m.key }}']?.emails || []).length">
+                                            <template x-for="(email, eIdx) in (summaryRules['{{ m.key }}']?.emails || [])" :key="email">
+                                                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs bg-slate-100 text-slate-800 border border-slate-200">
+                                                    <span x-text="email"></span>
+                                                    <button type="button" @click="removeEmail('{{ m.key }}', eIdx)" class="text-slate-400 hover:text-slate-900" title="Remove email">
+                                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                                    </button>
+                                                </span>
+                                            </template>
+                                        </div>
+
+                                        <!-- Add email input -->
+                                        <div class="flex gap-2">
+                                            <input type="email" x-model="emailInputs['{{ m.key }}']" @keydown.enter.prevent="addEmail('{{ m.key }}')" placeholder="counselor@desertsands.us…"
+                                                   class="flex-1 px-3 py-1.5 text-xs rounded-xl border border-slate-300 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-700 focus:border-slate-700">
+                                            <button type="button" @click="addEmail('{{ m.key }}')"
+                                                    class="px-3 py-1.5 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl transition">
+                                                + Add
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
+
                 </div>
-            </section>
+            </div>
 
-            <!-- ══ Student Summary ═══════════════════════════════════════════ -->
-            <h2 class="px-1 pt-2 text-xs font-bold uppercase tracking-widest text-slate-400">Student Summary</h2>
-
-            <section class="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 overflow-hidden" x-data="{ open: true }">
-                <button type="button" @click="open = !open"
-                        class="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-slate-50/70 transition">
-                    <span class="flex items-center gap-3 min-w-0">
-                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                        </span>
-                        <span class="min-w-0">
-                            <span class="block text-sm font-semibold text-slate-900">Student Summary Contents</span>
-                            <span class="block text-xs text-slate-500 mt-0.5">Choose which tabs and header indicators appear in the student summary pop-up.</span>
-                        </span>
+            <!-- Card 2: Diploma On-Track Expected Credits Matrix -->
+            <div class="bg-white rounded-2xl shadow-sm ring-1 ring-slate-200/90 overflow-hidden">
+                <div class="px-6 py-5 border-b border-slate-100 flex items-center gap-3">
+                    <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 border border-slate-200/60">
+                        <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
                     </span>
-                    <svg class="h-5 w-5 shrink-0 text-slate-400 transition-transform duration-200" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-                </button>
-
-                <div x-show="open" x-collapse>
-                    <div class="px-5 pb-5 pt-4 border-t border-slate-100 space-y-5">
-                        {% for group_label, items in summary_sections %}
-                        <div>
-                            <h4 class="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-2">{{ group_label }}</h4>
-                            <div class="grid sm:grid-cols-2 gap-2">
-                                {% for item in items %}
-                                <label class="flex items-start gap-3 cursor-pointer rounded-lg border border-slate-200 p-3 hover:bg-slate-50 transition">
-                                    <input type="checkbox" name="{{ item.field }}" {% if item.checked %}checked{% endif %}
-                                           class="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500">
-                                    <span>
-                                        <span class="block text-sm font-medium text-slate-700">{{ item.label }}</span>
-                                        <span class="block text-[11px] text-slate-500 mt-0.5">{{ item.help }}</span>
-                                    </span>
-                                </label>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        {% endfor %}
-
-                        <div>
-                            <h4 class="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-2">Diploma on-track — expected credits per year</h4>
-                            <p class="text-[11px] text-slate-500 mb-2">Expected diploma credits by subject and grade, used by the On Track view (grades 9–11). Credits are in whole 5-credit units.</p>
-                            <div class="overflow-x-auto rounded-lg border border-slate-200">
-                                <table class="min-w-full">
-                                    <thead class="bg-slate-50">
-                                        <tr class="text-[10px] uppercase tracking-wider text-slate-400">
-                                            <th class="px-3 py-2 text-left font-semibold">Subject</th>
-                                            <th class="px-3 py-2 text-center font-semibold">Grade 9</th>
-                                            <th class="px-3 py-2 text-center font-semibold">Grade 10</th>
-                                            <th class="px-3 py-2 text-center font-semibold">Grade 11</th>
-                                            <th class="px-3 py-2 text-center font-semibold">Grade 12</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="divide-y divide-slate-100">
-                                        {% for row in diploma_expected_rows %}
-                                        <tr>
-                                            <td class="px-3 py-1.5 text-sm text-slate-700 whitespace-nowrap">{{ row.subject }}</td>
-                                            {% for v in row.years %}
-                                            <td class="px-3 py-1.5 text-center">
-                                                <input type="number" min="0" step="5" name="de_{{ row.index }}_{{ forloop.counter0 }}" value="{{ v }}"
-                                                       class="w-20 rounded-md border-slate-300 shadow-sm text-sm text-center focus:border-emerald-500 focus:ring-emerald-500">
-                                            </td>
-                                            {% endfor %}
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <p class="text-[11px] text-slate-400">The Profile tab (demographics, school, language, services) is always shown. Changes apply to everyone after saving.</p>
+                    <div>
+                        <h3 class="text-base font-bold text-slate-900">Diploma On-Track — Expected Credits Per Year</h3>
+                        <p class="text-xs text-slate-500 mt-0.5">Defines the expected cumulative credits required per subject at each grade level (Grades 9–12) for DSUSD graduation tracking.</p>
                     </div>
                 </div>
-            </section>
 
+                <div class="p-6">
+                    <div class="overflow-x-auto rounded-xl border border-slate-200 shadow-xs">
+                        <table class="min-w-full divide-y divide-slate-200">
+                            <thead class="bg-slate-50">
+                                <tr>
+                                    <th scope="col" class="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Subject Area</th>
+                                    <th scope="col" class="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-500 w-28">Grade 9</th>
+                                    <th scope="col" class="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-500 w-28">Grade 10</th>
+                                    <th scope="col" class="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-500 w-28">Grade 11</th>
+                                    <th scope="col" class="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-500 w-28">Grade 12</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100 bg-white">
+                                {% for row in diploma_expected_rows %}
+                                <tr class="hover:bg-slate-50/70 transition">
+                                    <td class="px-4 py-2.5 text-xs font-bold text-slate-800 whitespace-nowrap">
+                                        {{ row.subject }}
+                                    </td>
+                                    {% for v in row.years %}
+                                    <td class="px-4 py-2 text-center">
+                                        <input type="number" min="0" step="5" name="de_{{ row.index }}_{{ forloop.counter0 }}" value="{{ v }}"
+                                               class="w-20 rounded-lg border-slate-300 shadow-xs text-xs font-semibold text-center focus:border-slate-800 focus:ring-slate-800 py-1.5">
+                                    </td>
+                                    {% endfor %}
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="mt-3 text-[11px] text-slate-400">
+                        Credits must be specified in increments of 5. These target thresholds determine whether high school students are flagged as On Track or Off Track.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Tab Footer Navigation (Solid monotone buttons) -->
+            <div class="flex items-center justify-between pt-2">
+                <button type="button" @click="setTab('datasets')"
+                        class="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-xl transition">
+                    <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    <span>Previous: Dataset Builder</span>
+                </button>
+                <button type="submit" form="settings-form"
+                        class="inline-flex items-center gap-2 px-5 py-2 text-xs font-bold uppercase tracking-wider text-white bg-slate-900 hover:bg-slate-800 rounded-xl shadow-sm transition">
+                    <span>Save All Settings</span>
+                </button>
+            </div>
         </div>
 
-        <!-- Bottom save -->
-        <div class="flex justify-end pt-2">
-            <button type="submit"
-                    class="px-6 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 shadow-sm transition-colors">
-                Save Settings
-            </button>
-        </div>
     </form>
 </div>
 
+<!-- ══ Page Logic & Controller Script ═════════════════════════════════════ -->
 <script>
-// Data injected as proper JSON from the view — no Python-repr edge cases
-const ACTIVE_DEFAULT = {{ active_default_columns_json|safe }};
-const ACTIVE_ENABLED = {{ active_enabled_columns_json|safe }};
-const ALL_COLS       = {{ all_column_keys_json|safe }};
-const COLUMN_LABELS  = {{ column_labels_json|safe }};
-const CHART_CHOICES  = {{ chart_choices_json|safe }};
-const HOME_FORCED    = {{ home_forced_charts_json|safe }};
+// Data injected safely as native JSON
+const ACTIVE_DEFAULT        = {{ active_default_columns_json|safe }};
+const ACTIVE_ENABLED        = {{ active_enabled_columns_json|safe }};
+const ALL_COLS              = {{ all_column_keys_json|safe }};
+const COLUMN_LABELS         = {{ column_labels_json|safe }};
+const CHART_CHOICES         = {{ chart_choices_json|safe }};
+const HOME_FORCED           = {{ home_forced_charts_json|safe }};
+const SUMMARY_ACCESS_RULES  = {{ summary_access_rules_json|safe }};
+const AVAILABLE_ROLES       = {{ available_roles_json|safe }};
 
 function settingsPage() {
-    return {
-        dirty: false,
-        markDirty() { this.dirty = true; }
-    };
-}
+    const validTabs = ['general', 'home', 'explorer', 'datasets', 'summary'];
+    const hash = window.location.hash.replace('#', '');
+    const savedTab = localStorage.getItem('dw_project_settings_tab');
+    const initialTab = (hash && validTabs.includes(hash))
+        ? hash
+        : ((savedTab && validTabs.includes(savedTab)) ? savedTab : 'general');
 
-function forcedChartsManager() {
     return {
-        forcedIds: HOME_FORCED.slice(),
-        _ready: false,
-        init() { this.sync(); this._ready = true; },
-        _markDirty() {
-            if (!this._ready) return;
-            document.getElementById('settings-form').dispatchEvent(new Event('input', { bubbles: true }));
+        currentTab: initialTab,
+        dirty: false,
+        homePageWidth: '{{ home_page_width }}',
+
+        // Search inputs
+        yearSearch: '',
+        forcedSearch: '',
+        defaultColSearch: '',
+        enabledColSearch: '',
+        tableSearch: '',
+
+        // Home forced charts
+        forcedIds: Array.isArray(HOME_FORCED) ? HOME_FORCED.slice() : [],
+
+        // Default Columns
+        defaultCols: Array.isArray(ACTIVE_DEFAULT) ? ACTIVE_DEFAULT.slice() : [],
+        dragIdx: null,
+
+        // Enabled Columns allowlist
+        enabledCols: ACTIVE_ENABLED ? ACTIVE_ENABLED.slice() : ALL_COLS.slice(),
+
+        // Summary Access Rules
+        summaryRules: JSON.parse(JSON.stringify(SUMMARY_ACCESS_RULES || {})),
+        emailInputs: {},
+
+        init() {
+            this.syncHiddenFields();
+            window.addEventListener('hashchange', () => {
+                const h = window.location.hash.replace('#', '');
+                if (validTabs.includes(h)) {
+                    this.currentTab = h;
+                }
+            });
         },
-        sync() {
-            document.getElementById('home_forced_charts_json').value = JSON.stringify(this.forcedIds);
+
+        setTab(tab) {
+            this.currentTab = tab;
+            localStorage.setItem('dw_project_settings_tab', tab);
+            try {
+                history.replaceState(null, null, '#' + tab);
+            } catch (e) {}
         },
-        toggle(id) {
+
+        markDirty() {
+            this.dirty = true;
+        },
+
+        syncHiddenFields() {
+            const defInput = document.getElementById('default_columns_json');
+            if (defInput) defInput.value = JSON.stringify(this.defaultCols);
+
+            const forcedInput = document.getElementById('home_forced_charts_json');
+            if (forcedInput) forcedInput.value = JSON.stringify(this.forcedIds);
+
+            const enInput = document.getElementById('enabled_columns_json');
+            if (enInput) {
+                const allSelected = this.enabledCols.length === ALL_COLS.length;
+                enInput.value = allSelected ? '' : JSON.stringify(this.enabledCols);
+            }
+
+            const sumInput = document.getElementById('summary_access_rules_json');
+            if (sumInput) sumInput.value = JSON.stringify(this.summaryRules);
+        },
+
+        // ── Forced Charts Helpers ──
+        toggleForced(id) {
             id = Number(id);
             const arr = this.forcedIds.slice();
-            const i = arr.indexOf(id);
-            if (i >= 0) { arr.splice(i, 1); } else { arr.push(id); }
+            const idx = arr.indexOf(id);
+            if (idx >= 0) {
+                arr.splice(idx, 1);
+            } else {
+                arr.push(id);
+            }
             this.forcedIds = arr;
-            this.sync();
-            this._markDirty();
+            this.syncHiddenFields();
+            this.markDirty();
         },
-        isForced(id) { return this.forcedIds.indexOf(Number(id)) !== -1; },
+
+        isForced(id) {
+            return this.forcedIds.indexOf(Number(id)) !== -1;
+        },
+
         chartName(id) {
-            const c = CHART_CHOICES.find(function (ch) { return ch.id === Number(id); });
+            const c = CHART_CHOICES.find(ch => ch.id === Number(id));
             return c ? c.name : 'Chart #' + id;
         },
+
         filteredCharts() {
             const q = (this.forcedSearch || '').toLowerCase().trim();
-            return CHART_CHOICES.filter(function (c) {
+            return CHART_CHOICES.filter(c => {
                 return !q || (c.name || '').toLowerCase().indexOf(q) !== -1;
             });
         },
-    };
-}
 
-function defaultColumnManager() {
-    return {
-        defaultCols: ACTIVE_DEFAULT.slice(),
-        dragIdx: null,
-        _ready: false,
-        init() { this.sync(); this._ready = true; },
-        _markDirty() {
-            if (!this._ready) return;
-            document.getElementById('settings-form').dispatchEvent(new Event('input', { bubbles: true }));
+        // ── Default Columns Helpers ──
+        defaultLabel(col) {
+            return COLUMN_LABELS[col] || col;
         },
-        sync() {
-            document.getElementById('default_columns_json').value = JSON.stringify(this.defaultCols);
-        },
-        defaultLabel(col) { return COLUMN_LABELS[col] || col; },
+
         toggleDefault(col) {
             const arr = this.defaultCols.slice();
-            const i = arr.indexOf(col);
-            if (i >= 0) { arr.splice(i, 1); } else { arr.push(col); }
+            const idx = arr.indexOf(col);
+            if (idx >= 0) {
+                arr.splice(idx, 1);
+            } else {
+                arr.push(col);
+            }
             this.defaultCols = arr;
-            this.sync();
-            this._markDirty();
+            this.syncHiddenFields();
+            this.markDirty();
         },
+
         moveDefault(col, dir) {
             const arr = this.defaultCols.slice();
             const i = arr.indexOf(col);
@@ -644,15 +1422,35 @@ function defaultColumnManager() {
             if (i < 0 || j < 0 || j >= arr.length) return;
             [arr[i], arr[j]] = [arr[j], arr[i]];
             this.defaultCols = arr;
-            this.sync();
-            this._markDirty();
+            this.syncHiddenFields();
+            this.markDirty();
         },
+
         removeDefault(col) {
             this.defaultCols = this.defaultCols.filter(c => c !== col);
-            this.sync();
-            this._markDirty();
+            this.syncHiddenFields();
+            this.markDirty();
         },
-        defaultDragStart(idx) { this.dragIdx = idx; },
+
+        clearAllDefaults() {
+            this.defaultCols = [];
+            this.syncHiddenFields();
+            this.markDirty();
+        },
+
+        categoryHasMatch(cols) {
+            if (!this.defaultColSearch) return true;
+            const q = this.defaultColSearch.toLowerCase().trim();
+            return cols.some(col => {
+                const label = (COLUMN_LABELS[col] || col).toLowerCase();
+                return label.includes(q) || col.toLowerCase().includes(q);
+            });
+        },
+
+        defaultDragStart(idx) {
+            this.dragIdx = idx;
+        },
+
         defaultDragOver(evt, idx) {
             evt.preventDefault();
             if (this.dragIdx === null || this.dragIdx === idx) return;
@@ -661,30 +1459,126 @@ function defaultColumnManager() {
             arr.splice(idx, 0, moved);
             this.defaultCols = arr;
             this.dragIdx = idx;
-            this.sync();
-            this._markDirty();
+            this.syncHiddenFields();
+            this.markDirty();
         },
-        defaultDragEnd() { this.dragIdx = null; }
-    };
-}
 
-function enabledColumnManager() {
-    return {
-        // null = all enabled; represent as full list on client side
-        enabledCols: ACTIVE_ENABLED ? ACTIVE_ENABLED.slice() : ALL_COLS.slice(),
-        init() {
-            this.$watch('enabledCols', cols => {
-                // Send empty string (= null in view) when all cols are selected
-                const allSelected = cols.length === ALL_COLS.length;
-                document.getElementById('enabled_columns_json').value =
-                    allSelected ? '' : JSON.stringify(cols);
-            });
-            // Seed the hidden field on page load
-            document.getElementById('enabled_columns_json').value =
-                ACTIVE_ENABLED ? JSON.stringify(ACTIVE_ENABLED) : '';
+        defaultDragEnd() {
+            this.dragIdx = null;
         },
-        enableAll()  { this.enabledCols = ALL_COLS.slice(); },
-        disableAll() { this.enabledCols = []; }
+
+        // ── Enabled Columns (Allowlist) Helpers ──
+        enableAll() {
+            this.enabledCols = ALL_COLS.slice();
+            this.syncHiddenFields();
+            this.markDirty();
+        },
+
+        disableAll() {
+            this.enabledCols = [];
+            this.syncHiddenFields();
+            this.markDirty();
+        },
+
+        enabledCategoryHasMatch(cols) {
+            if (!this.enabledColSearch) return true;
+            const q = this.enabledColSearch.toLowerCase().trim();
+            return cols.some(col => {
+                const label = (COLUMN_LABELS[col] || col).toLowerCase();
+                return label.includes(q) || col.toLowerCase().includes(q);
+            });
+        },
+
+        // ── Dataset Tables Helpers ──
+        checkAllTables(checked) {
+            const boxes = document.querySelectorAll('.dataset-table-checkbox');
+            boxes.forEach(cb => { cb.checked = checked; });
+            this.markDirty();
+        },
+
+        // ── Student Summary Access Rules Helpers (Option 1) ──
+        getModuleRule(key) {
+            if (!this.summaryRules[key]) {
+                this.summaryRules[key] = { mode: 'all', roles: [], emails: [] };
+            }
+            return this.summaryRules[key];
+        },
+
+        getModuleMode(key) {
+            return this.getModuleRule(key).mode || 'all';
+        },
+
+        setModuleMode(key, mode) {
+            const r = this.getModuleRule(key);
+            r.mode = mode;
+            this.syncHiddenFields();
+            this.markDirty();
+        },
+
+        hasRole(key, role) {
+            const roles = this.getModuleRule(key).roles || [];
+            return roles.includes(role);
+        },
+
+        toggleRole(key, role) {
+            const r = this.getModuleRule(key);
+            const arr = (r.roles || []).slice();
+            const idx = arr.indexOf(role);
+            if (idx >= 0) {
+                arr.splice(idx, 1);
+            } else {
+                arr.push(role);
+            }
+            r.roles = arr;
+            this.syncHiddenFields();
+            this.markDirty();
+        },
+
+        addEmail(key) {
+            const raw = (this.emailInputs[key] || '').trim().toLowerCase();
+            if (!raw || !raw.includes('@')) return;
+            const r = this.getModuleRule(key);
+            r.emails = r.emails || [];
+            if (!r.emails.includes(raw)) {
+                r.emails.push(raw);
+            }
+            this.emailInputs[key] = '';
+            this.syncHiddenFields();
+            this.markDirty();
+        },
+
+        removeEmail(key, idx) {
+            const r = this.getModuleRule(key);
+            if (r.emails && r.emails[idx] !== undefined) {
+                r.emails.splice(idx, 1);
+                this.syncHiddenFields();
+                this.markDirty();
+            }
+        },
+
+        restrictedBadgeText(key) {
+            const r = this.getModuleRule(key);
+            const rCount = (r.roles || []).length;
+            const eCount = (r.emails || []).length;
+            if (rCount === 0 && eCount === 0) {
+                return 'Restricted (None set)';
+            }
+            const parts = [];
+            if (rCount > 0) parts.push(rCount + (rCount === 1 ? ' role' : ' roles'));
+            if (eCount > 0) parts.push(eCount + (eCount === 1 ? ' email' : ' emails'));
+            return 'Restricted (' + parts.join(', ') + ')';
+        },
+
+        summaryRulesSummaryText() {
+            let active = 0;
+            const keys = Object.keys(this.summaryRules || {});
+            keys.forEach(k => {
+                if (this.summaryRules[k] && this.summaryRules[k].mode !== 'disabled') {
+                    active++;
+                }
+            });
+            return active + ' active modules';
+        }
     };
 }
 </script>

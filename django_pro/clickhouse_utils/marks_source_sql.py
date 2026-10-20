@@ -42,6 +42,19 @@ STUDENT_MARKS_FROM_ALT_COUNT = f"""
 SELECT COUNT(*) FROM ({STUDENT_MARKS_FROM_ALT_SELECT.strip()}) AS marks_live
 """
 
+def student_marks_pg_inline_relation() -> str:
+    """Parenthesized SELECT for PostgreSQL (live unnest from ``student_marks_table_alt``)."""
+    return f"({STUDENT_MARKS_FROM_ALT_SELECT.strip()})"
+
+
+def pg_sql_from_ch_marks_sql(sql: str) -> str:
+    """Rewrite ClickHouse ``analytics_student_marks`` to the live PG alt unnest subquery."""
+    if not sql:
+        return sql
+    sub = student_marks_pg_inline_relation()
+    return sql.replace('analytics_student_marks', sub)
+
+
 STUDENT_MARKS_LIST_COLUMN_NAMES = (
     'marks_id',
     'stu_annual_key',

@@ -49,15 +49,61 @@ SUMMARY_SECTION_FIELDS = {
 DEFAULT_SUMMARY_SECTIONS = {key: True for key in SUMMARY_SECTION_FIELDS}
 
 
-def get_summary_sections():
-    """Which student-summary sections are enabled (defaults to all on)."""
+def get_summary_sections(user=None):
+    """Which student-summary sections are enabled for a user (defaults to all on).
+
+    Evaluates the granular Access Policy per module:
+    - mode == 'all': enabled for all users
+    - mode == 'disabled': disabled for all users
+    - mode == 'restricted': enabled only if user has any of the allowed roles
+      OR user's email is in the allowed emails list.
+
+    Superusers and Project Admins always retain visibility to non-disabled sections.
+    """
     sections = dict(DEFAULT_SUMMARY_SECTIONS)
     try:
         cfg = get_project_config()
+        rules = getattr(cfg, 'summary_access_rules', None) or {}
+
+        # Precompute user role names & email if user provided
+        is_admin = False
+        user_roles = set()
+        user_email = ""
+        if user and getattr(user, 'is_authenticated', False):
+            if getattr(user, 'is_superuser', False) or getattr(user, 'is_project_admin', False):
+                is_admin = True
+            if hasattr(user, 'role_names'):
+                user_roles = set(user.role_names())
+            elif hasattr(user, 'roles'):
+                user_roles = set(user.roles.values_list('name', flat=True))
+            user_email = (getattr(user, 'email', '') or '').strip().lower()
+
         for key, field in SUMMARY_SECTION_FIELDS.items():
-            value = getattr(cfg, field, None)
-            if value is not None:
-                sections[key] = bool(value)
+            rule = rules.get(key)
+            if isinstance(rule, dict) and 'mode' in rule:
+                mode = rule.get('mode', 'all')
+                if mode == 'all':
+                    sections[key] = True
+                elif mode == 'disabled':
+                    sections[key] = False
+                elif mode == 'restricted':
+                    if is_admin:
+                        sections[key] = True
+                    elif user and getattr(user, 'is_authenticated', False):
+                        allowed_roles = set(rule.get('roles', []))
+                        allowed_emails = {
+                            e.strip().lower() for e in rule.get('emails', []) if e.strip()
+                        }
+                        has_role = bool(user_roles.intersection(allowed_roles))
+                        has_email = user_email in allowed_emails if user_email else False
+                        sections[key] = has_role or has_email
+                    else:
+                        sections[key] = False
+            else:
+                # Fallback to legacy boolean field
+                value = getattr(cfg, field, None)
+                if value is not None:
+                    sections[key] = bool(value)
     except Exception:
         pass
     return sections
@@ -73,18 +119,22 @@ def get_diploma_expected_credits():
         return {}
 
 
-def summary_sections_version():
+def summary_sections_version(user=None):
     """A short string that changes when the summary config changes.
 
     Folded into the student-summary cache key so section toggles and the
     diploma expected-credit settings take effect immediately.
     """
-    sections = get_summary_sections()
+    sections = get_summary_sections(user)
     bits = ''.join('1' if sections[k] else '0' for k in sorted(sections))
     try:
         import json as _json
         cfg = get_project_config()
-        extra = _json.dumps(cfg.diploma_expected_credits or {}, sort_keys=True)
+        extra_parts = [
+            _json.dumps(cfg.diploma_expected_credits or {}, sort_keys=True),
+            _json.dumps(cfg.summary_access_rules or {}, sort_keys=True),
+        ]
+        extra = ':'.join(extra_parts)
     except Exception:
         extra = ''
     digest = hashlib.md5(extra.encode('utf-8')).hexdigest()[:8]

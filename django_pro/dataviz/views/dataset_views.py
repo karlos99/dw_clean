@@ -840,3 +840,99 @@ def _dataset_filter_options_legacy(request, dataset_id):
         filter_labels[col_str] = col_str
 
     return JsonResponse({'filter_options': filter_options, 'filter_labels': filter_labels})
+
+
+@login_required
+@require_GET
+def dataloader_links_catalog_api(request):
+    """Published DataLoader sources attachable from the dataset builder."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+
+    from dataviz.utils.dataloader_links import (
+        catalog,
+        build_drag_toolbox_items,
+        build_survey_toolbox_groups,
+        build_fixed_loader_toolbox_items,
+    )
+    from dataviz.utils.compiler import get_allowed_dataset_tables
+
+    allowed = get_allowed_dataset_tables(for_dataset_builder=True)
+    data = catalog()
+    drag_items = build_drag_toolbox_items(data)
+    survey_groups = build_survey_toolbox_groups(data.get('surveys') or [])
+    fixed_loader_items = build_fixed_loader_toolbox_items(data)
+    blocked = []
+    for key in ('ap_results', 'ap_awards', 'sat_results'):
+        entry = data.get(key) or {}
+        tbl = entry.get('table')
+        if tbl and tbl not in allowed:
+            blocked.append(tbl)
+    if 'analytics_survey_responses' not in allowed:
+        blocked.append('analytics_survey_responses')
+
+    return JsonResponse({
+        'catalog': data,
+        'drag_items': drag_items,
+        'survey_groups': survey_groups,
+        'fixed_loader_items': fixed_loader_items,
+        'allowed_tables': sorted(allowed.keys()),
+        'blocked_tables': sorted(set(blocked)),
+    })
+
+
+@login_required
+@require_POST
+def dataloader_links_preview_api(request):
+    """Suggest join JSON and qualified columns for a DataLoader attachment."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON.'}, status=400)
+
+    from dataviz.utils.dataloader_links import (
+        suggest_attach_payload,
+        check_link_allowed,
+        LINK_TYPE_SURVEY,
+    )
+    from dataviz.utils.compiler import get_allowed_dataset_tables
+
+    link_type = (data.get('link_type') or '').strip()
+    base_table = (data.get('base_table') or '').strip()
+    if not link_type or not base_table:
+        return JsonResponse({'error': 'link_type and base_table are required.'}, status=400)
+
+    allowed = get_allowed_dataset_tables(for_dataset_builder=True)
+    if base_table not in allowed:
+        return JsonResponse({'error': f'Base table {base_table!r} is not allowed.'}, status=400)
+
+    link_err = check_link_allowed(link_type, allowed)
+    if link_err:
+        return JsonResponse({'error': link_err}, status=400)
+
+    selected = data.get('columns') or data.get('selected_columns') or []
+    try:
+        payload = suggest_attach_payload(
+            link_type,
+            base_table,
+            link_id=data.get('link_id') or '',
+            selected_columns=list(selected),
+            join_type=data.get('join_type') or 'left',
+            school_year_join=data.get('school_year_join'),
+        )
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+
+    column_aliases = {}
+    if link_type == LINK_TYPE_SURVEY:
+        from dataexploration.survey_utils import get_survey_columns
+        definitions = get_survey_columns().get('definitions') or {}
+        for col in payload.get('columns') or []:
+            bare = col.split('.', 1)[-1]
+            if bare in definitions:
+                column_aliases[col] = definitions[bare]
+
+    return JsonResponse({**payload, 'column_aliases': column_aliases})

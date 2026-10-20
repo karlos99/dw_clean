@@ -10,7 +10,7 @@ import math
 import os
 import re
 
-from studata.models import CurrentStudent, StudentEnroll, School, StudentMarks
+from studata.models import CurrentStudent, StudentEnroll, School
 
 
 def _student_summary_cache_version():
@@ -32,7 +32,7 @@ def _student_summary_cache_version():
         sections = summary_sections_version()
     except Exception:
         sections = ''
-    return 'v7:' + ':'.join(mtimes) + ':' + sections
+    return 'v8:' + ':'.join(mtimes) + ':' + sections
 
 
 def _resolve_ssid(ssid: str) -> str:
@@ -276,13 +276,15 @@ def _period_sort_key(period: str):
 
 
 def _is_progress_period(period):
-    """True for in-progress/live report periods that should not be displayed.
+    """True for progress-report periods hidden from the summary grades grid.
 
-    The Grades grid shows only semester/final marks, not the live (current)
-    grade or progress-report periods.
+    ``Live`` (current grade from ``student_marks_table_alt``) is shown; generic
+    progress-report labels are still hidden.
     """
     text = str(period or '').strip().lower()
-    return text == 'live' or 'progress' in text
+    if text == 'live':
+        return False
+    return 'progress' in text
 
 
 def _mark_tone(mark):
@@ -301,7 +303,7 @@ def _mark_tone(mark):
 
 
 def filter_display_marks(marks: list) -> list:
-    """Summary marks: drop live/progress periods so only semester grades show."""
+    """Summary marks: drop progress-report rows; keep Live and term/final grades."""
     return [m for m in (marks or []) if not _is_progress_period(m.get('mark_period'))]
 
 
@@ -328,7 +330,6 @@ def pivot_student_marks(marks: list) -> list:
                 'by_period': {},
             }
             bucket['courses'][course_key] = course
-        # Show only semester/final grades — the live (in-progress) grade is hidden.
         if _is_progress_period(period):
             if not course['staff_name'] and m.get('staff_name'):
                 course['staff_name'] = m.get('staff_name')
@@ -364,8 +365,49 @@ def pivot_student_marks(marks: list) -> list:
     return grid
 
 
+def _mark_school_years_for_student(ssid: str, student_id: str | None) -> list[str]:
+    """Distinct school years from ``student_marks_table_alt`` plus enrollment rows."""
+    years: set[str] = set()
+    sid = (student_id or '').strip()
+    try:
+        with connections['default'].cursor() as cur:
+            if sid:
+                cur.execute(
+                    """
+                    SELECT DISTINCT school_year FROM student_marks_table_alt
+                    WHERE ssid = %s OR student_id = %s
+                    """,
+                    [ssid, sid],
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT DISTINCT school_year FROM student_marks_table_alt
+                    WHERE ssid = %s
+                    """,
+                    [ssid],
+                )
+            for (sy,) in cur.fetchall():
+                if sy and str(sy).strip():
+                    years.add(str(sy).strip())
+    except Exception:
+        pass
+    for sy in CurrentStudent.objects.filter(ssid=ssid).values_list('school_year', flat=True):
+        if sy and str(sy).strip():
+            years.add(str(sy).strip())
+    return sorted(years, reverse=True)
+
+
+def _pick_better_mark_row(prev_row: dict, row: dict) -> dict:
+    from ..column_utils import _choose_better_mark
+
+    prev_c = (prev_row.get('mark'), prev_row.get('mark_status'), prev_row.get('mark_ord'))
+    cand_c = (row.get('mark'), row.get('mark_status'), row.get('mark_ord'))
+    return row if _choose_better_mark(prev_c, cand_c) == cand_c else prev_row
+
+
 def _fetch_student_marks_for_ssid(ssid: str):
-    """Fetch all marks for a student from live mark_data (not the matview)."""
+    """Fetch all marks for a student from live ``student_marks_table_alt`` JSON."""
     from ..column_utils import _fetch_marks_live_from_alt
 
     ssid = _resolve_ssid(ssid)
@@ -375,20 +417,27 @@ def _fetch_student_marks_for_ssid(ssid: str):
         .first()
     )
     student_id = getattr(cs, 'student_id', None) if cs else None
-    years = list(
-        CurrentStudent.objects.filter(ssid=ssid)
-        .values_list('school_year', flat=True)
-        .distinct()
+    if not student_id:
+        se = StudentEnroll.objects.filter(ssid=ssid).order_by('-school_year').first()
+        student_id = getattr(se, 'student_id', None) if se else None
+    years = _mark_school_years_for_student(ssid, student_id)
+    live_rows = _fetch_marks_live_from_alt(
+        [ssid],
+        [student_id] if student_id else [],
+        years or None,
     )
-    if not years:
-        years = list(
-            StudentMarks.objects.filter(ssid=ssid)
-            .values_list('school_year', flat=True)
-            .distinct()
-        )
-    live_rows = _fetch_marks_live_from_alt([ssid], [student_id] if student_id else [], years or None)
-    marks = []
+    best_by_cell: dict[tuple, dict] = {}
     for row in live_rows:
+        key = (
+            row.get('school_year'),
+            row.get('subject'),
+            row.get('course_name'),
+            row.get('mark_period'),
+        )
+        prev = best_by_cell.get(key)
+        best_by_cell[key] = _pick_better_mark_row(prev, row) if prev else row
+    marks = []
+    for row in best_by_cell.values():
         marks.append({
             'ssid': row.get('ssid'),
             'student_id': row.get('student_id'),
@@ -2149,7 +2198,7 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
     student_info = get_student_info_cached(ssid, timeout=timeout, user_id=user_id)
     try:
         from landing.utils import get_summary_sections
-        summary_sections = get_summary_sections()
+        summary_sections = get_summary_sections(getattr(request, 'user', None))
     except Exception:
         summary_sections = {
             'tests': True, 'grades': True, 'diploma': True, 'ag': True,

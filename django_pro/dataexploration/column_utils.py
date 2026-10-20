@@ -871,6 +871,33 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
     if col in VIRTUAL_COLUMNS:
         return
 
+    from dataexploration.mtss_columns import is_mtss_column, canonical_mtss_column
+
+    if is_mtss_column(col):
+        mtss_field = canonical_mtss_column(col)
+        if not mtss_field:
+            return
+        has_blank = "" in vals or '(Blank)' in vals
+        real_values = [v for v in vals if v not in ("", "(Blank)")]
+        sub_base = (
+            "SELECT m.ssid FROM mtss_data m "
+            "WHERE (m.school_year = cs.school_year "
+            "OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4) "
+            "OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4)) "
+        )
+        conditions = []
+        if real_values:
+            conditions.append(f"cs.ssid IN ({sub_base}AND m.{mtss_field} = ANY(%s))")
+            params.append(real_values)
+        if has_blank:
+            conditions.append(
+                f"(cs.ssid NOT IN ({sub_base}) OR "
+                f"cs.ssid IN ({sub_base}AND (m.{mtss_field} IS NULL OR m.{mtss_field} = '')))"
+            )
+        if conditions:
+            where_clauses.append(f"({' OR '.join(conditions)})")
+        return
+
     if col in COLUMN_DEFINITIONS and not col.startswith(('test_', 'mark_', 'survey_', 'ap_', 'sat_')):
         where_clauses.append(f"cs.{col} = ANY(%s)")
         params.append(vals)
