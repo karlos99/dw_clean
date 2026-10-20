@@ -19,16 +19,9 @@ class ProjectConfigAdminForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        from dataviz.utils.compiler import get_db_tables
+        from dataviz.utils.compiler import dataset_table_choices
         try:
-            db_tables = get_db_tables()
-            choices = []
-            for t in sorted(db_tables.keys()):
-                label = t.replace('_', ' ').title()
-                if label == 'Users User':
-                    label = 'Users/User'
-                choices.append((t, label))
-            self.fields['enabled_tables'].choices = choices
+            self.fields['enabled_tables'].choices = dataset_table_choices()
         except Exception:
             pass
 
@@ -65,7 +58,7 @@ class ProjectConfigAdmin(admin.ModelAdmin):
         }),
         ('Home Dashboard', {
             'fields': (
-                'enable_home_charts', 'home_show_chart_location',
+                'enable_home_charts', 'home_page_width', 'home_show_chart_location',
                 'home_forced_charts', 'home_max_charts',
             ),
         }),

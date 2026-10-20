@@ -1,26 +1,59 @@
 from pathlib import Path
 import os
+import sys
+
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv(BASE_DIR.parent / '.env')
-except ImportError:
-    pass
+
+def _load_env_file():
+    """Load repo-root .env when present; never override vars already in the process env."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    for path in (
+        BASE_DIR.parent / '.env',
+        BASE_DIR / '.env',
+        Path('/app/.env'),
+    ):
+        if path.is_file():
+            load_dotenv(path, override=False)
+            return
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
-
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-6p_2k_ar+j(1kf%)z1!$8h_ct(te(qby_i@qq9v^s_r3orx0j1'
+_load_env_file()
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+DEBUG = os.getenv('DEBUG', 'False').lower() in ('1', 'true', 'yes')
 
-ALLOWED_HOSTS = (os.getenv('ALLOWED_HOSTS') or 'localhost,127.0.0.1,*').split(',')
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG or 'test' in sys.argv:
+        SECRET_KEY = 'django-insecure-local-dev-and-test-only'
+    else:
+        raise ImproperlyConfigured(
+            'SECRET_KEY must be set in the environment or .env when DEBUG is False.'
+        )
+
+
+def _allowed_hosts_from_env():
+    raw = os.getenv('ALLOWED_HOSTS') or 'localhost,127.0.0.1'
+    hosts = []
+    for part in raw.split(','):
+        host = part.strip()
+        if not host or host == '*':
+            continue
+        if host.startswith('*.'):
+            host = '.' + host[2:]
+        hosts.append(host)
+    return hosts
+
+
+ALLOWED_HOSTS = _allowed_hosts_from_env()
 
 
 # Application definition
@@ -119,9 +152,10 @@ AUTHENTICATION_BACKENDS = [
     'allauth.account.auth_backends.AuthenticationBackend',
 ]
 
-SITE_ID = 1
+SITE_ID = int(os.getenv('SITE_ID', '1'))
 
 # Allauth Configuration
+ACCOUNT_DEFAULT_HTTP_PROTOCOL = os.getenv('ACCOUNT_DEFAULT_HTTP_PROTOCOL', 'https' if not DEBUG else 'http')
 ACCOUNT_LOGIN_METHODS = {'email'}
 ACCOUNT_SIGNUP_FIELDS = ['email*', 'password1*', 'password2*']
 ACCOUNT_EMAIL_VERIFICATION = 'none' 
@@ -187,6 +221,18 @@ CLICKHOUSE_NATIVE_PORT = int(os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'))
 # Database router: ClickHouse is read-only for analytics queries only.
 # All migrations and writes stay on PostgreSQL.
 DATABASE_ROUTERS = ['clickhouse_utils.router.AnalyticsRouter']
+
+if not DEBUG and 'test' not in sys.argv:
+    for _env_name in (
+        'POSTGRES_DB',
+        'POSTGRES_USER',
+        'POSTGRES_PASSWORD',
+        'POSTGRES_HOST',
+    ):
+        if not os.getenv(_env_name):
+            raise ImproperlyConfigured(
+                f'{_env_name} must be set in the environment or .env for production.'
+            )
 
 
 # Password validation
@@ -347,7 +393,6 @@ LOGGING = {
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50 MB
 
 # Disable migrations during unit testing to avoid raw SQL dependencies
-import sys
 if 'test' in sys.argv:
     class DisableMigrations:
         def __contains__(self, item):

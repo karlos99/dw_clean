@@ -61,7 +61,7 @@ Uses the parent Alpine scope `node` (active detail card).
                         <p class="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{{ s.expected_graduation_year|default:"—" }}</p>
                     </div>
                 </div>
-                {% if s.graduation_status or s.academic_recognition %}
+                {% if s.graduation_status or s.academic_recognition and summary_sections.recognition %}
                 <div class="mt-2 flex flex-wrap items-center gap-1.5">
                     {% if s.graduation_status %}
                     <span class="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
@@ -126,9 +126,10 @@ Uses the parent Alpine scope `node` (active detail card).
     </div>
 
     {# ---------- Detail cards ---------- #}
-    {% if student_details.has_any or student_cte_details.has_any %}
+    {% if summary_sections.diploma and student_details.requirements.diploma or summary_sections.ag and student_details.requirements.ag or summary_sections.cte and student_cte_details.has_any %}
     <div class="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:items-start">
 
+        {% if summary_sections.diploma %}
         {% for plan in student_details.requirements.diploma %}{% if forloop.first %}
         <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <button type="button" @click="node = (node === 'diploma' ? null : 'diploma')"
@@ -165,7 +166,9 @@ Uses the parent Alpine scope `node` (active detail card).
             </div>
         </section>
         {% endif %}{% endfor %}
+        {% endif %}
 
+        {% if summary_sections.ag %}
         {% for plan in student_details.requirements.ag %}{% if forloop.first %}
         <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <button type="button" @click="node = (node === 'ag' ? null : 'ag')"
@@ -202,8 +205,9 @@ Uses the parent Alpine scope `node` (active detail card).
             </div>
         </section>
         {% endif %}{% endfor %}
+        {% endif %}
 
-        {% if student_cte_details.has_any %}
+        {% if summary_sections.cte and student_cte_details.has_any %}
         <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <button type="button" @click="node = (node === 'cte' ? null : 'cte')"
                 class="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50">

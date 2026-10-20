@@ -107,3 +107,17 @@ class CourseProgramColumnSettingsTests(SimpleTestCase):
                 _defs, cats = get_enabled_columns()
         self.assertIn('course_programs', cats)
         self.assertTrue(cats['course_programs']['columns'])
+
+    def test_enabled_columns_allowlist_excludes_mtss_when_not_listed(self):
+        from unittest.mock import MagicMock, patch
+
+        from dataexploration.view_modules.column_management import get_enabled_columns
+
+        mock_cfg = MagicMock()
+        mock_cfg.enabled_columns = ['ssid', 'grade']
+        with patch('landing.utils.get_project_config', return_value=mock_cfg):
+            with patch('dataexploration.view_modules.column_management.course_program_columns_enabled', return_value=False):
+                defs, cats = get_enabled_columns()
+        self.assertNotIn('mtss', cats)
+        self.assertNotIn('plan_type', defs)
+        self.assertNotIn('case_id', defs)

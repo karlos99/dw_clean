@@ -356,6 +356,26 @@ class KeysetPaginationTests(SimpleTestCase):
         )
 
 
+class StudentMarksAltSourceTests(SimpleTestCase):
+    def test_marks_select_reads_student_marks_table_alt(self):
+        from clickhouse_utils.marks_source_sql import STUDENT_MARKS_FROM_ALT_SELECT
+
+        self.assertIn('student_marks_table_alt', STUDENT_MARKS_FROM_ALT_SELECT)
+        self.assertNotIn('student_marks_list', STUDENT_MARKS_FROM_ALT_SELECT)
+
+    def test_pg_fallback_rewrites_analytics_marks_to_alt_subquery(self):
+        from clickhouse_utils.marks_source_sql import pg_sql_from_ch_marks_sql
+
+        ch_sql = (
+            "SELECT sm.ssid FROM analytics_student_marks sm "
+            "WHERE sm.school_year = %s"
+        )
+        pg_sql = pg_sql_from_ch_marks_sql(ch_sql)
+        self.assertNotIn('analytics_student_marks', pg_sql)
+        self.assertIn('student_marks_table_alt', pg_sql)
+        self.assertIn('FROM (', pg_sql)
+
+
 class IncrementalSyncDecisionTests(SimpleTestCase):
     def test_choose_sync_mode_skips_unchanged_timestamped_tables(self):
         from clickhouse_utils.management.commands.sync_to_clickhouse import (

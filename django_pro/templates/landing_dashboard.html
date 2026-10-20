@@ -88,7 +88,7 @@
 
 {% block content %}
 {% if messages %}
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+<div class="{{ home_page_width_class|default:'max-w-7xl' }} mx-auto px-4 sm:px-6 lg:px-8 pt-4">
     {% for message in messages %}
     <div class="flex items-center gap-2 px-4 py-3 rounded-lg text-sm font-medium shadow-sm
                 {% if message.tags == 'success' %}bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200
@@ -104,7 +104,7 @@
     {% endfor %}
 </div>
 {% endif %}
-<div id="home-dash-app" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"
+<div id="home-dash-app" class="{{ home_page_width_class|default:'max-w-7xl' }} mx-auto px-4 sm:px-6 lg:px-8 py-8"
      data-dashboard-url="{% url 'dataviz:home_dashboard' %}"
      data-render-url-template="{% url 'dataviz:chart_render' 999999999 %}"
      data-csrf="{{ csrf_token }}"

@@ -245,6 +245,34 @@ def get_db_tables():
     return tables
 
 
+def get_dataset_table_registry() -> dict[str, str]:
+    """
+    All tables that may appear in the dataset builder and Project Settings
+    allowlist. Includes PostgreSQL public tables plus ClickHouse-only analytics
+    mirrors (they are not listed in information_schema).
+    """
+    from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES
+
+    registry = dict(get_db_tables())
+    for name in ANALYTICS_TABLE_NAMES:
+        registry[name] = name
+    registry['results_with_tests'] = 'results_with_tests'
+    for name in TABLE_WHITELIST:
+        registry[name] = name
+    return registry
+
+
+def dataset_table_choices() -> list[tuple[str, str]]:
+    """Sorted (key, label) pairs for settings UI checkboxes."""
+    choices = []
+    for t in sorted(get_dataset_table_registry().keys()):
+        label = t.replace('_', ' ').title()
+        if label == 'Users User':
+            label = 'Users/User'
+        choices.append((t, label))
+    return choices
+
+
 def get_columns_for_table(table_name: str) -> set:
     """
     Return columns for table_name. First gets base columns (from static whitelist
@@ -344,12 +372,8 @@ def get_allowed_dataset_tables(*, for_dataset_builder: bool = False):
     runtime unless ``for_dataset_builder=True``.
     """
     from landing.utils import get_project_config
-    from clickhouse_utils.schema import ANALYTICS_TABLE_NAMES
 
-    db_tables = get_db_tables()
-    for name in ANALYTICS_TABLE_NAMES:
-        db_tables[name] = name
-    db_tables['results_with_tests'] = 'results_with_tests'
+    db_tables = get_dataset_table_registry()
     try:
         cfg = get_project_config()
         enabled = getattr(cfg, 'enabled_dataset_tables', None)
@@ -492,7 +516,53 @@ class SQLCompilationError(Exception):
     pass
 
 
-def validate_column_identifier(col_str, active_tables):
+def _prepare_dataset_join_context(dataset, interactive_filters=None):
+    """Expand DataLoader links and build active table set for compilation."""
+    base_table = dataset.base_table
+    allowed_tables = get_allowed_dataset_tables()
+    if base_table not in allowed_tables:
+        raise SQLCompilationError(f"Base table '{base_table}' is not whitelisted.")
+
+    from dataviz.utils.dataloader_links import check_link_allowed, expand_dataloader_joins
+
+    raw_joins = list(dataset.joins or [])
+    for j in raw_joins:
+        if j.get('kind') == 'dataloader':
+            link_err = check_link_allowed(j.get('link_type') or '', allowed_tables)
+            if link_err:
+                raise SQLCompilationError(link_err)
+
+    try:
+        joins_list, dataloader_raw_joins, virtual_columns, dataloader_params = expand_dataloader_joins(
+            raw_joins, base_table,
+        )
+    except ValueError as exc:
+        raise SQLCompilationError(str(exc)) from exc
+
+    active_tables = {base_table}
+    active_tables.update(virtual_columns.keys())
+    for j in joins_list:
+        join_table = j.get('table')
+        if not join_table:
+            continue
+        if join_table not in allowed_tables:
+            raise SQLCompilationError(f"Joined table '{join_table}' is not whitelisted.")
+        active_tables.add(join_table)
+
+    joins_list, active_tables = _inject_student_filter_joins(
+        joins_list, active_tables, interactive_filters,
+    )
+    return (
+        allowed_tables,
+        joins_list,
+        dataloader_raw_joins,
+        virtual_columns,
+        dataloader_params,
+        active_tables,
+    )
+
+
+def validate_column_identifier(col_str, active_tables, virtual_columns=None):
     """
     Validates a column identifier of the format 'table_name.column_name'
     or 'table_name.column_name->key_name'.
@@ -508,7 +578,9 @@ def validate_column_identifier(col_str, active_tables):
     if table_name not in active_tables:
         raise SQLCompilationError(f"Table '{table_name}' is not in active query tables list.")
     
-    allowed_columns = get_columns_for_table(table_name)
+    allowed_columns = set(get_columns_for_table(table_name))
+    if virtual_columns and table_name in virtual_columns:
+        allowed_columns |= set(virtual_columns[table_name])
     if not allowed_columns:
         raise SQLCompilationError(f"Table '{table_name}' has no allowed columns or is not whitelisted.")
     
@@ -712,21 +784,14 @@ def compile_dataset_to_sql(
         logger.warning("Cache unavailable for compiled SQL", exc_info=True)
 
     base_table = dataset.base_table
-    allowed_tables = get_allowed_dataset_tables()
-    if base_table not in allowed_tables:
-        raise SQLCompilationError(f"Base table '{base_table}' is not whitelisted.")
-    
-    active_tables = {base_table}
-    joins_list = dataset.joins or []
-    for j in joins_list:
-        join_table = j.get('table')
-        if join_table not in allowed_tables:
-            raise SQLCompilationError(f"Joined table '{join_table}' is not whitelisted.")
-        active_tables.add(join_table)
-
-    joins_list, active_tables = _inject_student_filter_joins(
-        joins_list, active_tables, interactive_filters,
-    )
+    (
+        allowed_tables,
+        joins_list,
+        dataloader_raw_joins,
+        virtual_columns,
+        dataloader_params,
+        active_tables,
+    ) = _prepare_dataset_join_context(dataset, interactive_filters)
 
     columns_list = list(dataset.columns or [])
     if not columns_list:
@@ -739,7 +804,9 @@ def compile_dataset_to_sql(
         if sak_col and sak_col not in columns_list:
             columns_list.append(sak_col)
         if sak_col:
-            sak_tbl, sak_name = validate_column_identifier(sak_col, active_tables)
+            sak_tbl, sak_name = validate_column_identifier(
+                sak_col, active_tables, virtual_columns=virtual_columns,
+            )
             sak_expr = format_column_expr(sak_tbl, sak_name)
 
     # Duplicate `results` rows (one `other_info` carries the DFP/additional-info
@@ -754,7 +821,9 @@ def compile_dataset_to_sql(
     select_clauses = []
     group_by_exprs = []
     for col_str in columns_list:
-        tbl, col = validate_column_identifier(col_str, active_tables)
+        tbl, col = validate_column_identifier(
+            col_str, active_tables, virtual_columns=virtual_columns,
+        )
         expr = format_column_expr(tbl, col)
         alias = f'"{tbl}.{col}"'
         if dedupe_results and col_str in results_json_cols:
@@ -765,6 +834,7 @@ def compile_dataset_to_sql(
             group_by_exprs.append(expr)
 
     select_sql = ", ".join(select_clauses)
+    _vc = virtual_columns
 
     # Construct base query. DISTINCT ON (stu_annual_key) wins over row-level DISTINCT
     # when the chart asks for one enrollment-year record; results-JSON dedupe uses
@@ -805,18 +875,28 @@ def compile_dataset_to_sql(
             cond_right = cond.get('on_right')
             if not cond_left or not cond_right:
                 raise SQLCompilationError(f"Missing columns in join condition for table '{join_table}'.")
-            l_tbl, l_col = validate_column_identifier(cond_left, active_tables)
-            r_tbl, r_col = validate_column_identifier(cond_right, active_tables)
+            l_tbl, l_col = validate_column_identifier(
+                cond_left, active_tables, virtual_columns=_vc,
+            )
+            r_tbl, r_col = validate_column_identifier(
+                cond_right, active_tables, virtual_columns=_vc,
+            )
             on_clauses.append(f'{format_column_expr(l_tbl, l_col)} = {format_column_expr(r_tbl, r_col)}')
-            
+
+        extra_on = j.get('_extra_on')
+        if extra_on:
+            on_clauses.append(extra_on)
+
         join_clauses.append(f'{join_keyword} "{join_table}" ON ' + " AND ".join(on_clauses))
-        
+
     if join_clauses:
         sql += " " + " ".join(join_clauses)
-        
+    if dataloader_raw_joins:
+        sql += " " + " ".join(dataloader_raw_joins)
+
     # Construct filters
     where_parts = []
-    params = []
+    params = list(dataloader_params)
     
     filters_list = dataset.filters or []
     for f in filters_list:
@@ -824,7 +904,9 @@ def compile_dataset_to_sql(
         operator = f.get('operator', 'exact').lower()
         val = f.get('value')
         
-        tbl, col = validate_column_identifier(col_str, active_tables)
+        tbl, col = validate_column_identifier(
+            col_str, active_tables, virtual_columns=_vc,
+        )
 
         from dataexploration.view_modules.column_management import json_list_key_for_column
         json_key = json_list_key_for_column(col_str) or json_list_key_for_column(col)
@@ -949,7 +1031,10 @@ def compile_dataset_to_sql(
                 continue
             
             base_col = fname.split('->', 1)[0]
-            if ftbl not in allowed_tables or base_col not in get_columns_for_table(ftbl):
+            allowed_cols = set(get_columns_for_table(ftbl))
+            if _vc and ftbl in _vc:
+                allowed_cols |= set(_vc[ftbl])
+            if ftbl not in allowed_tables or base_col not in allowed_cols:
                 continue
 
             from dataexploration.view_modules.column_management import json_list_key_for_column
@@ -1024,7 +1109,9 @@ def compile_dataset_to_sql(
         # value e.g. dfp, one doesn't) it must prefer the populated row, or the
         # chart/drill show a blank DFP for that student.
         for col_str in results_json_cols:
-            _tbl, _col = validate_column_identifier(col_str, active_tables)
+            _tbl, _col = validate_column_identifier(
+                col_str, active_tables, virtual_columns=_vc,
+            )
             _expr = format_column_expr(_tbl, _col)
             if '->' in col_str:
                 order_parts.append(f'(NULLIF({_expr}, \'\') IS NOT NULL) DESC')
@@ -1038,7 +1125,9 @@ def compile_dataset_to_sql(
                 direction = 'asc'
             if not col_str:
                 continue
-            tbl, col = validate_column_identifier(col_str, active_tables)
+            tbl, col = validate_column_identifier(
+                col_str, active_tables, virtual_columns=_vc,
+            )
             expr = format_column_expr(tbl, col)
             if dedupe_results and _is_results_json_column(col_str):
                 expr = f"MAX(NULLIF({expr}, ''))" if '->' in col_str else f"MAX({expr})"
@@ -1159,21 +1248,15 @@ def compile_aggregated_dataset_to_sql(
         )
 
     base_table = dataset.base_table
-    allowed_tables = get_allowed_dataset_tables()
-    if base_table not in allowed_tables:
-        raise SQLCompilationError(f"Base table '{base_table}' is not whitelisted.")
-
-    active_tables = {base_table}
-    joins_list = dataset.joins or []
-    for j in joins_list:
-        join_table = j.get('table')
-        if join_table not in allowed_tables:
-            raise SQLCompilationError(f"Joined table '{join_table}' is not whitelisted.")
-        active_tables.add(join_table)
-
-    joins_list, active_tables = _inject_student_filter_joins(
-        joins_list, active_tables, interactive_filters,
-    )
+    (
+        allowed_tables,
+        joins_list,
+        dataloader_raw_joins,
+        virtual_columns,
+        dataloader_params,
+        active_tables,
+    ) = _prepare_dataset_join_context(dataset, interactive_filters)
+    _vc = virtual_columns
 
     all_group_cols = list(group_by_cols)
     if series_col and series_col not in all_group_cols:
@@ -1190,12 +1273,16 @@ def compile_aggregated_dataset_to_sql(
         for col_str in distinct_over_cols:
             if col_str in all_group_cols:
                 continue
-            tbl, col = validate_column_identifier(col_str, active_tables)
+            tbl, col = validate_column_identifier(
+                col_str, active_tables, virtual_columns=_vc,
+            )
             distinct_exprs.append((format_column_expr(tbl, col), col_str.replace('.', '_')))
 
     group_items = []
     for col_str in all_group_cols:
-        tbl, col = validate_column_identifier(col_str, active_tables)
+        tbl, col = validate_column_identifier(
+            col_str, active_tables, virtual_columns=_vc,
+        )
         expr = format_column_expr(tbl, col)
         if date_bucket and col_str == x_col_str:
             expr = _sql_date_bucket(expr, date_bucket)
@@ -1213,7 +1300,9 @@ def compile_aggregated_dataset_to_sql(
     if not (aggregation == 'count' and not y_col):
         if not y_col:
             raise SQLCompilationError(f"Aggregation '{aggregation}' requires a value column")
-        y_tbl, y_col_name = validate_column_identifier(y_col, active_tables)
+        y_tbl, y_col_name = validate_column_identifier(
+            y_col, active_tables, virtual_columns=_vc,
+        )
         y_expr = format_column_expr(y_tbl, y_col_name)
 
     # Named measures: each gets its own aggregate over the same grouped rows.
@@ -1232,7 +1321,9 @@ def compile_aggregated_dataset_to_sql(
         m_expr = None
         m_alias = ''
         if m_col:
-            m_tbl, m_col_name = validate_column_identifier(m_col, active_tables)
+            m_tbl, m_col_name = validate_column_identifier(
+                m_col, active_tables, virtual_columns=_vc,
+            )
             m_expr = format_column_expr(m_tbl, m_col_name)
             m_alias = m_col.replace('.', '_')
         elif m_agg != 'count':
@@ -1272,22 +1363,33 @@ def compile_aggregated_dataset_to_sql(
         for cond in conditions:
             cond_left = cond.get('on_left')
             cond_right = cond.get('on_right')
-            l_tbl, l_col = validate_column_identifier(cond_left, active_tables)
-            r_tbl, r_col = validate_column_identifier(cond_right, active_tables)
+            l_tbl, l_col = validate_column_identifier(
+                cond_left, active_tables, virtual_columns=_vc,
+            )
+            r_tbl, r_col = validate_column_identifier(
+                cond_right, active_tables, virtual_columns=_vc,
+            )
             on_clauses.append(f'{format_column_expr(l_tbl, l_col)} = {format_column_expr(r_tbl, r_col)}')
+        extra_on = j.get('_extra_on')
+        if extra_on:
+            on_clauses.append(extra_on)
         join_clauses.append(f'{join_keyword} "{join_table}" ON ' + " AND ".join(on_clauses))
     if join_clauses:
         from_sql += " " + " ".join(join_clauses)
+    if dataloader_raw_joins:
+        from_sql += " " + " ".join(dataloader_raw_joins)
 
     # Filters (same as compile_dataset_to_sql)
     where_parts = []
-    params = []
+    params = list(dataloader_params)
     filters_list = dataset.filters or []
     for f in filters_list:
         col_str = f.get('column')
         operator = f.get('operator', 'exact').lower()
         val = f.get('value')
-        tbl, col = validate_column_identifier(col_str, active_tables)
+        tbl, col = validate_column_identifier(
+            col_str, active_tables, virtual_columns=_vc,
+        )
         from dataexploration.view_modules.column_management import json_list_key_for_column
         json_key = json_list_key_for_column(col_str) or json_list_key_for_column(col)
         if json_key:

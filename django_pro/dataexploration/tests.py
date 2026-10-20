@@ -1,6 +1,7 @@
 from pathlib import Path
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 from django.template.loader import get_template
+
 
 
 class ScheduleFilterScopeTests(SimpleTestCase):
@@ -60,6 +61,90 @@ class TemplateCompilationTests(SimpleTestCase):
 
 	def test_student_orbit_header_compiles(self):
 		get_template("dataexploration/partials/student_orbit_header.html")
+
+	def test_student_orbit_header_respects_summary_sections_disabled(self):
+		from django.template.loader import render_to_string
+		context = {
+			'ssid': '12345',
+			'student_info': {
+				'ssid': '12345',
+				'student_id': '1001',
+				'full_name': 'Test Student',
+				'ell_status': 'EO',
+				'school': 'Test High School',
+				'school_short_name': 'Test HS',
+				'grade': '10',
+				'school_year': '2024-2025',
+			},
+			'student_details': {
+				'has_any': True,
+				'summary': {'weighted_gpa': '3.8'},
+				'requirements': {
+					'diploma': [{'label': 'Standard Diploma', 'rows': [], 'met_count': 10, 'row_count': 10}],
+					'ag': [{'label': 'UC/CSU', 'rows': [], 'met_count': 6, 'row_count': 7}],
+				},
+			},
+			'student_cte_details': {
+				'has_any': True,
+				'current': [{'cte_pathway': 'Health', 'pathway_status': 'In Progress'}],
+			},
+			'summary_sections': {
+				'diploma': False,
+				'ag': False,
+				'cte': False,
+				'recognition': False,
+				'flags': False,
+			},
+		}
+		html = render_to_string("dataexploration/partials/student_orbit_header.html", context)
+		self.assertNotIn("node === 'diploma'", html)
+		self.assertNotIn("node === 'ag'", html)
+		self.assertNotIn("node === 'cte'", html)
+		self.assertNotIn("UC/CSU A-G", html)
+		self.assertNotIn("Diploma Requirements", html)
+		self.assertNotIn("CTE Pathways", html)
+
+	def test_student_orbit_header_renders_when_summary_sections_enabled(self):
+		from django.template.loader import render_to_string
+		context = {
+			'ssid': '12345',
+			'student_info': {
+				'ssid': '12345',
+				'student_id': '1001',
+				'full_name': 'Test Student',
+				'ell_status': 'EO',
+				'school': 'Test High School',
+				'school_short_name': 'Test HS',
+				'grade': '10',
+				'school_year': '2024-2025',
+			},
+			'student_details': {
+				'has_any': True,
+				'summary': {'weighted_gpa': '3.8'},
+				'requirements': {
+					'diploma': [{'label': 'Standard Diploma', 'rows': [], 'met_count': 10, 'row_count': 10}],
+					'ag': [{'label': 'UC/CSU', 'rows': [], 'met_count': 6, 'row_count': 7}],
+				},
+			},
+			'student_cte_details': {
+				'has_any': True,
+				'current': [{'cte_pathway': 'Health', 'pathway_status': 'In Progress'}],
+			},
+			'summary_sections': {
+				'diploma': True,
+				'ag': True,
+				'cte': True,
+				'recognition': True,
+				'flags': True,
+			},
+		}
+		html = render_to_string("dataexploration/partials/student_orbit_header.html", context)
+		self.assertIn("node === 'diploma'", html)
+		self.assertIn("node === 'ag'", html)
+		self.assertIn("node === 'cte'", html)
+		self.assertIn("UC/CSU A-G", html)
+		self.assertIn("Diploma Requirements", html)
+		self.assertIn("CTE Pathways", html)
 
 	def test_dataexploration_manage_default_columns_compiles(self):
 		get_template("dataexploration/manage_default_columns.html")
@@ -252,17 +337,38 @@ class StudentMarksGridTests(SimpleTestCase):
 		from dataexploration.view_modules.student_data_utils import pivot_student_marks
 		self.assertEqual(pivot_student_marks([]), [])
 
-	def test_filter_display_marks_drops_live_and_progress(self):
+	def test_pivot_student_marks_includes_live_column(self):
+		from dataexploration.view_modules.student_data_utils import pivot_student_marks
+
+		marks = [
+			{
+				'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra 1',
+				'mark_period': 'Live', 'mark': 'A-', 'staff_name': 'Teacher A',
+			},
+			{
+				'school_year': '2025-2026', 'subject': 'Math', 'course_name': 'Algebra 1',
+				'mark_period': 'Semester 1', 'mark': 'B+', 'staff_name': 'Teacher A',
+			},
+		]
+		grid = pivot_student_marks(marks)
+		self.assertEqual(len(grid), 1)
+		self.assertIn('Live', grid[0]['periods'])
+		self.assertIn('Semester 1', grid[0]['periods'])
+
+	def test_filter_display_marks_keeps_live_drops_progress(self):
 		from dataexploration.view_modules.student_data_utils import filter_display_marks
 
 		marks = [
 			{'mark_period': 'Live', 'mark': 'A'},
-			{'mark_period': 'Progress', 'mark': 'B'},
+			{'mark_period': 'Progress Report 1', 'mark': 'B'},
 			{'mark_period': 'Semester 1', 'mark': 'B+'},
 			{'mark_period': 'Semester 2', 'mark': 'A-'},
 		]
 		out = filter_display_marks(marks)
-		self.assertEqual([m['mark_period'] for m in out], ['Semester 1', 'Semester 2'])
+		self.assertEqual(
+			[m['mark_period'] for m in out],
+			['Live', 'Semester 1', 'Semester 2'],
+		)
 
 
 class TestMetadataMatchesTests(SimpleTestCase):
@@ -585,6 +691,21 @@ class CsFilterClauseTests(SimpleTestCase):
 		self.assertIn("->>'DSUSD_FEP'", where_clauses[0])
 		self.assertNotIn('cs.dsusd_fep', where_clauses[0])
 		self.assertEqual(params, [['Y']])
+
+	def test_mtss_filter_uses_subquery_not_physical_cs_column(self):
+		from dataexploration.column_utils import _append_cs_filter_clause
+
+		where_clauses = []
+		params = []
+		_append_cs_filter_clause(where_clauses, params, 'plan_type', ['Tier 2'])
+		_append_cs_filter_clause(where_clauses, params, 'area_of_concern', ['Social Emotional'])
+
+		self.assertEqual(len(where_clauses), 2)
+		for clause in where_clauses:
+			self.assertIn('mtss_data', clause)
+			self.assertNotIn('cs.plan_type', clause)
+			self.assertNotIn('cs.area_of_concern', clause)
+		self.assertEqual(params, [['Tier 2'], ['Social Emotional']])
 
 
 class ClickHouseExecutorTests(SimpleTestCase):
@@ -1845,3 +1966,208 @@ class StudentDetailsTests(SimpleTestCase):
 		self.assertEqual(math['projected_total'], 10.0)
 		# The displayed current schedule remains the active term only.
 		self.assertEqual(len(out['current_schedule']), 1)
+
+
+class ExportFiltersTests(SimpleTestCase):
+	databases = {'default'}
+	def test_core_filter_keys_stripped_from_column_filters(self):
+
+		"""Verify school_year, grade, status, search, and schedule keys are stripped from column filters."""
+		from dataexploration.view_modules.export_views import export_students_csv
+		from dataexploration.models import SavedQuery
+		from unittest.mock import MagicMock, patch
+		from django.test import RequestFactory
+		import json
+
+		factory = RequestFactory()
+		filters_dict = {
+			'school_year': '2023-2024',
+			'grade': ['06', '07'],
+			'status': 'Active',
+			'search': 'Smith',
+			'schedule_period': ['1'],
+			'markall_2023_2024_Fine_Arts': ['exclude:Art'],
+		}
+		req = factory.get(
+			f'/dataexploration/api/students/export-csv/?columns=%5B%22ssid%22%5D&filters={json.dumps(filters_dict)}'
+		)
+
+		user = MagicMock()
+		user.is_authenticated = True
+		user.is_superuser = True
+		user.get_accessible_student_keys.return_value = None
+		req.user = user
+
+		with patch('dataexploration.view_modules.export_views.apply_column_filters') as mock_apply:
+			with patch('dataexploration.view_modules.export_views.connections') as mock_conn:
+				mock_cursor = MagicMock()
+				mock_cursor.fetchall.return_value = []
+				mock_cursor.description = [('ssid',)]
+				mock_conn.__getitem__.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+
+				resp = export_students_csv(req)
+				# Consume the stream
+				list(resp.streaming_content)
+
+				self.assertTrue(mock_apply.called)
+				# The 3rd argument to apply_column_filters is filters_without_cp
+				passed_filters = mock_apply.call_args[0][2]
+				self.assertNotIn('school_year', passed_filters)
+				self.assertNotIn('grade', passed_filters)
+				self.assertNotIn('status', passed_filters)
+				self.assertNotIn('search', passed_filters)
+				self.assertNotIn('schedule_period', passed_filters)
+
+
+class MtssDataExplorationTests(TestCase):
+	databases = {'default'}
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		from django.db import connection
+		with connection.cursor() as cur:
+			cur.execute("""
+				CREATE TABLE IF NOT EXISTS mtss_data (
+					mtss_row_key text,
+					school_year text,
+					student_id text,
+					ssid text,
+					last_name text,
+					first_name text,
+					middle_name text,
+					grade text,
+					school_name text,
+					plan_type text,
+					area_of_concern text,
+					learning_gap text,
+					support_tier text,
+					support_start_date text,
+					support_end_date text,
+					plan_name text,
+					case_id text,
+					outcome text,
+					outcome_action text
+				)
+			""")
+			cur.execute("DELETE FROM mtss_data")
+			cur.execute("""
+				INSERT INTO mtss_data (ssid, school_year, plan_type, area_of_concern, learning_gap, plan_name, support_start_date, support_end_date, case_id, outcome, outcome_action) VALUES
+				('1317443220', '2026', 'Tier 2', 'Academics', 'Foundational Reading Skills: Phonics', '2nd Grade: Academics Cycle 1', '2026-09-14', '2026-10-23', '1828', 'Met', 'Continue monitoring'),
+				('1352209140', '2026', 'Tier 2', 'Academics', 'Mathematics: Number Sense', '4th Grade Power Math', '2026-09-14', '2026-11-09', '1772', 'Partial', 'Extend support'),
+				('1352209140', '2026', 'Tier 2', 'Social Emotional', 'Cognitive Skills: Mindset', 'Growth Mindset', '2026-09-24', '2026-10-29', '1824', 'Met', 'Close case')
+			""")
+
+	def setUp(self):
+		super().setUp()
+		from django.core.cache import cache
+		cache.clear()
+
+	def test_mtss_definitions_and_category(self):
+		from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
+		from dataexploration.mtss_columns import is_mtss_column, canonical_mtss_column
+
+		all_mtss_cols = (
+			'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
+			'support_start_date', 'support_end_date', 'case_id',
+			'outcome', 'outcome_action',
+		)
+		for col in all_mtss_cols:
+			self.assertIn(col, COLUMN_DEFINITIONS)
+			self.assertTrue(is_mtss_column(col))
+			self.assertEqual(canonical_mtss_column(col), col)
+
+		self.assertIn('mtss', COLUMN_CATEGORIES)
+		self.assertEqual(COLUMN_CATEGORIES['mtss']['title'], 'MTSS (Tier 2)')
+		self.assertEqual(
+			COLUMN_CATEGORIES['mtss']['columns'],
+			list(all_mtss_cols),
+		)
+
+		# Check aliases
+		self.assertTrue(is_mtss_column('mtss_plan_type'))
+		self.assertEqual(canonical_mtss_column('mtss_plan_type'), 'plan_type')
+		self.assertTrue(is_mtss_column('mtss_case_id'))
+		self.assertEqual(canonical_mtss_column('mtss_case_id'), 'case_id')
+
+	def test_mtss_school_years(self):
+		from dataexploration.mtss_columns import get_mtss_school_years, normalize_mtss_school_year
+		self.assertEqual(normalize_mtss_school_year('2026'), '2026-2027')
+		self.assertEqual(normalize_mtss_school_year('2026-2027'), '2026-2027')
+
+		years = get_mtss_school_years()
+		# In this database mtss_data has school_year='2026', normalized to '2026-2027'
+		self.assertIn('2026-2027', years)
+
+	def test_mtss_data_fetching_and_enrichment(self):
+		from dataexploration.mtss_columns import apply_mtss_columns
+
+		students = [
+			{'ssid': '1317443220', 'school_year': '2026-2027'},
+			{'ssid': '1352209140', 'school_year': '2026-2027'},
+			{'ssid': '9999999999', 'school_year': '2026-2027'},  # non-existent
+			{'ssid': '1317443220', 'school_year': '2024-2025'},  # different school year
+		]
+		cols = [
+			'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
+			'support_start_date', 'support_end_date', 'case_id',
+			'outcome', 'outcome_action',
+		]
+		apply_mtss_columns(students, cols, active_school_year='2026-2027')
+
+		# Student 1: single plan
+		self.assertEqual(students[0]['plan_type'], 'Tier 2')
+		self.assertEqual(students[0]['area_of_concern'], 'Academics')
+		self.assertEqual(students[0]['learning_gap'], 'Foundational Reading Skills: Phonics')
+		self.assertEqual(students[0]['plan_name'], '2nd Grade: Academics Cycle 1')
+		self.assertEqual(students[0]['support_start_date'], '2026-09-14')
+		self.assertEqual(students[0]['support_end_date'], '2026-10-23')
+		self.assertEqual(students[0]['case_id'], '1828')
+		self.assertEqual(students[0]['outcome'], 'Met')
+		self.assertEqual(students[0]['outcome_action'], 'Continue monitoring')
+
+		# Student 2: multiple plans aggregated
+		self.assertEqual(students[1]['plan_type'], 'Tier 2')
+		self.assertIn('Academics', students[1]['area_of_concern'])
+		self.assertIn('Social Emotional', students[1]['area_of_concern'])
+		self.assertEqual(students[1]['case_id'], '1772, 1824')
+
+		# Non-existent student: gets dash
+		self.assertEqual(students[2]['plan_type'], '—')
+		self.assertEqual(students[2]['area_of_concern'], '—')
+		self.assertEqual(students[2]['case_id'], '—')
+
+	def test_mtss_column_filter_sql(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+
+		where_clauses = []
+		params = []
+		filters = {'plan_type': ['Tier 2', '']}
+		apply_column_filters(
+			where_clauses, params, filters,
+			test_col_map={}, mark_col_map={}, db_columns=['ssid'], enroll_columns=[],
+			needs_enroll=False,
+		)
+
+		self.assertEqual(len(where_clauses), 1)
+		sql = where_clauses[0]
+		self.assertIn('mtss_data', sql)
+		self.assertIn('m.plan_type = ANY(%s)', sql)
+		self.assertIn("m.school_year = cs.school_year", sql)
+		self.assertEqual(params, [['Tier 2']])
+
+
+	def test_mtss_in_project_admin_and_enabled_columns(self):
+		from dataexploration.view_modules.column_management import get_enabled_columns
+
+		defs, cats = get_enabled_columns()
+		self.assertIn('mtss', cats)
+		for col in (
+			'plan_type', 'area_of_concern', 'learning_gap', 'plan_name',
+			'support_start_date', 'support_end_date', 'case_id',
+			'outcome', 'outcome_action',
+		):
+			self.assertIn(col, defs)
+			self.assertIn(col, cats['mtss']['columns'])
+		self.assertEqual(cats['mtss']['title'], 'MTSS (Tier 2)')
+
