@@ -46,6 +46,24 @@ L_RACE_JSON_KEY = 'l_race'
 DSUSD_FEP_COL = 'dsusd_fep'
 DSUSD_FEP_JSON_KEY = 'DSUSD_FEP'
 
+# Performance & Behavior (column picker order: attendance, suspension, major/minor).
+PERFORMANCE_BEHAVIOR_COLUMNS = (
+    'atendace_rate',
+    'suspension_indicator',
+    'incidents_major',
+    'incidents_minor',
+    'suspension_days',
+)
+
+
+def _expand_performance_behavior_allowlist(allowed_set: set) -> None:
+    """Keep Major/Minor incident columns in the picker when older allowlists omit them."""
+    _incident_cols = ('incidents_major', 'incidents_minor', 'suspension_days')
+    if allowed_set.intersection({'atendace_rate', 'suspension_indicator'}):
+        allowed_set.update(_incident_cols)
+    if allowed_set.intersection(_incident_cols):
+        allowed_set.update(_incident_cols)
+
 
 def get_saved_default_columns():
     """
@@ -102,6 +120,7 @@ def get_enabled_columns():
     if course_program_columns_enabled():
         from ..catalog_columns import course_program_allowlist_keys
         allowed_set.update(course_program_allowlist_keys())
+    _expand_performance_behavior_allowlist(allowed_set)
 
     filtered_cats = {}
     base_defs, base_cats = merge_course_program_columns(COLUMN_DEFINITIONS, COLUMN_CATEGORIES)
@@ -327,9 +346,10 @@ def manage_default_columns(request):
             )
             
             from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+            col_defs, col_cats = get_enabled_columns()
             return render(request, 'dataexploration/manage_default_columns.html', {
-                'column_categories': COLUMN_CATEGORIES,
-                'column_definitions': COLUMN_DEFINITIONS,
+                'column_categories': col_cats,
+                'column_definitions': col_defs,
                 'test_structure': test_structure,
                 'selected_columns': columns,
                 'year_labels': get_year_labels_map(list(test_structure.keys())),
@@ -338,9 +358,10 @@ def manage_default_columns(request):
             })
         except Exception as e:
             from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+            col_defs, col_cats = get_enabled_columns()
             return render(request, 'dataexploration/manage_default_columns.html', {
-                'column_categories': COLUMN_CATEGORIES,
-                'column_definitions': COLUMN_DEFINITIONS,
+                'column_categories': col_cats,
+                'column_definitions': col_defs,
                 'test_structure': test_structure,
                 'selected_columns': default_columns,
                 'year_labels': get_year_labels_map(list(test_structure.keys())),
@@ -349,9 +370,10 @@ def manage_default_columns(request):
             })
 
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
+    col_defs, col_cats = get_enabled_columns()
     context = {
-        'column_categories': COLUMN_CATEGORIES,
-        'column_definitions': COLUMN_DEFINITIONS,
+        'column_categories': col_cats,
+        'column_definitions': col_defs,
         'test_structure': test_structure,
         'selected_columns': default_columns,
         'year_labels': get_year_labels_map(list(test_structure.keys())),

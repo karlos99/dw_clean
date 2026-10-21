@@ -214,7 +214,7 @@ def project_settings(request):
         if isinstance(access_rules, dict) and access_rules:
             # Clean roles and emails for each module
             cleaned_rules = {}
-            for key in ('tests', 'grades', 'diploma', 'ag', 'on_track', 'cte', 'recognition', 'flags'):
+            for key in ('tests', 'grades', 'diploma', 'ag', 'on_track', 'cte', 'behavior', 'recognition', 'flags'):
                 r = access_rules.get(key)
                 if isinstance(r, dict):
                     mode = r.get('mode', 'all')
@@ -301,6 +301,7 @@ def project_settings(request):
         ('ag', 'UC/CSU A-G', 'A-G course requirements.', 'Content tabs'),
         ('on_track', 'On Track', 'Grade-level A-G and diploma progress benchmarks (grades 9–11).', 'Content tabs'),
         ('cte', 'CTE Pathways', 'Career & technical education pathways.', 'Content tabs'),
+        ('behavior', 'Behavior', 'Discipline incidents (major/minor) by school year.', 'Content tabs'),
         ('recognition', 'Academic recognition', 'Summa / Magna / Cum Laude badge from unweighted GPA.', 'Header indicators'),
         ('flags', 'Support flags', 'SPED, 504, ELL, GATE, foster, homeless, … badges.', 'Header indicators'),
     ]

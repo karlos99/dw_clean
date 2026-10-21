@@ -22,7 +22,145 @@ from ..mtss_columns import (
     is_mtss_column,
     canonical_mtss_column,
 )
+from ..incident_columns import (
+    is_incident_column,
+    incident_value_sql_expr,
+)
 
+
+def expand_grade_match_values(raw) -> list[str]:
+    """String variants for grade (e.g. 3 vs 03) so filters match SIS storage."""
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, (list, tuple, set)) else [raw]
+    out: list[str] = []
+    for item in items:
+        s = str(item).strip()
+        if not s:
+            continue
+        out.append(s)
+        if s.isdigit():
+            n = int(s)
+            out.append(str(n))
+            if 0 <= n < 10:
+                out.append(f"{n:02d}")
+    seen: set[str] = set()
+    unique: list[str] = []
+    for v in out:
+        if v not in seen:
+            seen.add(v)
+            unique.append(v)
+    return unique
+
+
+def append_grade_where_clause(where_clauses, params, grade) -> None:
+    variants = expand_grade_match_values(grade)
+    if not variants:
+        return
+    where_clauses.append("cs.grade = ANY(%s)")
+    params.append(variants)
+
+
+def _filters_have_active_values(filters) -> bool:
+    if not isinstance(filters, dict):
+        return False
+    for key, values in filters.items():
+        if key == 'search' or not values:
+            continue
+        return True
+    return False
+
+
+def filters_require_postgres(filters) -> bool:
+    """True when filter keys force the main query onto PostgreSQL (e.g. mtss_data)."""
+    if not isinstance(filters, dict):
+        return False
+    for col, values in filters.items():
+        if col == 'search' or not values:
+            continue
+        if is_mtss_column(col):
+            return True
+        if is_incident_column(col):
+            return True
+        if isinstance(col, str) and col.startswith('survey_'):
+            return True
+        if col == 'elem_teacher_name':
+            return True
+    return False
+
+
+def _value_nonempty(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, list):
+        return any(str(v).strip() for v in value if v is not None and v != '')
+    return bool(str(value).strip())
+
+
+def _topbar_cohort_filters_active(
+    *,
+    search=None,
+    search_ids=None,
+    schedule_marks_filters=None,
+) -> bool:
+    """Toolbar cohort filters (search, schedule) — not stored in the filters JSON blob."""
+    if search_ids:
+        return True
+    if _value_nonempty(search):
+        return True
+    if schedule_marks_filters:
+        from .schedule_filter_sql import _schedule_filters_active
+
+        if _schedule_filters_active(schedule_marks_filters):
+            return True
+    return False
+
+
+def list_query_uses_postgres(
+    filters,
+    sort_by=None,
+    *,
+    search=None,
+    search_ids=None,
+    schedule_marks_filters=None,
+) -> bool:
+    """True when the student list must run on PostgreSQL (mixed MTSS/incident/survey reads)."""
+    if filters_require_postgres(filters):
+        return True
+    if sort_by and is_mtss_column(sort_by):
+        return True
+    if sort_by and is_incident_column(sort_by):
+        if _filters_have_active_values(filters):
+            return True
+        if _topbar_cohort_filters_active(
+            search=search,
+            search_ids=search_ids,
+            schedule_marks_filters=schedule_marks_filters,
+        ):
+            return True
+    return False
+
+
+def incident_sql_backend_for_request(
+    filters,
+    sort_by=None,
+    *,
+    search=None,
+    search_ids=None,
+    schedule_marks_filters=None,
+) -> str:
+    """ClickHouse vs PostgreSQL incident count SQL for the current list request."""
+    return (
+        'pg'
+        if list_query_uses_postgres(
+            filters,
+            sort_by,
+            search=search,
+            search_ids=search_ids,
+            schedule_marks_filters=schedule_marks_filters,
+        )
+        else 'ch'
+    )
 
 
 def normalize_filter_param(col, value):
@@ -170,6 +308,7 @@ def apply_column_filters(
     needs_eht=False,
     ap_exam_infos=None,
     ap_award_infos=None,
+    incident_sql_backend='ch',
 ):
     """Append SQL filter clauses + params for the provided filters dict."""
     ap_exam_infos = ap_exam_infos or []
@@ -182,6 +321,10 @@ def apply_column_filters(
         if col == 'search':
             continue
         if not values:
+            continue
+
+        if col == 'grade':
+            append_grade_where_clause(where_clauses, params, values)
             continue
 
         if col == 'atendace_rate':
@@ -211,6 +354,42 @@ def apply_column_filters(
 
                     conditions.append(f"{expr} = %s")
                     params.append(val)
+
+                if conditions:
+                    where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
+        if is_incident_column(col):
+            expr = incident_value_sql_expr(
+                col,
+                backend=incident_sql_backend,
+                student_alias='cs',
+            )
+            if expr:
+                conditions = []
+                for val in values:
+                    val_str = str(val).strip()
+                    if not val_str:
+                        conditions.append(f"({expr} = 0)")
+                        continue
+
+                    match = re.match(r'^([<>]=?|=)?\s*(\d+(?:\.\d+)?)$', val_str)
+                    if match:
+                        op = match.group(1) or '='
+                        num = match.group(2)
+                        conditions.append(f"{expr} {op} %s")
+                        params.append(num)
+                        continue
+
+                    match_range = re.match(r'^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$', val_str)
+                    if match_range:
+                        low, high = match_range.groups()
+                        conditions.append(f"{expr} BETWEEN %s AND %s")
+                        params.extend([low, high])
+                        continue
+
+                    conditions.append(f"{expr} = %s")
+                    params.append(int(float(val_str)) if val_str.replace('.', '', 1).isdigit() else val_str)
 
                 if conditions:
                     where_clauses.append(f"({' OR '.join(conditions)})")

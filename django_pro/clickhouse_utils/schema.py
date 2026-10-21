@@ -331,7 +331,7 @@ CREATE TABLE IF NOT EXISTS student_incidents (
     stu_annual_key String,
     ssid String,
     student_id Nullable(Int64),
-    incidents_data Nullable(String),
+    incidents Nullable(String),
     updated_at Nullable(DateTime64)
 )
 ENGINE = MergeTree

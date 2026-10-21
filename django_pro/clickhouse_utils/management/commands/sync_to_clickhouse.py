@@ -45,9 +45,16 @@ COURSE_PROGRAM_CH_TABLES = (
 from clickhouse_utils.schema import (
     ANALYTICS_TABLE_NAMES,
     COLUMN_MIGRATION_DDL,
+    CREATE_STUDENT_INCIDENTS,
     PROJECTION_DDL,
     SECONDARY_INDEX_DDL,
     get_all_ddl,
+)
+from clickhouse_utils.student_incidents_sync import (
+    STUDENT_INCIDENTS_CH_COLUMNS,
+    fetch_all_student_incidents_from_pg,
+    fetch_changed_student_incidents_from_pg,
+    sanitize_incident_row,
 )
 
 logger = logging.getLogger(__name__)
@@ -331,6 +338,9 @@ class Command(BaseCommand):
             ))
 
     def _sync_source_table(self, ch, ch_db, table, atomic, force_full, pg_fn_kwargs):
+        if table == 'student_incidents':
+            return self._sync_student_incidents_table(ch, ch_db, atomic, force_full)
+
         if table == 'student_marks_list':
             self._full_replace_marks_from_alt(ch, ch_db, atomic)
             pg_count = self._pg_count(table)
@@ -385,6 +395,151 @@ class Command(BaseCommand):
             cache.set(_watermark_key(table), self._pg_max_ts(table, ts_col), None)
         self._record_meta(
             ch, ch_db, table, pg_count if pg_count is not None else self._ch_count(ch, ch_db, table) or 0,
+            cache.get(_watermark_key(table)) if ts_col else None,
+            'full',
+        )
+        return 'full'
+
+    def _student_incidents_ch_schema_ok(self, ch, ch_db):
+        """True when ClickHouse student_incidents matches the current PG-backed layout."""
+        try:
+            result = ch.query(
+                f"SELECT name FROM system.columns "
+                f"WHERE database = '{ch_db}' AND table = 'student_incidents'"
+            )
+            rows = result.result_rows if hasattr(result, 'result_rows') else list(result)
+            names = {str(r[0]) for r in rows}
+            if not names:
+                return False
+            expected = set(STUDENT_INCIDENTS_CH_COLUMNS)
+            if names != expected:
+                return False
+            if 'incidents_data' in names:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _recreate_student_incidents_ch(self, ch, ch_db):
+        ddl = CREATE_STUDENT_INCIDENTS.strip().replace(
+            'CREATE TABLE IF NOT EXISTS student_incidents',
+            f'CREATE TABLE {ch_db}.student_incidents',
+        )
+        ch.command(f'DROP TABLE IF EXISTS {ch_db}.student_incidents__sync')
+        ch.command(f'DROP TABLE IF EXISTS {ch_db}.student_incidents')
+        ch.command(ddl)
+
+    def _insert_student_incidents_rows(self, ch, ch_db, table_name, rows, batch_size=5000):
+        if not rows:
+            return 0
+        insert_table = f'{ch_db}.{table_name}'
+        inserted = 0
+        for i in range(0, len(rows), batch_size):
+            chunk = rows[i:i + batch_size]
+            ch.insert(
+                insert_table,
+                [sanitize_incident_row(r) for r in chunk],
+                column_names=list(STUDENT_INCIDENTS_CH_COLUMNS),
+            )
+            inserted += len(chunk)
+        return inserted
+
+    def _delete_student_incidents_keys(self, ch, ch_db, keys):
+        if not keys:
+            return
+        safe_keys = [str(k).replace("'", "\\'") for k in keys if k]
+        for i in range(0, len(safe_keys), 500):
+            chunk = safe_keys[i:i + 500]
+            in_list = ', '.join(f"'{k}'" for k in chunk)
+            ch.command(
+                f'ALTER TABLE {ch_db}.student_incidents DELETE '
+                f'WHERE stu_annual_key IN ({in_list})'
+            )
+
+    def _sync_student_incidents_table(self, ch, ch_db, atomic, force_full):
+        """Sync student_incidents via explicit PG SELECT (jsonb incidents as text).
+
+        Recreates the ClickHouse table on full reload so a dropped/recreated
+        PostgreSQL table (or legacy incidents_data column) cannot leave CH stale.
+        """
+        table = 'student_incidents'
+        ts_col = TABLE_TS_COLS.get(table)
+        watermark = cache.get(_watermark_key(table)) if ts_col and not force_full else None
+        pg_count = self._pg_count(table)
+        ch_count = self._ch_count(ch, ch_db, table)
+        changed_count = 0
+        source_max_ts = None
+        if ts_col:
+            source_max_ts = self._pg_max_ts(table, ts_col)
+            if watermark:
+                changed_count = self._pg_changed_count(table, ts_col, watermark)
+
+        schema_ok = self._student_incidents_ch_schema_ok(ch, ch_db)
+        if not schema_ok:
+            force_full = True
+            if ch_count:
+                self.stdout.write(self.style.WARNING(
+                    '  student_incidents ClickHouse schema out of date; forcing full reload.'
+                ))
+
+        mode = 'full' if force_full else choose_sync_mode(
+            table, watermark, pg_count, ch_count, changed_count,
+        )
+        if mode == 'skip' and schema_ok:
+            self._record_meta(ch, ch_db, table, pg_count or ch_count or 0, source_max_ts, 'skip')
+            return 'skip'
+
+        if mode == 'incremental' and watermark and schema_ok:
+            try:
+                changed_rows = fetch_changed_student_incidents_from_pg(watermark)
+                if changed_rows:
+                    keys = [r[0] for r in changed_rows]
+                    self._delete_student_incidents_keys(ch, ch_db, keys)
+                    self._insert_student_incidents_rows(
+                        ch, ch_db, 'student_incidents', changed_rows,
+                    )
+                new_max = source_max_ts or self._pg_max_ts(table, ts_col)
+                cache.set(_watermark_key(table), new_max, None)
+                ch_after = self._ch_count(ch, ch_db, table)
+                self._record_meta(ch, ch_db, table, pg_count or 0, new_max, 'incremental')
+                if pg_count is not None and ch_after is not None and int(ch_after) != int(pg_count):
+                    self.stdout.write(self.style.WARNING(
+                        f'  {table} incremental row count mismatch '
+                        f'(pg={pg_count} ch={ch_after}); falling back to full.'
+                    ))
+                    force_full = True
+                else:
+                    return 'incremental'
+            except Exception as exc:
+                logger.warning('Incremental student_incidents sync failed: %s', exc)
+                self.stdout.write(self.style.WARNING(
+                    f'  {table} incremental failed ({exc}); falling back to full.'
+                ))
+                force_full = True
+
+        staging = f'{table}__sync'
+        if atomic:
+            self._recreate_student_incidents_ch(ch, ch_db)
+            target = staging
+            ch.command(f'CREATE TABLE {ch_db}.{staging} AS {ch_db}.{table}')
+            ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+        else:
+            self._recreate_student_incidents_ch(ch, ch_db)
+            target = table
+
+        all_rows = fetch_all_student_incidents_from_pg()
+        inserted = self._insert_student_incidents_rows(ch, ch_db, target, all_rows)
+        self.stdout.write(f'  student_incidents: inserted {inserted} rows from PostgreSQL')
+
+        if atomic:
+            ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
+            ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
+
+        if ts_col:
+            cache.set(_watermark_key(table), self._pg_max_ts(table, ts_col), None)
+        final_count = self._ch_count(ch, ch_db, table) or inserted
+        self._record_meta(
+            ch, ch_db, table, final_count,
             cache.get(_watermark_key(table)) if ts_col else None,
             'full',
         )

@@ -21,6 +21,7 @@ from ..catalog_columns import (
 )
 from ..constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
 from ..mtss_columns import is_mtss_column, apply_mtss_columns
+from ..incident_columns import is_incident_column, apply_incident_columns
 from ..column_utils import (
     _get_display_name,
     export_csv_cell,
@@ -35,7 +36,14 @@ from ..column_utils import (
 from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filter
 from .schedule_filter_sql import parse_schedule_marks_filters, apply_schedule_marks_filters
 from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
-from .filter_sql import apply_column_filters, extract_markall_course_picker, markall_course_filter_parts
+from .filter_sql import (
+    apply_column_filters,
+    extract_markall_course_picker,
+    incident_sql_backend_for_request,
+    list_query_uses_postgres,
+    markall_course_filter_parts,
+)
+from ..incident_pg_sql import incident_join_sql_fragment
 from .student_data_utils import (
     get_current_student_columns,
     get_student_enroll_columns,
@@ -328,6 +336,22 @@ def export_students_csv(request):
                     names.add(s[len('exclude:'):])
         return names
 
+    cp_filters, filters_without_cp = split_course_program_filters(filters)
+    list_uses_pg = list_query_uses_postgres(
+        filters_without_cp,
+        sort_by,
+        search=search,
+        search_ids=search_ids,
+        schedule_marks_filters=schedule_marks_filters,
+    )
+    incident_sql_backend = incident_sql_backend_for_request(
+        filters_without_cp,
+        sort_by,
+        search=search,
+        search_ids=search_ids,
+        schedule_marks_filters=schedule_marks_filters,
+    )
+
     # 2. Preparation for Query
     db_columns = get_current_student_columns()
     enroll_columns = get_student_enroll_columns()
@@ -365,11 +389,16 @@ def export_students_csv(request):
         [c for c in selected_columns if is_mtss_column(c)]
         + [k for k in filter_keys if is_mtss_column(k)]
     ))
+    selected_incident_cols = list(set(
+        [c for c in selected_columns if is_incident_column(c)]
+        + [k for k in filter_keys if is_incident_column(k)]
+    ))
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
         and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
         and not is_mtss_column(c)
+        and not is_incident_column(c)
         and c in COLUMN_DEFINITIONS
         and c not in VIRTUAL_COLUMNS
     ]
@@ -412,6 +441,14 @@ def export_students_csv(request):
     if needs_eht:
         join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
 
+    needs_incident_predicate = bool(sort_by and is_incident_column(sort_by))
+    if isinstance(filters, dict):
+        needs_incident_predicate = needs_incident_predicate or any(
+            is_incident_column(k) and filters.get(k) for k in filters
+        )
+    if needs_incident_predicate and incident_sql_backend == 'ch':
+        join_sql += incident_join_sql_fragment(join_sql, backend='ch')
+
     # Streaming Response setup
     class Echo:
         def write(self, value): return value
@@ -426,7 +463,7 @@ def export_students_csv(request):
             from clickhouse_utils.executor import QueryExecutor
             # Local working copy (the markall expansion below re-binds it).
             export_cols = list(selected_columns)
-            with QueryExecutor(analytics=True).cursor() as cursor:
+            with QueryExecutor(analytics=True, force_postgres=list_uses_pg).cursor() as cursor:
                 # Re-implement helper logic inline or simplified
                 def _parse_year_from_test_col(col_key):
                     s = (col_key or '').replace('-', '_')
@@ -774,6 +811,7 @@ def export_students_csv(request):
                     where_clauses, params, filters_without_cp, test_col_map, mark_col_map,
                     db_columns, enroll_columns, needs_enroll, needs_students, needs_eht,
                     ap_exam_infos, ap_award_infos,
+                    incident_sql_backend=incident_sql_backend,
                 )
                 apply_course_program_filters_for_clickhouse(
                     where_clauses, params, cp_filters, base_where_clauses, base_params,
@@ -991,8 +1029,10 @@ def export_students_csv(request):
                 if (test_cols_info or selected_mark_cols or markall_years or selected_survey_cols) and 'student_id' not in query_base_cols: query_base_cols.insert(0, 'student_id')
                 if (selected_mark_cols or markall_years or selected_course_prog_cols) and 'stu_annual_key' not in query_base_cols:
                     query_base_cols.insert(0, 'stu_annual_key')
-                if (selected_course_prog_cols or selected_mtss_cols) and 'school_year' not in query_base_cols:
+                if (selected_course_prog_cols or selected_mtss_cols or selected_incident_cols) and 'school_year' not in query_base_cols:
                     query_base_cols.insert(0, 'school_year')
+                if selected_incident_cols and 'stu_annual_key' not in query_base_cols:
+                    query_base_cols.insert(0, 'stu_annual_key')
                 
                 base_col_selects = []
                 base_col_expressions = {}
@@ -1065,6 +1105,9 @@ def export_students_csv(request):
 
                     if selected_mtss_cols:
                         apply_mtss_columns(chunk_students, selected_mtss_cols, active_school_year=school_year)
+
+                    if selected_incident_cols:
+                        apply_incident_columns(chunk_students, selected_incident_cols, active_school_year=school_year)
 
                     if sat_infos:
                         try:

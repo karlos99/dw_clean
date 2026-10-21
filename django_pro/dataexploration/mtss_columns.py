@@ -163,6 +163,121 @@ def fetch_mtss_data_for_students(students: list[dict]) -> tuple[dict[tuple[str, 
     return out, by_ssid
 
 
+_MTSS_YEAR_MATCH_SQL = """(
+    m.school_year = cs.school_year
+    OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4)
+    OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4)
+)"""
+
+
+def mtss_filter_options_sql(canonical: str, option_where_sql: str, join_sql: str) -> str:
+    return f"""
+        SELECT DISTINCT m.{canonical} AS v
+        FROM mtss_data m
+        WHERE NULLIF(BTRIM(m.{canonical}::text), '') IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+            FROM current_student cs
+            {join_sql}
+            WHERE cs.ssid = m.ssid
+              AND ({option_where_sql})
+              AND {_MTSS_YEAR_MATCH_SQL}
+          )
+        ORDER BY v ASC
+        LIMIT 50
+    """
+
+
+def mtss_filter_blank_check_sql(canonical: str, option_where_sql: str, join_sql: str) -> str:
+    return f"""
+        SELECT 1
+        FROM current_student cs
+        {join_sql}
+        WHERE {option_where_sql}
+          AND NOT EXISTS (
+            SELECT 1 FROM mtss_data m
+            WHERE m.ssid = cs.ssid
+              AND {_MTSS_YEAR_MATCH_SQL}
+              AND NULLIF(TRIM(m.{canonical}::text), '') IS NOT NULL
+          )
+        LIMIT 1
+    """
+
+
+def _mtss_global_distinct(canonical: str) -> list:
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT DISTINCT {canonical} AS v
+                FROM mtss_data
+                WHERE NULLIF(BTRIM({canonical}::text), '') IS NOT NULL
+                ORDER BY v ASC
+                LIMIT 50
+                """
+            )
+            return [row[0] for row in cur.fetchall() if row[0] is not None and str(row[0]).strip()]
+    except Exception as e:
+        logger.warning("MTSS global filter options failed for %s: %s", canonical, e)
+        return []
+
+
+def fetch_mtss_filter_options(
+    canonical: str,
+    option_where_sql: str,
+    join_sql: str,
+    params,
+) -> list:
+    """Load distinct MTSS facet values for the filtered student population (PostgreSQL)."""
+    values: list = []
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                mtss_filter_options_sql(canonical, option_where_sql, join_sql),
+                params,
+            )
+            for row in cur.fetchall():
+                val = row[0]
+                if val is None:
+                    val = ""
+                if val not in values:
+                    values.append(val)
+        with connection.cursor() as cur:
+            cur.execute(
+                mtss_filter_blank_check_sql(canonical, option_where_sql, join_sql),
+                params,
+            )
+            if cur.fetchone() and "" not in values:
+                values.insert(0, "")
+    except Exception as e:
+        logger.exception("MTSS filter options failed for %s", canonical)
+        values = []
+
+    if not values:
+        values = _mtss_global_distinct(canonical)
+        if values and "" not in values:
+            values.insert(0, "")
+    return values
+
+
+def mirror_mtss_filter_options(filter_options: dict, selected_mtss_cols: list[str]) -> None:
+    """Ensure filter_options keys cover MTSS column aliases (plan_type, mtss_plan_type, …)."""
+    for col in selected_mtss_cols:
+        canonical = canonical_mtss_column(col)
+        if not canonical:
+            continue
+        vals = filter_options.get(col)
+        if vals is None:
+            vals = filter_options.get(canonical)
+        if vals is None:
+            continue
+        filter_options[col] = vals
+        filter_options[canonical] = vals
+        for alias, can in MTSS_ALIASES.items():
+            if can == canonical:
+                filter_options[alias] = vals
+
+
 def apply_mtss_columns(
     students: list[dict],
     selected_cols: list[str],

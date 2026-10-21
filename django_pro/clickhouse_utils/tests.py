@@ -455,3 +455,35 @@ class CourseProgramSyncTests(SimpleTestCase):
         from clickhouse_utils.course_program_sync import CREATE_MATCHED_TEMP_SQL
 
         self.assertNotIn('Pending', CREATE_MATCHED_TEMP_SQL)
+
+
+class StudentIncidentsSyncTests(SimpleTestCase):
+    def test_pg_select_casts_incidents_to_text(self):
+        from clickhouse_utils.student_incidents_sync import STUDENT_INCIDENTS_PG_SELECT
+
+        self.assertIn('incidents::text', STUDENT_INCIDENTS_PG_SELECT)
+        self.assertIn('current_student', STUDENT_INCIDENTS_PG_SELECT)
+
+    def test_sync_select_joins_current_student_when_no_annual_key(self):
+        from clickhouse_utils import student_incidents_sync as mod
+
+        mod.clear_pg_student_incidents_columns_cache()
+        with patch.object(
+            mod,
+            'pg_student_incidents_columns',
+            return_value=frozenset({'ssid', 'school_year', 'incidents', 'updated_at'}),
+        ):
+            sql = mod._sync_select_sql()
+        self.assertIn('INNER JOIN current_student cs', sql)
+        self.assertIn('cs.stu_annual_key', sql)
+        self.assertNotIn('si.stu_annual_key', sql)
+
+    def test_sanitize_incident_row_coerces_strings(self):
+        from clickhouse_utils.student_incidents_sync import sanitize_incident_row
+
+        row = sanitize_incident_row(('key1', 'ssid1', 99, {'Major': {}}, None))
+        self.assertEqual(row[0], 'key1')
+        self.assertEqual(row[1], 'ssid1')
+        self.assertEqual(row[2], 99)
+        self.assertIn('Major', row[3])
+        self.assertEqual(row[4], None)

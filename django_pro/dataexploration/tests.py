@@ -692,6 +692,21 @@ class CsFilterClauseTests(SimpleTestCase):
 		self.assertNotIn('cs.dsusd_fep', where_clauses[0])
 		self.assertEqual(params, [['Y']])
 
+	def test_list_query_uses_postgres_for_incident_sort_with_filters(self):
+		from dataexploration.view_modules.filter_sql import list_query_uses_postgres
+
+		self.assertTrue(
+			list_query_uses_postgres({'area_of_concern': ['Behavior']}, sort_by='incidents_major'),
+		)
+		self.assertTrue(
+			list_query_uses_postgres({'plan_type': ['Tier 2']}, sort_by='incidents_minor'),
+		)
+		self.assertTrue(
+			list_query_uses_postgres({'suspension_days': ['>=1']}, sort_by='student_name'),
+		)
+		self.assertFalse(list_query_uses_postgres({}, sort_by='incidents_major'))
+		self.assertFalse(list_query_uses_postgres({'area_of_concern': ['Behavior']}, sort_by='student_name'))
+
 	def test_mtss_filter_uses_subquery_not_physical_cs_column(self):
 		from dataexploration.column_utils import _append_cs_filter_clause
 
@@ -730,7 +745,13 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		)
 		self.assertEqual(len(where_clauses), 1)
 		self.assertIn('cs.grade', where_clauses[0])
-		self.assertEqual(params, [['03']])
+		self.assertEqual(params, [['03', '3']])
+
+	def test_expand_grade_match_values_includes_zero_padded(self):
+		from dataexploration.view_modules.filter_sql import expand_grade_match_values
+
+		self.assertEqual(expand_grade_match_values('3'), ['3', '03'])
+		self.assertIn('9', expand_grade_match_values('09'))
 
 	def test_race_list_filter_uses_l_race_json_overlap(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
@@ -2152,6 +2173,38 @@ class MtssDataExplorationTests(TestCase):
 		self.assertEqual(len(where_clauses), 1)
 		sql = where_clauses[0]
 		self.assertIn('mtss_data', sql)
+
+	def test_mtss_filter_options_distinct(self):
+		from dataexploration.mtss_columns import fetch_mtss_filter_options
+		from django.db import connection
+
+		with connection.cursor() as cur:
+			cur.execute("""
+				CREATE TABLE IF NOT EXISTS current_student (
+					stu_annual_key text,
+					ssid text,
+					student_id text,
+					student_name text,
+					grade text,
+					school_year text,
+					status text,
+					school text
+				)
+			""")
+			cur.execute("DELETE FROM current_student")
+			cur.execute("""
+				INSERT INTO current_student (stu_annual_key, ssid, student_id, school_year, status)
+				VALUES ('k1', '1317443220', 's1', '2026-2027', 'Active'),
+				       ('k2', '1352209140', 's2', '2026-2027', 'Active')
+			""")
+
+		values = fetch_mtss_filter_options(
+			'plan_type',
+			"cs.status = 'Active' AND cs.school_year = %s",
+			'',
+			['2026-2027'],
+		)
+		self.assertIn('Tier 2', values)
 		self.assertIn('m.plan_type = ANY(%s)', sql)
 		self.assertIn("m.school_year = cs.school_year", sql)
 		self.assertEqual(params, [['Tier 2']])
@@ -2170,4 +2223,167 @@ class MtssDataExplorationTests(TestCase):
 			self.assertIn(col, defs)
 			self.assertIn(col, cats['mtss']['columns'])
 		self.assertEqual(cats['mtss']['title'], 'MTSS (Tier 2)')
+
+
+class StudentIncidentsTests(TestCase):
+	"""Parser and Data Explorer enrichment for student_incidents JSON."""
+
+	SAMPLE_JSON = {
+		'Major': {
+			'count': 2,
+			'incidents': [
+				{
+					'date': '2025-10-08',
+					'school': 'Example MS',
+					'location': 'Lunch Area',
+					'violations': [{'violation': 'Major Assault', 'notify_law_enforcement': 'N'}],
+					'incident_id': 2503199,
+					'dispositions': [],
+					'referring_staff': 'Staff A',
+				},
+				{
+					'date': '2026-03-05',
+					'location': 'Classroom',
+					'violations': [
+						{'violation': 'Major Defiance', 'ed_code': '48900(k)', 'notify_law_enforcement': 'N'},
+					],
+					'incident_id': 2513231,
+					'dispositions': [{'disposition': 'Lunch Detention'}],
+					'referring_staff': 'Staff B',
+					'review_status': 'Closed',
+					'description': 'Student refused to follow staff direction.',
+				},
+			],
+		},
+		'suspension_days': 3,
+		'Minor': {
+			'count': 1,
+			'incidents': [
+				{
+					'date': '2025-09-25',
+					'location': 'School Grounds',
+					'violations': [{'violation': 'Minor Campus disruption', 'notify_law_enforcement': 'N'}],
+					'incident_id': 2502159,
+					'dispositions': [],
+					'referring_staff': 'Staff C',
+				},
+			],
+		},
+	}
+
+	def test_incident_counts_from_json(self):
+		from dataexploration.incident_columns import (
+			incident_counts,
+			parse_incidents_payload,
+			suspension_days_from_payload,
+		)
+
+		payload = parse_incidents_payload(self.SAMPLE_JSON)
+		self.assertEqual(incident_counts(payload), (2, 1))
+		self.assertEqual(suspension_days_from_payload(payload), 3)
+
+	def test_suspension_days_from_dispositions(self):
+		from dataexploration.incident_columns import parse_incidents_payload, suspension_days_from_payload
+
+		payload = parse_incidents_payload({
+			'Major': {
+				'count': 1,
+				'incidents': [{
+					'incident_id': 1,
+					'dispositions': [{
+						'disposition': 'Out of School Suspension',
+						'duration_days': 4,
+					}],
+				}],
+			},
+			'Minor': {'count': 0, 'incidents': []},
+		})
+		self.assertEqual(suspension_days_from_payload(payload), 4)
+
+	def test_suspension_days_alt_root_key(self):
+		from dataexploration.incident_columns import parse_incidents_payload, suspension_days_from_payload
+
+		payload = parse_incidents_payload({'Suspension_Days': 2, 'Major': {'count': 0, 'incidents': []}})
+		self.assertEqual(suspension_days_from_payload(payload), 2)
+
+	def test_combine_incidents_for_year_sorts_newest_first(self):
+		from dataexploration.incident_columns import combine_incidents_for_year, parse_incidents_payload
+
+		payload = parse_incidents_payload(self.SAMPLE_JSON)
+		combined = combine_incidents_for_year(payload)
+		self.assertEqual(len(combined), 3)
+		self.assertEqual(combined[0]['incident_id'], 2513231)
+		self.assertEqual(combined[-1]['incident_id'], 2502159)
+
+	def test_normalize_incident_record(self):
+		from dataexploration.incident_columns import normalize_incident_record
+
+		item = self.SAMPLE_JSON['Major']['incidents'][1]
+		row = normalize_incident_record('Major', item)
+		self.assertEqual(row['date'], '2026-03-05')
+		self.assertEqual(row['date_display'], '03/05/2026')
+		self.assertIn('Major Defiance', row['violations'])
+		self.assertEqual(row['dispositions'], 'Lunch Detention')
+		self.assertEqual(row['review_status'], 'Closed')
+		self.assertEqual(row['description'], 'Student refused to follow staff direction.')
+		self.assertEqual(row['ed_codes'], '48900(k)')
+
+	def test_format_incident_date_display(self):
+		from dataexploration.incident_columns import format_incident_date_display
+
+		self.assertEqual(format_incident_date_display('2025-10-08'), '10/08/2025')
+		self.assertEqual(format_incident_date_display(''), '')
+
+	def test_incident_columns_in_catalog(self):
+		from dataexploration.constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES
+
+		self.assertIn('incidents_major', COLUMN_DEFINITIONS)
+		self.assertIn('incidents_minor', COLUMN_DEFINITIONS)
+		self.assertIn('suspension_days', COLUMN_DEFINITIONS)
+		perf = COLUMN_CATEGORIES['performance']['columns']
+		self.assertIn('incidents_major', perf)
+		self.assertIn('incidents_minor', perf)
+		self.assertIn('suspension_days', perf)
+		self.assertLess(perf.index('suspension_indicator'), perf.index('incidents_major'))
+		self.assertLess(perf.index('incidents_major'), perf.index('incidents_minor'))
+		self.assertLess(perf.index('incidents_minor'), perf.index('suspension_days'))
+
+	def test_enabled_allowlist_auto_includes_incident_columns(self):
+		from unittest.mock import patch
+		from dataexploration.view_modules.column_management import get_enabled_columns
+
+		mock_cfg = type('Cfg', (), {'enabled_columns': ['ssid', 'suspension_indicator']})()
+		with patch('landing.utils.get_project_config', return_value=mock_cfg):
+			_defs, cats = get_enabled_columns()
+		perf = cats.get('performance', {}).get('columns', [])
+		self.assertEqual(
+			[
+				c for c in perf
+				if c in ('suspension_indicator', 'incidents_major', 'incidents_minor', 'suspension_days')
+			],
+			['suspension_indicator', 'incidents_major', 'incidents_minor', 'suspension_days'],
+		)
+
+	def test_apply_incident_columns(self):
+		from unittest.mock import patch
+		from dataexploration.incident_columns import apply_incident_columns
+
+		students = [
+			{'stu_annual_key': 'key1', 'ssid': '111'},
+			{'stu_annual_key': 'key2', 'ssid': '222'},
+		]
+		with patch('dataexploration.incident_columns.fetch_incidents_for_keys') as mock_fetch:
+			mock_fetch.return_value = {
+				'key1': self.SAMPLE_JSON,
+			}
+			apply_incident_columns(
+				students,
+				['incidents_major', 'incidents_minor', 'suspension_days'],
+			)
+		self.assertEqual(students[0]['incidents_major'], 2)
+		self.assertEqual(students[0]['incidents_minor'], 1)
+		self.assertEqual(students[0]['suspension_days'], 3)
+		self.assertEqual(students[1]['incidents_major'], 0)
+		self.assertEqual(students[1]['incidents_minor'], 0)
+		self.assertEqual(students[1]['suspension_days'], 0)
 
