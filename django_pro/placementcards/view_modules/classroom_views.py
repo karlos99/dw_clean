@@ -413,7 +413,15 @@ def classroom_statistics(request: HttpRequest, classroom_id: int):
             response_value = responses_by_ssid.get(ssid, {}).get(str(question.id))
 
             if question.question_type == 'checkbox':
-                counts['YES' if bool(response_value) else 'NO'] += 1
+                if isinstance(response_value, list):
+                    normalized_items = [str(item).strip() for item in response_value if str(item).strip()]
+                    if normalized_items:
+                        for item in normalized_items:
+                            counts[_norm(item)] += 1
+                    else:
+                        counts['NONE'] += 1
+                else:
+                    counts['YES' if bool(response_value) else 'NO'] += 1
                 continue
 
             if question.question_type == 'choice':
