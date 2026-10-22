@@ -20,6 +20,7 @@ def _student_summary_cache_version():
     for name in (
         'student_test_summary_content.html', 'student_details.html',
         'student_orbit_header.html', 'student_requirement_table.html',
+        'student_behavior_incidents.html',
     ):
         try:
             mtimes.append(str(int(os.path.getmtime(base / name))))
@@ -32,7 +33,7 @@ def _student_summary_cache_version():
         sections = summary_sections_version()
     except Exception:
         sections = ''
-    return 'v8:' + ':'.join(mtimes) + ':' + sections
+    return 'v9:' + ':'.join(mtimes) + ':' + sections
 
 
 def _resolve_ssid(ssid: str) -> str:
@@ -64,6 +65,7 @@ def _student_summary_cache_keys(ssid: str, user_id=None, embedded: bool = False)
         'student_marks': f"dataexp:student_summary:{v}:{user_part}student_marks:{ssid}",
         'student_cte_details': f"dataexp:student_summary:{v}:{user_part}student_cte_details:{ssid}",
         'student_details': f"dataexp:student_summary:{v}:{user_part}student_details:{ssid}",
+        'student_incidents': f"dataexp:student_summary:{v}:{user_part}student_incidents:{ssid}",
         'partial_html': f"dataexp:student_summary:{v}:{user_part}partial_html:{'embedded' if embedded else 'full'}:{ssid}",
     }
 
@@ -2173,6 +2175,20 @@ def _fetch_student_details(ssid: str):
     return _build_student_details(row, ag_map=_get_course_ag_map())
 
 
+def get_student_incidents_cached(ssid: str, timeout: int = 300, user_id=None):
+    """Get multi-year discipline incidents for the student summary Behavior tab."""
+    from ..incident_columns import build_student_incidents_summary
+
+    ssid = _resolve_ssid(ssid)
+    keys = _student_summary_cache_keys(ssid, user_id=user_id)
+    cached = cache.get(keys['student_incidents'])
+    if cached is not None:
+        return cached
+    details = build_student_incidents_summary(ssid)
+    cache.set(keys['student_incidents'], details, timeout=timeout)
+    return details
+
+
 def get_student_details_cached(ssid: str, timeout: int = 300, user_id=None):
     """Get the student's record/transcript details with caching."""
     ssid = _resolve_ssid(ssid)
@@ -2202,7 +2218,8 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
     except Exception:
         summary_sections = {
             'tests': True, 'grades': True, 'diploma': True, 'ag': True,
-            'on_track': True, 'cte': True, 'recognition': True, 'flags': True,
+            'on_track': True, 'cte': True, 'behavior': True,
+            'recognition': True, 'flags': True,
         }
     context = {
         'ssid': ssid,
@@ -2216,6 +2233,7 @@ def get_student_summary_partial_html_cached(request, ssid: str, timeout: int = 3
             current_school_year=student_info.get('school_year') or '',
         ),
         'student_details': get_student_details_cached(ssid, timeout=timeout, user_id=user_id),
+        'student_incidents': get_student_incidents_cached(ssid, timeout=timeout, user_id=user_id),
         'embedded': embedded,
         'summary_sections': summary_sections,
     }

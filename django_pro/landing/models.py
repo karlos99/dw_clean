@@ -143,6 +143,10 @@ class ProjectConfig(models.Model):
         default=True,
         help_text="Show the CTE pathways tab in the student summary.",
     )
+    summary_show_behavior = models.BooleanField(
+        default=True,
+        help_text="Show the Behavior tab (discipline incidents by school year) in the student summary.",
+    )
     summary_show_recognition = models.BooleanField(
         default=True,
         help_text=(
@@ -159,7 +163,7 @@ class ProjectConfig(models.Model):
         blank=True,
         help_text=(
             "Granular access rules for student summary modules, keyed by module key "
-            "(tests, grades, diploma, ag, on_track, cte, recognition, flags). "
+            "(tests, grades, diploma, ag, on_track, cte, behavior, recognition, flags). "
             "Format: {\"flags\": {\"mode\": \"restricted\", \"roles\": [\"504_Admin\"], \"emails\": [\"user@example.com\"]}}"
         ),
     )

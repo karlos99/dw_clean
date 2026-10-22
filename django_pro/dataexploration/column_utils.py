@@ -837,7 +837,13 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
         params.extend([search_param, search_param, search_param])
         return
 
-    if col in {'school_year', 'grade', 'status', 'school_state_id'}:
+    if col == 'grade':
+        from dataexploration.view_modules.filter_sql import append_grade_where_clause
+
+        append_grade_where_clause(where_clauses, params, vals)
+        return
+
+    if col in {'school_year', 'status', 'school_state_id'}:
         where_clauses.append(f"cs.{col} = ANY(%s)")
         params.append(vals)
         return

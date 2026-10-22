@@ -54,6 +54,16 @@ from ..mtss_columns import (
     canonical_mtss_column,
     get_mtss_school_years,
     apply_mtss_columns,
+    fetch_mtss_filter_options,
+    mirror_mtss_filter_options,
+)
+from ..incident_columns import (
+    is_incident_column,
+    incident_value_sql_expr,
+    apply_incident_columns,
+)
+from ..incident_pg_sql import (
+    incident_join_sql_fragment,
 )
 
 from ..utils import (
@@ -90,6 +100,8 @@ from .column_management import (
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
 from .filter_sql import (
     apply_column_filters,
+    incident_sql_backend_for_request,
+    list_query_uses_postgres,
     normalize_filter_param as _normalize_filter_param,
     extract_markall_course_picker,
 )
@@ -710,13 +722,6 @@ def _load_students(request):
     except Exception:
         pass
     
-    _gr_raw = request.GET.get('grade', '')
-    grade = _parse_multi(
-        _gr_raw,
-        _parse_multi(saved_filters.get('grade', ''),
-                     _parse_multi(saved_config.get('grade', ''), ''))
-    )
-    
     status_param = request.GET.get('status')
     if status_param is not None:
         status = _parse_multi(status_param, '')
@@ -736,7 +741,7 @@ def _load_students(request):
     cursor_value = decode_cursor(cursor_raw) if cursor_raw else None
 
     CORE_FILTER_KEYS = {
-        'search', 'school_year', 'grade', 'status',
+        'search', 'school_year', 'status',
         'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
     }
     filters_json = request.GET.get('filters', '')
@@ -747,7 +752,7 @@ def _load_students(request):
         except Exception:
             filters = saved_filters.copy()
     else:
-        # Use saved filters, excluding the basic search/school_year/grade/status which are handled separately
+        # Use saved filters, excluding toolbar search/school_year/status (grade uses column filter JSON)
         filters = {
             k: v for k, v in saved_filters.items()
             if k not in CORE_FILTER_KEYS
@@ -805,7 +810,27 @@ def _load_students(request):
                     names.add(s[len('exclude:'):])
         return names
 
-    with QueryExecutor(analytics=True).cursor() as cursor:
+    cp_filters, filters_without_cp = split_course_program_filters(filters)
+    _query_routing_kw = {
+        'search': search,
+        'search_ids': search_ids,
+        'schedule_marks_filters': schedule_marks_filters,
+    }
+
+    def _incident_sql_backend(filters_for_request):
+        return incident_sql_backend_for_request(
+            filters_for_request,
+            sort_by,
+            **_query_routing_kw,
+        )
+
+    list_uses_pg = list_query_uses_postgres(
+        filters_without_cp,
+        sort_by,
+        **_query_routing_kw,
+    )
+
+    with QueryExecutor(analytics=True, force_postgres=list_uses_pg).cursor() as cursor:
         db_columns = get_current_student_columns()
         enroll_columns = get_student_enroll_columns()
         base_where_clauses = ["1=1"]
@@ -1097,7 +1122,6 @@ def _load_students(request):
                     # Override user-driven filters; the list defines membership.
                     search = None
                     school_year = None
-                    grade = None
                     status = None
                     filters = {}
 
@@ -1117,18 +1141,6 @@ def _load_students(request):
                 base_params.extend([search_param, search_param, search_param])
         
         _append_school_year_filter(base_where_clauses, base_params, school_year)
-        
-        if grade:
-            if isinstance(grade, list):
-                if len(grade) == 1:
-                    base_where_clauses.append("cs.grade = %s")
-                    base_params.append(grade[0])
-                elif len(grade) > 1:
-                    base_where_clauses.append("cs.grade = ANY(%s)")
-                    base_params.append(grade)
-            else:
-                base_where_clauses.append("cs.grade = %s")
-                base_params.append(grade)
 
         if status:
             if isinstance(status, list):
@@ -1191,6 +1203,10 @@ def _load_students(request):
             [c for c in selected_columns if is_mtss_column(c)]
             + [k for k in filter_keys if is_mtss_column(k)]
         ))
+        selected_incident_cols = list(set(
+            [c for c in selected_columns if is_incident_column(c)]
+            + [k for k in filter_keys if is_incident_column(k)]
+        ))
         selected_ap_cols = list(set(
             [c for c in selected_columns if isinstance(c, str) and c.startswith('ap_') and not c.startswith('apaward_') and not c.startswith('apawards_all_') and not c.startswith('apall_')] +
             [k for k in filter_keys if isinstance(k, str) and k.startswith('ap_') and not k.startswith('apaward_') and not k.startswith('apawards_all_') and not k.startswith('apall_')]
@@ -1220,6 +1236,7 @@ def _load_students(request):
             if isinstance(c, str)
             and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
             and not is_mtss_column(c)
+            and not is_incident_column(c)
             and c in COLUMN_DEFINITIONS
             and c not in VIRTUAL_COLUMNS
         ]
@@ -1261,6 +1278,15 @@ def _load_students(request):
              or sort_by == 'elem_teacher_name'
         )
 
+        incident_sql_backend = _incident_sql_backend(filters_without_cp)
+
+        needs_incident_predicate = bool(sort_by and is_incident_column(sort_by))
+        if isinstance(filters, dict):
+            needs_incident_predicate = needs_incident_predicate or any(
+                is_incident_column(k) and filters.get(k) for k in filters
+            )
+        needs_incident_ch_join = needs_incident_predicate and incident_sql_backend == 'ch'
+
         join_sql = ""
         if needs_enroll:
             join_sql += (
@@ -1281,15 +1307,17 @@ def _load_students(request):
             )
         if needs_eht:
             join_sql += " LEFT JOIN elementary_homeroom_teacher eht ON eht.stu_annual_key = cs.stu_annual_key"
+        if needs_incident_ch_join:
+            join_sql += incident_join_sql_fragment(join_sql, backend='ch')
 
         # Column filters (applied to the main query)
         where_clauses = list(base_where_clauses)
         params = list(base_params)
-        cp_filters, filters_without_cp = split_course_program_filters(filters)
         apply_column_filters(
             where_clauses, params, filters_without_cp, test_col_map, mark_col_map,
             db_columns, enroll_columns, needs_enroll, needs_students, needs_eht,
             ap_exam_infos, ap_award_infos,
+            incident_sql_backend=incident_sql_backend,
         )
         apply_course_program_filters_for_clickhouse(
             where_clauses, params, cp_filters, base_where_clauses, base_params,
@@ -1765,6 +1793,12 @@ def _load_students(request):
                             " ) _sort ON _sort._k = cs.ssid"
                         )
                         order_by_expr = "nullif(_sort._v, '')"
+            elif is_incident_column(sort_by):
+                order_by_expr = incident_value_sql_expr(
+                    sort_by,
+                    backend=incident_sql_backend,
+                    student_alias='cs',
+                )
 
         sort_dir = 'desc' if sort_dir == 'desc' else 'asc'
         # Put blank/missing assessment values at the end for both directions.
@@ -1774,12 +1808,14 @@ def _load_students(request):
             sort_by and course_program_columns_enabled() and is_course_program_column(sort_by)
         )
         mtss_sort = bool(sort_by and is_mtss_column(sort_by))
+        incident_sort = bool(sort_by and is_incident_column(sort_by))
         is_dynamic_sort = bool(sort_by) and (
             sort_by in test_col_map
             or sort_by in mark_col_map
             or sort_by.startswith(('test_', 'mark_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_'))
             or course_prog_sort
             or mtss_sort
+            or incident_sort
         )
         order_nulls_sql = ' NULLS LAST' if is_dynamic_sort else ''
         # sort_join placeholders come before WHERE in the SQL, so they must
@@ -1851,7 +1887,7 @@ def _load_students(request):
                 # 2. Sort them in Python to match the cached order.
                 # 3. Proceed to fetch Test/Mark data as usual.
                 
-                cached_exec = QueryExecutor(analytics=True)
+                cached_exec = QueryExecutor(analytics=True, force_postgres=list_uses_pg)
                 sy_clauses = []
                 sy_params = []
                 _append_school_year_filter(sy_clauses, sy_params, school_year)
@@ -1895,7 +1931,7 @@ def _load_students(request):
                 query = query.rstrip() + " OFFSET %s\n"
                 query_params.append(offset)
             
-            main_exec = QueryExecutor(analytics=True)
+            main_exec = QueryExecutor(analytics=True, force_postgres=list_uses_pg)
             main_result = main_exec.execute(query, query_params)
             empty_page = (not main_result.get('rows')) and total and offset < total
             if main_result.get('error') or empty_page:
@@ -2125,6 +2161,27 @@ def _load_students(request):
                     mtss_cols_to_fill.append(col)
         if mtss_cols_to_fill and students:
             apply_mtss_columns(students, mtss_cols_to_fill, active_school_year=school_year)
+        incident_cols_to_fill = list(selected_incident_cols)
+        if incident_sort:
+            for col in (sort_by,):
+                if col and is_incident_column(col) and col not in incident_cols_to_fill:
+                    incident_cols_to_fill.append(col)
+        if incident_cols_to_fill and students:
+            apply_incident_columns(students, incident_cols_to_fill, active_school_year=school_year)
+        if incident_sort and students:
+            _reverse = sort_dir == 'desc'
+
+            def _incident_sort_key(row):
+                val = row.get(sort_by)
+                if val == '—' or val is None or val == '':
+                    return (1, 0)
+                try:
+                    n = int(val)
+                except (TypeError, ValueError):
+                    return (1, 0)
+                return (0, -n if _reverse else n)
+
+            students.sort(key=_incident_sort_key)
         if mtss_sort and students:
             _sort_canonical = canonical_mtss_column(sort_by) or sort_by
             _reverse = sort_dir == 'desc'
@@ -2177,36 +2234,77 @@ def _load_students(request):
                 _sv_scale_max = _sv_color_info.get('scale_max', 5)
                 filter_options[_sv_col_key] = list(range(1, _sv_scale_max + 1))
 
+        for _inc_col in selected_incident_cols:
+            filter_options[_inc_col] = list(range(0, 11))
+
+        base_filter_state = {
+            'search': search or '',
+            'school_year': school_year or '',
+            'grade': (filters.get('grade') if isinstance(filters, dict) else None) or '',
+            'status': status or '',
+        }
+
+        def _normalize_filter_value(value):
+            if isinstance(value, (list, tuple, set)):
+                return sorted([str(v) for v in value if v is not None])
+            return value
+
+        def _get_filter_cache_key(column, active_filters):
+            normalized_filters = {}
+            if isinstance(active_filters, dict):
+                for key, val in active_filters.items():
+                    normalized_filters[key] = _normalize_filter_value(val)
+
+            payload = {
+                'base': base_filter_state,
+                'filters': normalized_filters or "no_filters",
+                'sync': cache.get('analytics:clickhouse_sync_version', 'legacy'),
+            }
+            filter_str = json.dumps(payload, sort_keys=True)
+            return f"filter_opts:{column}:{hashlib.md5(filter_str.encode()).hexdigest()}"
+
+        for _mtss_col in selected_mtss_cols:
+            _canon = canonical_mtss_column(_mtss_col) or _mtss_col
+            filter_options.setdefault(_mtss_col, [])
+            filter_options.setdefault(_canon, [])
+
+        for col_key in selected_mtss_cols:
+            canonical = canonical_mtss_column(col_key)
+            if not canonical:
+                continue
+
+            if isinstance(filters, dict) and col_key in filters:
+                other_filters = {k: v for k, v in filters.items() if k != col_key}
+            else:
+                other_filters = filters
+
+            cache_key = f"filter_opts:mtss:v2:{_get_filter_cache_key(col_key, other_filters)}"
+            cached_values = cache.get(cache_key)
+            if cached_values:
+                filter_options[col_key] = cached_values
+                continue
+
+            option_where = list(base_where_clauses)
+            option_params = list(base_params)
+            apply_column_filters(
+                option_where, option_params, other_filters, test_col_map, mark_col_map,
+                db_columns, enroll_columns, needs_enroll, False, False,
+                ap_exam_infos, ap_award_infos,
+                incident_sql_backend='pg',
+            )
+            option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+            values = fetch_mtss_filter_options(
+                canonical, option_where_sql, join_sql, option_params,
+            )
+            filter_options[col_key] = values
+            if values:
+                cache.set(cache_key, values, _FACET_CACHE_TTL)
+
+        mirror_mtss_filter_options(filter_options, selected_mtss_cols)
+
         if total > 0:
             excluded_filters = {'ssid', 'student_id', 'student_name'}
             always_include = {'school'}
-            
-            base_filter_state = {
-                'search': search or '',
-                'school_year': school_year or '',
-                'grade': grade or '',
-                'status': status or '',
-            }
-
-            def _normalize_filter_value(value):
-                if isinstance(value, (list, tuple, set)):
-                    return sorted([str(v) for v in value if v is not None])
-                return value
-
-            # Create cache key based on active filters (excluding current column)
-            def _get_filter_cache_key(column, active_filters):
-                normalized_filters = {}
-                if isinstance(active_filters, dict):
-                    for key, val in active_filters.items():
-                        normalized_filters[key] = _normalize_filter_value(val)
-
-                payload = {
-                    'base': base_filter_state,
-                    'filters': normalized_filters or "no_filters",
-                    'sync': cache.get('analytics:clickhouse_sync_version', 'legacy'),
-                }
-                filter_str = json.dumps(payload, sort_keys=True)
-                return f"filter_opts:{column}:{hashlib.md5(filter_str.encode()).hexdigest()}"
 
             if course_program_columns_enabled():
                 for col_key in normalize_course_program_columns(selected_course_prog_cols):
@@ -2226,6 +2324,7 @@ def _load_students(request):
                         option_where, option_params, non_cp_other, test_col_map, mark_col_map,
                         db_columns, enroll_columns, needs_enroll, needs_students, False,
                         ap_exam_infos, ap_award_infos,
+                        incident_sql_backend=_incident_sql_backend(non_cp_other),
                     )
                     if clickhouse_course_program_ready():
                         for _cp_col, _cp_vals in cp_other.items():
@@ -2278,7 +2377,7 @@ def _load_students(request):
                 # Cache miss - queue the query (executed concurrently below)
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, False, ap_exam_infos, ap_award_infos)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, needs_students, False, ap_exam_infos, ap_award_infos, incident_sql_backend=_incident_sql_backend(other_filters))
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 json_key = json_list_key_for_column(col)
@@ -2299,26 +2398,6 @@ def _load_students(request):
                     continue
 
                 if is_mtss_column(col):
-                    mtss_field = canonical_mtss_column(col)
-                    if mtss_field:
-                        options_query = f"""
-                            SELECT DISTINCT m.{mtss_field}
-                            FROM mtss_data m
-                            JOIN current_student cs ON m.ssid = cs.ssid
-                                AND (m.school_year = cs.school_year OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4) OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4))
-                            {join_sql}
-                            WHERE {option_where_sql}
-                              AND m.{mtss_field} IS NOT NULL AND m.{mtss_field} <> ''
-                            ORDER BY m.{mtss_field} ASC
-                            LIMIT 50
-                        """
-                        def _make_mtss_task(q, p):
-                            def _fetch():
-                                with connection.cursor() as cur:
-                                    cur.execute(q, p)
-                                    return [r[0] for r in cur.fetchall() if r[0]]
-                            return _fetch
-                        option_tasks.append((col, cache_key, _make_mtss_task(options_query, option_params)))
                     continue
 
                 expr = base_col_expressions.get(col)
@@ -2363,7 +2442,7 @@ def _load_students(request):
                 # Cache miss - query database
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos, incident_sql_backend=_incident_sql_backend(other_filters))
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
                 window_clause = ""
                 window_params = []
@@ -2472,7 +2551,7 @@ def _load_students(request):
 
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos, incident_sql_backend=_incident_sql_backend(other_filters))
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 period_clause = ""
@@ -2532,7 +2611,7 @@ def _load_students(request):
 
                         option_where = list(base_where_clauses)
                         option_params = list(base_params)
-                        apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
+                        apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos, incident_sql_backend=_incident_sql_backend(other_filters))
                         option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                         if is_marks:
@@ -2618,7 +2697,7 @@ def _load_students(request):
 
                         option_where = list(base_where_clauses)
                         option_params = list(base_params)
-                        apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
+                        apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos, incident_sql_backend=_incident_sql_backend(other_filters))
                         option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                         rank_subquery = f"""
@@ -2682,7 +2761,7 @@ def _load_students(request):
 
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos, incident_sql_backend=_incident_sql_backend(other_filters))
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 options_query = f"""
@@ -2746,7 +2825,7 @@ def _load_students(request):
 
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
-                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos)
+                apply_column_filters(option_where, option_params, other_filters, test_col_map, mark_col_map, db_columns, enroll_columns, needs_enroll, False, False, ap_exam_infos, ap_award_infos, incident_sql_backend=_incident_sql_backend(other_filters))
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
 
                 if ap_info['award'] == '__ALL__':
@@ -2808,10 +2887,8 @@ def _load_students(request):
                             check_blank_query, option_params + [ap_info['year']]),
                     ))
 
-            # Add filter options for MTSS columns
-            for col_key in selected_mtss_cols:
-                canonical = canonical_mtss_column(col_key)
-                if not canonical:
+            for col_key in selected_incident_cols:
+                if not incident_value_sql_expr(col_key, backend='pg', student_alias='cs'):
                     continue
 
                 if isinstance(filters, dict) and col_key in filters:
@@ -2825,43 +2902,45 @@ def _load_students(request):
                     filter_options[col_key] = cached_values
                     continue
 
+                option_backend = _incident_sql_backend(other_filters)
                 option_where = list(base_where_clauses)
                 option_params = list(base_params)
                 apply_column_filters(
                     option_where, option_params, other_filters, test_col_map, mark_col_map,
                     db_columns, enroll_columns, needs_enroll, False, False,
                     ap_exam_infos, ap_award_infos,
+                    incident_sql_backend=option_backend,
                 )
                 option_where_sql = " AND ".join(option_where) if option_where else "1=1"
+                count_expr = incident_value_sql_expr(
+                    col_key,
+                    backend=option_backend,
+                    student_alias='cs',
+                )
+                extra_incident_join = (
+                    ''
+                    if option_backend == 'pg'
+                    else incident_join_sql_fragment(join_sql, backend='ch')
+                )
 
                 options_query = f"""
-                    SELECT DISTINCT m.{canonical} AS v
-                    FROM mtss_data m
-                    INNER JOIN current_student cs ON m.ssid = cs.ssid
+                    SELECT DISTINCT {count_expr} AS v
+                    FROM current_student cs
+                    {extra_incident_join}
                     {join_sql}
                     WHERE {option_where_sql}
-                      AND (m.school_year = cs.school_year
-                           OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4)
-                           OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4))
-                      AND m.{canonical} IS NOT NULL AND m.{canonical} <> ''
                     ORDER BY v ASC
-                    LIMIT 50
+                    LIMIT 30
                 """
                 options_params = list(option_params)
 
                 check_blank_query = f"""
                     SELECT 1
                     FROM current_student cs
+                    {extra_incident_join}
                     {join_sql}
                     WHERE {option_where_sql}
-                      AND NOT EXISTS (
-                          SELECT 1 FROM mtss_data m
-                          WHERE m.ssid = cs.ssid
-                            AND (m.school_year = cs.school_year
-                                 OR m.school_year = SUBSTRING(cs.school_year FROM 1 FOR 4)
-                                 OR cs.school_year = SUBSTRING(m.school_year FROM 1 FOR 4))
-                            AND m.{canonical} IS NOT NULL AND m.{canonical} <> ''
-                      )
+                      AND {count_expr} = 0
                     LIMIT 1
                 """
                 check_params = list(option_params)
@@ -2870,13 +2949,14 @@ def _load_students(request):
                     col_key, cache_key,
                     _make_options_with_blank_task(
                         options_query, options_params,
-                        check_blank_query, check_params, use_pg=True,
+                        check_blank_query, check_params,
+                        use_pg=(option_backend == 'pg'),
                     ),
                 ))
 
             # Execute all queued columns concurrently and merge the results.
             for col_key, cache_key, values in _run_option_tasks(option_tasks):
-                if values:
+                if values is not None:
                     filter_options[col_key] = values
                     cache.set(cache_key, values, _FACET_CACHE_TTL)
             if course_program_columns_enabled():
@@ -2968,7 +3048,9 @@ def _load_students(request):
             'filters': filters,
             'search': search or '',
             'school_year': _serialize_context_filter(school_year),
-            'grade': _serialize_context_filter(grade),
+            'grade': _serialize_context_filter(
+                filters.get('grade') if isinstance(filters, dict) else None
+            ),
             'status': _serialize_context_filter(status),
             'sort_by': sort_by,
             'sort_dir': sort_dir,

@@ -455,3 +455,85 @@ class CourseProgramSyncTests(SimpleTestCase):
         from clickhouse_utils.course_program_sync import CREATE_MATCHED_TEMP_SQL
 
         self.assertNotIn('Pending', CREATE_MATCHED_TEMP_SQL)
+
+
+class StudentIncidentsSyncTests(SimpleTestCase):
+    def test_pg_select_casts_incidents_to_text(self):
+        from clickhouse_utils.student_incidents_sync import STUDENT_INCIDENTS_PG_SELECT
+
+        self.assertIn('incidents::text', STUDENT_INCIDENTS_PG_SELECT)
+        self.assertIn('current_student', STUDENT_INCIDENTS_PG_SELECT)
+
+    def test_sync_select_joins_current_student_when_no_annual_key(self):
+        from clickhouse_utils import student_incidents_sync as mod
+
+        mod.clear_pg_student_incidents_columns_cache()
+        with patch.object(
+            mod,
+            'pg_student_incidents_columns',
+            return_value=frozenset({'ssid', 'school_year', 'incidents', 'updated_at'}),
+        ):
+            sql = mod._sync_select_sql()
+        self.assertIn('INNER JOIN current_student cs', sql)
+        self.assertIn('cs.stu_annual_key', sql)
+        self.assertNotIn('si.stu_annual_key', sql)
+
+    def test_sanitize_incident_row_coerces_strings(self):
+        from clickhouse_utils.student_incidents_sync import sanitize_incident_row
+
+        row = sanitize_incident_row(('key1', 'ssid1', 99, {'Major': {}}, None))
+        self.assertEqual(row[0], 'key1')
+        self.assertEqual(row[1], 'ssid1')
+        self.assertEqual(row[2], 99)
+        self.assertIn('Major', row[3])
+        self.assertEqual(row[4], None)
+
+
+class StudentIncidentsAnalyticsTests(SimpleTestCase):
+    def test_week_fields_from_dw_cal_lookup(self):
+        from clickhouse_utils.student_incidents_analytics import _week_fields_for_date
+
+        lookup = {
+            ('2026-2027', '2026-03-05'): {
+                'school_week': 28,
+                'week_start_date': '2026-03-02',
+                'week_end_date': '2026-03-08',
+                'week_label': 'Week 28 (03/02/2026–03/08/2026)',
+            },
+        }
+        meta = _week_fields_for_date(lookup, '2026-2027', '2026-03-05')
+        self.assertEqual(meta['school_week'], 28)
+        self.assertEqual(meta['week_label'], 'Week 28 (03/02/2026–03/08/2026)')
+
+    def test_build_analytics_rows_uses_sample_json(self):
+        from unittest.mock import patch
+        from clickhouse_utils.student_incidents_analytics import build_analytics_student_incidents_rows
+
+        sample_payload = '{"Major": {"count": 1, "incidents": [{"date": "2026-03-05", "incident_id": 1, "violations": [{"violation": "Major Defiance", "ed_code": "48900(k)"}], "dispositions": [{"disposition": "Out-of-School Suspension", "duration_days": 3}]}]}, "Minor": {"count": 0, "incidents": []}}'
+        fake_row = (
+            '111', 'key1', '9001', 'Student A', '10', 'School A', 'SCH1', 'Active',
+            '2026-2027', sample_payload,
+        )
+        lookup = {
+            ('2026-2027', '2026-03-05'): {
+                'school_week': 28,
+                'week_start_date': '2026-03-02',
+                'week_end_date': '2026-03-08',
+                'week_label': 'Week 28',
+            },
+        }
+
+        with patch(
+            'clickhouse_utils.student_incidents_analytics._fetch_incidents_with_students_sql',
+            return_value='SELECT 1',
+        ):
+            with patch('clickhouse_utils.student_incidents_analytics.connection') as mock_conn:
+                mock_conn.cursor.return_value.__enter__.return_value.fetchall.return_value = [fake_row]
+                rows = build_analytics_student_incidents_rows(dw_cal_lookup=lookup)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], '111')
+        self.assertEqual(rows[0][9], 'Major')
+        self.assertEqual(rows[0][16], 3)
+        self.assertEqual(rows[0][17], 1)
+        self.assertEqual(rows[0][18], 28)

@@ -138,8 +138,11 @@ def can_edit_desi(user, student=None, school_state_id=None):
 
     Project/District/School Admin -> edit. A Teacher (including one who also
     holds an add-on Testing Coordinator role) edits their own students unless
-    the school's DesiSchoolAccess.teachers_can_edit is False. Non-teacher
-    viewers (School View / School Gr View / Testing Coordinator) are read-only.
+    the school's DesiSchoolAccess.teachers_can_edit is False. Testing
+    Coordinators edit students in the schools they administer. School View /
+    School Gr View users are read-only, but either role combined with a role
+    that grants edit rights (Testing Coordinator, School Admin, 504_Admin, ...)
+    keeps those rights.
 
     Students with a 504 plan (``in_504 = Y``) are editable only by users holding
     the ``504_Admin`` role (scoped to the schools they are assigned to).

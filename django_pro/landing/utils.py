@@ -42,6 +42,7 @@ SUMMARY_SECTION_FIELDS = {
     'ag': 'summary_show_ag',
     'on_track': 'summary_show_on_track',
     'cte': 'summary_show_cte',
+    'behavior': 'summary_show_behavior',
     'recognition': 'summary_show_recognition',
     'flags': 'summary_show_flags',
 }

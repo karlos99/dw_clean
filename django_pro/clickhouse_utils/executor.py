@@ -112,7 +112,7 @@ class QueryExecutor:
     PostgreSQL-based code for seamless drop-in compatibility.
     """
 
-    def __init__(self, analytics=False):
+    def __init__(self, analytics=False, force_postgres=False):
         """Create an executor.
 
         ``analytics=True`` is used by interactive analytics reads.  Those
@@ -121,8 +121,11 @@ class QueryExecutor:
         different snapshot while ClickHouse is being synchronized.  The
         default remains compatible for legacy/admin callers that intentionally
         support PostgreSQL fallback.
+
+        ``force_postgres=True`` skips ClickHouse entirely (MTSS + incident sort/filter mixes).
         """
         self.analytics = bool(analytics)
+        self.force_postgres = bool(force_postgres)
         self._ch_client = None
         self._pg_connection = None
 
@@ -154,6 +157,9 @@ class QueryExecutor:
             return self._execute(sql, params)
 
     def _execute(self, sql, params=None):
+        if self.force_postgres:
+            return self._execute_postgres(sql, params)
+
         if self.analytics and self.ch_client is None:
             return {'columns': [], 'rows': [], 'row_count': 0,
                     'error': 'ClickHouse analytics service is unavailable'}
@@ -195,6 +201,9 @@ class QueryExecutor:
         Execute and return raw (columns, rows) tuple like PG cursor.fetchall().
         rows is a list of tuples (not dicts).
         """
+        if self.force_postgres:
+            return self._execute_postgres_fetchall(sql, params)
+
         if self.analytics and self.ch_client is None:
             raise RuntimeError('ClickHouse analytics service is unavailable')
 
