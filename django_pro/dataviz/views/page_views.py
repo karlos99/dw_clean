@@ -169,6 +169,15 @@ def page_view(request, slug):
     # shape the page's Alpine filter-tag JS already uses (see toggleValue()/
     # removeTag() in view.html) — seeded client-side on first load, only for
     # filters the visitor hasn't already picked a value for this session.
+    def _resolve_page_filter_default(val: str) -> str:
+        if isinstance(val, str) and val.startswith('__sy_'):
+            try:
+                from dataexploration.school_year_utils import resolve_school_year
+                return resolve_school_year(val)
+            except Exception:
+                pass
+        return val
+
     default_filter_tags = []
     hidden_filter_cols = []
     for f in dv_page.page_filters:
@@ -187,6 +196,9 @@ def page_view(request, slug):
         )
         is_hidden = bool(f.get('hidden'))
         for v in values:
+            v = _resolve_page_filter_default(v)
+            if not v:
+                continue
             default_filter_tags.append({'col': col, 'label': label, 'value': v, 'hidden': is_hidden})
 
     sections = dv_page.sections.select_related('dashboard', 'chart', 'row').prefetch_related(

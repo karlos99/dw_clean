@@ -134,6 +134,7 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_ccgi_college_financial': {'current_student'},
     'analytics_ccgi_college_application': {'current_student'},
     'analytics_ccgi_application_status': {'current_student'},
+    'analytics_student_incidents': {'current_student', 'student_incidents'},
 }
 
 
@@ -306,6 +307,12 @@ class Command(BaseCommand):
                 if table == 'analytics_student_course_program':
                     self._rebuild_course_program_tables(ch, ch_db, atomic=atomic)
                     self.stdout.write(self.style.SUCCESS('  course program analytics rebuilt.'))
+                    continue
+                if table == 'analytics_student_incidents':
+                    self._rebuild_analytics_student_incidents(ch, ch_db, atomic=atomic)
+                    count = self._ch_count(ch, ch_db, table) or 0
+                    self._record_meta(ch, ch_db, table, count, None, 'derived')
+                    self.stdout.write(self.style.SUCCESS(f'  {table} rebuilt ({count} rows).'))
                     continue
                 self._rebuild_derived_table(
                     ch, ch_db, table, atomic=atomic, pg_fn_kwargs=pg_fn_kwargs,
@@ -597,6 +604,33 @@ class Command(BaseCommand):
                         f'  {table}: inserted {inserted} rows in {(time.perf_counter() - t1):.1f}s'
                     )
         cache.delete('analytics:course_program_ch_ready')
+
+    def _rebuild_analytics_student_incidents(self, ch, ch_db, atomic):
+        from clickhouse_utils.student_incidents_analytics import (
+            ANALYTICS_STUDENT_INCIDENTS_COLUMNS,
+            build_analytics_student_incidents_rows,
+        )
+
+        table = 'analytics_student_incidents'
+        staging = f'{table}__sync'
+        target = staging if atomic else table
+        if atomic:
+            ch.command(f'DROP TABLE IF EXISTS {ch_db}.{staging}')
+            ch.command(f'CREATE TABLE {ch_db}.{staging} AS {ch_db}.{table}')
+        else:
+            ch.command(f'TRUNCATE TABLE {ch_db}.{table}')
+
+        rows = build_analytics_student_incidents_rows()
+        insert_table = f'{ch_db}.{target}'
+        batch_size = 5000
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            if batch:
+                ch.insert(insert_table, batch, column_names=ANALYTICS_STUDENT_INCIDENTS_COLUMNS)
+
+        if atomic:
+            ch.command(f'EXCHANGE TABLES {ch_db}.{table} AND {ch_db}.{staging}')
+            ch.command(f'TRUNCATE TABLE {ch_db}.{staging}')
 
     def _rebuild_derived_table(self, ch, ch_db, table, atomic, pg_fn_kwargs=None):
         staging = f'{table}__sync'

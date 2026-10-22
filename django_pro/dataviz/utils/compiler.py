@@ -505,6 +505,13 @@ COLUMN_WHITELIST = {
         'system', 'application_status', 'eligibility',
         'csu_gpa', 'uc_gpa',
     },
+    'analytics_student_incidents': {
+        'ssid', 'stu_annual_key', 'student_id', 'student_name', 'grade', 'school',
+        'school_state_id', 'status', 'school_year',
+        'severity', 'incident_id', 'incident_date', 'violation', 'ed_code',
+        'review_status', 'description', 'suspension_days', 'is_suspended',
+        'school_week', 'week_start_date', 'week_end_date', 'week_label',
+    },
     'users_user': {
         'id', 'username', 'email', 'name', 'first_name', 'last_name', 'is_active',
         'is_superuser', 'is_staff'

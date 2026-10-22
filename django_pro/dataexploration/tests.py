@@ -2328,6 +2328,16 @@ class StudentIncidentsTests(TestCase):
 		self.assertEqual(row['description'], 'Student refused to follow staff direction.')
 		self.assertEqual(row['ed_codes'], '48900(k)')
 
+	def test_incident_suspension_days_for_item(self):
+		from dataexploration.incident_columns import incident_suspension_days_for_item
+
+		item = {
+			'dispositions': [
+				{'disposition': 'Out-of-School Suspension', 'duration_days': 2},
+			],
+		}
+		self.assertEqual(incident_suspension_days_for_item(item), 2)
+
 	def test_format_incident_date_display(self):
 		from dataexploration.incident_columns import format_incident_date_display
 

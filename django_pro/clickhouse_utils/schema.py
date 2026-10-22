@@ -37,6 +37,7 @@ def get_all_ddl():
         CREATE_ANALYTICS_CCGI_COLLEGE_FINANCIAL,
         CREATE_ANALYTICS_CCGI_COLLEGE_APPLICATION,
         CREATE_ANALYTICS_CCGI_APPLICATION_STATUS,
+        CREATE_ANALYTICS_STUDENT_INCIDENTS,
         CREATE_ANALYTICS_SYNC_META,
     ]
 
@@ -69,6 +70,7 @@ ANALYTICS_TABLE_NAMES = (
     # In Progress / Not Applied. Includes on-track students with no application
     # so they are not invisible in the system funnel charts.
     'analytics_ccgi_application_status',
+    'analytics_student_incidents',
 )
 
 
@@ -679,6 +681,36 @@ CREATE TABLE IF NOT EXISTS analytics_ccgi_application_status (
 )
 ENGINE = MergeTree
 ORDER BY (school_year, system, application_status, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_STUDENT_INCIDENTS = """
+CREATE TABLE IF NOT EXISTS analytics_student_incidents (
+    ssid String,
+    stu_annual_key String,
+    student_id Nullable(String),
+    student_name Nullable(String),
+    grade Nullable(String),
+    school Nullable(String),
+    school_state_id Nullable(String),
+    status Nullable(String),
+    school_year String,
+    severity String,
+    incident_id String,
+    incident_date Nullable(String),
+    violation Nullable(String),
+    ed_code Nullable(String),
+    review_status Nullable(String),
+    description Nullable(String),
+    suspension_days Float64,
+    is_suspended UInt8,
+    school_week Nullable(Int32),
+    week_start_date Nullable(String),
+    week_end_date Nullable(String),
+    week_label Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, severity, incident_id)
 SETTINGS index_granularity = 8192
 """
 

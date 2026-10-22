@@ -94,6 +94,44 @@ class CompilerSqlTests(SimpleTestCase):
         self.assertIn('ORDER BY "current_student"."stu_annual_key" ASC', sql)
         self.assertFalse(sql.startswith('SELECT DISTINCT "'))
 
+    def test_compile_discipline_incidents_dataset(self):
+        dataset = SimpleNamespace(
+            base_table='analytics_student_incidents',
+            distinct=True,
+            joins=[],
+            filters=[],
+            columns=[
+                'analytics_student_incidents.severity',
+                'analytics_student_incidents.school',
+            ],
+            updated_at=None,
+        )
+
+        def fake_validate(col_str, active_tables, virtual_columns=None):
+            tbl, col = col_str.split('.', 1)
+            return tbl, col
+
+        def fake_format(tbl, col):
+            return f'"{tbl}"."{col}"'
+
+        allowed = {'analytics_student_incidents'}
+        cols = {'severity', 'school', 'status', 'school_year', 'ssid'}
+
+        with patch('dataviz.utils.compiler.get_allowed_dataset_tables', return_value=allowed), \
+             patch('dataviz.utils.compiler.get_columns_for_table', return_value=cols), \
+             patch('dataviz.utils.compiler.validate_column_identifier', side_effect=fake_validate), \
+             patch('dataviz.utils.compiler.format_column_expr', side_effect=fake_format), \
+             patch('dataviz.utils.status_filter.prepare_interactive_filters', return_value=({}, None)):
+            sql, _params = compile_dataset_to_sql(
+                dataset,
+                interactive_filters={},
+                user=None,
+                status_filter=['Active'],
+            )
+
+        self.assertIn('"analytics_student_incidents"."severity"', sql)
+        self.assertIn('"analytics_student_incidents"."school"', sql)
+
     def test_compile_aggregated_avg_casts_strings_to_float(self):
         from dataviz.utils.compiler import compile_aggregated_dataset_to_sql
         dataset = SimpleNamespace(

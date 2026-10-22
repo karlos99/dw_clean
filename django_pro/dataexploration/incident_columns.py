@@ -349,6 +349,38 @@ def format_incident_date_display(raw: str | None) -> str:
     return text
 
 
+def incident_suspension_days_for_item(item: dict) -> int | float:
+    """Suspension day total for one incident object (dispositions + explicit fields)."""
+    if not isinstance(item, dict):
+        return 0
+    total = 0.0
+    found = False
+    dispositions = item.get('dispositions')
+    if isinstance(dispositions, list):
+        for disposition in dispositions:
+            if not isinstance(disposition, dict):
+                continue
+            label = (
+                disposition.get('disposition')
+                or disposition.get('Disposition')
+                or ''
+            )
+            if not _disposition_counts_as_suspension(label):
+                continue
+            days = _duration_from_disposition(disposition)
+            if days is not None:
+                total += days
+                found = True
+    for key, value in item.items():
+        if _normalize_json_key(key) in _SUSPENSION_DAY_KEY_ALIASES:
+            n = _coerce_nonneg_number(value)
+            if n is not None:
+                return n
+    if found:
+        return int(total) if total == int(total) else total
+    return 0
+
+
 def normalize_incident_record(severity: str, item: dict) -> dict:
     """Flatten one incident object for templates."""
     date_raw = (item.get('date') or '').strip()
