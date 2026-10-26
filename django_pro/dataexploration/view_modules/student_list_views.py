@@ -100,10 +100,12 @@ from .column_management import (
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
 from .filter_sql import (
     apply_column_filters,
+    append_de_student_status_where,
     incident_sql_backend_for_request,
     list_query_uses_postgres,
     normalize_filter_param as _normalize_filter_param,
     extract_markall_course_picker,
+    sanitize_de_status_filter_values,
 )
 from landing.utils import get_project_config
 
@@ -1086,6 +1088,7 @@ def _load_students(request):
         # A student list is a fixed set of students; when present it should override other
         # user-selected filters (grade/status/year/search/column-filters).
         student_list_id = request.GET.get('student_list')
+        de_status_skip_all_scope = False
         if student_list_id:
             list_ssids = None
 
@@ -1124,6 +1127,7 @@ def _load_students(request):
                     school_year = None
                     status = None
                     filters = {}
+                    de_status_skip_all_scope = True
 
         # Apply filters
         if search_ids:
@@ -1142,17 +1146,12 @@ def _load_students(request):
         
         _append_school_year_filter(base_where_clauses, base_params, school_year)
 
-        if status:
-            if isinstance(status, list):
-                if len(status) == 1:
-                    base_where_clauses.append("cs.status = %s")
-                    base_params.append(status[0])
-                elif len(status) > 1:
-                    base_where_clauses.append("cs.status = ANY(%s)")
-                    base_params.append(status)
-            else:
-                base_where_clauses.append("cs.status = %s")
-                base_params.append(status)
+        append_de_student_status_where(
+            base_where_clauses,
+            base_params,
+            status,
+            apply_all_when_unset=not de_status_skip_all_scope,
+        )
 
         # Apply active school context or enforce school permissions
         _apply_de_school_filter(base_where_clauses, base_params, request.user)
@@ -2983,6 +2982,8 @@ def _load_students(request):
                     normalized.append(v.isoformat())
                 else:
                     normalized.append(v)
+            if col == 'status':
+                normalized = sanitize_de_status_filter_values(normalized)
             filter_options[col] = normalized
 
     # filter_options is built inside the DB cursor context

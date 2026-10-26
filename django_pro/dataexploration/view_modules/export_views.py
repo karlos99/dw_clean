@@ -38,6 +38,7 @@ from .schedule_filter_sql import parse_schedule_marks_filters, apply_schedule_ma
 from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
 from .filter_sql import (
     apply_column_filters,
+    append_de_student_status_where,
     extract_markall_course_picker,
     incident_sql_backend_for_request,
     list_query_uses_postgres,
@@ -710,6 +711,7 @@ def export_students_csv(request):
                 filters_value = filters
                 
                 student_list_id = request.GET.get('student_list')
+                de_status_skip_all_scope = False
                 if student_list_id:
                     list_ssids = None
 
@@ -749,6 +751,7 @@ def export_students_csv(request):
                             grade_value = None
                             status_value = None
                             filters_value = {}
+                            de_status_skip_all_scope = True
 
                 search_ids_value = search_ids
                 if search_ids_value:
@@ -769,17 +772,12 @@ def export_students_csv(request):
                     else:
                         base_where_clauses.append("cs.grade = %s")
                         base_params.append(grade_value)
-                if status_value:
-                    if isinstance(status_value, list):
-                        if len(status_value) == 1:
-                            base_where_clauses.append("cs.status = %s")
-                            base_params.append(status_value[0])
-                        elif len(status_value) > 1:
-                            base_where_clauses.append("cs.status = ANY(%s)")
-                            base_params.append(status_value)
-                    else:
-                        base_where_clauses.append("cs.status = %s")
-                        base_params.append(status_value)
+                append_de_student_status_where(
+                    base_where_clauses,
+                    base_params,
+                    status_value,
+                    apply_all_when_unset=not de_status_skip_all_scope,
+                )
 
                 # Apply active school context or enforce school permissions
                 _apply_de_school_filter(base_where_clauses, base_params, request.user)

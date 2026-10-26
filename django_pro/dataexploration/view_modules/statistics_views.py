@@ -34,6 +34,7 @@ from ..catalog_columns import (
 )
 from .filter_sql import (
     apply_column_filters,
+    append_de_student_status_where,
     incident_sql_backend_for_request,
     list_query_uses_postgres,
 )
@@ -439,9 +440,7 @@ def get_column_statistics(request):
             base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
             base_params.extend([f'%{search}%']*3)
         _append_school_year_filter(base_where_clauses, base_params, school_year)
-        if status:
-            base_where_clauses.append("cs.status = %s")
-            base_params.append(status)
+        append_de_student_status_where(base_where_clauses, base_params, status)
 
         # Check if user is unrestricted (Project Admin OR District Role)
         is_unrestricted = _is_user_unrestricted(request.user)

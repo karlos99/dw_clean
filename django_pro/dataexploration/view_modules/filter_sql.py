@@ -61,6 +61,86 @@ def append_grade_where_clause(where_clauses, params, grade) -> None:
     params.append(variants)
 
 
+DE_EXCLUDED_STUDENT_STATUS = 'No_show'
+DE_ALLOWED_STUDENT_STATUSES = ('Active', 'Inactive')
+
+
+def _de_status_is_empty_toolbar_selection(status) -> bool:
+    if status is None:
+        return False
+    if isinstance(status, (list, tuple, set)):
+        cleaned = [str(s).strip() for s in status if s is not None and str(s).strip()]
+        return not cleaned
+    return str(status).strip() == ''
+
+
+def sanitize_de_status_filter_values(raw_vals) -> list[str]:
+    """Column-filter values for ``status``: only Active/Inactive; never No_show."""
+    if isinstance(raw_vals, (list, tuple, set)):
+        items = raw_vals
+    elif raw_vals is not None and str(raw_vals).strip() and str(raw_vals).strip() != 'All':
+        items = [raw_vals]
+    else:
+        items = []
+    allowed = set(DE_ALLOWED_STUDENT_STATUSES)
+    excluded = DE_EXCLUDED_STUDENT_STATUS.casefold()
+    out: list[str] = []
+    for item in items:
+        s = str(item).strip()
+        if not s or s.casefold() == excluded:
+            continue
+        if s in allowed:
+            out.append(s)
+    return out
+
+
+def append_de_student_status_where(
+    where_clauses,
+    params,
+    status,
+    *,
+    alias: str = 'cs',
+    apply_all_when_unset: bool = True,
+) -> None:
+    """Data Explorer student status: exclude No_show; empty toolbar = Active+Inactive only."""
+    col = f'{alias}.status'
+    # ClickHouse has no ``IS DISTINCT FROM``; NULL-safe exclusion works on PG + CH.
+    where_clauses.append(f'({col} IS NULL OR {col} <> %s)')
+    params.append(DE_EXCLUDED_STUDENT_STATUS)
+
+    if status is None:
+        if not apply_all_when_unset:
+            return
+        where_clauses.append(f'{col} = ANY(%s)')
+        params.append(list(DE_ALLOWED_STUDENT_STATUSES))
+        return
+
+    if _de_status_is_empty_toolbar_selection(status):
+        where_clauses.append(f'{col} = ANY(%s)')
+        params.append(list(DE_ALLOWED_STUDENT_STATUSES))
+        return
+
+    if isinstance(status, list):
+        vals = sanitize_de_status_filter_values(status)
+        if not vals:
+            where_clauses.append('1=0')
+            return
+        if len(vals) == 1:
+            where_clauses.append(f'{col} = %s')
+            params.append(vals[0])
+        else:
+            where_clauses.append(f'{col} = ANY(%s)')
+            params.append(vals)
+        return
+
+    s = str(status).strip()
+    if s.casefold() == DE_EXCLUDED_STUDENT_STATUS.casefold():
+        where_clauses.append('1=0')
+        return
+    where_clauses.append(f'{col} = %s')
+    params.append(s)
+
+
 def _filters_have_active_values(filters) -> bool:
     if not isinstance(filters, dict):
         return False

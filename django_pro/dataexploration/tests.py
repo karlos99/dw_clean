@@ -753,6 +753,39 @@ class ApplyColumnFilterTests(SimpleTestCase):
 		self.assertEqual(expand_grade_match_values('3'), ['3', '03'])
 		self.assertIn('9', expand_grade_match_values('09'))
 
+	def test_de_student_status_all_status_excludes_no_show(self):
+		from dataexploration.view_modules.filter_sql import append_de_student_status_where
+
+		where, params = [], []
+		append_de_student_status_where(where, params, '')
+		self.assertIn('IS NULL OR', where[0])
+		self.assertEqual(params[0], 'No_show')
+		self.assertIn('= ANY', where[1])
+		self.assertEqual(params[1], ['Active', 'Inactive'])
+
+	def test_de_student_status_active_only(self):
+		from dataexploration.view_modules.filter_sql import append_de_student_status_where
+
+		where, params = [], []
+		append_de_student_status_where(where, params, 'Active')
+		self.assertEqual(params, ['No_show', 'Active'])
+
+	def test_de_student_status_list_override_skips_all_scope(self):
+		from dataexploration.view_modules.filter_sql import append_de_student_status_where
+
+		where, params = [], []
+		append_de_student_status_where(where, params, None, apply_all_when_unset=False)
+		self.assertEqual(len(where), 1)
+		self.assertEqual(params, ['No_show'])
+
+	def test_sanitize_de_status_filter_values(self):
+		from dataexploration.view_modules.filter_sql import sanitize_de_status_filter_values
+
+		self.assertEqual(
+			sanitize_de_status_filter_values(['Active', 'No_show', 'Inactive', 'Other']),
+			['Active', 'Inactive'],
+		)
+
 	def test_race_list_filter_uses_l_race_json_overlap(self):
 		from dataexploration.view_modules.filter_sql import apply_column_filters
 

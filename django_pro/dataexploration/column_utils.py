@@ -843,7 +843,17 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
         append_grade_where_clause(where_clauses, params, vals)
         return
 
-    if col in {'school_year', 'status', 'school_state_id'}:
+    if col == 'status':
+        from dataexploration.view_modules.filter_sql import sanitize_de_status_filter_values
+
+        vals = sanitize_de_status_filter_values(vals)
+        if not vals:
+            return
+        where_clauses.append("cs.status = ANY(%s)")
+        params.append(vals)
+        return
+
+    if col in {'school_year', 'school_state_id'}:
         where_clauses.append(f"cs.{col} = ANY(%s)")
         params.append(vals)
         return
