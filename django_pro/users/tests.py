@@ -231,3 +231,82 @@ class DraftMenuPreviewTests(TestCase):
         self.assertTrue(user_can_preview_draft_site_page(self.viewer, self.child))
 
 
+class UserSchoolsAndRoleManagementTests(TestCase):
+    def setUp(self):
+        User._school_cache = {}
+        self.sch1 = StudataSchool.objects.create(dw_schoolkey=201, state_id='SCH_A', school_name='Alpha Academy')
+        self.sch2 = StudataSchool.objects.create(dw_schoolkey=202, state_id='SCH_B', school_name='Beta High')
+        self.sch3 = StudataSchool.objects.create(dw_schoolkey=203, state_id='SCH_C', school_name='Gamma Middle')
+
+        self.role_admin, _ = Role.objects.get_or_create(name='Project Admin')
+        self.role_teacher, _ = Role.objects.get_or_create(name='Teacher')
+        self.role_spec, _ = Role.objects.get_or_create(name='Testing Coordinator')
+
+        self.admin_user = User.objects.create_superuser(
+            username='admin_test',
+            email='admin_test@example.com',
+            password='pass',
+            schools=['SCH_A']
+        )
+        self.admin_user.roles.add(self.role_admin)
+
+        self.staff_user = User.objects.create_user(
+            username='staff_test',
+            email='staff_test@example.com',
+            name='Alice Staff',
+            staff_id='STF_123',
+            schools=['SCH_A', 'SCH_B', 'SCH_C']
+        )
+
+        self.client = Client()
+        self.client.force_login(self.admin_user)
+
+    def test_assigned_schools_list_multiple(self):
+        schools_list = self.staff_user.assigned_schools_list
+        self.assertEqual(len(schools_list), 3)
+        names = [s['school_name'] for s in schools_list]
+        self.assertIn('Alpha Academy', names)
+        self.assertIn('Beta High', names)
+        self.assertIn('Gamma Middle', names)
+
+    def test_assigned_schools_list_empty(self):
+        u_empty = User.objects.create_user(username='empty_u', email='empty@example.com', schools=[])
+        self.assertEqual(u_empty.assigned_schools_list, [])
+
+    def test_manage_users_roles_tab(self):
+        resp = self.client.get('/users/manage/?tab=roles')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('role_cards', resp.context)
+        card_names = [c['name'] for c in resp.context['role_cards']]
+        self.assertIn('Project Admin', card_names)
+        self.assertIn('Teacher', card_names)
+
+    def test_search_users_for_role(self):
+        resp = self.client.get('/users/manage/users-search/?q=Alice')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('users', data)
+        self.assertEqual(len(data['users']), 1)
+        self.assertEqual(data['users'][0]['email'], 'staff_test@example.com')
+        self.assertEqual(data['users'][0]['staff_id'], 'STF_123')
+
+    def test_add_and_remove_users_from_role(self):
+        # Add staff_user to Teacher role
+        add_url = f'/users/manage/roles/{self.role_teacher.id}/add-users/'
+        resp = self.client.post(
+            add_url,
+            data={'user_ids': [self.staff_user.id]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+        self.assertTrue(self.staff_user.roles.filter(id=self.role_teacher.id).exists())
+
+        # Remove staff_user from Teacher role
+        remove_url = f'/users/manage/roles/{self.role_teacher.id}/remove-user/{self.staff_user.id}/'
+        resp_rem = self.client.post(remove_url)
+        self.assertEqual(resp_rem.status_code, 200)
+        self.assertTrue(resp_rem.json()['success'])
+        self.assertFalse(self.staff_user.roles.filter(id=self.role_teacher.id).exists())
+
+
+

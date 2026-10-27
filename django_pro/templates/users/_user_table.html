@@ -5,242 +5,453 @@
           selectedCount: 0,
           selectAllMatching: false,
           action: '',
+          roleId: '',
+          roleModalOpen: false,
+          modalAction: '',
           updateCount() {
               this.selectedCount = document.querySelectorAll('input[name=\'user_ids\']:checked').length;
               if (this.selectedCount === 0) this.selectAllMatching = false;
+          },
+          triggerAction(act) {
+              if (act === 'add_role' || act === 'remove_role') {
+                  this.modalAction = act;
+                  this.roleModalOpen = true;
+                  return;
+              }
+              if (act === 'deactivate') {
+                  if (!confirm('Are you sure you want to deactivate ' + (this.selectAllMatching ? 'all {{ total_users_count }} users' : this.selectedCount + ' users') + '?')) {
+                      return;
+                  }
+              }
+              this.action = act;
+              this.$nextTick(() => {
+                  document.getElementById('bulk-update-form').submit();
+              });
+          },
+          submitRoleAction() {
+              if (!this.roleId) return;
+              this.action = this.modalAction;
+              this.roleModalOpen = false;
+              this.$nextTick(() => {
+                  document.getElementById('bulk-update-form').submit();
+              });
+          },
+          clearAllSelection() {
+              document.querySelectorAll('input[name=\'user_ids\']').forEach(el => el.checked = false);
+              const master = document.getElementById('select-all-header');
+              if (master) master.checked = false;
+              this.selectAllMatching = false;
+              this.updateCount();
           }
       }"
       @change="updateCount()"
       @checkbox-changed.window="updateCount()"
-      x-init="updateCount()">
+      x-init="updateCount()"
+      class="relative">
     {% csrf_token %}
-    <div class="mb-4 flex flex-col space-y-2">
-        <!-- Hidden inputs for current filters -->
-        <input type="hidden" name="q" value="{{ query }}">
-        <input type="hidden" name="role" value="{{ role_filter }}">
-        <input type="hidden" name="school" value="{{ school_filter }}">
-        <input type="hidden" name="job_title" value="{{ job_title_filter }}">
+
+    <!-- Hidden inputs for current filters & sorting -->
+    <input type="hidden" name="q" value="{{ query }}">
+    <input type="hidden" name="role" value="{{ role_filter }}">
+    <input type="hidden" name="school" value="{{ school_filter }}">
+    <input type="hidden" name="job_title" value="{{ job_title_filter }}">
+    <input type="hidden" name="sort" value="{{ sort_by }}">
+    <input type="hidden" name="order" value="{{ sort_order }}">
+    <input type="hidden" name="page_size" value="{{ page_size }}">
+    <input type="hidden" name="action" :value="action">
+    <input type="hidden" name="role_id" :value="roleId">
+    <input type="hidden" name="select_all_matching" :value="selectAllMatching">
+
+    <!-- ═══ Intuitive Floating / Sticky Bulk Action Bar ═══ -->
+    <div x-show="selectedCount > 0"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 -translate-y-2"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 translate-y-0"
+         x-transition:leave-end="opacity-0 -translate-y-2"
+         style="display: none;"
+         class="mb-4 bg-slate-900 text-white rounded-2xl shadow-xl p-3 px-5 flex flex-wrap items-center justify-between gap-4 border border-slate-800">
         
-        <div class="flex items-center space-x-2">
-            <select name="action" x-model="action" class="block rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border">
-                <option value="">Bulk Actions...</option>
-                <option value="activate">Activate Selected</option>
-                <option value="deactivate">Deactivate Selected</option>
-                <option value="add_role">Add Role...</option>
-                <option value="remove_role">Remove Role...</option>
-            </select>
-            
-            <div x-show="action === 'add_role' || action === 'remove_role'" style="display: none;">
-                <select name="role_id" class="block rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm px-3 py-2 border">
-                    <option value="">Select Role...</option>
-                    {% for role in all_roles %}
-                    <option value="{{ role.id }}">{{ role.name }}</option>
-                    {% endfor %}
-                </select>
+        <!-- Left: Selection Info -->
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2 bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 px-3 py-1 rounded-full text-xs font-bold">
+                <span class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></span>
+                <span><strong class="text-white" x-text="selectedCount"></strong> users selected</span>
             </div>
-            
-            <button type="submit" class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                :disabled="!action">
-                Apply
+
+            {% if total_users_count > users|length %}
+            <div class="text-xs">
+                <template x-if="!selectAllMatching">
+                    <button type="button" @click="selectAllMatching = true"
+                            class="text-indigo-400 hover:text-indigo-300 font-semibold underline transition">
+                        Select all {{ total_users_count }} matching users across all pages
+                    </button>
+                </template>
+                <template x-if="selectAllMatching">
+                    <span class="text-emerald-400 font-semibold flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                        All {{ total_users_count }} matching users selected
+                        <button type="button" @click="selectAllMatching = false" class="text-slate-400 hover:text-white underline ml-1 font-normal">(undo)</button>
+                    </span>
+                </template>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Right: Action Buttons -->
+        <div class="flex items-center gap-2">
+            <!-- Activate button -->
+            <button type="button" @click="triggerAction('activate')"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-xs transition"
+                    title="Activate selected user accounts">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <span>Activate</span>
             </button>
-        </div>
 
-        {% if total_users_count > users|length %}
-        <div class="bg-blue-50 border border-blue-200 rounded-md p-2 text-sm text-blue-800 flex items-center justify-between" 
-             style="display: none;"
-             x-show="selectedCount > 0">
-             
-             <div>
-                <span x-show="!selectAllMatching">
-                    <span x-text="selectedCount"></span> users selected.
-                    <span x-show="selectedCount === {{ users|length }}">
-                        <button type="button" @click="selectAllMatching = true" class="font-bold underline hover:text-blue-900 ml-1">
-                            Select all {{ total_users_count }} matching users
-                        </button>
-                    </span>
-                </span>
-                <span x-show="selectAllMatching">
-                    All {{ total_users_count }} matching users are selected.
-                    <button type="button" @click="selectAllMatching = false" class="underline hover:text-blue-900 ml-1">
-                        Undo
-                    </button>
-                </span>
-                <input type="hidden" name="select_all_matching" :value="selectAllMatching">
-             </div>
+            <!-- Deactivate button -->
+            <button type="button" @click="triggerAction('deactivate')"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-xs transition"
+                    title="Deactivate selected user accounts">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+                <span>Deactivate</span>
+            </button>
+
+            <!-- Add Role button -->
+            <button type="button" @click="triggerAction('add_role')"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow-xs transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                <span>Add Role…</span>
+            </button>
+
+            <!-- Remove Role button -->
+            <button type="button" @click="triggerAction('remove_role')"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"/></svg>
+                <span>Remove Role…</span>
+            </button>
+
+            <!-- Clear Selection -->
+            <button type="button" @click="clearAllSelection()"
+                    class="text-slate-400 hover:text-white p-1 text-sm font-bold ml-1 transition"
+                    title="Deselect all">✕</button>
         </div>
-        {% endif %}
     </div>
 
-<div class="bg-white shadow-sm ring-1 ring-slate-200 overflow-hidden rounded-xl">
-    <div class="overflow-x-auto">
-    <table class="min-w-full divide-y divide-slate-200">
-        <thead class="bg-slate-50">
-            <tr>
-                <th scope="col" class="px-6 py-3 text-left">
-                    <input type="checkbox" 
-                           @click="
-                                checked = $el.checked;
-                                document.querySelectorAll('input[name=\'user_ids\']').forEach(el => el.checked = checked);
-                                $dispatch('checkbox-changed');
-                           " 
-                           class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                </th>
-                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    <button type="button"
-                        hx-get="{% url 'users:manage_users' %}?sort=name&order={% if sort_by == 'name' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}{% if role_filter %}&role={{ role_filter }}{% endif %}{% if school_filter %}&school={{ school_filter }}{% endif %}{% if job_title_filter %}&job_title={{ job_title_filter|urlencode }}{% endif %}&page_size={{ page_size }}"
-                        hx-target="#user-content" hx-swap="innerHTML"
-                        class="flex items-center gap-1 hover:text-slate-700">
-                        User
-                        <span>{% if sort_by == 'name' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}⇅
+    <!-- ═══ Role Selection Popover Modal ═══ -->
+    <div x-show="roleModalOpen"
+         x-transition.opacity
+         style="display: none;"
+         class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden"
+             @click.outside="roleModalOpen = false">
+            <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <h3 class="text-sm font-bold text-slate-900" x-text="modalAction === 'add_role' ? 'Add Role to Selected Users' : 'Remove Role from Selected Users'"></h3>
+                <button type="button" @click="roleModalOpen = false" class="text-slate-400 hover:text-slate-600 p-1 text-base">&times;</button>
+            </div>
+            <div class="p-6 space-y-4">
+                <p class="text-xs text-slate-600">
+                    Select the role to <span class="font-bold" x-text="modalAction === 'add_role' ? 'grant to' : 'revoke from'"></span>
+                    <strong x-text="selectAllMatching ? 'all {{ total_users_count }} matching users' : selectedCount + ' users'"></strong>:
+                </p>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">Target Role</label>
+                    <select x-model="roleId" class="w-full text-xs border border-slate-300 rounded-lg p-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">— Select a Role —</option>
+                        {% for role in all_roles %}
+                        <option value="{{ role.id }}">{{ role.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button type="button" @click="roleModalOpen = false"
+                        class="px-3.5 py-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200 transition">Cancel</button>
+                <button type="button" @click="submitRoleAction()"
+                        :disabled="!roleId"
+                        :class="modalAction === 'add_role' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-rose-600 hover:bg-rose-700'"
+                        class="inline-flex items-center gap-1.5 px-4 py-2 text-white disabled:opacity-40 rounded-lg text-xs font-bold shadow-xs transition">
+                    <span x-text="modalAction === 'add_role' ? 'Apply Role' : 'Remove Role'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ Enhanced User Table ═══ -->
+    <div class="bg-white shadow-xs border border-slate-200/90 overflow-hidden rounded-2xl">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200/80">
+                <thead class="bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    <tr>
+                        <th scope="col" class="px-5 py-3.5 text-left w-10">
+                            <input type="checkbox"
+                                   id="select-all-header"
+                                   @click="
+                                        checked = $el.checked;
+                                        document.querySelectorAll('input[name=\'user_ids\']').forEach(el => el.checked = checked);
+                                        $dispatch('checkbox-changed');
+                                   " 
+                                   class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                        </th>
+                        <th scope="col" class="px-5 py-3.5 text-left">
+                            <button type="button"
+                                hx-get="{% url 'users:manage_users' %}?sort=name&order={% if sort_by == 'name' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}{% if role_filter %}&role={{ role_filter }}{% endif %}{% if school_filter %}&school={{ school_filter }}{% endif %}{% if job_title_filter %}&job_title={{ job_title_filter|urlencode }}{% endif %}&page_size={{ page_size }}"
+                                hx-target="#user-content" hx-swap="innerHTML"
+                                class="inline-flex items-center gap-1.5 hover:text-slate-800 transition">
+                                <span>User</span>
+                                <span class="text-xs">{% if sort_by == 'name' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}⇅{% endif %}</span>
+                            </button>
+                        </th>
+                        <th scope="col" class="px-5 py-3.5 text-left">
+                            <button type="button"
+                                hx-get="{% url 'users:manage_users' %}?sort=role__name&order={% if sort_by == 'role__name' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}{% if role_filter %}&role={{ role_filter }}{% endif %}{% if school_filter %}&school={{ school_filter }}{% endif %}{% if job_title_filter %}&job_title={{ job_title_filter|urlencode }}{% endif %}&page_size={{ page_size }}"
+                                hx-target="#user-content" hx-swap="innerHTML"
+                                class="inline-flex items-center gap-1.5 hover:text-slate-800 transition">
+                                <span>Roles</span>
+                                <span class="text-xs">{% if sort_by == 'role__name' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}⇅{% endif %}</span>
+                            </button>
+                        </th>
+                        <th scope="col" class="px-5 py-3.5 text-left">
+                            <button type="button"
+                                hx-get="{% url 'users:manage_users' %}?sort=job_title&order={% if sort_by == 'job_title' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}{% if role_filter %}&role={{ role_filter }}{% endif %}{% if school_filter %}&school={{ school_filter }}{% endif %}{% if job_title_filter %}&job_title={{ job_title_filter|urlencode }}{% endif %}&page_size={{ page_size }}"
+                                hx-target="#user-content" hx-swap="innerHTML"
+                                class="inline-flex items-center gap-1.5 hover:text-slate-800 transition">
+                                <span>Job Title</span>
+                                <span class="text-xs">{% if sort_by == 'job_title' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}⇅{% endif %}</span>
+                            </button>
+                        </th>
+                        <th scope="col" class="px-5 py-3.5 text-left">
+                            <button type="button"
+                                hx-get="{% url 'users:manage_users' %}?sort=schools&order={% if sort_by == 'schools' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}{% if role_filter %}&role={{ role_filter }}{% endif %}{% if school_filter %}&school={{ school_filter }}{% endif %}{% if job_title_filter %}&job_title={{ job_title_filter|urlencode }}{% endif %}&page_size={{ page_size }}"
+                                hx-target="#user-content" hx-swap="innerHTML"
+                                class="inline-flex items-center gap-1.5 hover:text-slate-800 transition">
+                                <span>Assigned Schools</span>
+                                <span class="text-xs">{% if sort_by == 'schools' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}⇅{% endif %}</span>
+                            </button>
+                        </th>
+                        <th scope="col" class="px-5 py-3.5 text-left">Status</th>
+                        <th scope="col" class="px-5 py-3.5 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-slate-100 text-xs text-slate-700">
+                    {% for user_obj in users %}
+                    <tr class="hover:bg-slate-50/70 transition-colors">
+                        <!-- Checkbox -->
+                        <td class="px-5 py-4 whitespace-nowrap">
+                            <input type="checkbox" name="user_ids" value="{{ user_obj.id }}"
+                                   @click="$dispatch('checkbox-changed')"
+                                   class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                        </td>
+
+                        <!-- User Profile Info -->
+                        <td class="px-5 py-4 whitespace-nowrap">
+                            <div class="flex items-center gap-3 min-w-[200px]">
+                                {% if user_obj.avatar %}
+                                <img class="h-9 w-9 rounded-full object-cover shrink-0 ring-1 ring-slate-200" src="{{ user_obj.avatar }}" alt="" referrerpolicy="no-referrer">
+                                {% else %}
+                                <div class="h-9 w-9 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
+                                    {{ user_obj.name|first|default:user_obj.email|first|upper }}
+                                </div>
+                                {% endif %}
+                                <div class="min-w-0">
+                                    <div class="font-bold text-slate-900 truncate">
+                                        {{ user_obj.name|default:user_obj.email }}
+                                    </div>
+                                    <div class="text-[11px] text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                                        <span>{{ user_obj.email }}</span>
+                                        {% if user_obj.staff_id %}
+                                        <span class="text-[10px] font-mono bg-slate-100 text-slate-600 px-1 py-0.2 rounded border border-slate-200/60" title="Staff ID">
+                                            #{{ user_obj.staff_id }}
+                                        </span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+
+                        <!-- Roles Badges -->
+                        <td class="px-5 py-4">
+                            <div class="flex flex-wrap gap-1 min-w-[140px] max-w-[240px]">
+                                {% for role in user_obj.roles.all %}
+                                <span class="px-2 py-0.5 inline-flex items-center text-[10px] font-bold rounded-full border
+                                    {% if role.name == 'Project Admin' %}bg-purple-100 text-purple-800 border-purple-200
+                                    {% elif role.name == 'District Admin' %}bg-indigo-100 text-indigo-800 border-indigo-200
+                                    {% elif role.name == 'District View' %}bg-blue-100 text-blue-800 border-blue-200
+                                    {% elif role.name == 'School Admin' %}bg-emerald-100 text-emerald-800 border-emerald-200
+                                    {% elif role.name == 'School Gr View' %}bg-teal-100 text-teal-800 border-teal-200
+                                    {% elif role.name == 'School View' %}bg-cyan-100 text-cyan-800 border-cyan-200
+                                    {% elif role.name == 'Teacher' %}bg-amber-100 text-amber-800 border-amber-200
+                                    {% elif role.name == 'Testing Coordinator' %}bg-rose-100 text-rose-800 border-rose-200
+                                    {% else %}bg-orange-100 text-orange-800 border-orange-200{% endif %}">
+                                    {{ role.name }}
+                                </span>
+                                {% empty %}
+                                <span class="text-[11px] text-slate-400 italic">No Role Assigned</span>
+                                {% endfor %}
+                            </div>
+                        </td>
+
+                        <!-- Job Title -->
+                        <td class="px-5 py-4 text-slate-600">
+                            <div class="min-w-[120px] max-w-[200px] truncate font-medium">
+                                {{ user_obj.job_title|default:"—" }}
+                            </div>
+                        </td>
+
+                        <!-- Assigned Schools List (IMPROVED) -->
+                        <td class="px-5 py-4">
+                            <div class="min-w-[180px] max-w-[280px]" x-data="{ hoverOpen: false }">
+                                {% with s_list=user_obj.assigned_schools_list %}
+                                    {% if s_list|length == 0 %}
+                                    <span class="text-[11px] text-slate-400 italic">No school assigned</span>
+                                    {% elif s_list|length == 1 %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200 truncate max-w-full"
+                                          title="{{ s_list.0.school_name }}">
+                                        <span class="truncate">{{ s_list.0.school_name }}</span>
+                                    </span>
+                                    {% elif s_list|length == 2 %}
+                                    <div class="flex flex-col gap-1">
+                                        {% for s in s_list %}
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200 truncate max-w-full"
+                                              title="{{ s.school_name }}">
+                                            <span class="truncate">{{ s.school_name }}</span>
+                                        </span>
+                                        {% endfor %}
+                                    </div>
+                                    {% else %}
+                                    <!-- 3+ schools: show first 2 + more pill with popover -->
+                                    <div class="flex flex-col gap-1 relative">
+                                        {% for s in s_list|slice:":2" %}
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200 truncate max-w-full"
+                                              title="{{ s.school_name }}">
+                                            <span class="truncate">{{ s.school_name }}</span>
+                                        </span>
+                                        {% endfor %}
+                                        
+                                        <!-- Hover popover trigger -->
+                                        <div class="relative inline-block">
+                                            <button type="button"
+                                                    @mouseenter="hoverOpen = true"
+                                                    @mouseleave="hoverOpen = false"
+                                                    @click="hoverOpen = !hoverOpen"
+                                                    class="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-md transition cursor-pointer">
+                                                <span>+{{ s_list|length|add:"-2" }} more schools</span>
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                                            </button>
+
+                                            <!-- Popover box -->
+                                            <div x-show="hoverOpen"
+                                                 x-transition
+                                                 @mouseenter="hoverOpen = true"
+                                                 @mouseleave="hoverOpen = false"
+                                                 style="display: none;"
+                                                 class="absolute z-30 left-0 bottom-full mb-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-3 space-y-1.5 text-xs">
+                                                <div class="font-bold text-slate-800 border-b border-slate-100 pb-1 flex items-center justify-between">
+                                                    <span>All Assigned Schools ({{ s_list|length }})</span>
+                                                </div>
+                                                <div class="max-h-40 overflow-y-auto space-y-1 pr-1">
+                                                    {% for s in s_list %}
+                                                    <div class="text-[11px] text-slate-700 flex items-center">
+                                                        <span class="truncate">{{ s.school_name }}</span>
+                                                    </div>
+                                                    {% endfor %}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endif %}
+                                {% endwith %}
+                            </div>
+                        </td>
+
+                        <!-- Status Dot -->
+                        <td class="px-5 py-4 whitespace-nowrap">
+                            {% if user_obj.is_active %}
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                <span>Active</span>
+                            </span>
+                            {% else %}
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                                <span>Inactive</span>
+                            </span>
                             {% endif %}
+                        </td>
 
-                        </span>
-                    </button>
-                </th>
-                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    <button type="button"
-                        hx-get="{% url 'users:manage_users' %}?sort=role__name&order={% if sort_by == 'role__name' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}{% if role_filter %}&role={{ role_filter }}{% endif %}{% if school_filter %}&school={{ school_filter }}{% endif %}{% if job_title_filter %}&job_title={{ job_title_filter|urlencode }}{% endif %}&page_size={{ page_size }}"
-                        hx-target="#user-content" hx-swap="innerHTML"
-                        class="flex items-center gap-1 hover:text-slate-700">
-                        Role
-                        <span>{% if sort_by == 'role__name' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}
-                            {% else %}⇅{% endif %}</span>
-                    </button>
-                </th>
-                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    <button type="button"
-                        hx-get="{% url 'users:manage_users' %}?sort=job_title&order={% if sort_by == 'job_title' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}{% if role_filter %}&role={{ role_filter }}{% endif %}{% if school_filter %}&school={{ school_filter }}{% endif %}{% if job_title_filter %}&job_title={{ job_title_filter|urlencode }}{% endif %}&page_size={{ page_size }}"
-                        hx-target="#user-content" hx-swap="innerHTML"
-                        class="flex items-center gap-1 hover:text-slate-700">
-                        Job Title
-                        <span>{% if sort_by == 'job_title' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}
-                            ⇅{% endif %}</span>
-                    </button>
-                </th>
-                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    <button type="button"
-                        hx-get="{% url 'users:manage_users' %}?sort=schools&order={% if sort_by == 'schools' and sort_order == 'asc' %}desc{% else %}asc{% endif %}{% if query %}&q={{ query|urlencode }}{% endif %}{% if role_filter %}&role={{ role_filter }}{% endif %}{% if school_filter %}&school={{ school_filter }}{% endif %}{% if job_title_filter %}&job_title={{ job_title_filter|urlencode }}{% endif %}&page_size={{ page_size }}"
-                        hx-target="#user-content" hx-swap="innerHTML"
-                        class="flex items-center gap-1 hover:text-slate-700">
-                        Schools
-                        <span>{% if sort_by == 'schools' %}{% if sort_order == 'asc' %}▲{% else %}▼{% endif %}{% else %}
-                            ⇅{% endif %}</span>
-                    </button>
-                </th>
-                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Status</th>
-                <th scope="col" class="relative px-6 py-3">
-                    <span class="sr-only">Actions</span>
-                </th>
-            </tr>
-        </thead>
-        <tbody class="bg-white divide-y divide-slate-200">
-            {% for user_obj in users %}
-            <tr>
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <input type="checkbox" name="user_ids" value="{{ user_obj.id }}" @click="$dispatch('checkbox-changed')" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                </td>
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="flex items-center min-w-[200px]">
-                        {% if user_obj.avatar %}
-                        <img class="h-10 w-10 rounded-full mr-4 flex-shrink-0" src="{{ user_obj.avatar }}" alt="" referrerpolicy="no-referrer">
-                        {% else %}
-                        <div class="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center mr-4 flex-shrink-0">
-                            <span class="text-slate-500 font-medium text-sm">{{ user_obj.name|first }}</span>
-                        </div>
-                        {% endif %}
-                        <div class="min-w-0">
-                            <div class="text-sm font-medium text-slate-900 truncate">{{ user_obj.name }}</div>
-                            <div class="text-sm text-slate-500 truncate">{{ user_obj.email }}</div>
-                        </div>
-                    </div>
-                </td>
-                <td class="px-6 py-4">
-                    <div class="min-w-[120px]">
-                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 whitespace-nowrap">
-                            {% for role in user_obj.roles.all %}{{ role.name }}{% if not forloop.last %}, {% endif %}{% empty %}No Role{% endfor %}
-                        </span>
-                    </div>
-                </td>
-                <td class="px-6 py-4 text-sm text-slate-500">
-                    <div class="min-w-[120px] max-w-[200px] truncate">
-                        {{ user_obj.job_title|default:"-" }}
-                    </div>
-                </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    <div class="min-w-[80px]">
-                        {{ user_obj.first_school_name }}
-                    </div>
-                </td>
-                <td class="px-6 py-4 whitespace-nowrap">
-                    {% if user_obj.is_active %}
-                    <span
-                        class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                        Active
-                    </span>
-                    {% else %}
-                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
-                        Inactive
-                    </span>
-                    {% endif %}
-                </td>
-                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    {% if user.is_superuser or user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
-                    {% if user_obj.id != user.id %}
-                    <a href="{% url 'users:impersonate_user' user_obj.id %}" 
-                       class="text-purple-600 hover:text-purple-900 mr-3 font-semibold"
-                       title="Log in as this user"
-                       onclick="return confirm('Are you sure you want to impersonate {{ user_obj.email }}?');">
-                        Impersonate
-                    </a>
-                    {% endif %}
-                    {% endif %}
-                    <button type="button"
-                        @click="$dispatch('open-user-modal', { userId: {{ user_obj.id }} })"
-                        class="text-blue-600 hover:text-blue-900 hover:underline">
-                        Edit
-                    </button>
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="7" class="px-6 py-4 text-center text-sm text-slate-500">No users found.</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                        <!-- Actions -->
+                        <td class="px-5 py-4 whitespace-nowrap text-right font-medium">
+                            <div class="flex items-center justify-end gap-2">
+                                {% if user.is_superuser or user.active_role.name == 'Project Admin' or not user.active_role and user.is_project_admin %}
+                                {% if user_obj.id != user.id %}
+                                <a href="{% url 'users:impersonate_user' user_obj.id %}" 
+                                   class="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-600 hover:text-purple-800 hover:bg-purple-50 px-2 py-1 rounded transition"
+                                   title="Log in as this user for troubleshooting"
+                                   onclick="return confirm('Log in as {{ user_obj.email }}?');">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                                    <span>Impersonate</span>
+                                </a>
+                                {% endif %}
+                                {% endif %}
+
+                                <!-- Edit Card Button -->
+                                <button type="button"
+                                    @click="$dispatch('open-user-modal', { userId: {{ user_obj.id }} })"
+                                    class="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100/80 px-2.5 py-1 rounded-md border border-indigo-200/80 shadow-2xs transition">
+                                    <svg class="w-3.5 h-3.5 text-indigo-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                    <span>Edit</span>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="px-6 py-12 text-center">
+                            <div class="max-w-sm mx-auto text-center text-slate-400">
+                                <svg class="w-10 h-10 mx-auto mb-2 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>
+                                <p class="text-sm font-semibold text-slate-600">No users match your criteria</p>
+                                <p class="text-xs text-slate-400 mt-1">Try clearing or adjusting search query and filters.</p>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-</div>
 </form>
 
+<!-- ═══ Pagination ═══ -->
 {% if page_obj.has_other_pages %}
-<div class="mt-6 flex items-center justify-between">
-    <div class="text-sm text-slate-500">
-        Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+<div class="mt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+    <div>
+        Showing <strong class="text-slate-800">{{ page_obj.start_index }}</strong> to <strong class="text-slate-800">{{ page_obj.end_index }}</strong> of <strong class="text-slate-800">{{ page_obj.paginator.count }}</strong> users
     </div>
-    <div class="flex items-center gap-2">
+    <div class="inline-flex items-center gap-1.5">
         {% if page_obj.has_previous %}
         <button
             hx-get="{% url 'users:manage_users' %}?{% if query %}q={{ query|urlencode }}&{% endif %}{% if role_filter %}role={{ role_filter }}&{% endif %}{% if school_filter %}school={{ school_filter }}&{% endif %}{% if job_title_filter %}job_title={{ job_title_filter|urlencode }}&{% endif %}sort={{ sort_by }}&order={{ sort_order }}&page={{ page_obj.previous_page_number }}&page_size={{ page_size }}"
             hx-target="#user-content" hx-swap="innerHTML"
-            class="px-3 py-2 rounded-md border border-slate-300 text-sm text-slate-700 hover:bg-slate-50">
+            class="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium transition shadow-2xs">
             Previous
         </button>
         {% else %}
-        <span class="px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-400">Previous</span>
+        <span class="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-300 cursor-not-allowed">Previous</span>
         {% endif %}
 
-        <span class="px-3 py-2 text-sm text-slate-600">{{ page_obj.number }}</span>
+        <span class="px-3 py-1.5 text-slate-700 font-semibold bg-slate-100 rounded-lg">
+            Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+        </span>
 
         {% if page_obj.has_next %}
         <button
             hx-get="{% url 'users:manage_users' %}?{% if query %}q={{ query|urlencode }}&{% endif %}{% if role_filter %}role={{ role_filter }}&{% endif %}{% if school_filter %}school={{ school_filter }}&{% endif %}{% if job_title_filter %}job_title={{ job_title_filter|urlencode }}&{% endif %}sort={{ sort_by }}&order={{ sort_order }}&page={{ page_obj.next_page_number }}&page_size={{ page_size }}"
             hx-target="#user-content" hx-swap="innerHTML"
-            class="px-3 py-2 rounded-md border border-slate-300 text-sm text-slate-700 hover:bg-slate-50">
+            class="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium transition shadow-2xs">
             Next
         </button>
         {% else %}
-        <span class="px-3 py-2 rounded-md border border-slate-200 text-sm text-slate-400">Next</span>
+        <span class="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-300 cursor-not-allowed">Next</span>
         {% endif %}
     </div>
 </div>
