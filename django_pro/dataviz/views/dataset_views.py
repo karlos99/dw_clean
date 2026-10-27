@@ -326,6 +326,29 @@ def dataset_detail_api(request, dataset_id):
 
 @login_required
 @require_GET
+def dataset_data_preview_api(request, dataset_id):
+    """Return first 5 rows + columns for a Dataset as JSON."""
+    if not is_project_admin(request.user):
+        return FORBIDDEN
+    from django.shortcuts import get_object_or_404 as g4
+    ds = g4(Dataset, pk=dataset_id)
+    from dataviz.utils.compiler import load_dataset_result
+    res = load_dataset_result(ds, limit=5, apply_aliases=True)
+    if res.get('error'):
+        return JsonResponse({'error': res['error']}, status=400)
+    rows = res.get('rows', [])
+    col_mappings = ds.column_mappings or {}
+    cols = list(rows[0].keys()) if rows else [col_mappings.get(c, c.split('.')[-1]) for c in (ds.columns or [])]
+    return JsonResponse({
+        'columns': cols,
+        'rows': rows,
+        'row_count': res.get('row_count', len(rows)),
+        'success': True,
+    })
+
+
+@login_required
+@require_GET
 def dataset_list_api(request):
     """List datasets as JSON for pickers."""
     if not is_project_admin(request.user):
@@ -553,14 +576,14 @@ def dataset_filter_options_api(request, dataset_id):
         col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
         res = execute_sql_dataset(ds.source_sql or '', limit=500)
         if res.get('error'):
-            return JsonResponse({'options': {}, 'labels': col_mappings, 'error': res['error']}, status=400)
+            return JsonResponse({'filter_options': {}, 'filter_labels': col_mappings, 'options': {}, 'labels': col_mappings, 'error': res['error']}, status=400)
         rows = res.get('rows') or []
         options = {}
         for col in (ds.columns or res.get('columns') or []):
             vals = sorted({str(r.get(col)).strip() for r in rows if r.get(col) not in (None, '')})
             if vals:
                 options[col_mappings.get(col, col)] = vals[:200]
-        return JsonResponse({'options': options, 'labels': col_mappings})
+        return JsonResponse({'filter_options': options, 'filter_labels': col_mappings, 'options': options, 'labels': col_mappings})
 
     current_filters_raw = request.GET.get('current_filters', '')
     current_filters = {}
@@ -597,53 +620,101 @@ def dataset_filter_options_api(request, dataset_id):
 
         filter_options = {}
         with cursor_ctx as cur:
+            # Group columns by active col_filters so we can batch them in ClickHouse
+            from collections import defaultdict
+            filter_groups = defaultdict(list)
             for sql_col, alias in col_mappings.items():
                 if alias in _SKIP:
                     continue
-                # Exclude the filter for the current column/alias from interactive filters
                 col_filters = {
                     fk: fval for fk, fval in resolved_filters.items()
                     if not (fk == sql_col or fk.startswith(sql_col + '->'))
                 }
-                # Compile base SQL with the excluded filters
+                group_key = tuple(sorted((k, tuple(v) if isinstance(v, list) else v) for k, v in col_filters.items()))
+                filter_groups[group_key].append((sql_col, alias, col_filters))
+
+            for group_key, cols in filter_groups.items():
+                _, _, sample_col_filters = cols[0]
                 sql, params = compile_dataset_to_sql(
-                    ds, user=request.user, interactive_filters=col_filters,
+                    ds, user=request.user, interactive_filters=sample_col_filters,
                     limit=1, status_filter=status_val,
                 )
-                # Strip the trailing LIMIT clause so the subquery is unlimited
                 sql_base = sql.rsplit(' LIMIT ', 1)[0]
 
-                # Quote the sql_col for use as column reference in the outer SELECT
-                quoted = f'"{sql_col}"'
-                col_name = alias.split('.')[-1].lower()
-                is_date = col_name.endswith('_date') or col_name.endswith('_at') or col_name == 'date' or 'date' in col_name
-                is_numeric = col_name == 'atendace_rate' or col_name.endswith('_ss') or col_name.endswith('_rate')
-                if is_date or is_numeric:
-                    bounds_sql = (
-                        f'SELECT CAST(MIN({quoted}) AS TEXT) AS min_val, CAST(MAX({quoted}) AS TEXT) AS max_val '
-                        f'FROM ({sql_base}) _q '
-                        f'WHERE {quoted} IS NOT NULL'
-                    )
+                if use_ch:
+                    select_exprs = []
+                    col_meta = []
+                    for sql_col, alias, _ in cols:
+                        quoted = f'"{sql_col}"'
+                        col_name = alias.split('.')[-1].lower()
+                        is_date = col_name.endswith('_date') or col_name.endswith('_at') or col_name == 'date' or 'date' in col_name
+                        is_numeric = col_name == 'atendace_rate' or col_name.endswith('_ss') or col_name.endswith('_rate')
+                        if is_date or is_numeric:
+                            select_exprs.append(f'CAST(MIN({quoted}) AS String), CAST(MAX({quoted}) AS String)')
+                            col_meta.append((alias, 'range'))
+                        else:
+                            select_exprs.append(f'groupUniqArray(100)({quoted})')
+                            col_meta.append((alias, 'distinct'))
+
+                    try:
+                        batch_sql = f'SELECT {", ".join(select_exprs)} FROM ({sql_base}) _q'
+                        cur.execute(batch_sql, params)
+                        batch_row = cur.fetchone()
+                        idx = 0
+                        for alias, kind in col_meta:
+                            if kind == 'range':
+                                min_v, max_v = batch_row[idx], batch_row[idx + 1]
+                                idx += 2
+                                vals = [str(v) for v in (min_v, max_v) if v is not None and v != '']
+                            else:
+                                raw_vals = batch_row[idx]
+                                idx += 1
+                                vals = sorted([str(v) for v in (raw_vals or []) if v is not None and v != ''])
+                            if vals:
+                                filter_options[alias] = vals
+                    except Exception:
+                        logger.warning("Batch ClickHouse filter extraction failed, falling back to sequential", exc_info=True)
+                        for sql_col, alias, _ in cols:
+                            quoted = f'"{sql_col}"'
+                            col_name = alias.split('.')[-1].lower()
+                            is_date = col_name.endswith('_date') or col_name.endswith('_at') or col_name == 'date' or 'date' in col_name
+                            is_numeric = col_name == 'atendace_rate' or col_name.endswith('_ss') or col_name.endswith('_rate')
+                            if is_date or is_numeric:
+                                q = f'SELECT CAST(MIN({quoted}) AS TEXT), CAST(MAX({quoted}) AS TEXT) FROM ({sql_base}) _q WHERE {quoted} IS NOT NULL'
+                            else:
+                                q = f'SELECT DISTINCT {quoted} FROM ({sql_base}) _q WHERE {quoted} IS NOT NULL AND CAST({quoted} AS TEXT) != \'\' ORDER BY 1 LIMIT 100'
+                            try:
+                                cur.execute(q, params)
+                                if is_date or is_numeric:
+                                    r = cur.fetchone()
+                                    vals = [str(v) for v in r if v is not None] if r else []
+                                else:
+                                    vals = [str(r[0]) for r in cur.fetchall() if r[0] is not None]
+                                if vals:
+                                    filter_options[alias] = vals
+                            except Exception:
+                                pass
                 else:
-                    bounds_sql = None
-                    distinct_sql = (
-                        f'SELECT DISTINCT {quoted} AS val '
-                        f'FROM ({sql_base}) _q '
-                        f'WHERE {quoted} IS NOT NULL AND CAST({quoted} AS TEXT) != \'\' '
-                        f'ORDER BY 1'
-                    )
-                try:
-                    if bounds_sql:
-                        cur.execute(bounds_sql, params)
-                        row = cur.fetchone()
-                        vals = [str(v) for v in row if v is not None] if row else []
-                    else:
-                        cur.execute(distinct_sql, params)
-                        vals = [str(row[0]) for row in cur.fetchall() if row[0] is not None]
-                    if vals:
-                        filter_options[alias] = vals
-                except Exception:
-                    pass  # skip columns that error (e.g. non-comparable types)
+                    for sql_col, alias, _ in cols:
+                        quoted = f'"{sql_col}"'
+                        col_name = alias.split('.')[-1].lower()
+                        is_date = col_name.endswith('_date') or col_name.endswith('_at') or col_name == 'date' or 'date' in col_name
+                        is_numeric = col_name == 'atendace_rate' or col_name.endswith('_ss') or col_name.endswith('_rate')
+                        if is_date or is_numeric:
+                            q = f'SELECT CAST(MIN({quoted}) AS TEXT), CAST(MAX({quoted}) AS TEXT) FROM ({sql_base}) _q WHERE {quoted} IS NOT NULL'
+                        else:
+                            q = f'SELECT DISTINCT {quoted} FROM ({sql_base}) _q WHERE {quoted} IS NOT NULL AND CAST({quoted} AS TEXT) != \'\' ORDER BY 1 LIMIT 100'
+                        try:
+                            cur.execute(q, params)
+                            if is_date or is_numeric:
+                                r = cur.fetchone()
+                                vals = [str(v) for v in r if v is not None] if r else []
+                            else:
+                                vals = [str(r[0]) for r in cur.fetchall() if r[0] is not None]
+                            if vals:
+                                filter_options[alias] = vals
+                        except Exception:
+                            pass
 
             # Always expose standard demographic range filters for chart builder.
             _STANDARD_RANGE_FILTERS = {
@@ -699,7 +770,7 @@ def dataset_filter_options_api(request, dataset_id):
         # Always offer every relative-year label, even for years with no data
         # yet, so the options survive a data rollover to a new current year.
         _inject_relative_year_labels(filter_options)
-        result = {'filter_options': filter_options, 'filter_labels': filter_labels}
+        result = {'filter_options': filter_options, 'filter_labels': filter_labels, 'options': filter_options, 'labels': filter_labels}
         try:
             cache.set(cache_key, result, 300)
         except Exception:

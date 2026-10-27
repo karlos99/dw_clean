@@ -61,10 +61,12 @@
     {# Step indicators #}
     <div class="hidden md:flex items-center gap-1.5 text-[10px]">
       <template x-for="(s, i) in steps" :key="i">
-        <div class="flex items-center gap-1">
-          <span class="step-dot" :class="s.done ? 'done' : (s.current ? 'current' : 'pending')"
+        <div class="flex items-center gap-1 cursor-pointer select-none group"
+             @click="i === 0 ? (srcOpen = true, colsOpen = true) : i === 1 ? centerTab = 'type' : i === 2 ? centerTab = 'columns' : doPreview()"
+             :title="'Go to ' + s.label">
+          <span class="step-dot transition-transform group-hover:scale-110" :class="s.done ? 'done' : (s.current ? 'current' : 'pending')"
                 x-text="s.done ? '✓' : (i+1)"></span>
-          <span class="text-slate-500 font-medium" x-text="s.label"></span>
+          <span class="text-slate-500 font-medium group-hover:text-slate-900 transition-colors" x-text="s.label"></span>
           <span x-show="i < steps.length - 1" class="text-slate-300 mx-1">→</span>
         </div>
       </template>
@@ -135,8 +137,8 @@
           </div>
         </button>
         <div x-show="srcOpen" x-collapse>
-          {# ── SCHOOL YEAR CONTEXT — hidden for Dataset source (year is embedded in dataset config) ── #}
-          <div class="px-4 pb-2 border-t border-slate-100" x-show="sourceType !== 'dataset'">
+          {# ── SCHOOL YEAR CONTEXT — available for queries, explorer, and datasets with school_year ── #}
+          <div class="px-4 pb-2 border-t border-slate-100" x-show="sourceType !== 'dataset' || (columns || []).includes('school_year') || Object.values(datasetColumnMappings || {}).includes('school_year')">
             <div class="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-2.5">
               <label class="text-[10px] font-semibold uppercase tracking-wider text-blue-700 block mb-1.5">School Year Context</label>
               <select x-model="yearContext" @change="onYearContextChange()"
@@ -253,29 +255,61 @@
 
       {# Dataset picker #}
       <div x-show="sourceType=='dataset'" class="px-4 py-3 border-t border-slate-100 mt-1">
-        <select x-model="datasetSourceId" @change="loadDatasetColumns()"
+        <div class="relative">
+          <input type="text" x-model="datasetSearch" placeholder="Search datasets…"
+                 class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white
+                        focus:outline-none focus:ring-2 focus:ring-blue-500 pl-8">
+          <svg class="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        </div>
+        <select x-model="datasetSourceId" @change="loadDatasetColumns()" size="6"
                 class="w-full text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white
-                       focus:outline-none focus:ring-2 focus:ring-blue-500">
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 mt-1.5">
           <option value="">— choose a dataset —</option>
           {% for ds in available_datasets %}
-          <option value="{{ ds.id }}">
+          <option value="{{ ds.id }}" :class="datasetSearch && !'{{ ds.name|escapejs }}'.toLowerCase().includes(datasetSearch.toLowerCase()) && 'hidden'">
             {{ ds.name }}
           </option>
           {% endfor %}
         </select>
         <div class="flex gap-1.5 mt-1.5" x-show="datasetSourceId">
-          <a href="{% url 'dataviz:dataset_edit' 0 %}"
-             :href="`/dataviz/datasets/${datasetSourceId}/edit/`"
+          <a :href="`/dataviz/datasets/${datasetSourceId}/edit/`"
              target="_blank"
              class="flex-1 text-center text-[9px] py-1.5 font-semibold bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition flex items-center justify-center gap-0.5">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
             Edit Dataset
           </a>
-          <button @click="loadColumns()" :disabled="columnsLoading"
+          <button @click="previewDataset()" :disabled="datasetPreviewLoading"
                   class="flex-1 text-center text-[9px] py-1.5 font-semibold bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition disabled:opacity-50 flex items-center justify-center gap-0.5">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-            Load Columns
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+            <span x-text="datasetPreviewLoading ? 'Loading…' : 'Preview Data'"></span>
           </button>
+        </div>
+        {# Dataset preview results #}
+        <div x-show="datasetPreviewData" class="mt-2 border border-blue-200 rounded-lg bg-blue-50 overflow-hidden" x-transition>
+          <div class="flex items-center justify-between px-2.5 py-1.5 bg-blue-100 border-b border-blue-200">
+            <span class="text-[9px] font-bold text-blue-700 uppercase">Preview (first 5 rows)</span>
+            <button @click="datasetPreviewData=null" class="text-blue-400 hover:text-blue-600 font-bold">&times;</button>
+          </div>
+          <div class="overflow-x-auto max-h-32 p-1.5">
+            <table class="w-full text-[9px]">
+              <thead>
+                <tr>
+                  <template x-for="col in datasetPreviewData?.columns" :key="col">
+                    <th class="text-left px-1 py-0.5 text-slate-500 font-semibold whitespace-nowrap" x-text="col"></th>
+                  </template>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="row in datasetPreviewData?.rows" :key="row">
+                  <tr class="border-t border-blue-100">
+                    <template x-for="col in datasetPreviewData?.columns" :key="col">
+                      <td class="px-1 py-0.5 text-slate-600 whitespace-nowrap" x-text="row[col] ?? ''"></td>
+                    </template>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
         </div>
         <label x-show="datasetSourceId" class="mt-2 flex items-start gap-2 cursor-pointer select-none">
           <input type="checkbox" x-model="oneRowPerStuAnnualKey"
@@ -906,6 +940,7 @@
                           <button type="button" @click="clearColumnFilter(col)" class="text-[9px] font-bold text-red-500 hover:text-red-700 px-1 rounded hover:bg-red-50">Clear</button>
                         </div>
                         <input type="text" :placeholder="'Search ' + (filterLabels[col] || col) + '…'" x-model="filterSearch[col]"
+                               @keydown.enter.prevent="if (filterSearch[col]?.trim()) { toggleFilterValue(col, filterSearch[col].trim()); filterSearch[col]=''; }"
                                class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 mb-1 focus:ring-1 focus:ring-blue-200 bg-slate-50">
                         <div class="max-h-32 overflow-y-auto space-y-0.5">
                           <template x-for="val in filteredFilterValues(col)" :key="'fv_'+col+'_'+val">
@@ -917,7 +952,18 @@
                               <span class="truncate" x-text="yearAliasLabels[val] || val || '(blank)'"></span>
                             </label>
                           </template>
-                          <p x-show="filteredFilterValues(col).length === 0" class="text-[10px] text-slate-400 py-1 px-1">No matches</p>
+                          <p x-show="filteredFilterValues(col).length === 0 && !filtersLoading" class="text-[10px] text-slate-400 py-1 px-1">
+                            <span x-show="!filterSearch[col]">No options detected</span>
+                            <span x-show="filterSearch[col]">No matches</span>
+                          </p>
+                          <p x-show="filtersLoading && filteredFilterValues(col).length === 0" class="text-[10px] text-slate-400 py-1 px-1">Loading options…</p>
+                          <div x-show="filterSearch[col] && filterSearch[col].trim()" class="pt-1 border-t border-slate-100">
+                            <button type="button" @click="toggleFilterValue(col, filterSearch[col].trim()); filterSearch[col]='';"
+                                    class="text-[10px] font-medium text-blue-600 hover:text-blue-800 px-1 py-0.5 rounded hover:bg-blue-50 flex items-center gap-1">
+                              <span>+ Filter by</span>
+                              <span class="font-bold underline" x-text="'\"' + filterSearch[col] + '\"'"></span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                       {# Selected filter chips #}
@@ -1029,11 +1075,11 @@
         <button type="button" @click="open=!open"
                 class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
           <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Map Columns</p>
+            <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-700">Map Columns &amp; Dimensions</p>
           </div>
           <div class="flex items-center gap-1.5">
-            <span x-show="!open && (xCols.length || yCol)" class="text-[9px] font-medium text-slate-400 truncate max-w-[80px]"
+            <span x-show="!open && (xCols.length || yCol)" class="text-[9px] font-medium text-slate-400 truncate max-w-[120px]"
                   x-text="xCols.concat(yCol ? [yCol] : []).join(' / ')"></span>
             <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -1041,200 +1087,340 @@
             </svg>
           </div>
         </button>
-        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-3 border-t border-slate-50">
-        <p class="text-[10px] text-slate-400 leading-snug">
-          Drag from left, or hover a column and click
-          <span class="font-bold text-slate-700">X</span> /
-          <span class="font-bold text-emerald-600">Y</span> /
-          <span class="font-bold text-purple-600">S</span>
-        </p>
 
-        {# X-Axis drop well — supports multiple columns #}
-        <div x-show="!meta.x?.hide" x-transition>
-          <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
-            <span class="w-4 h-4 rounded bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center justify-center">X</span>
-            <span x-text="meta.x?.lbl || 'X-Axis / Category'"></span>
-            <span x-show="meta.x?.req" class="text-red-400 text-[9px] font-bold">*</span>
-            <span class="text-[9px] text-slate-400 ml-1" x-show="xCols.length > 0" x-text="'(' + xCols.length + ')'"></span>
-          </label>
-          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 min-h-[42px]"
-               :class="dragTarget==='xCols' && 'accept'"
-               @dragover.prevent="dragTarget='xCols'"
-               @dragleave.self="dragTarget=''"
-               @drop.prevent="doDropMulti('xCols')">
-            <div x-show="xCols.length === 0" class="flex items-center justify-between w-full">
-              <span class="text-xs text-slate-400 italic">Drag columns here</span>
-              <select @change="xCols.push($event.target.value); $event.target.selectedIndex=0; _syncXCols()"
-                      class="text-[11px] border-0 bg-transparent text-blue-600 cursor-pointer p-0 focus:ring-0">
-                <option value="">or pick…</option>
-                <template x-for="c in activeCols" :key="'xp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
-              </select>
-            </div>
-            <div x-show="xCols.length > 0" class="flex flex-wrap items-center gap-1">
-              <template x-for="(col, idx) in xCols" :key="'xcol_'+col+'_'+idx">
-                <span class="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-800 rounded-md px-2 py-1 font-medium">
-                  <span class="truncate max-w-[180px]" x-text="colLabel(col)"></span>
-                  <button @click="xCols.splice(idx, 1); _syncXCols()" class="text-blue-400 hover:text-red-500 text-sm leading-none">&times;</button>
+        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-4 border-t border-slate-50">
+
+          {# ── Chart Blueprint & Role Impact Guide (Top Banner) ── #}
+          <div class="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-xl p-3.5 shadow-sm border border-slate-800 space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-6 h-6 rounded-md bg-indigo-500/25 border border-indigo-400/30 flex items-center justify-center text-indigo-300 text-xs">
+                  📊
                 </span>
-              </template>
-              <select @change="xCols.push($event.target.value); $event.target.selectedIndex=0; _syncXCols()"
-                      class="text-[11px] border border-dashed border-slate-300 bg-transparent text-blue-600 cursor-pointer p-0.5 rounded focus:ring-0">
-                <option value="">+ add</option>
-                <template x-for="c in activeCols" :key="'xpa_'+c">
-                  <option :value="c" x-show="!xCols.includes(c)" x-text="colLabel(c)"></option>
-                </template>
-              </select>
-              <button @click="xCols = []; _syncXCols()" class="ml-1 text-slate-400 hover:text-red-500 text-lg leading-none">&times;</button>
-            </div>
-          </div>
-          <div x-show="chartType === 'line' && xCols.some(c => isDateColumn(c))" x-transition class="mt-1.5">
-            <label class="text-[10px] font-semibold text-slate-500 mb-1 block">Group dates by</label>
-            <select x-model="xDateBucket" @change="_schedulePreview(true)"
-                    class="w-full text-[11px] border border-slate-200 rounded px-2 py-1 bg-white">
-              <option value="">Exact date (no bucketing)</option>
-              <option value="day">Day</option>
-              <option value="week">Week</option>
-              <option value="month">Month</option>
-              <option value="quarter">Quarter</option>
-              <option value="year">Year</option>
-            </select>
-          </div>
-        </div>
-
-        {# Y-Axis drop well #}
-        <div x-show="!meta.y?.hide" x-transition>
-          <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
-            <span class="w-4 h-4 rounded bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center">Y</span>
-            <span x-text="meta.y?.lbl || 'Y-Axis / Value'"></span>
-            <span x-show="meta.y?.req" class="text-red-400 text-[9px] font-bold">*</span>
-          </label>
-          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 flex items-center"
-               :class="dragTarget==='yCol' && 'accept'"
-               @dragover.prevent="dragTarget='yCol'"
-               @dragleave.self="dragTarget=''"
-               @drop.prevent="doDrop('yCol')">
-            <div x-show="!yCol" class="flex items-center justify-between w-full">
-              <span class="text-xs text-slate-400 italic">Drag a column here</span>
-              <select @change="yCol=$event.target.value; $event.target.selectedIndex=0"
-                      class="text-[11px] border-0 bg-transparent text-emerald-600 cursor-pointer p-0 focus:ring-0">
-                <option value="">or pick…</option>
-                <template x-for="c in activeCols" :key="'yp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
-              </select>
-            </div>
-            <div x-show="yCol" class="flex items-center gap-2 w-full">
-              <span class="inline-flex items-center gap-1 text-xs bg-emerald-100 text-emerald-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
-                <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M3 17V3h2v14H3zm4-4v4h2v-4H7zm4-6v10h2V7h-2zm4-4v14h2V3h-2z"/></svg>
-                <span x-text="colLabel(yCol)" class="truncate"></span>
-              </span>
-              <button @click="yCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
-            </div>
-          </div>
-        </div>
-
-        {# Series drop well — supports multiple columns #}
-        <div x-show="!meta.s?.hide" x-transition>
-          <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
-            <span class="w-4 h-4 rounded bg-purple-100 text-purple-700 text-[10px] font-bold flex items-center justify-center">S</span>
-            <span x-text="meta.s?.lbl || 'Series / Group-by'"></span>
-            <span class="font-normal text-slate-400 text-[10px] ml-0.5">optional</span>
-            <span class="text-[9px] text-slate-400" x-show="seriesCols.length > 0" x-text="'(' + seriesCols.length + ')'"></span>
-          </label>
-          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 min-h-[42px]"
-               :class="dragTarget==='seriesCols' && 'accept'"
-               @dragover.prevent="dragTarget='seriesCols'"
-               @dragleave.self="dragTarget=''"
-               @drop.prevent="doDropMulti('seriesCols')">
-            <div x-show="seriesCols.length === 0" class="flex items-center justify-between w-full">
-              <span class="text-xs text-slate-400 italic">Drag columns here</span>
-              <select @change="seriesCols.push($event.target.value); $event.target.selectedIndex=0; _syncSeriesCols()"
-                      class="text-[11px] border-0 bg-transparent text-purple-600 cursor-pointer p-0 focus:ring-0">
-                <option value="">or pick…</option>
-                <template x-for="c in activeCols" :key="'sp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
-              </select>
-            </div>
-            <div x-show="seriesCols.length > 0" class="flex flex-wrap items-center gap-1">
-              <template x-for="(col, idx) in seriesCols" :key="'scol_'+col+'_'+idx">
-                <span class="inline-flex items-center gap-1 text-xs bg-purple-100 text-purple-800 rounded-md px-2 py-1 font-medium">
-                  <span class="truncate max-w-[180px]" x-text="colLabel(col)"></span>
-                  <button @click="seriesCols.splice(idx, 1); _syncSeriesCols()" class="text-purple-400 hover:text-red-500 text-sm leading-none">&times;</button>
-                </span>
-              </template>
-              <select @change="seriesCols.push($event.target.value); $event.target.selectedIndex=0; _syncSeriesCols()"
-                      class="text-[11px] border border-dashed border-slate-300 bg-transparent text-purple-600 cursor-pointer p-0.5 rounded focus:ring-0">
-                <option value="">+ add</option>
-                <template x-for="c in activeCols" :key="'spa_'+c">
-                  <option :value="c" x-show="!seriesCols.includes(c)" x-text="colLabel(c)"></option>
-                </template>
-              </select>
-              <button @click="seriesCols = []; _syncSeriesCols()" class="ml-1 text-slate-400 hover:text-red-500 text-lg leading-none">&times;</button>
-            </div>
-          </div>
-
-          {# ── Stack / Series Order (drag-to-reorder) ── #}
-          <div x-show="(seriesCols.length || chartType === 'assessment_compare') && stackOrder.length > 1" x-collapse class="mt-2">
-            <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1">Stack Order (drag to reorder)</p>
-            <div class="space-y-0.5">
-              <template x-for="(item, idx) in stackOrder" :key="'so_'+item">
-                <div draggable="true"
-                     @dragstart="_dragStackIdx = idx"
-                     @dragend="_dragStackIdx = null"
-                     @dragover.prevent
-                     @drop.prevent="
-                       if (_dragStackIdx !== null && _dragStackIdx !== idx) {
-                         const moved = stackOrder.splice(_dragStackIdx, 1)[0];
-                         stackOrder.splice(idx, 0, moved);
-                         stackOrder = [...stackOrder];
-                         _dragStackIdx = null;
-                         _schedulePreview();
-                       }"
-                     class="flex items-center gap-1.5 bg-white border border-slate-200 rounded px-2 py-1 cursor-grab active:cursor-grabbing hover:border-blue-300 transition select-none">
-                  <svg class="w-3 h-3 text-slate-300 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
-                  </svg>
-                  <span class="text-[11px] text-slate-700 truncate" x-text="colLabel(item)"></span>
-                  <span class="ml-auto text-[9px] text-slate-400 font-mono" x-text="idx + 1"></span>
+                <div>
+                  <span class="text-[9px] font-bold uppercase tracking-wider text-indigo-300 block leading-tight">Mapping Impact Guide</span>
+                  <h4 class="text-xs font-semibold text-white leading-tight" x-text="CHART_NAMES[chartType] || chartType"></h4>
                 </div>
-              </template>
+              </div>
+              <span class="text-[9px] bg-indigo-500/20 text-indigo-200 border border-indigo-400/30 rounded-full px-2 py-0.5 truncate max-w-[200px]"
+                    x-text="meta.hint || ''"></span>
             </div>
-            <button type="button" x-show="stackOrderAvail.length > 0"
-                    @click="stackOrder = [...stackOrderAvail]; _schedulePreview();"
-                    class="text-[9px] text-blue-500 hover:text-blue-700 font-semibold mt-1">Reset to default order</button>
+
+            <!-- Role Impact Grid -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1 border-t border-slate-800/80">
+              <!-- Category (X) -->
+              <div class="bg-slate-800/60 rounded-lg p-2 border border-slate-700/60" x-show="!meta.x?.hide">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-3.5 h-3.5 rounded bg-indigo-400/20 text-indigo-300 text-[9px] font-bold flex items-center justify-center">X</span>
+                  <span class="text-[10px] font-semibold text-slate-300 truncate" x-text="meta.x?.lbl || 'Category Axis'"></span>
+                </div>
+                <div class="text-[11px] font-medium truncate" :class="xCols.length ? 'text-indigo-300 font-semibold' : 'text-slate-400 italic'"
+                     x-text="xCols.length ? xCols.map(c => colLabel(c)).join(' / ') : 'Not selected'"></div>
+                <p class="text-[9px] text-slate-400 mt-0.5 leading-tight">Horizontal axis items</p>
+              </div>
+
+              <!-- Metric (Y) -->
+              <div class="bg-slate-800/60 rounded-lg p-2 border border-slate-700/60" x-show="!meta.y?.hide">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-3.5 h-3.5 rounded bg-emerald-400/20 text-emerald-300 text-[9px] font-bold flex items-center justify-center">Y</span>
+                  <span class="text-[10px] font-semibold text-slate-300 truncate" x-text="meta.y?.lbl || 'Value Axis'"></span>
+                </div>
+                <div class="text-[11px] font-medium truncate" :class="yCol ? 'text-emerald-300 font-semibold' : 'text-slate-300'"
+                     x-text="yCol ? (aggFunc.toUpperCase() + '(' + colLabel(yCol) + ')') : ('Count of rows')"></div>
+                <p class="text-[9px] text-slate-400 mt-0.5 leading-tight">Controls height / size</p>
+              </div>
+
+              <!-- Series (S) -->
+              <div class="bg-slate-800/60 rounded-lg p-2 border border-slate-700/60" x-show="!meta.s?.hide">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-3.5 h-3.5 rounded bg-purple-400/20 text-purple-300 text-[9px] font-bold flex items-center justify-center">S</span>
+                  <span class="text-[10px] font-semibold text-slate-300 truncate" x-text="meta.s?.lbl || 'Series / Split'"></span>
+                </div>
+                <div class="text-[11px] font-medium truncate" :class="seriesCols.length ? 'text-purple-300 font-semibold' : 'text-slate-400 italic'"
+                     x-text="seriesCols.length ? seriesCols.map(c => colLabel(c)).join(', ') : 'Single Series'"></div>
+                <p class="text-[9px] text-slate-400 mt-0.5 leading-tight">Color division (stack/group)</p>
+              </div>
+
+              <!-- Group (G) -->
+              <div class="bg-slate-800/60 rounded-lg p-2 border border-slate-700/60" x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType) && seriesCols.length">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-3.5 h-3.5 rounded bg-amber-400/20 text-amber-300 text-[9px] font-bold flex items-center justify-center">G</span>
+                  <span class="text-[10px] font-semibold text-slate-300 truncate">Group By</span>
+                </div>
+                <div class="text-[11px] font-medium truncate" :class="groupCol ? 'text-amber-300 font-semibold' : 'text-slate-400 italic'"
+                     x-text="groupCol ? colLabel(groupCol) : 'None'"></div>
+                <p class="text-[9px] text-slate-400 mt-0.5 leading-tight">Clusters bars side-by-side</p>
+              </div>
+            </div>
+
+            <!-- Live Natural Language Summary -->
+            <div class="pt-2 border-t border-slate-800/80 flex items-start gap-1.5 text-[11px] text-slate-300 leading-snug">
+              <span class="text-indigo-400 font-bold shrink-0">💡</span>
+              <p>
+                Plotting <span class="text-emerald-300 font-semibold" x-text="yCol ? (aggFunc.toUpperCase() + ' of ' + colLabel(yCol)) : ('total record count')"></span>
+                across <span class="text-indigo-300 font-semibold" x-text="xCols.length ? xCols.map(c => colLabel(c)).join(' / ') : 'selected categories'"></span><template x-if="seriesCols.length"><span>, broken down by <span class="text-purple-300 font-semibold" x-text="seriesCols.map(c => colLabel(c)).join(', ')"></span></span></template><template x-if="groupCol"><span>, clustered by <span class="text-amber-300 font-semibold" x-text="colLabel(groupCol)"></span></span></template>.
+              </p>
+            </div>
           </div>
 
-        </div>
+          <p class="text-[10px] text-slate-400 leading-snug flex items-center gap-1">
+            <span>Drag columns from left, or hover a column and click</span>
+            <span class="px-1 py-0.2 rounded bg-indigo-100 text-indigo-700 font-bold text-[9px]">X</span>
+            <span class="px-1 py-0.2 rounded bg-emerald-100 text-emerald-700 font-bold text-[9px]">Y</span>
+            <span class="px-1 py-0.2 rounded bg-purple-100 text-purple-700 font-bold text-[9px]">S</span>
+          </p>
 
-        {# Group-by drop well — visible for bar charts when Series is also set #}
-        <div x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType) && seriesCols.length" x-transition>
-          <label class="text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
-            <span class="w-4 h-4 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex items-center justify-center">G</span>
-            <span>Group By</span>
-            <span class="font-normal text-slate-400 text-[10px] ml-0.5">optional — adds outer grouping</span>
-          </label>
-          <div class="drop-well rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 px-3 py-2 flex items-center"
-               :class="dragTarget==='groupCol' && 'accept'"
-               @dragover.prevent="dragTarget='groupCol'"
-               @dragleave.self="dragTarget=''"
-               @drop.prevent="doDrop('groupCol')">
-            <div x-show="!groupCol" class="flex items-center justify-between w-full">
-              <span class="text-xs text-slate-400 italic">Drag a column here</span>
-              <select @change="groupCol=$event.target.value; $event.target.selectedIndex=0"
-                      class="text-[11px] border-0 bg-transparent text-amber-600 cursor-pointer p-0 focus:ring-0">
-                <option value="">or pick…</option>
-                <template x-for="c in activeCols" :key="'gp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+          {# ── X-Axis Drop Card ── #}
+          <div x-show="!meta.x?.hide" x-transition class="bg-white rounded-xl border border-indigo-100 shadow-sm p-3.5 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <span class="w-4 h-4 rounded bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center shadow-xs">X</span>
+                <span x-text="meta.x?.lbl || 'X-Axis / Category'"></span>
+                <span x-show="meta.x?.req" class="text-red-500 text-[10px] font-bold" title="Required field">*</span>
+                <span class="text-[9px] text-slate-400 font-normal" x-show="xCols.length > 0" x-text="'(' + xCols.length + ' mapped)'"></span>
+              </label>
+              <span class="text-[9px] text-slate-400 font-medium">Categories / Timeline</span>
+            </div>
+
+            <div class="drop-well rounded-lg border-2 border-dashed border-indigo-200 bg-indigo-50/20 px-3 py-2.5 min-h-[44px] transition-colors"
+                 :class="dragTarget==='xCols' && 'border-indigo-500 bg-indigo-50/80'"
+                 @dragover.prevent="dragTarget='xCols'"
+                 @dragleave.self="dragTarget=''"
+                 @drop.prevent="doDropMulti('xCols')">
+              <div x-show="xCols.length === 0" class="flex items-center justify-between w-full">
+                <span class="text-xs text-slate-400 italic">Drag category columns here, or</span>
+                <select @change="xCols.push($event.target.value); $event.target.selectedIndex=0; _syncXCols()"
+                        class="text-xs border border-indigo-200 rounded px-2 py-1 bg-white text-indigo-700 font-medium cursor-pointer shadow-xs focus:ring-1 focus:ring-indigo-400">
+                  <option value="">Select column…</option>
+                  <template x-for="c in activeCols" :key="'xp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+                </select>
+              </div>
+              <div x-show="xCols.length > 0" class="flex flex-wrap items-center gap-1.5">
+                <template x-for="(col, idx) in xCols" :key="'xcol_'+col+'_'+idx">
+                  <span class="inline-flex items-center gap-1.5 text-xs bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-md px-2.5 py-1 font-medium shadow-xs">
+                    <span class="text-[9px] px-1 py-0.2 rounded font-bold"
+                          :class="colTypeBadge(col).class"
+                          x-text="colTypeBadge(col).text"></span>
+                    <span class="truncate max-w-[180px]" x-text="colLabel(col)"></span>
+                    <button @click="xCols.splice(idx, 1); _syncXCols()" class="text-indigo-400 hover:text-red-500 text-sm font-bold ml-0.5 leading-none">&times;</button>
+                  </span>
+                </template>
+                <select @change="xCols.push($event.target.value); $event.target.selectedIndex=0; _syncXCols()"
+                        class="text-xs border border-dashed border-indigo-300 bg-white text-indigo-600 rounded px-2 py-0.5 font-medium cursor-pointer hover:border-indigo-400">
+                  <option value="">+ Add Level</option>
+                  <template x-for="c in activeCols" :key="'xpa_'+c">
+                    <option :value="c" x-show="!xCols.includes(c)" x-text="colLabel(c)"></option>
+                  </template>
+                </select>
+                <button @click="xCols = []; _syncXCols()" class="ml-auto text-[10px] text-slate-400 hover:text-red-500 font-medium underline">Clear</button>
+              </div>
+            </div>
+
+            <p class="text-[9px] text-slate-500 leading-snug">
+              Each unique value creates an axis tick/category. Adding multiple columns creates a multi-level hierarchical axis.
+            </p>
+
+            <div x-show="chartType === 'line' && xCols.some(c => isDateColumn(c))" x-transition class="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+              <label class="text-[10px] font-semibold text-slate-600 flex items-center gap-1">
+                <span>📅 Group dates by:</span>
+              </label>
+              <select x-model="xDateBucket" @change="_schedulePreview(true)"
+                      class="text-xs border border-slate-200 rounded px-2 py-1 bg-white font-medium focus:ring-1 focus:ring-indigo-400">
+                <option value="">Exact date (no bucketing)</option>
+                <option value="day">Day</option>
+                <option value="week">Week</option>
+                <option value="month">Month</option>
+                <option value="quarter">Quarter</option>
+                <option value="year">Year</option>
               </select>
             </div>
-            <div x-show="groupCol" class="flex items-center gap-2 w-full">
-              <span class="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-800 rounded-md px-2.5 py-1 font-medium truncate max-w-[220px]">
-                <svg class="w-3 h-3 opacity-60 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-.293.707L13 10.414V15a1 1 0 01-.553.894l-4 2A1 1 0 017 17v-6.586L3.293 6.707A1 1 0 013 6V4z"/></svg>
-                <span x-text="colLabel(groupCol)" class="truncate"></span>
-              </span>
-              <button @click="groupCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-lg leading-none">&times;</button>
+          </div>
+
+          {# ── Y-Axis Drop Card with Inline Calculation ── #}
+          <div x-show="!meta.y?.hide" x-transition class="bg-white rounded-xl border border-emerald-100 shadow-sm p-3.5 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <span class="w-4 h-4 rounded bg-emerald-600 text-white text-[10px] font-bold flex items-center justify-center shadow-xs">Y</span>
+                <span x-text="meta.y?.lbl || 'Y-Axis / Metric & Value'"></span>
+                <span x-show="meta.y?.req" class="text-red-500 text-[10px] font-bold" title="Required field">*</span>
+              </label>
+              <span class="text-[9px] text-slate-400 font-medium">Height / Magnitude</span>
+            </div>
+
+            <div class="drop-well rounded-lg border-2 border-dashed border-emerald-200 bg-emerald-50/20 px-3 py-2.5 flex items-center transition-colors"
+                 :class="dragTarget==='yCol' && 'border-emerald-500 bg-emerald-50/80'"
+                 @dragover.prevent="dragTarget='yCol'"
+                 @dragleave.self="dragTarget=''"
+                 @drop.prevent="doDrop('yCol')">
+              <div x-show="!yCol" class="flex items-center justify-between w-full">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-xs text-slate-500 font-medium">Auto: <strong class="text-emerald-700">Count of Records</strong></span>
+                  <span class="text-[10px] text-slate-400">(or drag a numeric column)</span>
+                </div>
+                <select @change="yCol=$event.target.value; $event.target.selectedIndex=0"
+                        class="text-xs border border-emerald-200 rounded px-2 py-1 bg-white text-emerald-700 font-medium cursor-pointer shadow-xs focus:ring-1 focus:ring-emerald-400">
+                  <option value="">Pick metric…</option>
+                  <template x-for="c in activeCols" :key="'yp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+                </select>
+              </div>
+              <div x-show="yCol" class="flex items-center gap-2 w-full">
+                <span class="inline-flex items-center gap-1.5 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md px-2.5 py-1 font-medium shadow-xs truncate max-w-[220px]">
+                  <span class="text-[9px] px-1 py-0.2 rounded font-bold"
+                        :class="colTypeBadge(yCol).class"
+                        x-text="colTypeBadge(yCol).text"></span>
+                  <span x-text="colLabel(yCol)" class="truncate"></span>
+                </span>
+                <button @click="yCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-sm font-bold leading-none">&times; Clear</button>
+              </div>
+            </div>
+
+            {# Inline Metric Aggregation controls right inside Y-axis card #}
+            <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-100" x-show="!['summary_table','dynamic_summary_table'].includes(chartType)">
+              <div class="flex items-center gap-2">
+                <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Calculate as:</label>
+                <select x-model="aggFunc" @change="_schedulePreview(true)"
+                        class="text-xs border border-slate-200 rounded px-2 py-1 bg-white font-medium text-slate-700 focus:ring-1 focus:ring-emerald-400">
+                  {% for val, label in agg_choices %}
+                  <option value="{{ val }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="flex items-center gap-1.5" x-show="['avg','sum','min','max','median'].includes(aggFunc)">
+                <label class="text-[10px] font-medium text-slate-400">Decimals:</label>
+                <input type="number" min="0" max="6" placeholder="Auto"
+                       x-model.number="aggDecimals" @change="_schedulePreview(true)"
+                       class="w-16 text-xs border border-slate-200 rounded px-1.5 py-1 text-center bg-white focus:ring-1 focus:ring-emerald-400">
+              </div>
+            </div>
+
+            <p class="text-[9px] text-slate-500 leading-snug">
+              When Y is empty, the chart aggregates total rows (students, incidents, records). Pick a column like score or rate to compute sums or averages.
+            </p>
+          </div>
+
+          {# ── Series / Split Drop Card ── #}
+          <div x-show="!meta.s?.hide" x-transition class="bg-white rounded-xl border border-purple-100 shadow-sm p-3.5 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <span class="w-4 h-4 rounded bg-purple-600 text-white text-[10px] font-bold flex items-center justify-center shadow-xs">S</span>
+                <span x-text="meta.s?.lbl || 'Series / Group-by'"></span>
+                <span class="text-[9px] text-slate-400 font-normal">optional</span>
+                <span class="text-[9px] text-slate-400 font-normal" x-show="seriesCols.length > 0" x-text="'(' + seriesCols.length + ' mapped)'"></span>
+              </label>
+              <span class="text-[9px] text-slate-400 font-medium">Color Breakdown</span>
+            </div>
+
+            <div class="drop-well rounded-lg border-2 border-dashed border-purple-200 bg-purple-50/20 px-3 py-2.5 min-h-[44px] transition-colors"
+                 :class="dragTarget==='seriesCols' && 'border-purple-500 bg-purple-50/80'"
+                 @dragover.prevent="dragTarget='seriesCols'"
+                 @dragleave.self="dragTarget=''"
+                 @drop.prevent="doDropMulti('seriesCols')">
+              <div x-show="seriesCols.length === 0" class="flex items-center justify-between w-full">
+                <span class="text-xs text-slate-400 italic">Drag breakdown columns here, or</span>
+                <select @change="seriesCols.push($event.target.value); $event.target.selectedIndex=0; _syncSeriesCols()"
+                        class="text-xs border border-purple-200 rounded px-2 py-1 bg-white text-purple-700 font-medium cursor-pointer shadow-xs focus:ring-1 focus:ring-purple-400">
+                  <option value="">Select series…</option>
+                  <template x-for="c in activeCols" :key="'sp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+                </select>
+              </div>
+              <div x-show="seriesCols.length > 0" class="flex flex-wrap items-center gap-1.5">
+                <template x-for="(col, idx) in seriesCols" :key="'scol_'+col+'_'+idx">
+                  <span class="inline-flex items-center gap-1.5 text-xs bg-purple-50 text-purple-800 border border-purple-200 rounded-md px-2.5 py-1 font-medium shadow-xs">
+                    <span class="text-[9px] px-1 py-0.2 rounded font-bold"
+                          :class="colTypeBadge(col).class"
+                          x-text="colTypeBadge(col).text"></span>
+                    <span class="truncate max-w-[180px]" x-text="colLabel(col)"></span>
+                    <button @click="seriesCols.splice(idx, 1); _syncSeriesCols()" class="text-purple-400 hover:text-red-500 text-sm font-bold ml-0.5 leading-none">&times;</button>
+                  </span>
+                </template>
+                <select @change="seriesCols.push($event.target.value); $event.target.selectedIndex=0; _syncSeriesCols()"
+                        class="text-xs border border-dashed border-purple-300 bg-white text-purple-600 rounded px-2 py-0.5 font-medium cursor-pointer hover:border-purple-400">
+                  <option value="">+ Add Series</option>
+                  <template x-for="c in activeCols" :key="'spa_'+c">
+                    <option :value="c" x-show="!seriesCols.includes(c)" x-text="colLabel(c)"></option>
+                  </template>
+                </select>
+                <button @click="seriesCols = []; _syncSeriesCols()" class="ml-auto text-[10px] text-slate-400 hover:text-red-500 font-medium underline">Clear</button>
+              </div>
+            </div>
+
+            <p class="text-[9px] text-slate-500 leading-snug">
+              Divides each category into colored segments (stacked or side-by-side series). E.g. Ethnicity, Gender, or Incident Type.
+            </p>
+
+            {# ── Stack / Series Order (drag-to-reorder) ── #}
+            <div x-show="(seriesCols.length || chartType === 'assessment_compare') && stackOrder.length > 1" x-collapse class="pt-2 border-t border-slate-100">
+              <div class="flex items-center justify-between mb-1.5">
+                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Stack Order (drag to reorder)</p>
+                <button type="button" x-show="stackOrderAvail.length > 0"
+                        @click="stackOrder = [...stackOrderAvail]; _schedulePreview();"
+                        class="text-[9px] text-purple-600 hover:text-purple-800 font-semibold underline">Reset Order</button>
+              </div>
+              <div class="space-y-1">
+                <template x-for="(item, idx) in stackOrder" :key="'so_'+item">
+                  <div draggable="true"
+                       @dragstart="_dragStackIdx = idx"
+                       @dragend="_dragStackIdx = null"
+                       @dragover.prevent
+                       @drop.prevent="
+                         if (_dragStackIdx !== null && _dragStackIdx !== idx) {
+                           const moved = stackOrder.splice(_dragStackIdx, 1)[0];
+                           stackOrder.splice(idx, 0, moved);
+                           stackOrder = [...stackOrder];
+                           _dragStackIdx = null;
+                           _schedulePreview();
+                         }"
+                       class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded px-2 py-1 cursor-grab active:cursor-grabbing hover:border-purple-300 transition select-none">
+                    <svg class="w-3 h-3 text-slate-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
+                    </svg>
+                    <span class="text-[11px] text-slate-700 font-medium truncate" x-text="colLabel(item)"></span>
+                    <span class="ml-auto text-[9px] text-slate-400 font-mono" x-text="idx + 1"></span>
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
-          <p class="text-[9px] text-amber-600 mt-1 leading-snug">
-            Each group value gets its own stacked bar cluster side by side — e.g. set <em>School Year</em> here, <em>Grade</em> on X, and a metric on Series.
-          </p>
-        </div>
+
+          {# ── Group-by Drop Card (Cluster) ── #}
+          <div x-show="['bar','column','grouped_bar','stacked_bar'].includes(chartType) && seriesCols.length" x-transition class="bg-white rounded-xl border border-amber-100 shadow-sm p-3.5 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-semibold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <span class="w-4 h-4 rounded bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center shadow-xs">G</span>
+                <span>Group By / Outer Clustering</span>
+                <span class="text-[9px] text-slate-400 font-normal">optional</span>
+              </label>
+              <span class="text-[9px] text-slate-400 font-medium">Clustered Bars</span>
+            </div>
+
+            <div class="drop-well rounded-lg border-2 border-dashed border-amber-200 bg-amber-50/20 px-3 py-2.5 flex items-center transition-colors"
+                 :class="dragTarget==='groupCol' && 'border-amber-500 bg-amber-50/80'"
+                 @dragover.prevent="dragTarget='groupCol'"
+                 @dragleave.self="dragTarget=''"
+                 @drop.prevent="doDrop('groupCol')">
+              <div x-show="!groupCol" class="flex items-center justify-between w-full">
+                <span class="text-xs text-slate-400 italic">Drag cluster column here, or</span>
+                <select @change="groupCol=$event.target.value; $event.target.selectedIndex=0"
+                        class="text-xs border border-amber-200 rounded px-2 py-1 bg-white text-amber-700 font-medium cursor-pointer shadow-xs focus:ring-1 focus:ring-amber-400">
+                  <option value="">Pick cluster…</option>
+                  <template x-for="c in activeCols" :key="'gp_'+c"><option :value="c" x-text="colLabel(c)"></option></template>
+                </select>
+              </div>
+              <div x-show="groupCol" class="flex items-center gap-2 w-full">
+                <span class="inline-flex items-center gap-1.5 text-xs bg-amber-50 text-amber-800 border border-amber-200 rounded-md px-2.5 py-1 font-medium shadow-xs truncate max-w-[220px]">
+                  <span class="text-[9px] px-1 py-0.2 rounded font-bold"
+                        :class="colTypeBadge(groupCol).class"
+                        x-text="colTypeBadge(groupCol).text"></span>
+                  <span x-text="colLabel(groupCol)" class="truncate"></span>
+                </span>
+                <button @click="groupCol=''" class="ml-auto text-slate-400 hover:text-red-500 transition text-sm font-bold leading-none">&times; Clear</button>
+              </div>
+            </div>
+
+            <p class="text-[9px] text-amber-700 leading-snug">
+              Each group value gets its own stacked bar cluster side by side — e.g. set <em>School Year</em> here, <em>Grade</em> on X, and a metric on Series.
+            </p>
+          </div>
 
         {# PL Column Picker — visible only for assessment_compare type #}
         <div x-show="chartType==='assessment_compare'" x-transition>
@@ -2171,102 +2357,97 @@
         </div>{# /map cols collapse #}
       </section>
 
-      {# Aggregation & Sort #}
+      {# Aggregation, Sort & Limits #}
       <section x-data="{ open: false }" class="border-b border-slate-100">
         <button type="button" @click="open=!open"
                 class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition">
           <div class="flex items-center gap-2">
-            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h8m-8 6h16"/></svg>
-            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Aggregation &amp; Sort</p>
+            <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h8m-8 6h16"/></svg>
+            <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-700">Sort Order &amp; Row Limits</p>
           </div>
           <div class="flex items-center gap-1.5">
             <span x-show="!open" class="text-[9px] font-medium text-slate-400 font-mono uppercase"
-                  x-text="aggFunc"></span>
+                  x-text="sortCol ? (sortCol === '_label' ? 'Label ' + sortDir.toUpperCase() : sortCol === '_value' ? 'Value ' + sortDir.toUpperCase() : sortCol) : 'Auto Order'"></span>
             <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'"
                  fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <path stroke-linecap="round" d="M19 9l-7 7-7-7"/>
             </svg>
           </div>
         </button>
-        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-3 border-t border-slate-50">
-        <div x-show="!['summary_table','dynamic_summary_table'].includes(chartType)">
-          <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Function</label>
-          <select x-model="aggFunc" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-            {% for val, label in agg_choices %}
-            <option value="{{ val }}">{{ label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        {# Decimal precision — shown for numeric aggregation functions #}
-        <div x-show="!['summary_table','dynamic_summary_table'].includes(chartType) && ['avg','sum','min','max','median'].includes(aggFunc)" class="flex items-center gap-2">
-          <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 whitespace-nowrap">Decimal Places</label>
-          <input type="number" min="0" max="10" placeholder="Auto"
-                 x-model.number="aggDecimals"
-                 class="w-24 text-sm border border-slate-300 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <span class="text-[10px] text-slate-400">leave blank for auto</span>
-        </div>
-        <div class="flex gap-2">
-          <div class="flex-1">
-            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block"
-                   x-text="['summary_table','dynamic_summary_table'].includes(chartType) ? 'First column order' : 'Category Order'"></label>
-            <select x-model="sortCol" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">Auto</option>
-              <option value="_label">A → Z (label)</option>
-              <option value="_value" x-show="!['summary_table','dynamic_summary_table'].includes(chartType)">Aggregated value</option>
-              <option value="__manual__">Manual order</option>
-            </select>
-          </div>
-          <div class="w-28" x-show="sortCol !== '__manual__'">
-            <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Direction</label>
-            <select x-model="sortDir" class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="asc">ASC ↑</option>
-              <option value="desc">DESC ↓</option>
-            </select>
-          </div>
-        </div>
-        <p x-show="sortCol === '__manual__' && categoryOrderAvail.length < 2"
-           class="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
-          Run a preview first so first-column values load for manual ordering.
-        </p>
-        <div x-show="sortCol === '__manual__' && (categoryOrder.length > 1 || categoryOrderAvail.length > 1)" class="space-y-1.5">
-          <div class="flex items-center justify-between">
-            <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Drag or use arrows</p>
-            <button type="button"
-                    @click="categoryOrder = [...categoryOrderAvail]; _schedulePreview();"
-                    class="text-[9px] text-blue-500 hover:text-blue-700 font-semibold uppercase tracking-wide">Reset</button>
-          </div>
-          <template x-for="(item, idx) in categoryOrder" :key="'co_'+item">
-            <div draggable="true"
-                 @dragstart="_dragCategoryIdx = idx"
-                 @dragend="_dragCategoryIdx = null"
-                 @dragover.prevent
-                 @drop.prevent="
-                   if (_dragCategoryIdx !== null && _dragCategoryIdx !== idx) {
-                     const moved = categoryOrder.splice(_dragCategoryIdx, 1)[0];
-                     categoryOrder.splice(idx, 0, moved);
-                     categoryOrder = [...categoryOrder];
-                     _dragCategoryIdx = null;
-                     _schedulePreview();
-                   }"
-                 class="flex items-center gap-1.5 bg-white border border-slate-200 rounded px-2 py-1 cursor-grab active:cursor-grabbing hover:border-blue-300 transition select-none">
-              <svg class="w-3 h-3 text-slate-300 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
-              </svg>
-              <span class="text-xs text-slate-600 truncate flex-1" x-text="item"></span>
-              <button type="button" @click.stop="moveCategoryOrder(idx, -1)" :disabled="idx===0"
-                      class="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs font-bold leading-none px-1" title="Move up">↑</button>
-              <button type="button" @click.stop="moveCategoryOrder(idx, 1)" :disabled="idx===categoryOrder.length-1"
-                      class="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs font-bold leading-none px-1" title="Move down">↓</button>
+        <div x-show="open" x-collapse class="px-4 pb-4 pt-2 space-y-3.5 border-t border-slate-50">
+          <div class="flex gap-2">
+            <div class="flex-1">
+              <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1 block"
+                     x-text="['summary_table','dynamic_summary_table'].includes(chartType) ? 'First Column Order' : 'Category Sort By'"></label>
+              <select x-model="sortCol" @change="_schedulePreview(true)"
+                      class="w-full text-xs border border-slate-200 rounded px-2.5 py-1.5 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="">Auto (Default Database Order)</option>
+                <option value="_label">Category Label (Alphabetical)</option>
+                <option value="_value" x-show="!['summary_table','dynamic_summary_table'].includes(chartType)">Aggregated Metric Value</option>
+                <option value="__manual__">Manual Custom Order</option>
+              </select>
             </div>
-          </template>
-        </div>
-        <div>
-          <label class="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 block">Row Limit</label>
-          <input type="number" x-model.number="limit" min="1"
-                 placeholder="No limit"
-                 class="w-full text-sm border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <p class="text-[10px] text-slate-400 mt-1">Leave blank to load all rows</p>
-        </div>
+            <div class="w-28" x-show="sortCol !== '__manual__'">
+              <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1 block">Direction</label>
+              <select x-model="sortDir" @change="_schedulePreview(true)"
+                      class="w-full text-xs border border-slate-200 rounded px-2.5 py-1.5 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="asc">Ascending ↑ (A-Z / Low-High)</option>
+                <option value="desc">Descending ↓ (Z-A / High-Low)</option>
+              </select>
+            </div>
+          </div>
+
+          <p x-show="sortCol === '__manual__' && categoryOrderAvail.length < 2"
+             class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 leading-snug">
+            Run a preview first so first-column category values load into the list for manual drag-and-drop ordering.
+          </p>
+
+          <div x-show="sortCol === '__manual__' && (categoryOrder.length > 1 || categoryOrderAvail.length > 1)" class="space-y-1.5 pt-1">
+            <div class="flex items-center justify-between">
+              <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Drag to reorder categories</p>
+              <button type="button"
+                      @click="categoryOrder = [...categoryOrderAvail]; _schedulePreview();"
+                      class="text-[9px] text-indigo-600 hover:text-indigo-800 font-semibold underline">Reset Order</button>
+            </div>
+            <div class="space-y-1 max-h-48 overflow-y-auto pr-1">
+              <template x-for="(item, idx) in categoryOrder" :key="'co_'+item">
+                <div draggable="true"
+                     @dragstart="_dragCategoryIdx = idx"
+                     @dragend="_dragCategoryIdx = null"
+                     @dragover.prevent
+                     @drop.prevent="
+                       if (_dragCategoryIdx !== null && _dragCategoryIdx !== idx) {
+                         const moved = categoryOrder.splice(_dragCategoryIdx, 1)[0];
+                         categoryOrder.splice(idx, 0, moved);
+                         categoryOrder = [...categoryOrder];
+                         _dragCategoryIdx = null;
+                         _schedulePreview();
+                       }"
+                     class="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded px-2.5 py-1 cursor-grab active:cursor-grabbing hover:border-indigo-300 transition select-none">
+                  <svg class="w-3 h-3 text-slate-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
+                  </svg>
+                  <span class="text-xs text-slate-700 truncate flex-1 font-medium" x-text="item"></span>
+                  <button type="button" @click.stop="moveCategoryOrder(idx, -1)" :disabled="idx===0"
+                          class="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs font-bold leading-none px-1" title="Move up">↑</button>
+                  <button type="button" @click.stop="moveCategoryOrder(idx, 1)" :disabled="idx===categoryOrder.length-1"
+                          class="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs font-bold leading-none px-1" title="Move down">↓</button>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
+            <div class="flex-1">
+              <label class="text-[10px] font-semibold uppercase tracking-wider text-slate-600 block mb-0.5">Category Limit (Top N)</label>
+              <input type="number" x-model.number="limit" min="1"
+                     placeholder="Show all categories"
+                     class="w-full text-xs border border-slate-200 rounded px-2.5 py-1.5 bg-white font-medium focus:ring-1 focus:ring-indigo-400">
+            </div>
+            <p class="text-[10px] text-slate-400 flex-1 pt-3 leading-snug">
+              e.g. enter <strong>10</strong> to show the Top 10 categories. Leave empty for all categories.
+            </p>
+          </div>
         </div>{# /agg collapse #}
       </section>
 
@@ -2397,570 +2578,691 @@
       </div>{# /map tab #}
 
       {# ── Tab: Style ── #}
-      <div x-show="centerTab==='style'">
+      <div x-show="centerTab==='style'" class="divide-y divide-slate-100">
 
-      {# COLOUR MAPPING #}
-      <div class="px-3 py-3 border-b border-slate-100">
-        <button type="button"
-                @click="colorMapOpen = !colorMapOpen; if(colorMapOpen && !colorMapPresetsLoaded){colorMapPresetsLoaded=true;loadColorMapPresets();}"
-                class="flex items-center gap-1.5 w-full text-[10px] font-semibold text-slate-500 hover:text-slate-700 uppercase tracking-widest transition">
-          <svg class="w-2.5 h-2.5 transition-transform" :class="colorMapOpen && 'rotate-90'" fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
-          Colour Mapping
-          <span x-show="Object.keys(colorMap).length > 0"
-                class="text-[8px] bg-blue-100 text-blue-700 rounded-full px-1.5 font-bold ml-1"
-                x-text="Object.keys(colorMap).length + ' custom'"></span>
-        </button>
-        <div x-show="colorMapOpen" x-collapse class="mt-2 space-y-2">
-          <p class="text-[10px] text-slate-400 leading-snug">Assign fixed colours to specific data values. Overrides palette.</p>
-
-          {# Presets: load a saved set of rules, or save the current one for reuse on other charts #}
-          <div class="bg-slate-50 border border-slate-200 rounded-lg p-2 space-y-1.5">
-            <div class="flex items-center gap-1">
-              <select @change="if($event.target.value){loadColorMapPreset(parseInt($event.target.value));$event.target.value='';}"
-                      class="flex-1 text-[10px] border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                <option value="">Load a preset…</option>
-                <template x-for="p in colorMapPresets" :key="'cmp_'+p.id">
-                  <option :value="p.id" x-text="p.name"></option>
-                </template>
-              </select>
-              <button type="button" x-show="colorMapPresetId"
-                      @click="deleteColorMapPreset(colorMapPresetId)"
-                      title="Delete loaded preset"
-                      class="text-slate-300 hover:text-red-500 transition-colors text-sm leading-none flex-shrink-0 px-1">&times;</button>
+        {# 1. Titles & Description #}
+        <section x-data="{ open: true }" class="border-b border-slate-100">
+          <button type="button" @click="open=!open"
+                  class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition text-left">
+            <div class="flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              <span class="text-[10px] font-bold uppercase tracking-wider text-slate-700">Titles &amp; Text</span>
             </div>
-            <div x-show="colorMapPresetId" class="text-[9px] text-slate-500" x-text="'Loaded: ' + colorMapPresetName"></div>
-            <div class="flex items-center gap-1">
-              <button type="button" x-show="colorMapPresetId" @click="updateColorMapPreset()"
-                      class="text-[10px] bg-blue-600 text-white rounded px-2 py-1 hover:bg-blue-700 font-semibold"
-                      x-text="'Update \'' + colorMapPresetName + '\''"></button>
-            </div>
-            <div class="flex items-center gap-1">
-              <input type="text" x-model="colorMapSaveAsName" placeholder="New preset name…"
-                     class="flex-1 text-[10px] border border-slate-300 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500">
-              <button type="button"
-                      @click="saveColorMapPresetAsNew(colorMapSaveAsName); colorMapSaveAsName='';"
-                      :disabled="!colorMapSaveAsName.trim() || Object.keys(colorMap).length === 0"
-                      class="text-[10px] bg-slate-800 text-white rounded px-2 py-1 hover:bg-slate-700 disabled:opacity-40 font-semibold whitespace-nowrap">Save as New</button>
-            </div>
-          </div>
-
-          <template x-for="(color, key) in colorMap" :key="'cm_'+key">
             <div class="flex items-center gap-1.5">
-              <input type="color" :value="color"
-                     @input="colorMap[key]=$event.target.value;colorMap={...colorMap};_editorFiring=true;clearTimeout(_editorTimer);_editorTimer=setTimeout(()=>{_editorFiring=false;_schedulePreview();},500);"
-                     class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
-              <span class="text-[11px] text-slate-700 truncate flex-1" x-text="key"></span>
-              <button type="button" @click="delete colorMap[key];colorMap={...colorMap};_schedulePreview();"
-                      class="text-red-400 hover:text-red-600 text-xs font-bold px-1">&times;</button>
+              <span x-show="showTitle && chartTitle" class="text-[9px] text-slate-400 font-mono truncate max-w-[120px]" x-text="chartTitle"></span>
+              <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 9l-7 7-7-7"/></svg>
             </div>
-          </template>
-          <div class="flex items-center gap-1">
-            <input type="color" x-model="colorMapNewColor" class="w-6 h-6 border border-slate-200 rounded cursor-pointer p-0">
-            <input type="text" x-model="colorMapNewKey" placeholder="Value name…"
-                   class="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-200">
-            <button type="button"
-                    @click="if(colorMapNewKey.trim()){colorMap[colorMapNewKey.trim()]=colorMapNewColor;colorMap={...colorMap};colorMapNewKey='';_schedulePreview();}"
-                    :disabled="!colorMapNewKey.trim()"
-                    class="text-[10px] bg-slate-800 text-white rounded px-2 py-1 hover:bg-slate-700 disabled:opacity-40 font-semibold">Add</button>
-          </div>
-          <button type="button" x-show="Object.keys(colorMap).length > 0"
-                  @click="colorMap={};_schedulePreview();"
-                  class="text-[9px] text-red-400 hover:text-red-600 font-semibold">Clear all</button>
-        </div>
-      </div>
-
-      {# TITLE #}
-      <div class="px-3 py-3 border-b border-slate-100">
-        <div class="flex items-center justify-between mb-1.5">
-          <label class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Chart Title</label>
-          <label class="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" x-model="showTitle" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-            <span class="text-[9px] text-slate-500">Show</span>
-          </label>
-        </div>
-        <input type="text" x-model="chartTitle" placeholder="e.g. Reading Scores by Grade"
-               class="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white">
-        <div x-show="showTitle" class="mt-2.5 flex items-center gap-2">
-          <span class="text-[9px] text-slate-400 w-12 flex-shrink-0">Size</span>
-          <input type="range" min="8" max="48" step="1" x-model.number="titleFontSize"
-                 class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-          <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="titleFontSize+'px'"></span>
-        </div>
-      </div>
-
-      {# DESCRIPTION #}
-      <div class="px-3 py-3 border-b border-slate-100">
-        <div class="flex items-center justify-between mb-1.5">
-          <label class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Description</label>
-          <label class="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" x-model="showSubtitle" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-            <span class="text-[9px] text-slate-500">Show</span>
-          </label>
-        </div>
-        <textarea x-model="chartSubtitle" rows="3" placeholder="Optional paragraph under the title"
-                  class="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white resize-y"></textarea>
-      </div>
-
-      {# APPEARANCE #}
-      <div class="px-3 py-3 border-b border-slate-100 space-y-2.5">
-        <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Appearance</p>
-        <select x-model="palette" class="w-full text-xs border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white">
-          <option value="">Default Palette</option>
-          {% for p in palettes %}<option value="{{ p }}">{{ p|title }}</option>{% endfor %}
-        </select>
-        <div class="flex gap-1">
-          <template x-for="bg in ['white','light','dark']">
-            <button type="button" @click="background=bg"
-                    :class="background===bg?'ring-2 ring-indigo-400 border-indigo-400':'border-slate-200 hover:border-slate-400'"
-                    class="flex-1 text-[9px] font-semibold border rounded-lg py-1.5 transition"
-                    :style="{background:bg==='dark'?'#1e2432':bg==='light'?'#f0f4f8':'#fff',color:bg==='dark'?'#e5e7eb':'#374151'}"
-                    x-text="bg==='white'?'White':bg==='light'?'Light':'Dark'">
-            </button>
-          </template>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-[9px] text-slate-400 w-12 flex-shrink-0">Opacity</span>
-          <input type="range" min="0.1" max="1" step="0.1" x-model.number="opacity"
-                 class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-          <span class="text-[9px] font-mono text-slate-400 w-6 text-right" x-text="parseFloat(opacity).toFixed(1)"></span>
-        </div>
-      </div>
-
-      {# LEGEND #}
-      <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-        <div class="flex items-center justify-between">
-          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Legend</p>
-          <label class="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" x-model="showLegend" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-            <span class="text-[9px] text-slate-500">Show</span>
-          </label>
-        </div>
-        <div x-show="showLegend" class="space-y-2">
-          <div class="grid grid-cols-4 gap-0.5">
-            <template x-for="opt in [['top','▲'],['bottom','▼'],['left','◀'],['right','▶']]" :key="opt[0]">
-              <button type="button" @click="legendPos=opt[0];legendLeft=null;legendTop=null;_scheduleStylePreview();"
-                      :class="legendPos===opt[0]?'bg-indigo-600 text-white':'bg-slate-50 text-slate-500 hover:bg-indigo-50'"
-                      class="text-[10px] font-bold rounded py-1 transition" x-text="opt[1]">
-              </button>
-            </template>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Edge offset</span>
-            <input type="range" min="0" max="60" step="2" x-model.number="legendOffset"
-                   @input="legendLeft=null;legendTop=null;_scheduleStylePreview();"
-                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="legendOffset+'px'"></span>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Item gap</span>
-            <input type="range" min="2" max="40" step="2" x-model.number="legendItemGap"
-                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="legendItemGap+'px'"></span>
-          </div>
-          <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
-            <div>
-              <div class="flex justify-between"><span class="text-[9px] text-slate-400">Text</span><span class="text-[9px] font-mono text-slate-400" x-text="legendFontSize+'px'"></span></div>
-              <input type="range" min="8" max="16" step="1" x-model.number="legendFontSize"
-                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            </div>
-            <div>
-              <div class="flex justify-between"><span class="text-[9px] text-slate-400">Icon</span><span class="text-[9px] font-mono text-slate-400" x-text="legendIconSize+'px'"></span></div>
-              <input type="range" min="6" max="20" step="1" x-model.number="legendIconSize"
-                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            </div>
-          </div>
-          <p x-show="legendLeft!==null&&legendTop!==null"
-             class="text-[9px] text-indigo-500 bg-indigo-50 rounded px-2 py-1">
-            Drag position set on chart.
-            <button type="button" @click="legendLeft=null;legendTop=null;_scheduleStylePreview();" class="underline ml-1 hover:text-red-500">Reset</button>
-          </p>
-        </div>
-      </div>
-
-      {# DATA LABELS #}
-      <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-        <div class="flex items-center justify-between">
-          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Data Labels</p>
-          <label class="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" x-model="showLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-            <span class="text-[9px] text-slate-500">Show</span>
-          </label>
-        </div>
-        <div x-show="showLabels" class="space-y-1.5">
-          <select x-model="labelPosition" class="w-full text-[10px] border border-slate-200 rounded px-2 py-1 bg-white">
-            <option value="top">Top</option>
-            <option value="inside">Inside centre</option>
-            <option value="insideTop">Inside top</option>
-            <option value="insideBottom">Inside bottom</option>
-            <option value="left">Left</option>
-            <option value="right">Right</option>
-          </select>
-          <div class="flex items-center gap-2 mt-1.5">
-            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Font Size</span>
-            <input type="range" min="6" max="24" step="1" x-model.number="labelFontSize"
-                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="labelFontSize+'px'"></span>
-          </div>
-        </div>
-      </div>
-
-      {# PERCENT FORMAT — labels, axis values, and tooltips #}
-      <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-        <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Percent Format</p>
-        <p class="text-[9px] text-slate-400 leading-snug">Applies to data labels, 100% stacked values, and tooltip percentages.</p>
-        <label class="flex items-center gap-1.5 cursor-pointer">
-          <input type="checkbox" x-model="showPercentSymbol" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-          <span class="text-[10px] text-slate-600">Show % symbol on percent values</span>
-        </label>
-        <div class="flex items-center gap-2">
-          <span class="text-[9px] text-slate-400 w-20 flex-shrink-0">Decimals</span>
-          <input type="range" min="0" max="4" step="1" x-model.number="percentDecimals"
-                 class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-          <span class="text-[9px] font-mono text-slate-400 w-10 text-right"
-                x-text="percentDecimals === 0 ? '0 (none)' : percentDecimals"></span>
-        </div>
-      </div>
-
-      {# BAR STYLE (conditional) #}
-      <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
-        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Bar Style</p>
-          <template x-if="chartType === 'bar'">
-            <div class="space-y-2">
-              <div>
-                <p class="text-[9px] text-slate-400 mb-1">Layout</p>
-                <div class="grid grid-cols-2 gap-1">
-                  <button type="button" @click="barLayout='grouped'"
-                          :class="barLayout==='grouped' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Grouped</button>
-                  <button type="button" @click="barLayout='stacked'"
-                          :class="barLayout==='stacked' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Stacked</button>
-                </div>
+          </button>
+          <div x-show="open" x-collapse class="px-4 pb-3.5 pt-1 space-y-3 bg-slate-50/50">
+            {# Main Title #}
+            <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2">
+              <div class="flex items-center justify-between">
+                <label class="text-[10px] font-semibold text-slate-700">Chart Title</label>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" x-model="showTitle" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                  <span class="text-[10px] font-medium text-slate-600">Show</span>
+                </label>
               </div>
-              <div>
-                <p class="text-[9px] text-slate-400 mb-1">Canvas</p>
-                <div class="grid grid-cols-3 gap-1">
-                  <button type="button" @click="barRadial=false; barPolar=false"
-                          :class="!barRadial && !barPolar ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Cartesian</button>
-                  <button type="button" @click="barRadial=true; barPolar=false"
-                          :class="barRadial ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Radial</button>
-                  <button type="button" @click="barPolar=true; barRadial=false"
-                          :class="barPolar ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Polar</button>
-                </div>
-              </div>
-              <div x-show="!barRadial && !barPolar">
-                <p class="text-[9px] text-slate-400 mb-1">Orientation</p>
-                <div class="grid grid-cols-2 gap-1">
-                  <button type="button" @click="barOrientation='vertical'"
-                          :class="barOrientation==='vertical' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Vertical</button>
-                  <button type="button" @click="barOrientation='horizontal'"
-                          :class="barOrientation==='horizontal' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                          class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Horizontal</button>
-                </div>
+              <input type="text" x-model="chartTitle" placeholder="e.g. Reading Scores by Grade"
+                     class="w-full text-xs border border-slate-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white">
+              <div x-show="showTitle" class="flex items-center gap-2 pt-1 border-t border-slate-100">
+                <span class="text-[10px] text-slate-500 w-12 flex-shrink-0">Font Size</span>
+                <input type="range" min="8" max="48" step="1" x-model.number="titleFontSize"
+                       class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                <span class="text-[10px] font-mono text-slate-600 w-8 text-right font-semibold" x-text="titleFontSize+'px'"></span>
               </div>
             </div>
-          </template>
-          <div class="flex items-center gap-2">
-            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Radius</span>
-            <input type="range" min="0" max="12" step="1" x-model.number="barBorderRadius"
-                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="barBorderRadius+'px'"></span>
-          </div>
-          <template x-if="(chartType === 'bar' && barLayout === 'stacked') || ['assessment_compare','progress_growth'].includes(chartType)">
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-              <span class="text-[10px] text-slate-600">100% stacked</span>
-            </label>
-          </template>
-          <label x-show="chartType === 'bar' && seriesCols.length > 0" class="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" x-model="groupTotal" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-            <span class="text-[10px] text-slate-600">Add a <span class="font-semibold text-indigo-700">Total</span> group — a new category (e.g. per school year) counting all students across the stacks (e.g. all grades)</span>
-          </label>
-        </div>
-      </template>
 
-      {# COMPARE LAYOUT (conditional) #}
-      <template x-if="chartType === 'assessment_compare'">
-        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Compare Layout</p>
-          <div class="flex items-center gap-2">
-            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Cat. gap</span>
-            <input type="range" min="0" max="150" step="5" x-model.number="compareGap"
-                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            <span class="text-[9px] font-mono text-slate-400 w-8 text-right" x-text="compareGap+'%'"></span>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <div class="flex justify-between"><span class="text-[9px] text-slate-400">Font</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatFontSize+'px'"></span></div>
-              <input type="range" min="8" max="18" step="1" x-model.number="compareCatFontSize"
-                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            </div>
-            <div>
-              <div class="flex justify-between"><span class="text-[9px] text-slate-400">Rotation</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatRotation+'°'"></span></div>
-              <input type="range" min="0" max="90" step="5" x-model.number="compareCatRotation"
-                     class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+            {# Subtitle / Description #}
+            <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2">
+              <div class="flex items-center justify-between">
+                <label class="text-[10px] font-semibold text-slate-700">Subtitle / Description</label>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" x-model="showSubtitle" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                  <span class="text-[10px] font-medium text-slate-600">Show</span>
+                </label>
+              </div>
+              <textarea x-model="chartSubtitle" rows="2" placeholder="Optional paragraph under the title…"
+                        class="w-full text-xs border border-slate-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white resize-y"></textarea>
             </div>
           </div>
-        </div>
-      </template>
+        </section>
 
-      {# LINE STYLE (conditional) #}
-      <template x-if="chartType === 'line'">
-        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Line Style</p>
-          <div>
-            <p class="text-[9px] text-slate-400 mb-1">Layout</p>
-            <div class="grid grid-cols-2 gap-1">
-              <button type="button" @click="lineLayout='standard'"
-                      :class="lineLayout==='standard' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                      class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Standard</button>
-              <button type="button" @click="lineLayout='stacked'"
-                      :class="lineLayout==='stacked' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                      class="text-[10px] font-semibold border rounded px-2 py-1.5 transition">Stacked</button>
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-2 pt-1">
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" x-model="lineFill" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-              <span class="text-[10px] text-slate-600">Area Fill</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" x-model="smooth" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-              <span class="text-[10px] text-slate-600">Smooth</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" x-model="showPoints" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-              <span class="text-[10px] text-slate-600">Points</span>
-            </label>
-            <template x-if="lineLayout === 'stacked'">
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-                <span class="text-[10px] text-slate-600">100% stacked</span>
-              </label>
-            </template>
-          </div>
-        </div>
-      </template>
-
-      {# PARLIAMENT STYLE (conditional) #}
-      <template x-if="chartType === 'spline'">
-        <div class="px-3 py-3 border-b border-slate-100 space-y-3">
-          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Parliament Style</p>
-          
-          <div>
-            <p class="text-[9px] text-slate-400 mb-1">Layout Shape</p>
-            <div class="grid grid-cols-3 gap-1">
-              <button type="button" @click="parliamentShape='semi-circle'"
-                      :class="parliamentShape==='semi-circle' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                      class="text-[10px] font-semibold border rounded px-1.5 py-1 transition">Semicircle</button>
-              <button type="button" @click="parliamentShape='horseshoe'"
-                      :class="parliamentShape==='horseshoe' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                      class="text-[10px] font-semibold border rounded px-1.5 py-1 transition">Horseshoe</button>
-              <button type="button" @click="parliamentShape='circle'"
-                      :class="parliamentShape==='circle' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'"
-                      class="text-[10px] font-semibold border rounded px-1.5 py-1 transition">Circle</button>
-            </div>
-          </div>
-
-          <div>
-            <div class="flex justify-between items-center mb-1">
-              <span class="text-[9px] text-slate-400">Dot Size Scale</span>
-              <span class="text-[9px] font-mono text-slate-400" x-text="parliamentDotScale + 'x'"></span>
-            </div>
+        {# 2. Theme & Colors #}
+        <section x-data="{ open: true }" class="border-b border-slate-100">
+          <button type="button" @click="open=!open"
+                  class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition text-left">
             <div class="flex items-center gap-2">
-              <input type="range" min="0.2" max="3.0" step="0.1" x-model.number="parliamentDotScale"
-                     class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-              <button type="button" @click="parliamentDotScale = 1.0" class="text-[9px] text-indigo-500 hover:text-indigo-700">Reset</button>
+              <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+              <span class="text-[10px] font-bold uppercase tracking-wider text-slate-700">Theme &amp; Colors</span>
             </div>
-          </div>
-
-          <div>
-            <div class="flex justify-between items-center mb-1">
-              <span class="text-[9px] text-slate-400">Rows</span>
-              <span class="text-[9px] font-mono text-slate-400" x-text="parliamentRowsAuto ? 'Auto' : parliamentRows"></span>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[9px] font-medium text-slate-500 capitalize" x-text="palette ? palette : 'Default Palette'"></span>
+              <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 9l-7 7-7-7"/></svg>
             </div>
-            <div class="space-y-1">
-              <div class="flex items-center gap-2" x-show="!parliamentRowsAuto">
-                <input type="range" min="1" max="20" step="1" x-model.number="parliamentRows"
-                       class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+          </button>
+          <div x-show="open" x-collapse class="px-4 pb-3.5 pt-1 space-y-3 bg-slate-50/50">
+            {# Palette & Canvas Background #}
+            <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2.5">
+              <div>
+                <label class="text-[10px] font-semibold text-slate-700 block mb-1">Color Palette</label>
+                <select x-model="palette" class="w-full text-xs border border-slate-200 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white">
+                  <option value="">Default Palette</option>
+                  {% for p in palettes %}<option value="{{ p }}">{{ p|title }}</option>{% endfor %}
+                </select>
               </div>
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" x-model="parliamentRowsAuto" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-                <span class="text-[10px] text-slate-600">Auto-calculate rows</span>
-              </label>
-            </div>
-          </div>
 
-          <div>
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" x-model="parliamentShowSS" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-              <span class="text-[10px] text-slate-600">Include Scale Score (SS) in tooltip</span>
-            </label>
-          </div>
-
-        </div>
-      </template>
-
-      {# AXIS & LAYOUT (conditional) #}
-      <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
-        <div class="px-3 py-3 border-b border-slate-100 space-y-2">
-          <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Axis &amp; Layout</p>
-          <template x-if="chartType === 'assessment_compare' || xCols.length > 1">
-            <div class="space-y-2">
-              <div class="grid grid-cols-2 gap-2">
-                <div>
-                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Compare Labels Rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
-                  <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
-                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-                </div>
-                <div>
-                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Category Labels Rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatRotation+'°'"></span></div>
-                  <input type="range" min="0" max="90" step="15" x-model.number="compareCatRotation"
-                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+              <div>
+                <label class="text-[10px] font-semibold text-slate-700 block mb-1">Canvas Background</label>
+                <div class="grid grid-cols-3 gap-1.5">
+                  <template x-for="bg in ['white','light','dark']">
+                    <button type="button" @click="background=bg"
+                            :class="background===bg?'ring-2 ring-indigo-500 border-indigo-500 shadow-xs font-bold':'border-slate-200 hover:border-slate-300 font-medium'"
+                            class="text-[10px] border rounded-md py-1.5 transition text-center"
+                            :style="{background:bg==='dark'?'#1e2432':bg==='light'?'#f8fafc':'#fff',color:bg==='dark'?'#e5e7eb':'#334155'}"
+                            x-text="bg==='white'?'White':bg==='light'?'Light':'Dark'">
+                    </button>
+                  </template>
                 </div>
               </div>
-              <div class="grid grid-cols-2 gap-2">
-                <div>
-                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Compare Labels Font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
-                  <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
-                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-                </div>
-                <div>
-                  <div class="flex justify-between"><span class="text-[9px] text-slate-400 font-semibold">Category Labels Font</span><span class="text-[9px] font-mono text-slate-400" x-text="compareCatFontSize+'px'"></span></div>
-                  <input type="range" min="8" max="16" step="1" x-model.number="compareCatFontSize"
-                         class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-                </div>
-              </div>
+
               <div class="flex items-center gap-2 pt-1 border-t border-slate-100">
-                <span class="text-[9px] text-slate-400 w-24 flex-shrink-0">Group gap</span>
-                <input type="range" min="0" max="100" step="1" x-model.number="groupGapPct"
-                       class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-                <span class="text-[9px] font-mono text-slate-400 w-12 text-right"
-                      x-text="groupGapPct + '%'"></span>
-              </div>
-              <label class="flex items-center gap-2 pt-1 cursor-pointer">
-                <input type="checkbox" x-model="centerGroupLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-                <span class="text-[9px] text-slate-500 font-semibold uppercase tracking-wide">Center group labels</span>
-              </label>
-            </div>
-          </template>
-          <template x-if="chartType !== 'assessment_compare' && xCols.length <= 1">
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <div class="flex justify-between"><span class="text-[9px] text-slate-400">X rotate</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelRotation+'°'"></span></div>
-                <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
-                       class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-              </div>
-              <div>
-                <div class="flex justify-between"><span class="text-[9px] text-slate-400">X font</span><span class="text-[9px] font-mono text-slate-400" x-text="xLabelFontSize+'px'"></span></div>
-                <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
-                       class="w-full h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
+                <span class="text-[10px] text-slate-500 w-16 flex-shrink-0">Opacity</span>
+                <input type="range" min="0.1" max="1" step="0.1" x-model.number="opacity"
+                       class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                <span class="text-[10px] font-mono text-slate-600 w-7 text-right font-semibold" x-text="parseFloat(opacity).toFixed(1)"></span>
               </div>
             </div>
-          </template>
-          <div class="flex items-center gap-2">
-            <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Truncate</span>
-            <input type="range" min="0" max="30" step="1" x-model.number="xLabelMaxLength"
-                   class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-            <span class="text-[9px] font-mono text-slate-400 w-12 text-right"
-                  x-text="xLabelMaxLength>0?xLabelMaxLength+'ch':'Off'"></span>
-          </div>
-          <div class="flex items-center gap-2 pt-1">
-            <label class="inline-flex items-center cursor-pointer select-none gap-2">
-              <input type="checkbox" x-model="forceShowAllLabels"
-                     class="rounded border-slate-300 text-indigo-650 focus:ring-indigo-200 w-3.5 h-3.5">
-              <span class="text-[10px] text-slate-600 font-semibold uppercase tracking-wider">Force show all labels</span>
-            </label>
-          </div>
-          <template x-if="['bar','waterfall','progress_growth'].includes(chartType)">
-            <div class="flex items-center gap-2">
-              <span class="text-[9px] text-slate-400 w-16 flex-shrink-0">Cat. gap</span>
-              <input type="range" min="0" max="100" step="1" x-model.number="groupGap"
-                     class="flex-1 h-1 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-500">
-              <span class="text-[9px] font-mono text-slate-400 w-7 text-right" x-text="groupGap+'%'"></span>
-            </div>
-          </template>
-          <template x-if="!['heatmap','box','scatter','bubble'].includes(chartType)">
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-[9px] text-slate-400 block mb-0.5">Y Min</label>
-                <input type="number" x-model="yAxisMin" placeholder="Auto"
-                       class="w-full text-xs border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-300">
-              </div>
-              <div>
-                <label class="text-[9px] text-slate-400 block mb-0.5">Y Max</label>
-                <input type="number" x-model="yAxisMax" placeholder="Auto"
-                       class="w-full text-xs border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-300">
-              </div>
-            </div>
-          </template>
-        </div>
-      </template>
 
-      {# CHART ELEMENTS #}
-      <div class="px-3 py-3">
-        <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Chart Elements</p>
-        <div class="grid grid-cols-2 gap-x-3 gap-y-1.5">
-          <label class="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" x-model="showTooltip" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-            <span class="text-[10px] text-slate-600">Tooltip</span>
-          </label>
-          {# Tooltip sub-options — shown only when tooltip is enabled #}
-          <div x-show="showTooltip" x-cloak class="col-span-2 ml-4 flex flex-col gap-1">
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" x-model="tooltipShowPct" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-              <span class="text-[10px] text-slate-500">Show % in tooltip</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" x-model="tooltipShowCount" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-              <span class="text-[10px] text-slate-500">Show count (n=) in tooltip</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer">
-              <input type="checkbox" x-model="tooltipValuePct" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-              <span class="text-[10px] text-slate-500">Append % to value in tooltip</span>
-            </label>
-          </div>
-          <label class="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" x-model="enableAnimation" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-            <span class="text-[10px] text-slate-600">Animation</span>
-          </label>
-          <label class="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" x-model="showToolbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-            <span class="text-[10px] text-slate-600">Toolbox</span>
-          </label>
-          <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
-            <div class="contents">
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" x-model="showZoom" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-                <span class="text-[10px] text-slate-600">Zoom</span>
-              </label>
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" x-model="showGrid" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-                <span class="text-[10px] text-slate-600">Grid lines</span>
-              </label>
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" x-model="showAxisLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-                <span class="text-[10px] text-slate-600">Axis labels</span>
-              </label>
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" x-model="showCategories" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-                <span class="text-[10px] text-slate-600">Categories</span>
-              </label>
-              <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" x-model="showAxisTitles" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
-                <span class="text-[10px] text-slate-600">Axis titles</span>
-              </label>
+            {# Color Mapping Accordion #}
+            <div class="bg-white border border-slate-200 rounded-lg shadow-xs overflow-hidden">
+              <button type="button"
+                      @click="colorMapOpen = !colorMapOpen; if(colorMapOpen && !colorMapPresetsLoaded){colorMapPresetsLoaded=true;loadColorMapPresets();}"
+                      class="flex items-center justify-between w-full px-3 py-2.5 hover:bg-slate-50 transition text-left">
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full" :class="Object.keys(colorMap).length > 0 ? 'bg-indigo-500' : 'bg-slate-300'"></span>
+                  <span class="text-[10px] font-bold uppercase tracking-wider text-slate-700">Fixed Colour Mapping</span>
+                  <span x-show="Object.keys(colorMap).length > 0"
+                        class="text-[9px] bg-indigo-100 text-indigo-700 rounded-full px-2 py-0.5 font-bold"
+                        x-text="Object.keys(colorMap).length + ' mapped'"></span>
+                </div>
+                <svg class="w-3 h-3 text-slate-400 transition-transform" :class="colorMapOpen && 'rotate-90'" fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
+              </button>
+              <div x-show="colorMapOpen" x-collapse class="px-3 pb-3 pt-1 border-t border-slate-100 space-y-2.5">
+                <p class="text-[10px] text-slate-500 leading-snug">Assign fixed colours to specific data category values (e.g. 'Grade 5' &rarr; #4f46e5). Overrides the palette.</p>
+
+                {# Presets #}
+                <div class="bg-slate-50 border border-slate-200 rounded-md p-2 space-y-2">
+                  <div class="flex items-center gap-1.5">
+                    <select @change="if($event.target.value){loadColorMapPreset(parseInt($event.target.value));$event.target.value='';}"
+                            class="flex-1 text-[10px] border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                      <option value="">Load a saved preset…</option>
+                      <template x-for="p in colorMapPresets" :key="'cmp_'+p.id">
+                        <option :value="p.id" x-text="p.name"></option>
+                      </template>
+                    </select>
+                    <button type="button" x-show="colorMapPresetId"
+                            @click="deleteColorMapPreset(colorMapPresetId)"
+                            title="Delete loaded preset"
+                            class="text-slate-400 hover:text-red-500 transition text-sm leading-none flex-shrink-0 px-1">&times;</button>
+                  </div>
+                  <div x-show="colorMapPresetId" class="flex items-center justify-between text-[9px] text-slate-600 bg-indigo-50 px-2 py-1 rounded">
+                    <span x-text="'Active: ' + colorMapPresetName"></span>
+                    <button type="button" @click="updateColorMapPreset()"
+                            class="font-bold text-indigo-700 hover:underline">Update</button>
+                  </div>
+                  <div class="flex items-center gap-1.5">
+                    <input type="text" x-model="colorMapSaveAsName" placeholder="New preset name…"
+                           class="flex-1 text-[10px] border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+                    <button type="button"
+                            @click="saveColorMapPresetAsNew(colorMapSaveAsName); colorMapSaveAsName='';"
+                            :disabled="!colorMapSaveAsName.trim() || Object.keys(colorMap).length === 0"
+                            class="text-[10px] bg-indigo-600 text-white rounded px-2.5 py-1 hover:bg-indigo-700 disabled:opacity-40 font-semibold whitespace-nowrap shadow-xs">Save</button>
+                  </div>
+                </div>
+
+                {# Color Rules List #}
+                <div class="space-y-1.5 max-h-48 overflow-y-auto">
+                  <template x-for="(color, key) in colorMap" :key="'cm_'+key">
+                    <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                      <input type="color" :value="color"
+                             @input="colorMap[key]=$event.target.value;colorMap={...colorMap};_editorFiring=true;clearTimeout(_editorTimer);_editorTimer=setTimeout(()=>{_editorFiring=false;_schedulePreview();},500);"
+                             class="w-5 h-5 rounded cursor-pointer p-0 border border-slate-300">
+                      <span class="text-[10px] font-medium text-slate-700 truncate flex-1" x-text="key"></span>
+                      <button type="button" @click="delete colorMap[key];colorMap={...colorMap};_schedulePreview();"
+                              class="text-slate-400 hover:text-red-600 text-sm font-bold px-1">&times;</button>
+                    </div>
+                  </template>
+                </div>
+
+                {# Add Rule #}
+                <div class="flex items-center gap-1.5 pt-1">
+                  <input type="color" x-model="colorMapNewColor" class="w-6 h-6 rounded cursor-pointer p-0 border border-slate-300 flex-shrink-0">
+                  <input type="text" x-model="colorMapNewKey" placeholder="Category or series value…"
+                         @keydown.enter.prevent="if(colorMapNewKey.trim()){colorMap[colorMapNewKey.trim()]=colorMapNewColor;colorMap={...colorMap};colorMapNewKey='';_schedulePreview();}"
+                         class="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-300 bg-white">
+                  <button type="button"
+                          @click="if(colorMapNewKey.trim()){colorMap[colorMapNewKey.trim()]=colorMapNewColor;colorMap={...colorMap};colorMapNewKey='';_schedulePreview();}"
+                          :disabled="!colorMapNewKey.trim()"
+                          class="text-[10px] bg-slate-800 text-white rounded px-2.5 py-1 hover:bg-slate-700 disabled:opacity-40 font-semibold shadow-xs">Add</button>
+                </div>
+                <div class="flex justify-end" x-show="Object.keys(colorMap).length > 0">
+                  <button type="button" @click="colorMap={};_schedulePreview();"
+                          class="text-[9px] text-red-500 hover:text-red-700 font-semibold">Clear all rules</button>
+                </div>
+              </div>
             </div>
-          </template>
-        </div>
-      </div>
+          </div>
+        </section>
+
+        {# 3. Legend & Data Labels #}
+        <section x-data="{ open: true }" class="border-b border-slate-100">
+          <button type="button" @click="open=!open"
+                  class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition text-left">
+            <div class="flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              <span class="text-[10px] font-bold uppercase tracking-wider text-slate-700">Legend &amp; Labels</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[9px] font-medium text-slate-400" x-text="(showLegend ? 'Legend on' : 'Legend off') + (showLabels ? ' • Labels on' : '')"></span>
+              <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 9l-7 7-7-7"/></svg>
+            </div>
+          </button>
+          <div x-show="open" x-collapse class="px-4 pb-3.5 pt-1 space-y-3 bg-slate-50/50">
+            {# Legend Controls #}
+            <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2.5">
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-semibold text-slate-700">Legend</span>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" x-model="showLegend" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                  <span class="text-[10px] font-medium text-slate-600">Show</span>
+                </label>
+              </div>
+              <div x-show="showLegend" class="space-y-2 pt-1 border-t border-slate-100">
+                <div>
+                  <span class="text-[9px] text-slate-400 block mb-1">Position</span>
+                  <div class="grid grid-cols-4 gap-1">
+                    <template x-for="opt in [['top','▲ Top'],['bottom','▼ Bottom'],['left','◀ Left'],['right','▶ Right']]" :key="opt[0]">
+                      <button type="button" @click="legendPos=opt[0];legendLeft=null;legendTop=null;_scheduleStylePreview();"
+                              :class="legendPos===opt[0]?'bg-indigo-600 text-white font-bold shadow-xs':'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                              class="text-[9px] rounded py-1 transition text-center" x-text="opt[1]">
+                      </button>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <div class="flex justify-between"><span class="text-[9px] text-slate-500">Edge offset</span><span class="text-[9px] font-mono text-slate-600 font-semibold" x-text="legendOffset+'px'"></span></div>
+                    <input type="range" min="0" max="60" step="2" x-model.number="legendOffset"
+                           @input="legendLeft=null;legendTop=null;_scheduleStylePreview();"
+                           class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  </div>
+                  <div>
+                    <div class="flex justify-between"><span class="text-[9px] text-slate-500">Item gap</span><span class="text-[9px] font-mono text-slate-600 font-semibold" x-text="legendItemGap+'px'"></span></div>
+                    <input type="range" min="2" max="40" step="2" x-model.number="legendItemGap"
+                           class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <div class="flex justify-between"><span class="text-[9px] text-slate-500">Font size</span><span class="text-[9px] font-mono text-slate-600 font-semibold" x-text="legendFontSize+'px'"></span></div>
+                    <input type="range" min="8" max="16" step="1" x-model.number="legendFontSize"
+                           class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  </div>
+                  <div>
+                    <div class="flex justify-between"><span class="text-[9px] text-slate-500">Icon size</span><span class="text-[9px] font-mono text-slate-600 font-semibold" x-text="legendIconSize+'px'"></span></div>
+                    <input type="range" min="6" max="20" step="1" x-model.number="legendIconSize"
+                           class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  </div>
+                </div>
+
+                <p x-show="legendLeft!==null&&legendTop!==null"
+                   class="text-[9px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-2 py-1 flex items-center justify-between">
+                  <span>Custom dragged position active</span>
+                  <button type="button" @click="legendLeft=null;legendTop=null;_scheduleStylePreview();" class="underline font-bold text-red-600 hover:text-red-800">Reset to auto</button>
+                </p>
+              </div>
+            </div>
+
+            {# Data Labels #}
+            <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[10px] font-semibold text-slate-700">Data Value Labels</span>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" x-model="showLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                  <span class="text-[10px] font-medium text-slate-600">Show</span>
+                </label>
+              </div>
+              <div x-show="showLabels" class="space-y-2 pt-1 border-t border-slate-100">
+                <div>
+                  <span class="text-[9px] text-slate-400 block mb-1">Position</span>
+                  <select x-model="labelPosition" class="w-full text-xs border border-slate-200 rounded px-2 py-1 bg-white">
+                    <option value="top">Top (outside)</option>
+                    <option value="inside">Inside centre</option>
+                    <option value="insideTop">Inside top</option>
+                    <option value="insideBottom">Inside bottom</option>
+                    <option value="left">Left</option>
+                    <option value="right">Right</option>
+                  </select>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] text-slate-500 w-16 flex-shrink-0">Font Size</span>
+                  <input type="range" min="6" max="24" step="1" x-model.number="labelFontSize"
+                         class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  <span class="text-[10px] font-mono text-slate-600 w-7 text-right font-semibold" x-text="labelFontSize+'px'"></span>
+                </div>
+              </div>
+            </div>
+
+            {# Percent Format #}
+            <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2">
+              <span class="text-[10px] font-semibold text-slate-700 block">Percent Formatting</span>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" x-model="showPercentSymbol" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                <span class="text-[10px] text-slate-600">Include % symbol on percent values</span>
+              </label>
+              <div class="flex items-center gap-2 pt-1 border-t border-slate-100">
+                <span class="text-[10px] text-slate-500 w-20 flex-shrink-0">Decimals</span>
+                <input type="range" min="0" max="4" step="1" x-model.number="percentDecimals"
+                       class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                <span class="text-[10px] font-mono text-slate-600 w-10 text-right font-semibold"
+                      x-text="percentDecimals === 0 ? '0 (none)' : percentDecimals"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {# 4. Shape & Type Specific Styles #}
+        <section x-data="{ open: true }"
+                 x-show="['bar','waterfall','assessment_compare','progress_growth','line','spline'].includes(chartType)"
+                 class="border-b border-slate-100">
+          <button type="button" @click="open=!open"
+                  class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition text-left">
+            <div class="flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>
+              <span class="text-[10px] font-bold uppercase tracking-wider text-slate-700"
+                    x-text="chartType === 'line' ? 'Line Series Styling' : chartType === 'spline' ? 'Parliament Styling' : 'Bar &amp; Stack Styling'"></span>
+            </div>
+            <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 9l-7 7-7-7"/></svg>
+          </button>
+          <div x-show="open" x-collapse class="px-4 pb-3.5 pt-1 space-y-3 bg-slate-50/50">
+
+            {# Bar / Waterfall / Compare / Progress Growth #}
+            <template x-if="['bar','waterfall','assessment_compare','progress_growth'].includes(chartType)">
+              <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2.5">
+                <template x-if="chartType === 'bar'">
+                  <div class="space-y-2">
+                    <div>
+                      <span class="text-[9px] text-slate-400 block mb-1">Layout</span>
+                      <div class="grid grid-cols-2 gap-1.5">
+                        <button type="button" @click="barLayout='grouped'"
+                                :class="barLayout==='grouped' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                                class="text-[10px] rounded-md py-1.5 transition">Grouped</button>
+                        <button type="button" @click="barLayout='stacked'"
+                                :class="barLayout==='stacked' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                                class="text-[10px] rounded-md py-1.5 transition">Stacked</button>
+                      </div>
+                    </div>
+                    <div>
+                      <span class="text-[9px] text-slate-400 block mb-1">Canvas Grid</span>
+                      <div class="grid grid-cols-3 gap-1">
+                        <button type="button" @click="barRadial=false; barPolar=false"
+                                :class="!barRadial && !barPolar ? 'bg-slate-900 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                                class="text-[10px] rounded py-1 transition">Cartesian</button>
+                        <button type="button" @click="barRadial=true; barPolar=false"
+                                :class="barRadial ? 'bg-slate-900 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                                class="text-[10px] rounded py-1 transition">Radial</button>
+                        <button type="button" @click="barPolar=true; barRadial=false"
+                                :class="barPolar ? 'bg-slate-900 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                                class="text-[10px] rounded py-1 transition">Polar</button>
+                      </div>
+                    </div>
+                    <div x-show="!barRadial && !barPolar">
+                      <span class="text-[9px] text-slate-400 block mb-1">Orientation</span>
+                      <div class="grid grid-cols-2 gap-1.5">
+                        <button type="button" @click="barOrientation='vertical'"
+                                :class="barOrientation==='vertical' ? 'bg-slate-900 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                                class="text-[10px] rounded-md py-1.5 transition">Vertical</button>
+                        <button type="button" @click="barOrientation='horizontal'"
+                                :class="barOrientation==='horizontal' ? 'bg-slate-900 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                                class="text-[10px] rounded-md py-1.5 transition">Horizontal</button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <div class="flex items-center gap-2 pt-1 border-t border-slate-100">
+                  <span class="text-[10px] text-slate-500 w-16 flex-shrink-0">Corner Radius</span>
+                  <input type="range" min="0" max="12" step="1" x-model.number="barBorderRadius"
+                         class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  <span class="text-[10px] font-mono text-slate-600 w-7 text-right font-semibold" x-text="barBorderRadius+'px'"></span>
+                </div>
+
+                <template x-if="(chartType === 'bar' && barLayout === 'stacked') || ['assessment_compare','progress_growth'].includes(chartType)">
+                  <label class="flex items-center gap-1.5 cursor-pointer pt-1 border-t border-slate-100">
+                    <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                    <span class="text-[10px] font-medium text-slate-700">100% stacked scale</span>
+                  </label>
+                </template>
+
+                <label x-show="chartType === 'bar' && seriesCols.length > 0" class="flex items-center gap-1.5 cursor-pointer pt-1 border-t border-slate-100">
+                  <input type="checkbox" x-model="groupTotal" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                  <span class="text-[10px] text-slate-600">Add a <span class="font-semibold text-indigo-700">Total</span> group across categories</span>
+                </label>
+              </div>
+            </template>
+
+            {# Compare Layout #}
+            <template x-if="chartType === 'assessment_compare'">
+              <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2">
+                <span class="text-[10px] font-semibold text-slate-700 block">Assessment Compare Layout</span>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] text-slate-500 w-16 flex-shrink-0">Category gap</span>
+                  <input type="range" min="0" max="150" step="5" x-model.number="compareGap"
+                         class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  <span class="text-[10px] font-mono text-slate-600 w-8 text-right font-semibold" x-text="compareGap+'%'"></span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+                  <div>
+                    <div class="flex justify-between"><span class="text-[9px] text-slate-500">Label Font</span><span class="text-[9px] font-mono text-slate-600 font-semibold" x-text="compareCatFontSize+'px'"></span></div>
+                    <input type="range" min="8" max="18" step="1" x-model.number="compareCatFontSize"
+                           class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  </div>
+                  <div>
+                    <div class="flex justify-between"><span class="text-[9px] text-slate-500">Rotation</span><span class="text-[9px] font-mono text-slate-600 font-semibold" x-text="compareCatRotation+'°'"></span></div>
+                    <input type="range" min="0" max="90" step="5" x-model.number="compareCatRotation"
+                           class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            {# Line Style #}
+            <template x-if="chartType === 'line'">
+              <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2.5">
+                <div>
+                  <span class="text-[9px] text-slate-400 block mb-1">Layout</span>
+                  <div class="grid grid-cols-2 gap-1.5">
+                    <button type="button" @click="lineLayout='standard'"
+                            :class="lineLayout==='standard' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                            class="text-[10px] rounded-md py-1.5 transition">Standard</button>
+                    <button type="button" @click="lineLayout='stacked'"
+                            :class="lineLayout==='stacked' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                            class="text-[10px] rounded-md py-1.5 transition">Stacked</button>
+                  </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="lineFill" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                    <span class="text-[10px] font-medium text-slate-700">Area Fill</span>
+                  </label>
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="smooth" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                    <span class="text-[10px] font-medium text-slate-700">Smooth Curve</span>
+                  </label>
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="showPoints" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                    <span class="text-[10px] font-medium text-slate-700">Show Points</span>
+                  </label>
+                  <template x-if="lineLayout === 'stacked'">
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" x-model="showPercent" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                      <span class="text-[10px] font-medium text-slate-700">100% stacked</span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            {# Parliament Style #}
+            <template x-if="chartType === 'spline'">
+              <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2.5">
+                <div>
+                  <span class="text-[9px] text-slate-400 block mb-1">Layout Shape</span>
+                  <div class="grid grid-cols-3 gap-1">
+                    <button type="button" @click="parliamentShape='semi-circle'"
+                            :class="parliamentShape==='semi-circle' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                            class="text-[10px] rounded py-1 transition">Semicircle</button>
+                    <button type="button" @click="parliamentShape='horseshoe'"
+                            :class="parliamentShape==='horseshoe' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                            class="text-[10px] rounded py-1 transition">Horseshoe</button>
+                    <button type="button" @click="parliamentShape='circle'"
+                            :class="parliamentShape==='circle' ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 font-medium'"
+                            class="text-[10px] rounded py-1 transition">Circle</button>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="flex justify-between items-center mb-1">
+                    <span class="text-[10px] text-slate-500">Dot Size Scale</span>
+                    <span class="text-[10px] font-mono text-slate-600 font-semibold" x-text="parliamentDotScale + 'x'"></span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input type="range" min="0.2" max="3.0" step="0.1" x-model.number="parliamentDotScale"
+                           class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                    <button type="button" @click="parliamentDotScale = 1.0" class="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold">Reset</button>
+                  </div>
+                </div>
+
+                <div class="pt-1 border-t border-slate-100 space-y-1">
+                  <div class="flex justify-between items-center mb-1">
+                    <span class="text-[10px] text-slate-500">Rows</span>
+                    <span class="text-[10px] font-mono text-slate-600 font-semibold" x-text="parliamentRowsAuto ? 'Auto' : parliamentRows"></span>
+                  </div>
+                  <div class="flex items-center gap-2" x-show="!parliamentRowsAuto">
+                    <input type="range" min="1" max="20" step="1" x-model.number="parliamentRows"
+                           class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                  </div>
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="parliamentRowsAuto" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                    <span class="text-[10px] text-slate-600">Auto-calculate rows</span>
+                  </label>
+                </div>
+
+                <div class="pt-1 border-t border-slate-100">
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="parliamentShowSS" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                    <span class="text-[10px] text-slate-600">Include Scale Score (SS) in tooltip</span>
+                  </label>
+                </div>
+              </div>
+            </template>
+
+          </div>
+        </section>
+
+        {# 5. Axes & Layout #}
+        <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
+          <section x-data="{ open: true }" class="border-b border-slate-100">
+            <button type="button" @click="open=!open"
+                    class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition text-left">
+              <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 3v18h18M7 16l4-4 4 4 6-6"/></svg>
+                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-700">Axes &amp; Layout</span>
+              </div>
+              <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            <div x-show="open" x-collapse class="px-4 pb-3.5 pt-1 space-y-3 bg-slate-50/50">
+              <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2.5">
+                {# Multi X or Compare #}
+                <template x-if="chartType === 'assessment_compare' || xCols.length > 1">
+                  <div class="space-y-2">
+                    <div class="grid grid-cols-2 gap-2">
+                      <div>
+                        <div class="flex justify-between"><span class="text-[9px] text-slate-500 font-semibold">Compare Rotate</span><span class="text-[9px] font-mono text-slate-600" x-text="xLabelRotation+'°'"></span></div>
+                        <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
+                               class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                      </div>
+                      <div>
+                        <div class="flex justify-between"><span class="text-[9px] text-slate-500 font-semibold">Category Rotate</span><span class="text-[9px] font-mono text-slate-600" x-text="compareCatRotation+'°'"></span></div>
+                        <input type="range" min="0" max="90" step="15" x-model.number="compareCatRotation"
+                               class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <div>
+                        <div class="flex justify-between"><span class="text-[9px] text-slate-500 font-semibold">Compare Font</span><span class="text-[9px] font-mono text-slate-600" x-text="xLabelFontSize+'px'"></span></div>
+                        <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
+                               class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                      </div>
+                      <div>
+                        <div class="flex justify-between"><span class="text-[9px] text-slate-500 font-semibold">Category Font</span><span class="text-[9px] font-mono text-slate-600" x-text="compareCatFontSize+'px'"></span></div>
+                        <input type="range" min="8" max="16" step="1" x-model.number="compareCatFontSize"
+                               class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2 pt-1 border-t border-slate-100">
+                      <span class="text-[10px] text-slate-500 w-20 flex-shrink-0">Group gap</span>
+                      <input type="range" min="0" max="100" step="1" x-model.number="groupGapPct"
+                             class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                      <span class="text-[10px] font-mono text-slate-600 w-10 text-right font-semibold" x-text="groupGapPct + '%'"></span>
+                    </div>
+                    <label class="flex items-center gap-1.5 pt-1 cursor-pointer">
+                      <input type="checkbox" x-model="centerGroupLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                      <span class="text-[10px] text-slate-600 font-medium">Center group labels</span>
+                    </label>
+                  </div>
+                </template>
+
+                {# Standard Single X #}
+                <template x-if="chartType !== 'assessment_compare' && xCols.length <= 1">
+                  <div class="grid grid-cols-2 gap-2">
+                    <div>
+                      <div class="flex justify-between"><span class="text-[9px] text-slate-500">X-Axis Rotate</span><span class="text-[9px] font-mono text-slate-600" x-text="xLabelRotation+'°'"></span></div>
+                      <input type="range" min="0" max="90" step="15" x-model.number="xLabelRotation"
+                             class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                    </div>
+                    <div>
+                      <div class="flex justify-between"><span class="text-[9px] text-slate-500">X-Axis Font</span><span class="text-[9px] font-mono text-slate-600" x-text="xLabelFontSize+'px'"></span></div>
+                      <input type="range" min="8" max="16" step="1" x-model.number="xLabelFontSize"
+                             class="w-full h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                    </div>
+                  </div>
+                </template>
+
+                {# Truncate & Force Show #}
+                <div class="space-y-2 pt-1 border-t border-slate-100">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[10px] text-slate-500 w-20 flex-shrink-0">Truncate</span>
+                    <input type="range" min="0" max="30" step="1" x-model.number="xLabelMaxLength"
+                           class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                    <span class="text-[10px] font-mono text-slate-600 w-10 text-right font-semibold"
+                          x-text="xLabelMaxLength>0?xLabelMaxLength+'ch':'Off'"></span>
+                  </div>
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="forceShowAllLabels"
+                           class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                    <span class="text-[10px] text-slate-700 font-medium">Force show all labels (prevent auto-skip)</span>
+                  </label>
+                </div>
+
+                {# Cat gap for bar #}
+                <template x-if="['bar','waterfall','progress_growth'].includes(chartType)">
+                  <div class="flex items-center gap-2 pt-1 border-t border-slate-100">
+                    <span class="text-[10px] text-slate-500 w-20 flex-shrink-0">Category gap</span>
+                    <input type="range" min="0" max="100" step="1" x-model.number="groupGap"
+                           class="flex-1 h-1.5 bg-slate-200 rounded appearance-none cursor-pointer accent-indigo-600">
+                    <span class="text-[10px] font-mono text-slate-600 w-10 text-right font-semibold" x-text="groupGap+'%'"></span>
+                  </div>
+                </template>
+
+                {# Y-Axis Min/Max #}
+                <template x-if="!['heatmap','box','scatter','bubble'].includes(chartType)">
+                  <div class="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+                    <div>
+                      <label class="text-[9px] text-slate-500 block mb-1">Y-Axis Min</label>
+                      <input type="number" x-model="yAxisMin" placeholder="Auto"
+                             class="w-full text-xs border border-slate-200 rounded px-2.5 py-1 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white">
+                    </div>
+                    <div>
+                      <label class="text-[9px] text-slate-500 block mb-1">Y-Axis Max</label>
+                      <input type="number" x-model="yAxisMax" placeholder="Auto"
+                             class="w-full text-xs border border-slate-200 rounded px-2.5 py-1 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 bg-white">
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </section>
+        </template>
+
+        {# 6. Interactivity & Chart Elements #}
+        <section x-data="{ open: true }" class="border-b border-slate-100">
+          <button type="button" @click="open=!open"
+                  class="flex items-center justify-between w-full px-4 py-3 hover:bg-slate-50 transition text-left">
+            <div class="flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"/></svg>
+              <span class="text-[10px] font-bold uppercase tracking-wider text-slate-700">Interactivity &amp; Elements</span>
+            </div>
+            <svg class="w-3 h-3 text-slate-400 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 9l-7 7-7-7"/></svg>
+          </button>
+          <div x-show="open" x-collapse class="px-4 pb-3.5 pt-1 space-y-3 bg-slate-50/50">
+            <div class="bg-white border border-slate-200 rounded-lg p-2.5 shadow-xs space-y-2">
+              {# Tooltip & sub-options #}
+              <div class="space-y-1.5 pb-2 border-b border-slate-100">
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" x-model="showTooltip" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                  <span class="text-[10px] font-bold text-slate-700">Show Hover Tooltip</span>
+                </label>
+                <div x-show="showTooltip" class="ml-5 space-y-1 bg-slate-50 border border-slate-200 rounded p-2">
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="tooltipShowPct" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                    <span class="text-[10px] text-slate-600">Show percentage in tooltip</span>
+                  </label>
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="tooltipShowCount" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                    <span class="text-[10px] text-slate-600">Show count (n=) in tooltip</span>
+                  </label>
+                  <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="checkbox" x-model="tooltipValuePct" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3 h-3">
+                    <span class="text-[10px] text-slate-600">Append % to value</span>
+                  </label>
+                </div>
+              </div>
+
+              {# Toggles Grid #}
+              <div class="grid grid-cols-2 gap-2 pt-1">
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" x-model="enableAnimation" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                  <span class="text-[10px] font-medium text-slate-700">Smooth Animation</span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" x-model="showToolbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                  <span class="text-[10px] font-medium text-slate-700">Toolbox Bar</span>
+                </label>
+                <template x-if="!['pie','donut','funnel','treemap','radar','gauge'].includes(chartType)">
+                  <div class="contents">
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" x-model="showZoom" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                      <span class="text-[10px] font-medium text-slate-700">Data Zoom Slider</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" x-model="showGrid" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                      <span class="text-[10px] font-medium text-slate-700">Grid Lines</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" x-model="showAxisLabels" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                      <span class="text-[10px] font-medium text-slate-700">Axis Numbers/Labels</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" x-model="showCategories" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                      <span class="text-[10px] font-medium text-slate-700">Category Names</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" x-model="showAxisTitles" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 w-3.5 h-3.5">
+                      <span class="text-[10px] font-medium text-slate-700">Axis Titles</span>
+                    </label>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </section>
 
       </div>{# /style tab #}
+
 
       {# ── Tab: Options ── #}
       <div x-show="centerTab==='options'">
@@ -3293,71 +3595,228 @@
     {# ══════════ RIGHT: Preview ══════════ #}
     <div class="flex-1 bg-slate-50 overflow-hidden flex flex-col"
          @chartinited.window="if (editMode) { $nextTick(() => _attachEditor()); } _updateDrillStatus($refs.previewContainer);">
-
       {# Empty state #}
-      <div x-show="!previewHtml && !previewLoading" class="flex-1 flex items-center justify-center p-5">
-        <div class="text-center text-slate-400 max-w-xs">
-          <svg class="w-16 h-16 mx-auto mb-4 opacity-20" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 3v18h18"/><path stroke-linecap="round" stroke-width="1.5" d="M7 16l4-4 3 3 4-6"/></svg>
-          <p class="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-1">Chart Preview</p>
-          <p class="text-xs leading-relaxed text-slate-400" x-text="canPreview
-              ? 'Click Preview to generate your chart'
-              : (meta.x?.hide ? 'Choose data → pick chart type → map Y column'
-                : meta.y?.req ? 'Choose data → pick chart type → map X & Y columns'
-                : 'Choose data → pick chart type → map X column, then Preview')"></p>
+      <div x-show="!previewHtml && !previewLoading" class="flex-1 flex items-center justify-center">
+        <div class="text-center text-slate-400 max-w-sm px-4">
+          <svg class="w-12 h-12 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
+          </svg>
+          <p class="text-sm font-medium text-slate-500 mb-1">Live Chart Preview</p>
+          <p class="text-xs text-slate-400">Map your columns on the left to automatically see your chart rendered with real dataset data.</p>
         </div>
       </div>
 
-      {# Loading #}
-      <div x-show="previewLoading" class="flex-1 flex items-center justify-center">
+      {# Loading (initial empty state only) #}
+      <div x-show="previewLoading && !previewHtml" class="flex-1 flex items-center justify-center">
         <div class="text-center text-slate-400">
-          <svg class="animate-spin w-8 h-8 mx-auto mb-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
-          <p class="text-sm">Building chart…</p>
+          <svg class="animate-spin w-8 h-8 mx-auto mb-2 text-indigo-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+          <p class="text-sm font-medium">Building chart…</p>
         </div>
       </div>
 
-      {# Rendered chart + edit toolbar #}
-      <div x-show="previewHtml && !previewLoading" class="flex-1 flex flex-col min-h-0">
+      {# Rendered chart + interactive preview toolbar #}
+      <div x-show="previewHtml" class="flex-1 flex flex-col min-h-0 bg-white">
 
-        {# ── Toolbar ── #}
-        <div class="flex items-center gap-2 px-5 pt-4 pb-2 flex-shrink-0 border-b border-slate-100">
-          {# Edit Layout toggle #}
-          <button type="button" @click="toggleEditMode()"
-                  :class="editMode
-                    ? 'bg-indigo-600 text-white border-indigo-700 shadow-inner'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'"
-                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider border rounded shadow-sm transition-all">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-              <path stroke-linecap="round" d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-            </svg>
-            <span x-text="editMode ? 'Editing Layout' : 'Edit Layout'"></span>
-          </button>
+        {# ── Interactive Toolbar ── #}
+        <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 flex-shrink-0 border-b border-slate-100 bg-slate-50/50">
+          <!-- Left: View Mode & Responsive controls -->
+          <div class="flex items-center gap-2">
+            <!-- Mode Switcher -->
+            <div class="inline-flex items-center bg-slate-200/70 rounded-lg p-0.5 border border-slate-200">
+              <button type="button" @click="previewViewMode='chart'"
+                      :class="previewViewMode==='chart' ? 'bg-white shadow-xs text-indigo-700 font-bold' : 'text-slate-600 hover:text-slate-900'"
+                      class="px-2.5 py-1 rounded-md text-xs transition flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                <span>Chart View</span>
+              </button>
+              <button type="button" @click="previewViewMode='table'"
+                      :class="previewViewMode==='table' ? 'bg-white shadow-xs text-indigo-700 font-bold' : 'text-slate-600 hover:text-slate-900'"
+                      class="px-2.5 py-1 rounded-md text-xs transition flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 14h18m-9-4v8m-7 4h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                <span>Data Table</span>
+                <span class="text-[9px] bg-indigo-100 text-indigo-700 px-1.5 py-0.2 rounded-full font-bold" x-text="previewRowCount"></span>
+              </button>
+            </div>
 
-          {# Hint text #}
-          <span x-show="editMode" class="text-[10px] text-indigo-400 font-medium">
-            Drag handles &amp; badges to reposition chart elements
-          </span>
-          <span x-show="drillStatus && !editMode" class="inline-flex items-center gap-1.5 text-[10px] font-medium"
-                :class="drillStatus.canDrill ? 'text-emerald-600' : 'text-amber-600'">
-            <svg x-show="drillStatus.canDrill" class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5"/></svg>
-            <svg x-show="!drillStatus.canDrill" class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            <span x-text="drillStatus.message"></span>
-          </span>
-          <div class="ml-auto flex items-center gap-2">
+            <!-- Responsive Device Presets (Chart mode) -->
+            <div class="hidden sm:flex items-center gap-1 text-[11px] text-slate-500" x-show="previewViewMode==='chart'">
+              <button type="button" @click="previewDeviceWidth='100%'"
+                      :class="previewDeviceWidth==='100%' ? 'bg-white text-indigo-700 border-indigo-300 font-bold shadow-xs' : 'text-slate-500 hover:bg-white border-transparent'"
+                      class="border rounded px-2 py-0.5 transition" title="Full 100% canvas width">Full</button>
+              <button type="button" @click="previewDeviceWidth='768px'"
+                      :class="previewDeviceWidth==='768px' ? 'bg-white text-indigo-700 border-indigo-300 font-bold shadow-xs' : 'text-slate-500 hover:bg-white border-transparent'"
+                      class="border rounded px-2 py-0.5 transition" title="Tablet preview width (768px)">Tablet</button>
+              <button type="button" @click="previewDeviceWidth='400px'"
+                      :class="previewDeviceWidth==='400px' ? 'bg-white text-indigo-700 border-indigo-300 font-bold shadow-xs' : 'text-slate-500 hover:bg-white border-transparent'"
+                      class="border rounded px-2 py-0.5 transition" title="Mobile card preview width (400px)">Mobile</button>
+            </div>
+
+            <!-- Edit Layout toggle -->
+            <button type="button" @click="toggleEditMode()" x-show="previewViewMode==='chart'"
+                    :class="editMode
+                      ? 'bg-indigo-600 text-white border-indigo-700 shadow-inner'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'"
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border rounded-md shadow-xs transition-all">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                <path stroke-linecap="round" d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+              <span x-text="editMode ? 'Done Layout' : 'Edit Layout'"></span>
+            </button>
+          </div>
+
+          <!-- Right: Interactive Toggles & Fullscreen -->
+          <div class="flex items-center gap-1.5 ml-auto">
+            <span x-show="drillStatus && !editMode" class="inline-flex items-center gap-1 text-[10px] font-medium mr-2"
+                  :class="drillStatus.canDrill ? 'text-emerald-700' : 'text-amber-700'">
+              <span class="w-1.5 h-1.5 rounded-full" :class="drillStatus.canDrill ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+              <span x-text="drillStatus.message"></span>
+            </span>
+
+            <template x-if="previewViewMode==='chart'">
+              <div class="flex items-center gap-1">
+                <button type="button" @click="showZoom = !showZoom; _schedulePreview(true)"
+                        :class="showZoom ? 'bg-indigo-50 text-indigo-700 border-indigo-300 font-semibold' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'"
+                        class="border rounded px-2 py-1 text-[10px] flex items-center gap-1 shadow-xs transition" title="Toggle interactive zoom & pan slider">
+                  <span>Zoom</span>
+                </button>
+                <button type="button" @click="showLabels = !showLabels; _applyStyleLive()"
+                        :class="showLabels ? 'bg-indigo-50 text-indigo-700 border-indigo-300 font-semibold' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'"
+                        class="border rounded px-2 py-1 text-[10px] flex items-center gap-1 shadow-xs transition" title="Toggle data labels">
+                  <span>Labels</span>
+                </button>
+                <button type="button" @click="showLegend = !showLegend; _applyStyleLive()"
+                        :class="showLegend ? 'bg-indigo-50 text-indigo-700 border-indigo-300 font-semibold' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'"
+                        class="border rounded px-2 py-1 text-[10px] flex items-center gap-1 shadow-xs transition" title="Toggle legend">
+                  <span>Legend</span>
+                </button>
+                <button type="button" @click="previewFullscreen = true"
+                        class="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded px-2 py-1 text-[10px] font-medium flex items-center gap-1 shadow-xs transition" title="Full screen view">
+                  <svg class="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                  <span>Expand</span>
+                </button>
+              </div>
+            </template>
+
+            <!-- Refreshing indicator -->
+            <span x-show="previewLoading" class="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full animate-pulse">
+              <svg class="animate-spin w-2.5 h-2.5 text-indigo-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+              <span>Updating…</span>
+            </span>
+
             <span x-show="!editMode && (gridLeft || gridRight || gridTop || gridBottom)"
-                  class="text-[10px] text-slate-400">
-              Custom layout active ·
+                  class="text-[10px] text-slate-400 ml-1">
+              Custom layout ·
               <button type="button" @click="gridLeft=null;gridRight=null;gridTop=null;gridBottom=null;doPreview()"
-                      class="text-red-400 hover:text-red-600 font-semibold">Reset</button>
+                      class="text-red-500 hover:text-red-700 font-semibold underline">Reset</button>
             </span>
           </div>
         </div>
 
-        {# ── Main area: chart ── #}
-        <div class="flex flex-1 min-h-0 overflow-hidden">
+        {# ── Interactive Selected Data Point Banner ── #}
+        <div x-show="selectedPreviewPoint" x-transition class="px-5 py-2 bg-gradient-to-r from-indigo-50 via-blue-50 to-indigo-50 border-b border-indigo-200/80 flex items-center justify-between text-xs text-indigo-950">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-indigo-600 animate-ping"></span>
+            <span class="font-bold text-indigo-800 uppercase text-[10px] tracking-wider">Point Selected:</span>
+            <span class="font-semibold text-slate-900 bg-white px-2 py-0.5 rounded border border-indigo-200" x-text="selectedPreviewPoint.xVal"></span>
+            <template x-if="selectedPreviewPoint.seriesVal">
+              <span class="text-slate-600 font-medium">· Series: <strong class="text-slate-800" x-text="selectedPreviewPoint.seriesVal"></strong></span>
+            </template>
+            <span class="text-slate-600 font-medium">· Value: <strong class="text-indigo-900 font-bold bg-white px-1.5 py-0.5 rounded border border-indigo-200" x-text="selectedPreviewPoint.value"></strong></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <template x-if="selectedPreviewPoint.url">
+              <a :href="selectedPreviewPoint.url" target="_blank"
+                 class="inline-flex items-center gap-1 px-3 py-1 bg-indigo-600 text-white rounded-md text-[11px] font-bold hover:bg-indigo-700 shadow-xs transition">
+                <span>Test Drill In ↗</span>
+              </a>
+            </template>
+            <template x-if="selectedPreviewPoint.isUnsaved">
+              <span class="text-[10px] text-amber-800 font-semibold bg-amber-100 border border-amber-200 px-2 py-0.5 rounded">
+                Save chart to drill into student records
+              </span>
+            </template>
+            <button type="button" @click="selectedPreviewPoint=null" class="text-slate-400 hover:text-slate-700 font-bold text-base leading-none px-1" title="Dismiss">&times;</button>
+          </div>
+        </div>
 
-          {# ── Chart container ── #}
-          <div x-ref="previewContainer" class="flex-1 p-5 min-h-[400px] overflow-auto"></div>
+        {# ── Main Preview Area: Visual Chart OR Data Table ── #}
+        <div class="flex flex-1 min-h-0 overflow-hidden relative">
+
+          {# 1. Visual Chart View #}
+          <div x-show="previewViewMode==='chart'" class="flex-1 flex flex-col min-h-0 overflow-auto w-full">
+            <div class="flex-1 w-full mx-auto transition-all" :style="{ maxWidth: previewDeviceWidth }">
+              <div x-ref="previewContainer" :class="previewLoading && 'opacity-60 pointer-events-none transition-opacity'" class="w-full p-5 min-h-[460px] overflow-auto"></div>
+            </div>
+          </div>
+
+          {# 2. Data Table View #}
+          <div x-show="previewViewMode==='table'" class="flex-1 flex flex-col min-h-0 overflow-hidden bg-slate-50/30">
+            <div class="p-3 border-b border-slate-200 bg-white flex items-center justify-between gap-3">
+              <div class="flex items-center gap-2 flex-1 max-w-sm">
+                <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" x-model="previewTableSearch" placeholder="Filter rows in preview data…"
+                       class="w-full text-xs border border-slate-200 rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400">
+              </div>
+              <span class="text-xs text-slate-500 font-medium">
+                Showing <strong class="text-slate-800" x-text="filteredPreviewTableRows.length"></strong> of <strong class="text-slate-800" x-text="previewRowCount"></strong> rows
+              </span>
+            </div>
+            <div class="flex-1 overflow-auto p-4">
+              <template x-if="previewTableRows.length === 0">
+                <div class="p-8 text-center text-slate-400 text-xs italic">No preview data rows available. Generate a preview first.</div>
+              </template>
+              <template x-if="previewTableRows.length > 0">
+                <div class="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-xs">
+                  <table class="w-full text-left text-xs border-collapse">
+                    <thead class="bg-slate-100/80 sticky top-0 border-b border-slate-200">
+                      <tr>
+                        <template x-for="col in previewTableCols" :key="'pth_'+col">
+                          <th class="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-600 truncate border-r border-slate-200/60 last:border-r-0"
+                              x-text="colLabel(col)"></th>
+                        </template>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                      <template x-for="(row, rIdx) in filteredPreviewTableRows" :key="'ptr_'+rIdx">
+                        <tr class="hover:bg-indigo-50/30 transition-colors">
+                          <template x-for="col in previewTableCols" :key="'ptd_'+col+'_'+rIdx">
+                            <td class="px-3 py-1.5 text-slate-700 font-mono text-[11px] truncate border-r border-slate-100 last:border-r-0"
+                                x-text="row[col] !== null && row[col] !== undefined ? row[col] : '—'"></td>
+                          </template>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+            </div>
+          </div>
+
+        </div>{# /main area #}
+      </div>{# /rendered chart #}
+    </div>
+
+    {# ── Fullscreen Expanded Preview Modal ── #}
+    <div x-show="previewFullscreen" x-transition.opacity class="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[88vh] flex flex-col overflow-hidden border border-slate-200">
+        <div class="px-6 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+          <div class="flex items-center gap-3">
+            <span class="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-sm font-bold shadow-xs">📊</span>
+            <div>
+              <h3 class="text-sm font-bold text-slate-800" x-text="chartTitle || name || 'Chart Fullscreen Preview'"></h3>
+              <p class="text-[10px] text-slate-500" x-text="(CHART_NAMES[chartType] || chartType) + ' · Expanded View'"></p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="button" @click="previewFullscreen = false"
+                    class="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-semibold hover:bg-slate-700 transition">
+              Close ✕
+            </button>
+          </div>
+        </div>
+        <div class="flex-1 p-6 overflow-auto flex items-center justify-center bg-white" id="fullscreen-chart-host">
+          <div class="w-full h-full flex flex-col justify-center" x-html="previewHtml"></div>
         </div>
       </div>
     </div>
@@ -3549,13 +4008,13 @@
 
 </div>
 
-<script src="{% static 'js/dataviz/chart-renderer.js' %}"></script>
-<script src="{% static 'js/dataviz/chart-editor.js' %}"></script>
-<script src="{% static 'js/dataviz/chart-builder-ui.js' %}"></script>
-<script src="{% static 'js/dataviz/chart-builder-data.js' %}"></script>
-<script src="{% static 'js/dataviz/chart-builder-explorer.js' %}"></script>
-<script src="{% static 'js/dataviz/chart-builder-filters.js' %}"></script>
-<script src="{% static 'js/dataviz/chart-builder-preview.js' %}"></script>
+<script src="{% static 'js/dataviz/chart-renderer.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-editor.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-builder-ui.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-builder-data.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-builder-explorer.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-builder-filters.js' %}?v=20261027_preview"></script>
+<script src="{% static 'js/dataviz/chart-builder-preview.js' %}?v=20261027_preview"></script>
 <script>
 function chartBuilder() {
   const existing = JSON.parse('{{ existing_chart_json|escapejs }}' || 'null');
@@ -3613,9 +4072,41 @@ function chartBuilder() {
   };
   const _defaultMeta = CHART_META.bar;
 
+  const CHART_NAMES = {
+    bar: 'Bar / Column Chart',
+    line: 'Line & Area Trend Chart',
+    pie: 'Pie Chart',
+    donut: 'Donut Chart',
+    scatter: 'Scatter Plot',
+    bubble: 'Bubble Chart',
+    heatmap: 'Heatmap Matrix',
+    histogram: 'Histogram Distribution',
+    box: 'Box Plot',
+    waterfall: 'Waterfall Chart',
+    funnel: 'Funnel Chart',
+    treemap: 'Treemap',
+    radar: 'Radar Chart',
+    gauge: 'Gauge Metric',
+    assessment_compare: 'Assessment Performance Comparison',
+    progress_growth: 'Student Progress & Growth',
+    summary_table: 'Summary Pivot Table',
+    dynamic_summary_table: 'Dynamic Multi-Dimension Pivot',
+    date_series: 'Date Series Timeline'
+  };
+
   return {
     /* ─── State ──────────────────────────────────────────── */
     centerTab:    'type',
+    CHART_NAMES:  CHART_NAMES,
+    /* Preview Interactive state */
+    previewViewMode: 'chart',   // 'chart' | 'table'
+    previewDeviceWidth: '100%', // '100%' | '768px' | '400px'
+    previewFullscreen: false,
+    selectedPreviewPoint: null, // { xVal, seriesVal, value, url, isUnsaved }
+    previewTableRows: [],
+    previewTableCols: [],
+    previewRowCount: 0,
+    previewTableSearch: '',
     chartId:      existing?.id ?? {{ chart_id|default:"null" }},
     name:         existing?.name ?? '',
     chartTitle:   existing?.config?.chart_title ?? '',
@@ -3852,6 +4343,10 @@ function chartBuilder() {
     queryPreviewData:  null,           // { columns, rows } from preview API
     queryPreviewLoading: false,
     queryPreviewOpen:  false,
+    // Searchable dataset picker & preview
+    datasetSearch:         '',
+    datasetPreviewData:    null,
+    datasetPreviewLoading: false,
     // Save + Add to Page
     saveAndAttachOpen: false,
     targetPageId:      '',
@@ -3883,6 +4378,18 @@ function chartBuilder() {
       return Object.keys(this.chartFilters).reduce((n, col) => n + this.filterBadgeCount(col), 0);
     },
     get meta()         { return CHART_META[this.chartType] || _defaultMeta; },
+    get filteredPreviewTableRows() {
+      if (!this.previewTableSearch) return this.previewTableRows;
+      const q = this.previewTableSearch.toLowerCase();
+      return this.previewTableRows.filter(row => {
+        return Object.values(row).some(v => String(v).toLowerCase().includes(q));
+      });
+    },
+    colTypeBadge(col) {
+      if (this.isDateColumn(col)) return { text: 'DATE', icon: '📅', class: 'bg-amber-100 text-amber-800 border border-amber-200' };
+      if (this.isNumericColumn(col)) return { text: 'NUM', icon: '#', class: 'bg-emerald-100 text-emerald-800 border border-emerald-200' };
+      return { text: 'ABC', icon: '🔤', class: 'bg-blue-100 text-blue-800 border border-blue-200' };
+    },
     get drillColumns() { return this.drillSelected.join(', '); },
     get pgScaleParsed() {
       return this.pgScaleText.split(',').map(v => v.trim()).filter(Boolean);

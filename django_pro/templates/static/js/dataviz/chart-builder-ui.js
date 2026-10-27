@@ -438,9 +438,18 @@ function chartBuilderUIMethods() {
       if (this.savedQueryId) this.loadColumns();
       if (this.sourceType === 'dataset' && this.datasetSourceId) this.loadDatasetColumns();
       if (this.sourceType === 'columns') this.loadExplorerStructure();
+      if (this.sourceType === 'sql' && this.rawSql) this.runSql();
       this._recomputeFilterCols();
 
-      const dataProps = ['chartType','barLayout','barOrientation','barRadial','barPolar','lineLayout','lineFill','xCols','xCol','yCol','seriesCols','seriesCol','groupCol','groupTotal','groupTotalLabel','comparePlCols','aggFunc','aggDecimals',
+      // Auto-preview on initial load if chart is already configured
+      this.$nextTick(() => {
+        if (this.canPreview && !this.previewHtml) {
+          this._scheduleDataPreview();
+        }
+      });
+
+      const dataProps = ['sourceType','savedQueryId','datasetSourceId','oneRowPerStuAnnualKey','schoolFilterMode',
+                         'chartType','barLayout','barOrientation','barRadial','barPolar','lineLayout','lineFill','xCols','xCol','yCol','seriesCols','seriesCol','groupCol','groupTotal','groupTotalLabel','comparePlCols','aggFunc','aggDecimals',
                          'sortCol','sortDir','categoryOrder','limit','palette','showPercent','showPercentSymbol','percentDecimals','stackOrder',
                          'stRowCol','stColCol','stRowCols','stColCols','stAggFunc','stValueCol','stAggDecimals','explorerSelected',
                          'acIncludeCats','acIncludePl','acColFilters',

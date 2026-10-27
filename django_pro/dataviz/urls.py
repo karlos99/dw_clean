@@ -22,7 +22,7 @@ from .views import (
     drill_rows_api, drill_columns_api, drill_filter_values_api,
     drill_export_csv_api, drill_available_columns_api,
     # Dataset API
-    dataset_save_api, dataset_detail_api, dataset_list_api, dataset_preview_api, api_column_unique_values, dataset_filter_options_api, dataset_duplicate_api, dataset_export_csv_api, dataloader_links_catalog_api, dataloader_links_preview_api,
+    dataset_save_api, dataset_detail_api, dataset_list_api, dataset_preview_api, api_column_unique_values, dataset_filter_options_api, dataset_duplicate_api, dataset_export_csv_api, dataloader_links_catalog_api, dataloader_links_preview_api, dataset_data_preview_api,
     # Color-mapping preset API
     colormap_preset_save_api, colormap_preset_detail_api, colormap_preset_list_api,
     # Home dashboard API
@@ -83,6 +83,7 @@ urlpatterns = [
     path('api/datasets/<int:dataset_id>/', dataset_detail_api, name='dataset_detail'),
     path('api/datasets/<int:dataset_id>/duplicate/', dataset_duplicate_api, name='dataset_duplicate'),
     path('api/datasets/<int:dataset_id>/filter-options/', dataset_filter_options_api, name='dataset_filter_options'),
+    path('api/datasets/<int:dataset_id>/preview-data/', dataset_data_preview_api, name='dataset_data_preview'),
     path('api/datasets/dataloader-links/', dataloader_links_catalog_api, name='dataloader_links_catalog'),
     path('api/datasets/dataloader-links/preview/', dataloader_links_preview_api, name='dataloader_links_preview'),
     path('api/column/unique-values/',   api_column_unique_values, name='api_column_unique_values'),

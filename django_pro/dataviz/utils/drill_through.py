@@ -322,7 +322,7 @@ def _resolve_drill_row_col(col, row_keys):
     from dataexploration.school_year_utils import resolve_relative_column_key
 
     def _norm(c):
-        return str(c).replace('-', '_').lower()
+        return str(c).replace('-', '_').replace(' ', '_').lower()
 
     key_map = {_norm(k): k for k in row_keys}
     norm = _norm(col)
@@ -336,6 +336,9 @@ def _resolve_drill_row_col(col, row_keys):
     norm_clean = _norm(clean)
     if norm_clean in key_map:
         return key_map[norm_clean]
+    for rk in row_keys:
+        if rk.split('.')[-1].lower() == clean.lower():
+            return rk
     return col
 
 
@@ -350,7 +353,33 @@ def _apply_drill_row_filters(rows, drill_filters):
         col = _resolve_drill_row_col(fkey, row_keys)
         if not col or col not in row_keys:
             continue
-        if isinstance(fval, list):
+        if isinstance(fval, dict):
+            gte = fval.get('gte')
+            lte = fval.get('lte')
+            exclude = bool(fval.get('exclude'))
+
+            def _val_passes(rv):
+                if rv is None or str(rv).strip() in _blank:
+                    return exclude
+                try:
+                    num = float(rv)
+                    res = True
+                    if gte is not None and num < float(gte):
+                        res = False
+                    if lte is not None and num > float(lte):
+                        res = False
+                    return not res if exclude else res
+                except (ValueError, TypeError):
+                    s = str(rv).strip()
+                    res = True
+                    if gte is not None and s < str(gte):
+                        res = False
+                    if lte is not None and s > str(lte):
+                        res = False
+                    return not res if exclude else res
+
+            rows = [r for r in rows if _val_passes(r.get(col))]
+        elif isinstance(fval, list):
             allowed = {str(v).strip() for v in fval}
             rows = [
                 r for r in rows
@@ -1212,10 +1241,12 @@ def execute_drill_query(
                         rows = [r for r in rows if str(r.get(col_name) or '').strip() == target]
 
         # Raw SQL sources cannot receive safe predicates from the generic
-        # compiler. Apply their click-derived equality filters after the full
-        # source result is fetched, then paginate the filtered rows below.
-        if rows and drill_filters and (chart.source_type == 'sql' or raw_dataset_source):
-            rows = _apply_drill_row_filters(rows, drill_filters)
+        # compiler. Apply their click-derived equality filters and chart source filters
+        # after the full source result is fetched, then paginate the filtered rows below.
+        if rows and (drill_filters or getattr(chart, 'source_filters', None)) and (chart.source_type == 'sql' or raw_dataset_source):
+            combined_sf = dict(getattr(chart, 'source_filters', None) or {})
+            combined_sf.update(drill_filters)
+            rows = _apply_drill_row_filters(rows, combined_sf)
 
         if rows and drill_filters and chart.chart_type in ('summary_table', 'dynamic_summary_table'):
             rows = _apply_drill_row_filters(rows, drill_filters)
@@ -1399,11 +1430,19 @@ def execute_drill_query(
 
     # Per-column filters (from header filter dropdowns)
     if column_filters and rows:
+        row_keys = list(rows[0].keys())
         for fkey, fvals in column_filters.items():
             if not fvals:
                 continue
             allowed = set(fvals) if isinstance(fvals, list) else {fvals}
-            rows = [r for r in rows if str(r.get(fkey, '')) in allowed]
+            target_key = _resolve_drill_row_col(fkey, row_keys)
+            if not target_key or target_key not in row_keys:
+                target_key = next((rk for rk in row_keys if rk.split('.')[-1].lower() == fkey.split('.')[-1].lower()), fkey)
+            rows = [
+                r for r in rows
+                if str(r.get(target_key, '')) in allowed
+                or (target_key in r and r.get(target_key) is None and '' in allowed)
+            ]
 
     # Sorting (skip when SQL already ordered the page)
     if sort_by and rows and sql_total_rows is None:

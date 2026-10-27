@@ -21,7 +21,7 @@ from clickhouse_utils.timing import timed_fn
 from ..mixins import is_project_admin, FORBIDDEN
 
 # Bump when chart row-fetch or counting logic changes — busts Redis data/render caches.
-_CHART_PIPELINE_VERSION = '17'
+_CHART_PIPELINE_VERSION = '18'
 _timing_log = logging.getLogger('analytics.timing')
 
 # One ClickHouse query per unique chart+filters under a stampede; waiters poll Redis.
@@ -1215,6 +1215,10 @@ def chart_preview_api(request):
     from dataviz.utils.data_loader import run_saved_query, run_raw_sql, run_column_query
     if preview_cached is not None:
         result = preview_cached
+        if result.get('compact_cfg_patch'):
+            cfg.update(result['compact_cfg_patch'])
+        elif result.get('col_mappings'):
+            cfg = _remap_config_cols(cfg, result['col_mappings'])
     elif source_type == 'sql':
         result = run_raw_sql(source_sql)
     elif source_type == 'columns':
@@ -1239,6 +1243,7 @@ def chart_preview_api(request):
         col_mappings = ds.column_mappings or generate_column_aliases(ds.columns or [], {})
         limit_val = _parse_chart_row_limit(cfg)
         one_per_sak = bool(cfg.get('one_row_per_stu_annual_key'))
+        aggregated = None
         if getattr(ds, 'source_type', Dataset.SOURCE_VISUAL) == Dataset.SOURCE_SQL:
             res = load_dataset_result(ds, limit=limit_val, one_per_sak=one_per_sak)
             if res.get('error'):
@@ -1248,10 +1253,15 @@ def chart_preview_api(request):
         else:
             active_tables = {ds.base_table} | {j['table'] for j in (ds.joins or []) if j.get('table')}
             resolved_filters, status_val = prepare_interactive_filters(source_filters or {}, ds, active_tables)
-            aggregated = _clickhouse_aggregate_dataset(
-                ds, cfg, source_filters or {}, col_mappings,
-                allow_limit=True,
-            )
+            if _is_pivot_summary_chart(cfg, cfg.get('chart_type')):
+                aggregated = _clickhouse_aggregate_table_cells(
+                    ds, cfg, source_filters or {}, col_mappings,
+                )
+            else:
+                aggregated = _clickhouse_aggregate_dataset(
+                    ds, cfg, source_filters or {}, col_mappings,
+                    allow_limit=True,
+                )
             if aggregated is not None:
                 res, cfg = aggregated
             else:
@@ -1275,6 +1285,15 @@ def chart_preview_api(request):
                 aliased_rows, _missing_assessment, None, source_filters=source_filters,
             )
         result = {'rows': aliased_rows, 'columns': res.get('columns', []), 'row_count': len(aliased_rows)}
+        if aggregated is not None:
+            cfg_patch_keys = (
+                'y_col', 'agg', '__measure_label__', 'group_col', 'stack_col', 'series_col',
+                'x_cols', 'x_col', '__compact_cells__', '__compact_calc_cells__',
+                'dyn_row_cols', 'dyn_col_cols', 'st_row_col', 'st_col_col',
+            )
+            result['compact_cfg_patch'] = {k: cfg[k] for k in cfg_patch_keys if k in cfg}
+        elif col_mappings:
+            result['col_mappings'] = col_mappings
     else:
         if not source_id:
             return _error('Select a data source first')
@@ -1307,6 +1326,7 @@ def chart_preview_api(request):
         ac_avail_cats   = option.pop('__ac_avail_cats__', [])
         ac_avail_pl     = option.pop('__ac_avail_pl__', [])
         query_columns = list(rows[0].keys()) if rows else (result.get('columns', []))
+        preview_rows_sample = rows[:100] if isinstance(rows, list) else []
         return render(request, 'dataviz/partials/chart_preview.html', {
             'option_json':        json.dumps(option),
             'series_names_json':  json.dumps(series_names),
@@ -1316,6 +1336,8 @@ def chart_preview_api(request):
             'ac_avail_cats_json': json.dumps(ac_avail_cats),
             'ac_avail_pl_json':   json.dumps(ac_avail_pl),
             'query_columns_json': json.dumps(query_columns),
+            'preview_rows_json':  json.dumps(preview_rows_sample, default=str),
+            'preview_row_count':  len(rows) if isinstance(rows, list) else 0,
             'chart_id':           _chart_id or 'preview',
             'drill_enabled':      '1' if _chart_id else '0',
             'drill_source':       'chart_builder' if _chart_id else '',

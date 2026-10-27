@@ -51,6 +51,7 @@ from .dataset_views import (
     dataset_save_api, dataset_detail_api, dataset_list_api, dataset_preview_api,
     api_column_unique_values, dataset_filter_options_api, dataset_duplicate_api,
     dataset_export_csv_api, dataloader_links_catalog_api, dataloader_links_preview_api,
+    dataset_data_preview_api,
 )
 from .api.colormap_api import (
     colormap_preset_save_api, colormap_preset_detail_api, colormap_preset_list_api,
@@ -72,7 +73,7 @@ __all__ = [
     'page_filter_columns_api', 'section_detail_api', 'row_detail_api',
     'drill_rows_api', 'drill_columns_api', 'drill_filter_values_api',
     'drill_export_csv_api', 'drill_available_columns_api',
-    'dataset_save_api', 'dataset_detail_api', 'dataset_list_api', 'dataset_preview_api', 'api_column_unique_values', 'dataset_filter_options_api', 'dataset_duplicate_api', 'dataset_export_csv_api', 'dataloader_links_catalog_api', 'dataloader_links_preview_api',
+    'dataset_save_api', 'dataset_detail_api', 'dataset_list_api', 'dataset_preview_api', 'api_column_unique_values', 'dataset_filter_options_api', 'dataset_duplicate_api', 'dataset_export_csv_api', 'dataloader_links_catalog_api', 'dataloader_links_preview_api', 'dataset_data_preview_api',
     'colormap_preset_save_api', 'colormap_preset_detail_api', 'colormap_preset_list_api',
     'home_dashboard_api',
 ]
