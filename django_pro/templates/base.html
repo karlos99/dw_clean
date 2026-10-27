@@ -57,18 +57,23 @@
             navbar_style: "{{ navbar_config.navbar_style }}",
             label_case: "{{ navbar_config.label_case }}",
             submenu_style: "{{ navbar_config.submenu_style }}",
+            submenu_opacity: {{ navbar_config.submenu_opacity|default:100 }},
         };
 
-        function navbarController() {            const cfg = window.NAVBAR_CONFIG || { sticky: true, navbar_style: "classic", label_case: "uppercase", submenu_style: "dropdown" };
+        function navbarController() {
+            const cfg = window.NAVBAR_CONFIG || { sticky: true, navbar_style: "classic", label_case: "uppercase", submenu_style: "dropdown", submenu_opacity: 100 };
             return {
                 mobileOpen: false,
                 sticky: cfg.sticky,
                 navbarStyle: cfg.navbar_style,
                 labelCase: cfg.label_case,
                 submenuStyle: cfg.submenu_style,
+                submenuOpacity: cfg.submenu_opacity || 100,
                 activeMega: null,
+                activeSplit: null,
                 meterOpen: null,
                 _megaTimer: null,
+                _splitTimer: null,
                 toggleMobile() {
                     this.mobileOpen = !this.mobileOpen;
                 },
@@ -80,8 +85,17 @@
                     clearTimeout(this._megaTimer);
                     this._megaTimer = setTimeout(() => { this.activeMega = null; }, 150);
                 },
+                openSplit(slug) {
+                    clearTimeout(this._splitTimer);
+                    this.activeSplit = slug;
+                },
+                closeSplit() {
+                    clearTimeout(this._splitTimer);
+                    this._splitTimer = setTimeout(() => { this.activeSplit = null; }, 180);
+                },
                 toggleMeter(slug) {
                     this.meterOpen = this.meterOpen === slug ? null : slug;
+                    this.activeSplit = this.meterOpen;
                 },
                 navWrapClass() {
                     return this.sticky ? "sticky top-0 z-40" : "relative";
@@ -90,6 +104,13 @@
                     return this.labelCase === "uppercase"
                         ? "text-xs font-semibold uppercase tracking-[0.15em]"
                         : "text-sm font-medium normal-case tracking-normal";
+                },
+                panelBgStyle() {
+                    const op = (Number(this.submenuOpacity) || 100) / 100;
+                    if (op >= 1) {
+                        return 'background-color: #ffffff;';
+                    }
+                    return `background-color: rgba(255, 255, 255, ${op}); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);`;
                 },
             };
         }

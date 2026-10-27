@@ -1259,11 +1259,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const columnFilters = {
             school_year: document.getElementById('school_year')?.value || '',
             status: document.getElementById('status')?.value || '',
-            search: document.getElementById('search')?.value || '',
         };
-        Object.keys(filters || {}).sort().forEach((k) => {
-            columnFilters[k] = filters[k];
-        });
         // Keep marks/test column trees aligned with schedule-filtered student cohort.
         if (scheduleFiltersEligible && isScheduleFilterBarActive()) {
             const sf = getScheduleFilterValues();

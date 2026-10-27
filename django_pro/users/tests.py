@@ -309,4 +309,88 @@ class UserSchoolsAndRoleManagementTests(TestCase):
         self.assertFalse(self.staff_user.roles.filter(id=self.role_teacher.id).exists())
 
 
+class NavbarConfigSplitPanelTests(TestCase):
+    def setUp(self):
+        from users.models_pages import Page
+        self.admin_user = User.objects.create_superuser(
+            username='admin_pages',
+            email='admin_pages@example.com',
+            password='password123'
+        )
+        self.top_page = Page.objects.create(
+            name='Assessments',
+            slug='assessments',
+            url_path='/assessments/',
+            show_in_menu=True,
+            status='active'
+        )
+        self.child_page = Page.objects.create(
+            name='State Testing',
+            slug='state-testing',
+            url_path='/assessments/state-testing/',
+            parent_page=self.top_page,
+            show_in_menu=True,
+            status='active'
+        )
+        self.client = Client()
+        self.client.force_login(self.admin_user)
+
+    def test_navbar_config_split_panel_and_opacity_defaults(self):
+        from users.models_pages import NavbarConfig
+        cfg = NavbarConfig.get()
+        self.assertEqual(cfg.submenu_opacity, 100)
+        self.assertEqual(cfg.submenu_opacity_decimal, 1.0)
+
+        cfg.submenu_style = 'split_panel'
+        cfg.submenu_opacity = 85
+        cfg.save()
+
+        reloaded = NavbarConfig.get()
+        self.assertEqual(reloaded.submenu_style, 'split_panel')
+        self.assertEqual(reloaded.submenu_opacity, 85)
+        self.assertEqual(reloaded.submenu_opacity_decimal, 0.85)
+
+    def test_navbar_settings_post_saves_split_panel_and_opacity(self):
+        from users.models_pages import NavbarConfig
+        resp = self.client.post(
+            '/users/pages/navbar-settings/',
+            data={
+                'navbar_style': 'classic',
+                'label_case': 'uppercase',
+                'submenu_style': 'split_panel',
+                'submenu_opacity': '90',
+                'sticky': 'on'
+            }
+        )
+        self.assertEqual(resp.status_code, 302)
+        cfg = NavbarConfig.get()
+        self.assertEqual(cfg.submenu_style, 'split_panel')
+        self.assertEqual(cfg.submenu_opacity, 90)
+        self.assertTrue(cfg.sticky)
+
+    def test_manage_pages_navbar_tab_renders_split_panel_preview(self):
+        resp = self.client.get('/users/pages/?tab=navbar')
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode('utf-8')
+        self.assertIn('Split panel (half-page panel with left categories + right items list)', content)
+        self.assertIn('Submenu Background Opacity', content)
+        self.assertIn('id="submenu_opacity_range"', content)
+        self.assertNotIn('Submenu Explorer', content)
+
+    def test_page_has_accessible_subpages_property(self):
+        from users.models_pages import Page
+        # top_page has child_page, but child_page has no children -> has_accessible_subpages is False
+        self.top_page.accessible_children = [self.child_page]
+        self.child_page.accessible_children = []
+        self.assertFalse(self.top_page.has_accessible_subpages)
+
+        # when grandchild is added to child_page -> has_accessible_subpages is True
+        grandchild = Page(name='Grandchild', slug='grandchild', url_path='/gc/')
+        self.child_page.accessible_children = [grandchild]
+        self.assertTrue(self.top_page.has_accessible_subpages)
+
+
+
+
+
 

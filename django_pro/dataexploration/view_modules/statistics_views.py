@@ -233,18 +233,22 @@ def get_column_statistics(request):
                      win_norm = _norm_part(test_window).strip('_')
                      key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
 
-                     for metric in ['SS', 'PL', 'DFP']:
+                     for metric in ['SS', 'PL', 'ELPI_LEVEL', 'DFP']:
                          norm_key = f"test_{key_base}_{metric.upper()}"
                          original_key = normalized_to_original.get(norm_key)
+                         if not original_key and metric == 'ELPI_LEVEL':
+                             original_key = normalized_to_original.get(f"test_{key_base}_ELPI")
                          if original_key:
                              info = {
                                  'year': yr, 'test_name': test_name, 'subject': subject, 'test_window': (test_window or '').strip() or None,
-                                 'metric': metric.lower(), 'col_name': original_key
+                                 'metric': 'elpi_level' if metric in ('ELPI_LEVEL', 'ELPI') else metric.lower(), 'col_name': original_key
                              }
                              if metric == 'DFP':
                                  # DFP is promoted out of other_info (see get_test_columns),
                                  # backed by the "dfp" key in results.other_info.
                                  info['other_info_key'] = 'dfp'
+                             elif metric in ('ELPI_LEVEL', 'ELPI'):
+                                 info['other_info_key'] = 'ELPI_level'
                              test_col_map[original_key] = info
                              test_col_map[original_key.replace('-', '_')] = test_col_map[original_key]
 

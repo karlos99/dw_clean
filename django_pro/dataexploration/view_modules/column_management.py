@@ -492,6 +492,11 @@ def load_column_structures(request):
     # does not invalidate the multi-MB column tree and force a slow unscoped
     # rebuild of the assessments and marks trees.
     base_column_filters = strip_course_program_filters(base_column_filters)
+    if isinstance(base_column_filters, dict):
+        base_column_filters = {
+            k: v for k, v in base_column_filters.items()
+            if k in {'school_year', 'status'}
+        }
 
     # Lazy mark-course fragment: the selector renders a course's period
     # checkboxes on first expand rather than emitting every period up front.
@@ -526,7 +531,7 @@ def load_column_structures(request):
     # school scope, sync version), so reuse it across identical requests.
     _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
     _html_cache_key = (
-        "dataexp:column_structures_html:v4:"
+        "dataexp:column_structures_html:v5:"
         + hashlib.md5(json.dumps({
             'column_filters': base_column_filters,
             'where': where_clauses,

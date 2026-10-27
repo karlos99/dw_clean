@@ -244,6 +244,15 @@
                                             {% else %}bg-slate-100 text-slate-800 border border-slate-200{% endif %}">
                                             {{ record.pl|default:"-" }}
                                         </span>
+                                        {% if record.other_info and record.other_info.ELPI_level and record.other_info.ELPI_level != 'NaN' %}
+                                        <div class="mt-1 text-[11px] font-semibold text-slate-600">
+                                            ELPI: {{ record.other_info.ELPI_level }}
+                                        </div>
+                                        {% elif record.other_info and record.other_info.elpi_level and record.other_info.elpi_level != 'NaN' %}
+                                        <div class="mt-1 text-[11px] font-semibold text-slate-600">
+                                            ELPI: {{ record.other_info.elpi_level }}
+                                        </div>
+                                        {% endif %}
                                     </td>
                                     <td class="px-6 py-3 whitespace-nowrap text-sm font-bold text-slate-900 bg-blue-50/10">{{ record.ss|default:"-" }}</td>
                                     <td class="px-6 py-3 whitespace-nowrap bg-purple-50/10">

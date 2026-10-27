@@ -528,7 +528,7 @@ def apply_column_filters(
 
                 val_id_params = list(base_params)
                 val_ssid_params = list(base_params)
-                if metric_col in {'oi', 'dfp'}:
+                if metric_col in {'oi', 'dfp', 'elpi_level'}:
                     val_id_params.append(test_info.get('other_info_key', ''))
                     val_ssid_params.append(test_info.get('other_info_key', ''))
                 val_id_params.append(real_values)

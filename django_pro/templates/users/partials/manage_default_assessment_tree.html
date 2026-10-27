@@ -62,6 +62,15 @@
                                 </label>
                                 {% endif %}
 
+                                {% with elpi_col=metrics.ELPI_level|default:metrics.ELPI %}
+                                {% if elpi_col %}
+                                <label class="flex items-center space-x-2">
+                                    <input type="checkbox" name="columns" value="{{ elpi_col }}" {% if elpi_col in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                                    <span class="text-xs text-slate-700">ELPI Level</span>
+                                </label>
+                                {% endif %}
+                                {% endwith %}
+
                                 {% if metrics.DFP %}
                                 <label class="flex items-center space-x-2">
                                     <input type="checkbox" name="columns" value="{{ metrics.DFP }}" {% if metrics.DFP in selected_columns %}checked{% endif %} class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">

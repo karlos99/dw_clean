@@ -252,7 +252,7 @@ def _build_test_columns_from_db(cursor, selected_test_cols: list[str]) -> tuple[
 
         key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
 
-        for suffix, metric in (('SS', 'ss'), ('PL', 'pl'), ('DFP', 'dfp')):
+        for suffix, metric in (('SS', 'ss'), ('PL', 'pl'), ('ELPI_LEVEL', 'elpi_level'), ('ELPI', 'elpi_level'), ('DFP', 'dfp')):
             norm_key = f"test_{key_base}_{suffix}"
             original_key = normalized_to_original.get(norm_key)
             if not original_key:
@@ -267,6 +267,8 @@ def _build_test_columns_from_db(cursor, selected_test_cols: list[str]) -> tuple[
             }
             if metric == 'dfp':
                 info['other_info_key'] = 'dfp'
+            elif metric == 'elpi_level':
+                info['other_info_key'] = 'ELPI_level'
             infos.append(info)
             col_map[original_key] = info
             col_map[original_key.replace('-', '_')] = info
@@ -870,7 +872,7 @@ def _fetch_test_data(cursor, test_cols_info: list[dict], student_ids: list[str],
                     val = normalize_score_value(ss) or '\u2014'
                 elif metric == 'pl':
                     val = normalize_score_value(pl) or '\u2014'
-                elif metric == 'oi' or metric == 'dfp':
+                elif metric == 'oi' or metric == 'dfp' or metric == 'elpi_level':
                     oi_key = info.get('other_info_key')
                     if oi_key:
                         if isinstance(oi, str):

@@ -506,9 +506,11 @@ def export_students_csv(request):
                             win_norm = _norm_part(test_window).strip('_')
                             key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
                             
-                            for metric in ('ss', 'pl', 'dfp'):
+                            for metric in ('ss', 'pl', 'elpi_level', 'dfp'):
                                 norm_key = f"test_{key_base}_{metric.upper()}"
                                 original_key = normalized_to_original.get(norm_key)
+                                if not original_key and metric == 'elpi_level':
+                                    original_key = normalized_to_original.get(f"test_{key_base}_ELPI")
                                 if original_key:
                                     info = {
                                         'col_name': original_key, 'year': yr, 'test_name': (test_name or ''), 
@@ -516,6 +518,8 @@ def export_students_csv(request):
                                     }
                                     if metric == 'dfp':
                                         info['other_info_key'] = 'dfp'
+                                    elif metric == 'elpi_level':
+                                        info['other_info_key'] = 'ELPI_level'
                                     test_cols_info.append(info)
                                     test_col_map[original_key] = info
                                     test_col_map[original_key.replace('-', '_')] = info
@@ -673,7 +677,7 @@ def export_students_csv(request):
                     dynamic_labels.update(COURSE_PROGRAM_DEFINITIONS)
                 if test_cols_info:
                     for info in test_cols_info:
-                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
+                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'elpi_level': 'ELPI Level', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
                         metric_label = metric_map.get(info['metric'], info['metric'])
                         
                         display_test = _get_display_name(info['test_name'])

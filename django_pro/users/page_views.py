@@ -188,9 +188,18 @@ def navbar_settings(request):
             label_case = 'uppercase'
         config.label_case = label_case
         submenu_style = request.POST.get('submenu_style', 'dropdown')
-        if submenu_style not in {'dropdown', 'megamenu'}:
+        if submenu_style not in {'dropdown', 'megamenu', 'split_panel'}:
             submenu_style = 'dropdown'
         config.submenu_style = submenu_style
+
+        try:
+            submenu_opacity = int(request.POST.get('submenu_opacity', 100))
+            if submenu_opacity not in {100, 95, 90, 85, 80, 70}:
+                submenu_opacity = 100
+        except (ValueError, TypeError):
+            submenu_opacity = 100
+        config.submenu_opacity = submenu_opacity
+
         config.updated_by = request.user
         config.save()
         messages.success(request, 'Navbar settings saved.')

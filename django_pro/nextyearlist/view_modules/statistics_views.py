@@ -154,6 +154,8 @@ def get_column_statistics(request):
                 norm_col = col.replace('-', '_')
                 if norm_col.upper().endswith('_DFP'):
                     metric = 'dfp'
+                elif norm_col.upper().endswith('_ELPI_LEVEL') or norm_col.upper().endswith('_ELPI'):
+                    metric = 'elpi_level'
                 elif norm_col.upper().endswith('_SS'):
                     metric = 'ss'
                 elif norm_col.upper().endswith('_PL'):
@@ -187,7 +189,10 @@ def get_column_statistics(request):
                     key_base = (f'{_np(row_yr)}_{_np(test_name)}_{_np(subject)}_{win_norm}'
                                 if win_norm else f'{_np(row_yr)}_{_np(test_name)}_{_np(subject)}')
                     candidate = f'test_{key_base}_{metric.upper()}'
-                    if candidate.replace('-', '_') == norm_col:
+                    matched = candidate.replace('-', '_') == norm_col
+                    if not matched and metric == 'elpi_level':
+                        matched = f'test_{key_base}_ELPI'.replace('-', '_') == norm_col
+                    if matched:
                         test_info = {
                             'year': row_yr,
                             'test_name': test_name,
@@ -197,6 +202,8 @@ def get_column_statistics(request):
                         }
                         if metric == 'dfp':
                             test_info['other_info_key'] = 'dfp'
+                        elif metric == 'elpi_level':
+                            test_info['other_info_key'] = 'ELPI_level'
                         break
 
                 if not test_info:

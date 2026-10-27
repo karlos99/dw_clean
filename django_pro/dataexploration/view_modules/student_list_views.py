@@ -918,9 +918,16 @@ def _load_students(request):
 
                 ss_norm = f"test_{key_base}_SS"
                 pl_norm = f"test_{key_base}_PL"
+                elpi_norm = f"test_{key_base}_ELPI_LEVEL"
                 dfp_norm = f"test_{key_base}_DFP"
 
-                for norm_key, metric in ((ss_norm, 'ss'), (pl_norm, 'pl'), (dfp_norm, 'dfp')):
+                for norm_key, metric in (
+                    (ss_norm, 'ss'),
+                    (pl_norm, 'pl'),
+                    (elpi_norm, 'elpi_level'),
+                    (f"test_{key_base}_ELPI", 'elpi_level'),
+                    (dfp_norm, 'dfp'),
+                ):
                     original_key = normalized_to_original.get(norm_key)
                     if not original_key:
                         continue
@@ -935,6 +942,8 @@ def _load_students(request):
                     }
                     if metric == 'dfp':
                         info['other_info_key'] = 'dfp'
+                    elif metric == 'elpi_level':
+                        info['other_info_key'] = 'ELPI_level'
                     infos.append(info)
                     # Map both exact and normalized keys for lookups
                     col_map[original_key] = info
@@ -2421,7 +2430,7 @@ def _load_students(request):
 
             # Add filter options for test PL columns, dfp, and other_info columns (with caching)
             for test_info in test_cols_info:
-                if test_info['metric'] not in {'pl', 'oi', 'dfp'}:
+                if test_info['metric'] not in {'pl', 'oi', 'dfp', 'elpi_level'}:
                     continue
                 col_key = test_info['col_name']
                 
@@ -2465,6 +2474,30 @@ def _load_students(request):
                     ORDER BY v ASC NULLS FIRST
                     LIMIT 30
                 """
+                    options_params = option_params + [
+                        test_info['year'],
+                        test_info['test_name'],
+                        test_info['subject'],
+                        *window_params,
+                    ]
+                elif test_info['metric'] == 'elpi_level':
+                    options_query = f"""
+                    SELECT (r.other_info ->> 'ELPI_level') AS v
+                    FROM results r
+                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                    INNER JOIN current_student cs ON {RESULTS_STUDENT_MATCH_SQL}
+                    {join_sql}
+                    WHERE {option_where_sql}
+                      AND r.school_year = %s
+                      AND t.test_name ILIKE %s
+                      AND t.subject ILIKE %s
+                      {window_clause}
+                      AND (r.other_info ->> 'ELPI_level') IS NOT NULL
+                      AND (r.other_info ->> 'ELPI_level') != 'NaN'
+                    GROUP BY v
+                    ORDER BY v ASC
+                    LIMIT 30
+                    """
                     options_params = option_params + [
                         test_info['year'],
                         test_info['test_name'],
@@ -2530,7 +2563,7 @@ def _load_students(request):
                 option_tasks.append((
                     col_key, cache_key,
                     _make_options_with_blank_task(
-                        options_query, options_params, check_blank_query, check_params),
+                        options_query, options_params, check_blank_query, check_params, use_pg=True),
                 ))
 
             # Add filter options for mark columns
@@ -2981,6 +3014,8 @@ def _load_students(request):
                 elif isinstance(v, (datetime, date)):
                     normalized.append(v.isoformat())
                 else:
+                    if isinstance(v, str) and v.strip().lower() in ('nan', 'none'):
+                        continue
                     normalized.append(v)
             if col == 'status':
                 normalized = sanitize_de_status_filter_values(normalized)
@@ -2996,7 +3031,7 @@ def _load_students(request):
     dynamic_definitions.update(get_survey_columns().get('definitions', {}))
     if test_cols_info:
         for info in test_cols_info:
-            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
+            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'elpi_level': 'ELPI Level', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
             metric_label = metric_map.get(info['metric'], info['metric'])
             display_test = _get_display_name(info['test_name'])
             display_subject = _get_display_name(info['subject'])
