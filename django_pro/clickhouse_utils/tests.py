@@ -536,6 +536,19 @@ class CourseProgramSyncTests(SimpleTestCase):
 
         self.assertNotIn('Pending', CREATE_MATCHED_TEMP_SQL)
 
+    def test_refresh_skipped_when_clickhouse_analytics_off(self):
+        from django.test import override_settings
+
+        from clickhouse_utils.course_program_sync import (
+            _course_program_sync_requested,
+            schedule_course_program_refresh,
+        )
+
+        _course_program_sync_requested.clear()
+        with override_settings(USE_CLICKHOUSE_ANALYTICS=False):
+            schedule_course_program_refresh()
+        self.assertFalse(_course_program_sync_requested.is_set())
+
 
 class StudentIncidentsSyncTests(SimpleTestCase):
     def test_pg_select_casts_incidents_to_text(self):

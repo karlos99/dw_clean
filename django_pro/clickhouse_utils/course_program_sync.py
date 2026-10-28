@@ -1,5 +1,15 @@
 """PostgreSQL extracts for ClickHouse course-program analytics tables."""
 
+import logging
+import threading
+
+from django.db import connection, transaction
+
+logger = logging.getLogger(__name__)
+
+_course_program_sync_lock = threading.Lock()
+_course_program_sync_requested = threading.Event()
+
 # Resolve catalog entry without OR inside LATERAL (uses PK / small-table lookups).
 _CATALOG_RESOLVE_JOINS = """
 LEFT JOIN courses_catalog cc_k
@@ -148,4 +158,58 @@ DIMENSION_BY_COLUMN = {
     'course_prog_discipline': 'discipline',
     'course_prog_level': 'level',
 }
+
+
+def schedule_course_program_refresh():
+    """Rebuild course-program flags after catalog placements are committed."""
+    from django.conf import settings
+
+    if not getattr(settings, 'USE_CLICKHOUSE_ANALYTICS', True):
+        return
+    transaction.on_commit(_start_course_program_refresh)
+
+
+def _start_course_program_refresh():
+    _course_program_sync_requested.set()
+    if not _course_program_sync_lock.acquire(blocking=False):
+        return
+    threading.Thread(target=_course_program_refresh_loop, daemon=True).start()
+
+
+def refresh_course_program_tables():
+    """Reload course-program ClickHouse tables from current placements and schedules."""
+    from django.conf import settings
+    from django.core.cache import cache
+    from django.utils import timezone
+
+    from clickhouse_utils.client import get_clickhouse_client
+    from clickhouse_utils.management.commands.sync_to_clickhouse import Command
+
+    ch = get_clickhouse_client()
+    if ch is None:
+        logger.warning('Course-program refresh skipped: no ClickHouse client.')
+        return
+    ch_db = getattr(settings, 'CLICKHOUSE_DB', 'fastapi_clickhouse_db')
+    Command()._rebuild_course_program_tables(ch, ch_db, atomic=True)
+    cache.set('analytics:clickhouse_sync_version', timezone.now().isoformat(), None)
+    cache.delete('analytics:course_program_ch_ready')
+
+
+def _course_program_refresh_loop():
+    try:
+        while True:
+            _course_program_sync_requested.clear()
+            try:
+                refresh_course_program_tables()
+                logger.info('Course-program ClickHouse refresh completed.')
+            except Exception:
+                logger.exception('Course-program ClickHouse refresh failed.')
+            finally:
+                connection.close()
+            if not _course_program_sync_requested.is_set():
+                break
+    finally:
+        _course_program_sync_lock.release()
+        if _course_program_sync_requested.is_set():
+            _start_course_program_refresh()
 

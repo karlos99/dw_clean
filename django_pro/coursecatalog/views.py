@@ -44,6 +44,8 @@ from .cte_pathways import (
     cte_pathways_for_discipline,
     list_cte_pathways,
 )
+from clickhouse_utils.course_program_sync import schedule_course_program_refresh
+
 from .placement_ops import upsert_placement_for_tag
 from .catalog_search import (
     catalog_terms_matched,
@@ -709,6 +711,8 @@ def placement_bulk_create(request):
             parts.append(f'{unchanged} unchanged')
         summary = ', '.join(parts) if parts else '0 courses'
         messages.success(request, f'Assigned {summary} to {label}.')
+        if created or replaced:
+            schedule_course_program_refresh()
     else:
         messages.error(request, form.errors.as_text())
     return redirect(_placements_url(q=q))
@@ -737,6 +741,8 @@ def placement_bulk_update(request):
         else:
             deleted, _ = CatalogPlacement.objects.filter(id__in=selected).delete()
             messages.success(request, f'Removed {deleted} assignment(s).')
+            if deleted:
+                schedule_course_program_refresh()
         return redirect(_placements_url(q=q, **assignment_filters))
 
     placement_choices = [(str(p.id), p.catalog_entry.display_title) for p in filtered[:500]]
@@ -767,6 +773,8 @@ def placement_bulk_update(request):
             f'Updated {updated} assignment(s) to {label}.'
             + (f' {skipped} could not be updated (duplicate path).' if skipped else ''),
         )
+        if updated:
+            schedule_course_program_refresh()
     else:
         messages.error(request, form.errors.as_text())
     return redirect(_placements_url(q=q, **assignment_filters))
@@ -776,7 +784,9 @@ def placement_bulk_update(request):
 @page_access_required('coursecatalog-placements')
 @require_POST
 def placement_delete(request, pk):
-    CatalogPlacement.objects.filter(pk=pk).delete()
+    deleted, _ = CatalogPlacement.objects.filter(pk=pk).delete()
+    if deleted:
+        schedule_course_program_refresh()
     messages.success(request, 'Placement removed.')
     assignment_filters = _assignment_filters_from_request(request, use_post=True)
     return redirect(
