@@ -418,8 +418,67 @@ class RemainingAnalyticsTests(SimpleTestCase):
         self.assertIn(CREATE_ANALYTICS_SURVEY_RESPONSES, get_all_ddl())
         self.assertIn('analytics_ap_results', ddl)
         self.assertIn('analytics_survey_responses', ddl)
+        self.assertNotIn('dbuilder', CREATE_ANALYTICS_AP_RESULTS)
+        self.assertNotIn('dbuilder', CREATE_ANALYTICS_SURVEY_RESPONSES)
+        self.assertIn('exam_grade Nullable(String)', CREATE_ANALYTICS_AP_RESULTS)
         self.assertTrue(PROJECTION_DDL)
         self.assertIn('ADD PROJECTION', PROJECTION_DDL[0])
+
+    def test_dbuilder_tables_are_new_clickhouse_read_models(self):
+        from clickhouse_utils.executor import CLICKHOUSE_SYNCED_TABLES
+        from clickhouse_utils.management.commands.sync_to_clickhouse import Command
+        from clickhouse_utils.schema import (
+            ANALYTICS_TABLE_NAMES,
+            CREATE_ANALYTICS_DBUILDER_AP_RESULTS,
+            CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY,
+            get_all_ddl,
+        )
+        from dataviz.utils.compiler import COLUMN_WHITELIST, TABLE_WHITELIST
+
+        ddl = get_all_ddl()
+        self.assertIn(CREATE_ANALYTICS_DBUILDER_AP_RESULTS, ddl)
+        self.assertIn(CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY, ddl)
+        self.assertIn('analytics_dbuilder_ap_results', ANALYTICS_TABLE_NAMES)
+        self.assertIn('analytics_dbuilder_panorama_survey', ANALYTICS_TABLE_NAMES)
+        self.assertIn('ORDER BY (school_year, exam_name, ssid)', CREATE_ANALYTICS_DBUILDER_AP_RESULTS)
+        self.assertIn(
+            'ORDER BY (school_year, survey_window, school, ssid)',
+            CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY,
+        )
+        self.assertNotIn('Nullable', CREATE_ANALYTICS_DBUILDER_AP_RESULTS)
+        self.assertNotIn('Nullable', CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY)
+
+        for name in ('analytics_dbuilder_ap_results', 'analytics_dbuilder_panorama_survey'):
+            self.assertIn(name, TABLE_WHITELIST)
+            self.assertIn(name, CLICKHOUSE_SYNCED_TABLES)
+
+        self.assertEqual(
+            COLUMN_WHITELIST['analytics_dbuilder_ap_results'],
+            {'ssid', 'school_year', 'exam_name', 'exam_grade'},
+        )
+        self.assertEqual(
+            COLUMN_WHITELIST['analytics_dbuilder_panorama_survey'],
+            {'ssid', 'school', 'category', 'question', 'response', 'school_year', 'survey_window'},
+        )
+
+        pg = dict(pg_host='h', pg_port='5432', pg_db='db', pg_user='u', pg_password='p')
+        cmd = Command()
+        ap_sql = cmd._derived_insert_sql('ch', 'analytics_dbuilder_ap_results', 't', pg)
+        self.assertIn('dataLoader_apexamresult', ap_sql)
+        self.assertIn('dataLoader_apexamcode', ap_sql)
+        self.assertIn('toUInt8(il.is_published) = 1', ap_sql)
+        self.assertIn('r.admin_year', ap_sql)
+
+        survey_sql = cmd._derived_insert_sql('ch', 'analytics_dbuilder_panorama_survey', 't', pg)
+        self.assertIn('dataLoader_surveytopic', survey_sql)
+        self.assertIn('dataLoader_responsescalelabel', survey_sql)
+        self.assertIn("sd.source_system = 'Panorama'", survey_sql)
+        self.assertIn("'Fall'", survey_sql)
+        self.assertIn('question_text', survey_sql)
+
+        old_survey = cmd._derived_insert_sql('ch', 'analytics_survey_responses', 't', pg)
+        self.assertNotIn('question_text', old_survey)
+        self.assertNotIn('dbuilder', old_survey)
 
     def test_timed_fn_preserves_name_and_sets_request_id(self):
         from clickhouse_utils.timing import current_request_id, timed_fn

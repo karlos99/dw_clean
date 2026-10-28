@@ -229,6 +229,8 @@ TABLE_WHITELIST = {
     'analytics_ap_awards': 'analytics_ap_awards',
     'analytics_sat_results': 'analytics_sat_results',
     'analytics_survey_responses': 'analytics_survey_responses',
+    'analytics_dbuilder_ap_results': 'analytics_dbuilder_ap_results',
+    'analytics_dbuilder_panorama_survey': 'analytics_dbuilder_panorama_survey',
     'analytics_ccgi_application_status': 'analytics_ccgi_application_status',
 }
 
@@ -487,6 +489,13 @@ COLUMN_WHITELIST = {
     'analytics_survey_responses': {
         'student_id', 'ssid', 'survey_type', 'school_year', 'testing_window',
         'grade_range', 'question_order', 'value',
+    },
+    'analytics_dbuilder_ap_results': {
+        'ssid', 'school_year', 'exam_name', 'exam_grade',
+    },
+    'analytics_dbuilder_panorama_survey': {
+        'ssid', 'school', 'category', 'question', 'response',
+        'school_year', 'survey_window',
     },
     'analytics_ccgi_favorite_career': {
         'ssid', 'stu_annual_key', 'student_name', 'grade', 'school',

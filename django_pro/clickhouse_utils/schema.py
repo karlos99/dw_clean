@@ -28,6 +28,8 @@ def get_all_ddl():
         CREATE_ANALYTICS_AP_AWARDS,
         CREATE_ANALYTICS_SAT_RESULTS,
         CREATE_ANALYTICS_SURVEY_RESPONSES,
+        CREATE_ANALYTICS_DBUILDER_AP_RESULTS,
+        CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY,
         CREATE_ANALYTICS_TEST_METADATA,
         CREATE_ANALYTICS_MARKS_METADATA,
         CREATE_ANALYTICS_STUDENT_COURSE_PROGRAM,
@@ -50,6 +52,10 @@ ANALYTICS_TABLE_NAMES = (
     'analytics_ap_awards',
     'analytics_sat_results',
     'analytics_survey_responses',
+    # Flat Dataset Builder tables. Separate from the analytics mirrors above
+    # so those schemas stay unchanged.
+    'analytics_dbuilder_ap_results',
+    'analytics_dbuilder_panorama_survey',
     # Small DISTINCT column-discovery tables. These back the unfiltered
     # test/mark column tree without re-scanning the multi-million-row
     # results/student_marks_list fact tables on every page load.
@@ -515,6 +521,41 @@ CREATE TABLE IF NOT EXISTS analytics_survey_responses (
 )
 ENGINE = MergeTree
 ORDER BY (school_year, student_id, survey_type, question_order)
+SETTINGS index_granularity = 8192
+"""
+
+# Dataset Builder read model for published AP exam rows.
+# Filters: school_year (always), exam_name, ssid join.
+# school_year is the low-cardinality prefix; exam_name is next; ssid is the
+# high-cardinality join key and stays last.
+CREATE_ANALYTICS_DBUILDER_AP_RESULTS = """
+CREATE TABLE IF NOT EXISTS analytics_dbuilder_ap_results (
+    ssid String,
+    school_year LowCardinality(String),
+    exam_name LowCardinality(String),
+    exam_grade LowCardinality(String) DEFAULT ''
+)
+ENGINE = MergeTree
+ORDER BY (school_year, exam_name, ssid)
+SETTINGS index_granularity = 8192
+"""
+
+# Dataset Builder read model for published Panorama responses, one row per
+# student answer. Filters: school_year, survey_window, school, then ssid.
+# survey_window stays a string (Fall/Winter/Spring) rather than Enum so an
+# unexpected window value still loads.
+CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY = """
+CREATE TABLE IF NOT EXISTS analytics_dbuilder_panorama_survey (
+    ssid String,
+    school LowCardinality(String),
+    category LowCardinality(String),
+    question LowCardinality(String),
+    response LowCardinality(String) DEFAULT '',
+    school_year LowCardinality(String),
+    survey_window LowCardinality(String)
+)
+ENGINE = MergeTree
+ORDER BY (school_year, survey_window, school, ssid)
 SETTINGS index_granularity = 8192
 """
 

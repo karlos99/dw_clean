@@ -45,6 +45,8 @@ CLICKHOUSE_SYNCED_TABLES = frozenset({
     'analytics_student_marks',     'analytics_ap_results', 'analytics_ap_awards',
     'analytics_sat_results',
     'analytics_survey_responses',
+    'analytics_dbuilder_ap_results',
+    'analytics_dbuilder_panorama_survey',
     'analytics_test_metadata', 'analytics_marks_metadata',
     'analytics_student_course_program', 'analytics_course_program_values',
     'analytics_ccgi_favorite_career', 'analytics_ccgi_career_cluster',
