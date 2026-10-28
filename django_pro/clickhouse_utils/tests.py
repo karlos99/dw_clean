@@ -120,6 +120,26 @@ class ClickHouseClientHealthTests(SimpleTestCase):
             self.assertIs(ch_client.get_clickhouse_client(), fake)
         fake.ping.assert_called_once_with()
 
+class PostgresOnlyTableRoutingTests(SimpleTestCase):
+    def test_schedule_alt_and_catalog_stay_on_postgres(self):
+        from clickhouse_utils.executor import _sql_requires_postgres
+
+        preview = (
+            "SELECT DISTINCT schedule_table_alt.schedule_id "
+            "FROM schedule_table_alt LIMIT 51"
+        )
+        catalog = "SELECT course_key FROM courses_catalog LIMIT 51"
+        self.assertTrue(_sql_requires_postgres(preview))
+        self.assertTrue(_sql_requires_postgres(catalog))
+        self.assertTrue(_sql_requires_postgres(
+            "SELECT s.ssid FROM schedule_table_alt s "
+            "INNER JOIN courses_catalog c ON c.course_id = s.course_code"
+        ))
+        self.assertFalse(_sql_requires_postgres(
+            "SELECT schedule_id FROM schedule_list LIMIT 51"
+        ))
+
+
 class SQLTranslatorTests(SimpleTestCase):
     def test_translate_cross_join_lateral_jsonb_object_keys(self):
         sql = """
@@ -446,7 +466,7 @@ class RemainingAnalyticsTests(SimpleTestCase):
             CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY,
         )
         self.assertNotIn('Nullable', CREATE_ANALYTICS_DBUILDER_AP_RESULTS)
-        self.assertNotIn('Nullable', CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY)
+        self.assertIn('response_value Nullable(UInt8)', CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY)
 
         for name in ('analytics_dbuilder_ap_results', 'analytics_dbuilder_panorama_survey'):
             self.assertIn(name, TABLE_WHITELIST)
@@ -458,7 +478,7 @@ class RemainingAnalyticsTests(SimpleTestCase):
         )
         self.assertEqual(
             COLUMN_WHITELIST['analytics_dbuilder_panorama_survey'],
-            {'ssid', 'school', 'category', 'question', 'response', 'school_year', 'survey_window'},
+            {'ssid', 'school', 'category', 'question', 'response', 'response_value', 'school_year', 'survey_window'},
         )
 
         pg = dict(pg_host='h', pg_port='5432', pg_db='db', pg_user='u', pg_password='p')
@@ -475,6 +495,7 @@ class RemainingAnalyticsTests(SimpleTestCase):
         self.assertIn("sd.source_system = 'Panorama'", survey_sql)
         self.assertIn("'Fall'", survey_sql)
         self.assertIn('question_text', survey_sql)
+        self.assertIn('CAST(sr.value AS Nullable(UInt8))', survey_sql)
 
         old_survey = cmd._derived_insert_sql('ch', 'analytics_survey_responses', 't', pg)
         self.assertNotIn('question_text', old_survey)

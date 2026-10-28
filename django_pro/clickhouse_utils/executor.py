@@ -72,6 +72,10 @@ _PG_ONLY_TABLE_MARKERS = (
     # expression identifier".
     'dataloader_',
     'mtss_data',
+    # Dataset builder base tables that stay in PostgreSQL. ClickHouse has
+    # schedule_list, not schedule_table_alt, and has no courses_catalog.
+    'schedule_table_alt',
+    'courses_catalog',
 )
 
 

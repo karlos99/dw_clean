@@ -551,6 +551,7 @@ CREATE TABLE IF NOT EXISTS analytics_dbuilder_panorama_survey (
     category LowCardinality(String),
     question LowCardinality(String),
     response LowCardinality(String) DEFAULT '',
+    response_value Nullable(UInt8),
     school_year LowCardinality(String),
     survey_window LowCardinality(String)
 )
@@ -815,5 +816,7 @@ COLUMN_MIGRATION_DDL = (
     "ADD COLUMN IF NOT EXISTS csu_gpa Nullable(Float64)",
     "ALTER TABLE analytics_ccgi_application_status "
     "ADD COLUMN IF NOT EXISTS uc_gpa Nullable(Float64)",
+    "ALTER TABLE analytics_dbuilder_panorama_survey "
+    "ADD COLUMN IF NOT EXISTS response_value Nullable(UInt8) AFTER response",
 )
 

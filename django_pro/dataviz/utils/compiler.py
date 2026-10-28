@@ -494,7 +494,7 @@ COLUMN_WHITELIST = {
         'ssid', 'school_year', 'exam_name', 'exam_grade',
     },
     'analytics_dbuilder_panorama_survey': {
-        'ssid', 'school', 'category', 'question', 'response',
+        'ssid', 'school', 'category', 'question', 'response', 'response_value',
         'school_year', 'survey_window',
     },
     'analytics_ccgi_favorite_career': {

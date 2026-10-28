@@ -1020,6 +1020,7 @@ class Command(BaseCommand):
                         lb.label,
                         if(sr.value IS NULL, '', toString(sr.value))
                     ),
+                    CAST(sr.value AS Nullable(UInt8)),
                     ifNull(sd.school_year, ''),
                     multiIf(
                         upper(ifNull(sd.testing_window, '')) = 'FALL', 'Fall',
