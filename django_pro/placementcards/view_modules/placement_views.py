@@ -77,10 +77,15 @@ def _teacher_note_questions(school) -> list[dict]:
     for question in questions:
         choices = []
         if question.question_type == 'checkbox':
-            choices = [
-                {'value': 'true', 'label': 'Yes'},
-                {'value': 'false', 'label': 'No'},
-            ]
+            field_options = question.field_options if isinstance(question.field_options, dict) else {}
+            option_values = field_options.get('choices', []) if isinstance(field_options.get('choices', []), list) else []
+            if option_values:
+                choices = [{'value': str(option), 'label': str(option)} for option in option_values if str(option).strip()]
+            else:
+                choices = [
+                    {'value': 'true', 'label': 'Yes'},
+                    {'value': 'false', 'label': 'No'},
+                ]
         elif question.question_type in {'choice', 'multiselect'}:
             field_options = question.field_options if isinstance(question.field_options, dict) else {}
             option_values = field_options.get('choices', []) if isinstance(field_options.get('choices', []), list) else []
@@ -110,6 +115,9 @@ def _matches_teacher_note_filter(question_type: str, value, selected_values: lis
         return True
 
     if question_type == 'checkbox':
+        if isinstance(value, list):
+            normalized_values = {str(item).strip() for item in value if str(item).strip()}
+            return bool(normalized_values & selected_set)
         value_str = 'true' if bool(value) else 'false'
         return value_str in selected_set
 

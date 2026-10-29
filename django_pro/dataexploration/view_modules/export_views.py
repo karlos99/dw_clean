@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import StreamingHttpResponse
 from django.db import connections
 from django.core.cache import cache
+from django.urls import reverse
 import json
 import csv
 import hashlib
@@ -28,6 +29,7 @@ from ..column_utils import (
     enrich_students_tests_marks,
     _fetch_marks_live_from_alt,
     group_marks_by_ssid_course,
+    get_sat_columns,
     markall_course_filter_fn,
     parse_markall_key,
     markall_key as _markall_key,
@@ -37,11 +39,15 @@ from ..utils import can_user_view_query, get_user_folders, _apply_de_school_filt
 from .schedule_filter_sql import parse_schedule_marks_filters, apply_schedule_marks_filters
 from .student_list_views import _append_school_year_filter, _fetchall_ch_or_pg
 from .filter_sql import (
+    append_de_student_status_where,
+    append_grade_where_clause,
     apply_column_filters,
     extract_markall_course_picker,
+    extract_markall_period_includes,
     incident_sql_backend_for_request,
     list_query_uses_postgres,
     markall_course_filter_parts,
+    markall_period_filter_parts,
 )
 from ..incident_pg_sql import incident_join_sql_fragment
 from .student_data_utils import (
@@ -178,8 +184,13 @@ def export_students_csv(request):
     sort_by = request.GET.get('sort_by', '') or saved_config.get('sort_by', '')
     sort_dir = request.GET.get('sort_dir', 'asc').lower()
 
+    # ``grade`` is intentionally not a core key here: the Data Explorer sends
+    # it as a column filter (``filters={"grade": [...]}``), exactly like the
+    # student list does. Keep it in the filters dict so the same predicate is
+    # applied to the export; the legacy top-level ``grade`` parameter below is
+    # still supported.
     CORE_FILTER_KEYS = {
-        'search', 'school_year', 'grade', 'status',
+        'search', 'school_year', 'status',
         'schedule_period', 'schedule_subject', 'schedule_course_name', 'schedule_staff',
     }
 
@@ -196,6 +207,12 @@ def export_students_csv(request):
 
     if isinstance(filters, dict):
         filters = {k: v for k, v in filters.items() if k not in CORE_FILTER_KEYS}
+        # The explorer applies Grade as a column filter. Move it to the single
+        # top-level grade predicate so the table and the export agree (and so
+        # a legacy ?grade= parameter still takes precedence when present).
+        filters_grade = filters.pop('grade', None)
+        if not grade and filters_grade:
+            grade = filters_grade
 
     # If saved query defines umbrella course/assessment filters that were not sent in filters, preserve them
     if saved_filters and isinstance(filters, dict):
@@ -269,9 +286,13 @@ def export_students_csv(request):
         selected_columns = new_selected
 
     markall_pickers = extract_markall_course_picker(filters)
+    markall_period_pickers = extract_markall_period_includes(filters)
 
     def _markall_course_picker_for_umbrella(umbrella):
         return markall_pickers.get(umbrella, {'mode': 'all', 'courses': set()})
+
+    def _markall_periods_for_umbrella(umbrella):
+        return markall_period_pickers.get(umbrella, set())
 
     # ── AP "All Results" expansion setup ───────────────────────────────────
     # The apall_<year> umbrella (or already-expanded pairs) collapses back to
@@ -403,7 +424,7 @@ def export_students_csv(request):
         and c not in VIRTUAL_COLUMNS
     ]
 
-    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
     needs_enroll = (
         any(c in enroll_fields for c in selected_columns)
         or (isinstance(filters, dict) and any(k in enroll_fields for k in filters.keys()))
@@ -505,9 +526,11 @@ def export_students_csv(request):
                             win_norm = _norm_part(test_window).strip('_')
                             key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
                             
-                            for metric in ('ss', 'pl', 'dfp'):
+                            for metric in ('ss', 'pl', 'elpi_level', 'dfp'):
                                 norm_key = f"test_{key_base}_{metric.upper()}"
                                 original_key = normalized_to_original.get(norm_key)
+                                if not original_key and metric == 'elpi_level':
+                                    original_key = normalized_to_original.get(f"test_{key_base}_ELPI")
                                 if original_key:
                                     info = {
                                         'col_name': original_key, 'year': yr, 'test_name': (test_name or ''), 
@@ -515,6 +538,8 @@ def export_students_csv(request):
                                     }
                                     if metric == 'dfp':
                                         info['other_info_key'] = 'dfp'
+                                    elif metric == 'elpi_level':
+                                        info['other_info_key'] = 'ELPI_level'
                                     test_cols_info.append(info)
                                     test_col_map[original_key] = info
                                     test_col_map[original_key.replace('-', '_')] = info
@@ -667,12 +692,22 @@ def export_students_csv(request):
                         })
 
                 # Prepare Dynamic Headers
+                if selected_sat_cols:
+                    # Populate COLUMN_DEFINITIONS with SAT labels; the module
+                    # constant is only filled when the selector is built.
+                    try:
+                        get_sat_columns()
+                    except Exception:
+                        pass
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
+                # The Data Explorer renders pictures from the student-picture
+                # endpoint; a CSV gets the absolute URL so the column is usable.
+                dynamic_labels['picture'] = 'Picture URL'
                 if course_program_columns_enabled():
                     dynamic_labels.update(COURSE_PROGRAM_DEFINITIONS)
                 if test_cols_info:
                     for info in test_cols_info:
-                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
+                        metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'elpi_level': 'ELPI Level', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
                         metric_label = metric_map.get(info['metric'], info['metric'])
                         
                         display_test = _get_display_name(info['test_name'])
@@ -710,6 +745,7 @@ def export_students_csv(request):
                 filters_value = filters
                 
                 student_list_id = request.GET.get('student_list')
+                de_status_skip_all_scope = False
                 if student_list_id:
                     list_ssids = None
 
@@ -749,6 +785,7 @@ def export_students_csv(request):
                             grade_value = None
                             status_value = None
                             filters_value = {}
+                            de_status_skip_all_scope = True
 
                 search_ids_value = search_ids
                 if search_ids_value:
@@ -759,27 +796,14 @@ def export_students_csv(request):
                     base_params.extend([f'%{search_value}%'] * 3)
                 _append_school_year_filter(base_where_clauses, base_params, school_year_value)
                 if grade_value:
-                    if isinstance(grade_value, list):
-                        if len(grade_value) == 1:
-                            base_where_clauses.append("cs.grade = %s")
-                            base_params.append(grade_value[0])
-                        elif len(grade_value) > 1:
-                            base_where_clauses.append("cs.grade = ANY(%s)")
-                            base_params.append(grade_value)
-                    else:
-                        base_where_clauses.append("cs.grade = %s")
-                        base_params.append(grade_value)
-                if status_value:
-                    if isinstance(status_value, list):
-                        if len(status_value) == 1:
-                            base_where_clauses.append("cs.status = %s")
-                            base_params.append(status_value[0])
-                        elif len(status_value) > 1:
-                            base_where_clauses.append("cs.status = ANY(%s)")
-                            base_params.append(status_value)
-                    else:
-                        base_where_clauses.append("cs.status = %s")
-                        base_params.append(status_value)
+                    # Match "7", "07" and numeric variants exactly like load_students.
+                    append_grade_where_clause(base_where_clauses, base_params, grade_value)
+                append_de_student_status_where(
+                    base_where_clauses,
+                    base_params,
+                    status_value,
+                    apply_all_when_unset=not de_status_skip_all_scope,
+                )
 
                 # Apply active school context or enforce school permissions
                 _apply_de_school_filter(base_where_clauses, base_params, request.user)
@@ -822,7 +846,6 @@ def export_students_csv(request):
                     if isinstance(k, str) and k.startswith('survey_') and v
                 }
                 if survey_filters:
-                    from ..survey_utils import get_survey_columns
                     _survey_col_meta = get_survey_columns().get('col_meta', {})
                     for _sr_col_key, _sr_values in survey_filters.items():
                         _sr_meta = _survey_col_meta.get(_sr_col_key)
@@ -866,6 +889,9 @@ def export_students_csv(request):
                         course_filter_sql, course_extra_params = markall_course_filter_parts(
                             subject, _markall_course_picker_for_umbrella(umbrella)
                         )
+                        period_filter_sql, period_extra_params = markall_period_filter_parts(
+                            _markall_periods_for_umbrella(umbrella),
+                        )
                         markall_cache_key = (
                             f"dataexp:markall_max:{_sync_v}:"
                             + hashlib.md5(json.dumps({
@@ -876,6 +902,8 @@ def export_students_csv(request):
                                 'subject': subject,
                                 'cf': course_filter_sql,
                                 'cep': [str(p) for p in course_extra_params],
+                                'pf': period_filter_sql,
+                                'pep': [str(p) for p in period_extra_params],
                             }, sort_keys=True).encode()).hexdigest()
                         )
                         max_val = cache.get(markall_cache_key)
@@ -890,6 +918,7 @@ def export_students_csv(request):
                                 WHERE {where_sql}
                                   AND sm.school_year = %s AND sm.subject = %s
                                   {course_filter_sql}
+                                  {period_filter_sql}
                                 GROUP BY sm.ssid
                             ) t
                             """
@@ -897,7 +926,7 @@ def export_students_csv(request):
                             pg_query = pg_sql_from_ch_marks_sql(ch_query)
                             res = _fetchall_ch_or_pg(
                                 ch_query,
-                                params + [year, subject] + course_extra_params,
+                                params + [year, subject] + course_extra_params + period_extra_params,
                                 pg_sql=pg_query,
                             )
                             max_val = min(int(res[0][0] or 0), 10) if res else 0
@@ -954,7 +983,7 @@ def export_students_csv(request):
                             SELECT COALESCE(MAX(cnt), 0)
                             FROM (
                                 SELECT r.ssid, COUNT(*) AS cnt
-                                FROM analytics_ap_exam_results r
+                                FROM analytics_ap_results r
                                 INNER JOIN current_student cs ON r.ssid = cs.ssid
                                 {join_sql}
                                 WHERE {where_sql}
@@ -1076,6 +1105,23 @@ def export_students_csv(request):
                     enrich_students_tests_marks(
                         chunk_students, test_cols_info, mark_cols_info, blank='',
                     )
+
+                    if 'picture' in export_cols:
+                        for student in chunk_students:
+                            ssid_val = str(student.get('ssid') or '').strip()
+                            if not ssid_val:
+                                student['picture'] = ''
+                                continue
+                            try:
+                                picture_path = reverse('studata:picture', args=[ssid_val])
+                                try:
+                                    student['picture'] = request.build_absolute_uri(picture_path)
+                                except Exception:
+                                    # Some proxies/hosts are not in ALLOWED_HOSTS;
+                                    # a relative URL is still useful in the CSV.
+                                    student['picture'] = picture_path
+                            except Exception:
+                                student['picture'] = ''
 
                     if selected_survey_cols:
                         try:
@@ -1204,6 +1250,7 @@ def export_students_csv(request):
                                     if n <= 0:
                                         continue
                                     picker = _markall_course_picker_for_umbrella(umbrella)
+                                    selected_periods = _markall_periods_for_umbrella(umbrella)
                                     if year not in _live_marks_by_year:
                                         _live_marks_by_year[year] = _fetch_marks_live_from_alt(chunk_ssids, chunk_ids, [year])
                                     live_rows = _live_marks_by_year[year]
@@ -1211,6 +1258,7 @@ def export_students_csv(request):
                                         live_rows,
                                         subject=subject,
                                         course_filter_fn=markall_course_filter_fn(subject, picker),
+                                        periods=selected_periods,
                                     )
                                     for student in chunk_students:
                                         ssid_key = str(student.get('ssid') or '').strip()

@@ -124,7 +124,7 @@ def export_students_csv(request):
         if isinstance(c, str) and not c.startswith(('test_', 'mark_')) and c in COLUMN_DEFINITIONS
     ]
 
-    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
     needs_enroll = (
         any(c in enroll_fields for c in selected_columns)
         or (isinstance(filters, dict) and any(k in enroll_fields for k in filters))
@@ -441,8 +441,10 @@ def export_students_csv(request):
                                 f"{_np(yr)}_{_np(test_name)}_{_np(subject)}"
                             )
                             win_value = (test_window or '').strip() or None
-                            for metric, suffix in (('ss', 'SS'), ('pl', 'PL'), ('dfp', 'DFP')):
+                            for metric, suffix in (('ss', 'SS'), ('pl', 'PL'), ('elpi_level', 'ELPI_LEVEL'), ('dfp', 'DFP')):
                                 ok = n2o.get(f"test_{key_base}_{suffix}")
+                                if not ok and suffix == 'ELPI_LEVEL':
+                                    ok = n2o.get(f"test_{key_base}_ELPI")
                                 if not ok:
                                     continue
                                 info = {
@@ -454,6 +456,8 @@ def export_students_csv(request):
                                 }
                                 if metric == 'dfp':
                                     info['other_info_key'] = 'dfp'
+                                elif metric == 'elpi_level':
+                                    info['other_info_key'] = 'ELPI_level'
                                 test_cols_info.append(info)
                                 test_col_map[ok] = info
                                 test_col_map[ok.replace('-', '_')] = info
@@ -530,7 +534,7 @@ def export_students_csv(request):
                 # --- Dynamic headers ---
                 dynamic_labels = COLUMN_DEFINITIONS.copy()
                 for info in test_cols_info:
-                    metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
+                    metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'elpi_level': 'ELPI Level', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
                     label = (
                         f"{_get_display_name(info['test_name'])} {_get_display_name(info['subject'])}"
                         f" ({info['year']}) {metric_map.get(info['metric'], info['metric'])}"

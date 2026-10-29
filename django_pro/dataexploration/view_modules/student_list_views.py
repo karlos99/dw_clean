@@ -100,10 +100,14 @@ from .column_management import (
 from ..school_year_utils import get_school_year_choices, get_year_labels_map, get_year_alias_map, resolve_relative_column_key
 from .filter_sql import (
     apply_column_filters,
+    append_de_student_status_where,
     incident_sql_backend_for_request,
     list_query_uses_postgres,
     normalize_filter_param as _normalize_filter_param,
     extract_markall_course_picker,
+    extract_markall_period_includes,
+    markall_period_filter_parts,
+    sanitize_de_status_filter_values,
 )
 from landing.utils import get_project_config
 
@@ -795,6 +799,14 @@ def _load_students(request):
             return markall_pickers[umbrella]
         return {'mode': 'all', 'courses': set()}
 
+    # All Marks marking-period picker. ``period:<name>`` values on the umbrella
+    # key whitelist the periods returned; no values means every period.
+    markall_periods = extract_markall_period_includes(filters)
+
+    def _markall_period_picker(year, subject):
+        umbrella = markall_years.get((year, subject))
+        return markall_periods.get(umbrella, set()) if umbrella else set()
+
     # Subjects the user unchecked from an "All Results" umbrella. Stored under
     # the umbrella key as 'exclude:<subject>' values; like the marks course
     # excludes these only shape the wide-pair columns, never the row population.
@@ -916,9 +928,16 @@ def _load_students(request):
 
                 ss_norm = f"test_{key_base}_SS"
                 pl_norm = f"test_{key_base}_PL"
+                elpi_norm = f"test_{key_base}_ELPI_LEVEL"
                 dfp_norm = f"test_{key_base}_DFP"
 
-                for norm_key, metric in ((ss_norm, 'ss'), (pl_norm, 'pl'), (dfp_norm, 'dfp')):
+                for norm_key, metric in (
+                    (ss_norm, 'ss'),
+                    (pl_norm, 'pl'),
+                    (elpi_norm, 'elpi_level'),
+                    (f"test_{key_base}_ELPI", 'elpi_level'),
+                    (dfp_norm, 'dfp'),
+                ):
                     original_key = normalized_to_original.get(norm_key)
                     if not original_key:
                         continue
@@ -933,6 +952,8 @@ def _load_students(request):
                     }
                     if metric == 'dfp':
                         info['other_info_key'] = 'dfp'
+                    elif metric == 'elpi_level':
+                        info['other_info_key'] = 'ELPI_level'
                     infos.append(info)
                     # Map both exact and normalized keys for lookups
                     col_map[original_key] = info
@@ -1086,6 +1107,7 @@ def _load_students(request):
         # A student list is a fixed set of students; when present it should override other
         # user-selected filters (grade/status/year/search/column-filters).
         student_list_id = request.GET.get('student_list')
+        de_status_skip_all_scope = False
         if student_list_id:
             list_ssids = None
 
@@ -1124,6 +1146,7 @@ def _load_students(request):
                     school_year = None
                     status = None
                     filters = {}
+                    de_status_skip_all_scope = True
 
         # Apply filters
         if search_ids:
@@ -1142,17 +1165,12 @@ def _load_students(request):
         
         _append_school_year_filter(base_where_clauses, base_params, school_year)
 
-        if status:
-            if isinstance(status, list):
-                if len(status) == 1:
-                    base_where_clauses.append("cs.status = %s")
-                    base_params.append(status[0])
-                elif len(status) > 1:
-                    base_where_clauses.append("cs.status = ANY(%s)")
-                    base_params.append(status)
-            else:
-                base_where_clauses.append("cs.status = %s")
-                base_params.append(status)
+        append_de_student_status_where(
+            base_where_clauses,
+            base_params,
+            status,
+            apply_all_when_unset=not de_status_skip_all_scope,
+        )
 
         # Apply active school context or enforce school permissions
         _apply_de_school_filter(base_where_clauses, base_params, request.user)
@@ -1262,7 +1280,7 @@ def _load_students(request):
                 ap_exam_infos = ap_award_infos = []
 
         # Determine if we need student_enroll join
-        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
         needs_enroll = (
             any(c in enroll_fields for c in selected_columns)
             or (isinstance(filters, dict) and any(k in enroll_fields for k in filters.keys()))
@@ -1390,6 +1408,10 @@ def _load_students(request):
                 course_filter_sql, course_extra_params = _markall_course_sql_parts(
                     subject, _markall_course_picker(year, subject)
                 )
+                selected_periods = _markall_period_picker(year, subject)
+                period_filter_sql, period_extra_params = markall_period_filter_parts(
+                    selected_periods,
+                )
                 markall_cache_key = (
                     f"dataexp:markall_max:{_sync_v}:"
                     + hashlib.md5(json.dumps({
@@ -1400,6 +1422,8 @@ def _load_students(request):
                         'subject': subject,
                         'cf': course_filter_sql,
                         'cep': [str(p) for p in course_extra_params],
+                        'pf': period_filter_sql,
+                        'pep': [str(p) for p in period_extra_params],
                     }, sort_keys=True).encode()).hexdigest()
                 )
                 max_val = cache.get(markall_cache_key)
@@ -1414,6 +1438,7 @@ def _load_students(request):
                         WHERE {where_sql}
                           AND sm.school_year = %s AND sm.subject = %s
                           {course_filter_sql}
+                          {period_filter_sql}
                         GROUP BY sm.ssid
                     ) t
                     """
@@ -1421,7 +1446,7 @@ def _load_students(request):
                     pg_query = pg_sql_from_ch_marks_sql(ch_query)
                     res = _fetchall_ch_or_pg(
                         ch_query,
-                        params + [year, subject] + course_extra_params,
+                        params + [year, subject] + course_extra_params + period_extra_params,
                         pg_sql=pg_query,
                     )
                     max_val = min(int(res[0][0] or 0), 10) if res else 0
@@ -1982,6 +2007,7 @@ def _load_students(request):
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
                         excludes = _markall_course_picker(year, subject)
+                        selected_periods = _markall_period_picker(year, subject)
                         if year not in _live_marks_by_year:
                             _live_marks_by_year[year] = _fetch_marks_live_from_alt(
                                 student_ssids_all, student_ids_all, [year],
@@ -1991,6 +2017,7 @@ def _load_students(request):
                             live_rows,
                             subject=subject,
                             course_filter_fn=markall_course_filter_fn(subject, excludes),
+                            periods=selected_periods,
                         )
                         for student in students:
                             ssid_key = str(student.get('ssid') or '').strip()
@@ -2422,7 +2449,7 @@ def _load_students(request):
 
             # Add filter options for test PL columns, dfp, and other_info columns (with caching)
             for test_info in test_cols_info:
-                if test_info['metric'] not in {'pl', 'oi', 'dfp'}:
+                if test_info['metric'] not in {'pl', 'oi', 'dfp', 'elpi_level'}:
                     continue
                 col_key = test_info['col_name']
                 
@@ -2466,6 +2493,30 @@ def _load_students(request):
                     ORDER BY v ASC NULLS FIRST
                     LIMIT 30
                 """
+                    options_params = option_params + [
+                        test_info['year'],
+                        test_info['test_name'],
+                        test_info['subject'],
+                        *window_params,
+                    ]
+                elif test_info['metric'] == 'elpi_level':
+                    options_query = f"""
+                    SELECT (r.other_info ->> 'ELPI_level') AS v
+                    FROM results r
+                    INNER JOIN tests t ON r.test_group_key = t.test_group_key
+                    INNER JOIN current_student cs ON {RESULTS_STUDENT_MATCH_SQL}
+                    {join_sql}
+                    WHERE {option_where_sql}
+                      AND r.school_year = %s
+                      AND t.test_name ILIKE %s
+                      AND t.subject ILIKE %s
+                      {window_clause}
+                      AND (r.other_info ->> 'ELPI_level') IS NOT NULL
+                      AND (r.other_info ->> 'ELPI_level') != 'NaN'
+                    GROUP BY v
+                    ORDER BY v ASC
+                    LIMIT 30
+                    """
                     options_params = option_params + [
                         test_info['year'],
                         test_info['test_name'],
@@ -2531,7 +2582,7 @@ def _load_students(request):
                 option_tasks.append((
                     col_key, cache_key,
                     _make_options_with_blank_task(
-                        options_query, options_params, check_blank_query, check_params),
+                        options_query, options_params, check_blank_query, check_params, use_pg=True),
                 ))
 
             # Add filter options for mark columns
@@ -2982,7 +3033,11 @@ def _load_students(request):
                 elif isinstance(v, (datetime, date)):
                     normalized.append(v.isoformat())
                 else:
+                    if isinstance(v, str) and v.strip().lower() in ('nan', 'none'):
+                        continue
                     normalized.append(v)
+            if col == 'status':
+                normalized = sanitize_de_status_filter_values(normalized)
             filter_options[col] = normalized
 
     # filter_options is built inside the DB cursor context
@@ -2995,7 +3050,7 @@ def _load_students(request):
     dynamic_definitions.update(get_survey_columns().get('definitions', {}))
     if test_cols_info:
         for info in test_cols_info:
-            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
+            metric_map = {'ss': 'Scale Score', 'pl': 'Perf Lvl', 'elpi_level': 'ELPI Level', 'dfp': 'DFP', 'oi': info.get('other_info_key', 'Info')}
             metric_label = metric_map.get(info['metric'], info['metric'])
             display_test = _get_display_name(info['test_name'])
             display_subject = _get_display_name(info['subject'])

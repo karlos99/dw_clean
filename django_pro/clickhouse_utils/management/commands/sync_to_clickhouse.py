@@ -120,6 +120,8 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_ap_awards': set(),
     'analytics_sat_results': set(),
     'analytics_survey_responses': set(),
+    'analytics_dbuilder_ap_results': set(),
+    'analytics_dbuilder_panorama_survey': set(),
     # Column-discovery tables: depend on the denormalized result/mark tables and
     # current_student (to preserve the INNER JOIN that scopes discovery to known
     # students).
@@ -981,6 +983,67 @@ class Command(BaseCommand):
                 INNER JOIN {sd} AS sd ON sq.survey_definition_id = sd.id
                 INNER JOIN {il} AS il ON sr.import_log_id = il.id
                 WHERE toUInt8(il.ready_for_exploration) = 1 AND il.status = 'COMPLETED' AND toUInt8(sd.is_active) = 1
+            """
+        if table == 'analytics_dbuilder_ap_results':
+            r = _pg_table_fn(table='dataLoader_apexamresult', **pg)
+            e = _pg_table_fn(table='dataLoader_apexamcode', **pg)
+            il = _pg_table_fn(table='dataLoader_apimportlog', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    ifNull(r.ssid, ''),
+                    ifNull(r.admin_year, ''),
+                    ifNull(e.name, ''),
+                    ifNull(r.exam_grade, '')
+                FROM {r} AS r
+                INNER JOIN {e} AS e ON r.exam_id = e.code
+                INNER JOIN {il} AS il ON r.import_log_id = il.id
+                WHERE toUInt8(il.is_published) = 1
+            """
+        if table == 'analytics_dbuilder_panorama_survey':
+            sr = _pg_table_fn(table='dataLoader_surveyresponse', **pg)
+            sq = _pg_table_fn(table='dataLoader_surveyquestion', **pg)
+            sd = _pg_table_fn(table='dataLoader_surveydefinition', **pg)
+            il = _pg_table_fn(table='dataLoader_importlog', **pg)
+            tp = _pg_table_fn(table='dataLoader_surveytopic', **pg)
+            lb = _pg_table_fn(table='dataLoader_responsescalelabel', **pg)
+            sch = _pg_table_fn(table='school', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    ifNull(sr.ssid, ''),
+                    if(ifNull(sch.school_name, '') != '', sch.school_name, ifNull(sr.school_code, '')),
+                    if(ifNull(tp.name, '') != '', tp.name, ifNull(sq.domain, '')),
+                    ifNull(sq.question_text, ''),
+                    if(
+                        ifNull(lb.label, '') != '',
+                        lb.label,
+                        if(sr.value IS NULL, '', toString(sr.value))
+                    ),
+                    CAST(sr.value AS Nullable(UInt8)),
+                    ifNull(sd.school_year, ''),
+                    multiIf(
+                        upper(ifNull(sd.testing_window, '')) = 'FALL', 'Fall',
+                        upper(ifNull(sd.testing_window, '')) = 'WINTER', 'Winter',
+                        upper(ifNull(sd.testing_window, '')) = 'SPRING', 'Spring',
+                        ifNull(sd.testing_window, '')
+                    )
+                FROM {sr} AS sr
+                INNER JOIN {sq} AS sq ON sr.question_id = sq.id
+                INNER JOIN {sd} AS sd ON sq.survey_definition_id = sd.id
+                INNER JOIN {il} AS il ON sr.import_log_id = il.id
+                LEFT JOIN {tp} AS tp ON sq.topic_id = tp.id
+                LEFT JOIN {lb} AS lb ON lb.question_id = sq.id AND lb.value = sr.value
+                LEFT JOIN (
+                    SELECT sis_key, any(school_name) AS school_name
+                    FROM {sch}
+                    WHERE sis_key IS NOT NULL AND sis_key != ''
+                    GROUP BY sis_key
+                ) AS sch ON sch.sis_key = sr.school_code
+                WHERE toUInt8(il.ready_for_exploration) = 1
+                  AND il.status = 'COMPLETED'
+                  AND toUInt8(sd.is_active) = 1
+                  AND sd.source_system = 'Panorama'
             """
         if table == 'analytics_ccgi_favorite_career':
             ce = _pg_table_fn(table='ccgi_career_explo', **pg)

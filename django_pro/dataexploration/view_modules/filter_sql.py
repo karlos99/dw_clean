@@ -61,6 +61,86 @@ def append_grade_where_clause(where_clauses, params, grade) -> None:
     params.append(variants)
 
 
+DE_EXCLUDED_STUDENT_STATUS = 'No_show'
+DE_ALLOWED_STUDENT_STATUSES = ('Active', 'Inactive')
+
+
+def _de_status_is_empty_toolbar_selection(status) -> bool:
+    if status is None:
+        return False
+    if isinstance(status, (list, tuple, set)):
+        cleaned = [str(s).strip() for s in status if s is not None and str(s).strip()]
+        return not cleaned
+    return str(status).strip() == ''
+
+
+def sanitize_de_status_filter_values(raw_vals) -> list[str]:
+    """Column-filter values for ``status``: only Active/Inactive; never No_show."""
+    if isinstance(raw_vals, (list, tuple, set)):
+        items = raw_vals
+    elif raw_vals is not None and str(raw_vals).strip() and str(raw_vals).strip() != 'All':
+        items = [raw_vals]
+    else:
+        items = []
+    allowed = set(DE_ALLOWED_STUDENT_STATUSES)
+    excluded = DE_EXCLUDED_STUDENT_STATUS.casefold()
+    out: list[str] = []
+    for item in items:
+        s = str(item).strip()
+        if not s or s.casefold() == excluded:
+            continue
+        if s in allowed:
+            out.append(s)
+    return out
+
+
+def append_de_student_status_where(
+    where_clauses,
+    params,
+    status,
+    *,
+    alias: str = 'cs',
+    apply_all_when_unset: bool = True,
+) -> None:
+    """Data Explorer student status: exclude No_show; empty toolbar = Active+Inactive only."""
+    col = f'{alias}.status'
+    # ClickHouse has no ``IS DISTINCT FROM``; NULL-safe exclusion works on PG + CH.
+    where_clauses.append(f'({col} IS NULL OR {col} <> %s)')
+    params.append(DE_EXCLUDED_STUDENT_STATUS)
+
+    if status is None:
+        if not apply_all_when_unset:
+            return
+        where_clauses.append(f'{col} = ANY(%s)')
+        params.append(list(DE_ALLOWED_STUDENT_STATUSES))
+        return
+
+    if _de_status_is_empty_toolbar_selection(status):
+        where_clauses.append(f'{col} = ANY(%s)')
+        params.append(list(DE_ALLOWED_STUDENT_STATUSES))
+        return
+
+    if isinstance(status, list):
+        vals = sanitize_de_status_filter_values(status)
+        if not vals:
+            where_clauses.append('1=0')
+            return
+        if len(vals) == 1:
+            where_clauses.append(f'{col} = %s')
+            params.append(vals[0])
+        else:
+            where_clauses.append(f'{col} = ANY(%s)')
+            params.append(vals)
+        return
+
+    s = str(status).strip()
+    if s.casefold() == DE_EXCLUDED_STUDENT_STATUS.casefold():
+        where_clauses.append('1=0')
+        return
+    where_clauses.append(f'{col} = %s')
+    params.append(s)
+
+
 def _filters_have_active_values(filters) -> bool:
     if not isinstance(filters, dict):
         return False
@@ -285,6 +365,44 @@ def extract_markall_course_picker(filters_to_apply):
     return pickers
 
 
+def extract_markall_period_includes(filters_to_apply):
+    """Read per-umbrella All Marks marking-period allowlist from a filters dict.
+
+    Selected periods are stored on the umbrella key as ``period:<period>``
+    values (e.g. ``period:Q1``). No period values means **all** periods, which
+    keeps saved queries created before period selection existed unchanged.
+
+    Returns ``{umbrella_key: set(period_names)}``.
+    """
+    periods = {}
+    if not isinstance(filters_to_apply, dict):
+        return periods
+    for col, values in filters_to_apply.items():
+        if not is_markall_umbrella_key(col):
+            continue
+        selected = {
+            str(value)[len('period:'):].strip()
+            for value in (values or [])
+            if str(value).startswith('period:')
+        }
+        selected.discard('')
+        if selected:
+            periods[col] = selected
+    return periods
+
+
+def markall_period_filter_parts(periods, alias='sm'):
+    """SQL predicate + params restricting All Marks to selected marking periods.
+
+    Returns ``(sql_fragment, params)``; an empty fragment means all periods.
+    """
+    names = sorted({str(p).strip() for p in (periods or set()) if str(p).strip()})
+    if not names:
+        return '', []
+    placeholders = ", ".join(["%s"] * len(names))
+    return f" AND {alias}.mark_period IN ({placeholders})", names
+
+
 def extract_markall_course_excludes(filters_to_apply):
     """Legacy helper: exclude sets for umbrellas still in **all** mode."""
     pickers = extract_markall_course_picker(filters_to_apply)
@@ -448,7 +566,7 @@ def apply_column_filters(
 
                 val_id_params = list(base_params)
                 val_ssid_params = list(base_params)
-                if metric_col in {'oi', 'dfp'}:
+                if metric_col in {'oi', 'dfp', 'elpi_level'}:
                     val_id_params.append(test_info.get('other_info_key', ''))
                     val_ssid_params.append(test_info.get('other_info_key', ''))
                 val_id_params.append(real_values)

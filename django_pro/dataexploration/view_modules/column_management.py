@@ -288,7 +288,7 @@ def get_column_expression(col, db_columns, enroll_columns=None, use_enroll=False
         return None, None
     if col == 'atendace_rate' and 'attendance_rate' in db_columns:
         return "cs.attendance_rate", "atendace_rate"
-    if col in {'birth_date', 'us_enter_date', 'fep_date'}:
+    if col in {'birth_date', 'us_enter_date', 'fep_date', 'enter_date', 'leave_date'}:
         if col in db_columns:
             return f"cs.{col}", col
         if use_enroll and enroll_columns and col in enroll_columns:
@@ -469,6 +469,27 @@ def strip_course_program_filters(filters):
     }
 
 
+def build_marks_period_index(marks_structure):
+    """Return ``{year: {subject: [period, ...]}}`` for the All Marks picker.
+
+    Periods are the union across the subject's courses, sorted with ``Live``
+    last to match the mark-column ordering used elsewhere.
+    """
+    index = {}
+    for year, subjects in (marks_structure or {}).items():
+        for subject, courses in (subjects or {}).items():
+            periods = set()
+            for course_periods in (courses or {}).values():
+                periods.update(p for p in (course_periods or {}) if p)
+            if not periods:
+                continue
+            index.setdefault(year, {})[subject] = sorted(
+                periods,
+                key=lambda p: (1, str(p)) if str(p).lower() == 'live' else (0, str(p)),
+            )
+    return index
+
+
 def load_column_structures(request):
     """Load dynamic column structures for the selector via HTMX."""
     import json
@@ -492,6 +513,11 @@ def load_column_structures(request):
     # does not invalidate the multi-MB column tree and force a slow unscoped
     # rebuild of the assessments and marks trees.
     base_column_filters = strip_course_program_filters(base_column_filters)
+    if isinstance(base_column_filters, dict):
+        base_column_filters = {
+            k: v for k, v in base_column_filters.items()
+            if k in {'school_year', 'status'}
+        }
 
     # Lazy mark-course fragment: the selector renders a course's period
     # checkboxes on first expand rather than emitting every period up front.
@@ -526,7 +552,7 @@ def load_column_structures(request):
     # school scope, sync version), so reuse it across identical requests.
     _sync_v = cache.get('analytics:clickhouse_sync_version', 'legacy')
     _html_cache_key = (
-        "dataexp:column_structures_html:v4:"
+        "dataexp:column_structures_html:v7:"
         + hashlib.md5(json.dumps({
             'column_filters': base_column_filters,
             'where': where_clauses,
@@ -558,6 +584,7 @@ def load_column_structures(request):
     context = {
         'test_structure': test_structure,
         'marks_structure': marks_structure,
+        'marks_periods': build_marks_period_index(marks_structure),
         'survey_structure': survey_structure.get('structure', {}),
         'ap_structure': ap_structure,
         'sat_structure': sat_structure,

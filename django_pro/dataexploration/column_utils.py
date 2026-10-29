@@ -222,9 +222,14 @@ def _append_grouped_mark(grouped, owner_key, course, period, mark):
     grouped.setdefault(owner_key, {}).setdefault(course, []).append((period, disp or mark))
 
 
-def group_marks_by_ssid_course(rows, subject=None, course_filter_fn=None):
-    """Group live mark rows into ssid and student_id keyed course/period maps."""
+def group_marks_by_ssid_course(rows, subject=None, course_filter_fn=None, periods=None):
+    """Group live mark rows into ssid and student_id keyed course/period maps.
+
+    ``periods`` optionally limits the included marking periods (e.g. Q1, P1);
+    ``None``/empty means every period.
+    """
     subject_fold = _fold(subject) if subject else None
+    period_set = {str(p).strip() for p in (periods or set()) if str(p).strip()} or None
     grouped_ssid = {}
     grouped_id = {}
     best = {}
@@ -236,6 +241,8 @@ def group_marks_by_ssid_course(rows, subject=None, course_filter_fn=None):
         if course_filter_fn and not course_filter_fn(course):
             continue
         period = (row.get('mark_period') or '').strip()
+        if period_set is not None and period not in period_set:
+            continue
         cand = (row.get('mark'), row.get('mark_status'), row.get('mark_ord'))
         ssid_s = str(row.get('ssid') or '').strip()
         sid_s = str(row.get('student_id') or '').strip()
@@ -301,7 +308,11 @@ def export_cell(value, blank='\u2014'):
     consistent instead of surfacing raw ``NaN`` / ``None`` strings.
     """
     v = normalize_score_value(value)
-    return blank if v is None else v
+    # UI-side enrich helpers (SAT/AP/MTSS) use the em dash for "no value";
+    # map it to the export blank marker as well so the CSV stays clean.
+    if v is None or str(v).strip() == '\u2014':
+        return blank
+    return v
 
 
 def export_csv_cell(value):
@@ -353,17 +364,35 @@ def _json_key_value(raw, key):
         return None
     if isinstance(raw, dict):
         val = raw.get(key)
+        if val is None:
+            k_lower = key.lower()
+            for k, v in raw.items():
+                if k.lower() == k_lower:
+                    val = v
+                    break
     else:
         try:
             obj = json.loads(raw)
         except (TypeError, ValueError):
             return None
-        val = obj.get(key) if isinstance(obj, dict) else None
+        if isinstance(obj, dict):
+            val = obj.get(key)
+            if val is None:
+                k_lower = key.lower()
+                for k, v in obj.items():
+                    if k.lower() == k_lower:
+                        val = v
+                        break
+        else:
+            val = None
     if val is None:
         return None
     if isinstance(val, (dict, list)):
         return json.dumps(val, ensure_ascii=False)
-    return str(val).strip() or None
+    v_str = str(val).strip()
+    if v_str.lower() == 'nan':
+        return None
+    return v_str or None
 
 
 def _fold(val):
@@ -843,7 +872,17 @@ def _append_cs_filter_clause(where_clauses, params, col, raw_val):
         append_grade_where_clause(where_clauses, params, vals)
         return
 
-    if col in {'school_year', 'status', 'school_state_id'}:
+    if col == 'status':
+        from dataexploration.view_modules.filter_sql import sanitize_de_status_filter_values
+
+        vals = sanitize_de_status_filter_values(vals)
+        if not vals:
+            return
+        where_clauses.append("cs.status = ANY(%s)")
+        params.append(vals)
+        return
+
+    if col in {'school_year', 'school_state_id'}:
         where_clauses.append(f"cs.{col} = ANY(%s)")
         params.append(vals)
         return
@@ -992,6 +1031,19 @@ def _build_test_columns_from_metadata():
             windows[window_name][testing_name] = {'SS': ss_key, 'PL': pl_key}
             continue
 
+        if raw_key_str.lower() in ('elpi_level', 'elpi level', 'elpi') or raw_key_str == 'ELPI_level':
+            elpi_key = f"test_{test_key}_ELPI_LEVEL"
+            COLUMN_DEFINITIONS[elpi_key] = f"{label_base} ELPI Level"
+            new_definitions[elpi_key] = COLUMN_DEFINITIONS[elpi_key]
+            windows = columns[year][assessment_name]['windows']
+            if window_name not in windows:
+                windows[window_name] = {}
+            if testing_name not in windows[window_name]:
+                windows[window_name][testing_name] = {}
+            windows[window_name][testing_name]['ELPI_level'] = elpi_key
+            windows[window_name][testing_name]['ELPI'] = elpi_key
+            continue
+
         if raw_key_str.lower() == 'dfp':
             dfp_key = f"test_{test_key}_DFP"
             COLUMN_DEFINITIONS[dfp_key] = f"{label_base} DFP"
@@ -1038,7 +1090,7 @@ def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses
                         - Additional assessment info comes from results.other_info (JSONB) keys.
     """
     extra_hash_str = f"{extra_join_sql}_{json.dumps(extra_where_clauses)}_{json.dumps(extra_params)}" if extra_join_sql or extra_where_clauses else ""
-    cache_key = _generate_cache_key("test_columns_v4", column_filters, extra_hash_str)
+    cache_key = _generate_cache_key("test_columns_v5", column_filters, extra_hash_str)
     cached_data = cache.get(cache_key)
 
     if cached_data:
@@ -1235,6 +1287,21 @@ def get_test_columns(column_filters=None, extra_join_sql="", extra_where_clauses
                 # Table header label should remain consistent with the existing format.
                 display_test_name = _get_display_name(test_name)
                 label_base = f"{display_test_name} {clean_subject} ({year})"
+
+                # Promote ELPI_level out of "Additional Info" to live below PL alongside SS and PL
+                if raw_key_str.lower() in ('elpi_level', 'elpi level', 'elpi') or raw_key_str == 'ELPI_level':
+                    elpi_key = f"test_{test_key}_ELPI_LEVEL"
+                    COLUMN_DEFINITIONS[elpi_key] = f"{label_base} ELPI Level"
+                    new_definitions[elpi_key] = COLUMN_DEFINITIONS[elpi_key]
+
+                    # Ensure the windows/testing_name entry exists
+                    if window_name not in columns[year][assessment_name]['windows']:
+                        columns[year][assessment_name]['windows'][window_name] = {}
+                    if testing_name not in columns[year][assessment_name]['windows'][window_name]:
+                        columns[year][assessment_name]['windows'][window_name] = {}
+                    columns[year][assessment_name]['windows'][window_name][testing_name]['ELPI_level'] = elpi_key
+                    columns[year][assessment_name]['windows'][window_name][testing_name]['ELPI'] = elpi_key
+                    continue
 
                 # Promote DFP out of "Additional Info" to live alongside SS and PL
                 if raw_key_str.lower() == 'dfp':

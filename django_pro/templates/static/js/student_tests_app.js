@@ -654,24 +654,58 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         return set;
     };
+    // Marking periods selected on the umbrella. No values = all periods, which
+    // keeps saved queries created before period selection working unchanged.
+    const markallPeriodIncludeSet = (umbrellaKey) => {
+        const set = new Set();
+        const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        vals.forEach((v) => {
+            const s = String(v);
+            if (s.startsWith('period:')) set.add(s.slice('period:'.length));
+        });
+        return set;
+    };
+    const markallFilterValuesWithoutPeriods = (umbrellaKey) => {
+        const vals = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        return vals.filter((v) => !String(v).startsWith('period:'));
+    };
     const getMarkallVisibleCourseInputs = (box, subject) => Array.from(box.querySelectorAll('input[data-markall-course]'))
         .filter((ci) => !isMarkallHiddenCourse(subject, ci.dataset.markallCourseName || ''));
     const getMarkallVisibleCourseNames = (box, subject) => getMarkallVisibleCourseInputs(box, subject)
         .map((ci) => String(ci.dataset.markallCourseName || '').trim())
         .filter(Boolean);
-    const persistMarkallCoursePicker = (umbrellaKey, mode, checkedNames, allVisibleNames) => {
-        const checked = [...new Set(checkedNames)];
-        const visible = [...new Set(allVisibleNames)];
-        if (mode === 'only') {
-            filters[umbrellaKey] = ['mode:only', ...checked.map((n) => `include:${n}`)];
-            return;
-        }
-        const excluded = visible.filter((n) => !checked.includes(n));
-        if (excluded.length) {
-            filters[umbrellaKey] = excluded.map((n) => `exclude:${n}`);
+    const applyMarkallFilterValues = (umbrellaKey, values) => {
+        if (values.length) {
+            filters[umbrellaKey] = values;
         } else {
             delete filters[umbrellaKey];
         }
+    };
+    const persistMarkallCoursePicker = (umbrellaKey, mode, checkedNames, allVisibleNames) => {
+        const checked = [...new Set(checkedNames)];
+        const visible = [...new Set(allVisibleNames)];
+        const existingValues = Array.isArray(filters[umbrellaKey]) ? filters[umbrellaKey] : [];
+        const periodValues = existingValues.filter((v) => String(v).startsWith('period:'));
+        let courseValues = [];
+        if (mode === 'only') {
+            courseValues = ['mode:only', ...checked.map((n) => `include:${n}`)];
+        } else {
+            const excluded = visible.filter((n) => !checked.includes(n));
+            courseValues = excluded.map((n) => `exclude:${n}`);
+        }
+        applyMarkallFilterValues(umbrellaKey, [...courseValues, ...periodValues]);
+    };
+    const persistMarkallPeriodPicker = (umbrellaKey, checkedPeriods, allPeriods) => {
+        const checked = [...new Set(checkedPeriods)].filter(Boolean);
+        const all = [...new Set(allPeriods)].filter(Boolean);
+        // Preserve the course picker values (mode/include/exclude).
+        const courseValues = markallFilterValuesWithoutPeriods(umbrellaKey);
+        // Only store an allowlist when the user narrowed the periods; checking
+        // everything removes the values so the default is truly "all".
+        const periodValues = checked.length && checked.length < all.length
+            ? checked.map((p) => `period:${p}`)
+            : [];
+        applyMarkallFilterValues(umbrellaKey, [...courseValues, ...periodValues]);
     };
     const updateMarkallModeButtons = (box, mode) => {
         box.querySelectorAll('[data-markall-mode-btn]').forEach((btn) => {
@@ -698,8 +732,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const active = markallUmbrellaActive(year, subject);
             box.classList.toggle('hidden', !active);
             const hint = box.querySelector('[data-markall-course-hint]');
+            const periodHint = box.querySelector('[data-markall-period-hint]');
             if (!active) {
                 if (hint) hint.textContent = '';
+                if (periodHint) periodHint.textContent = '';
                 return;
             }
             const umbrellaKey = markallUmbrellaKey(year, subject);
@@ -734,6 +770,23 @@ document.addEventListener('DOMContentLoaded', () => {
                     hint.textContent = `${checked}/${visible.length} selected`;
                 }
             }
+
+            const periodInputs = Array.from(box.querySelectorAll('input[data-markall-period]'));
+            const selectedPeriods = markallPeriodIncludeSet(umbrellaKey);
+            periodInputs.forEach((pi) => {
+                const name = pi.dataset.markallPeriodName || '';
+                pi.checked = selectedPeriods.size ? selectedPeriods.has(name) : true;
+            });
+            if (periodHint) {
+                if (!periodInputs.length) {
+                    periodHint.textContent = '';
+                } else if (selectedPeriods.size) {
+                    const periodChecked = periodInputs.filter((pi) => pi.checked).length;
+                    periodHint.textContent = `${periodChecked}/${periodInputs.length}`;
+                } else {
+                    periodHint.textContent = 'All';
+                }
+            }
         });
     };
 
@@ -764,6 +817,47 @@ document.addEventListener('DOMContentLoaded', () => {
         const allNames = getMarkallVisibleCourseNames(box, subject);
         const checkedNames = checkedAfter.map((ci) => String(ci.dataset.markallCourseName || '').trim()).filter(Boolean);
         persistMarkallCoursePicker(umbrellaKey, mode, checkedNames, allNames);
+        resetPage();
+        syncMarkallCourseControls();
+        triggerLoadData({ debounceMs: 250 });
+    };
+
+    const getMarkallPeriodInputs = (box) => Array.from(box.querySelectorAll('input[data-markall-period]'));
+
+    const handleMarkallPeriodToggle = (periodCb) => {
+        const container = periodCb.closest('[data-category^="marks_"]');
+        const box = container ? container.querySelector('[data-markall-course-box]') : null;
+        if (!box) return;
+        const year = periodCb.dataset.markallYear || '';
+        const subject = periodCb.dataset.markallSubject || '';
+        if (!markallUmbrellaActive(year, subject)) {
+            syncMarkallCourseControls();
+            return;
+        }
+        const inputs = getMarkallPeriodInputs(box);
+        const checkedAfter = inputs.filter((pi) => pi.checked);
+        if (checkedAfter.length === 0) {
+            // Keep at least one period selected, mirroring the course picker.
+            periodCb.checked = true;
+            return;
+        }
+        const umbrellaKey = markallUmbrellaKey(year, subject);
+        const allPeriods = inputs.map((pi) => String(pi.dataset.markallPeriodName || '').trim()).filter(Boolean);
+        const checkedPeriods = checkedAfter.map((pi) => String(pi.dataset.markallPeriodName || '').trim()).filter(Boolean);
+        persistMarkallPeriodPicker(umbrellaKey, checkedPeriods, allPeriods);
+        resetPage();
+        syncMarkallCourseControls();
+        triggerLoadData({ debounceMs: 250 });
+    };
+
+    const selectAllMarkallPeriods = (box, year, subject) => {
+        if (!markallUmbrellaActive(year, subject)) return;
+        const umbrellaKey = markallUmbrellaKey(year, subject);
+        const allPeriods = getMarkallPeriodInputs(box)
+            .map((pi) => String(pi.dataset.markallPeriodName || '').trim())
+            .filter(Boolean);
+        if (!allPeriods.length) return;
+        persistMarkallPeriodPicker(umbrellaKey, allPeriods, allPeriods);
         resetPage();
         syncMarkallCourseControls();
         triggerLoadData({ debounceMs: 250 });
@@ -919,6 +1013,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     umbrellaCb.dataset.markallSubject || '',
                 );
             }
+            return;
+        }
+        const markallSelectAllPeriods = e.target.closest('[data-markall-select-all-periods]');
+        if (markallSelectAllPeriods) {
+            const box = markallSelectAllPeriods.closest('[data-markall-course-box]');
+            const umbrellaCb = box?.closest('[data-category^="marks_"]')?.querySelector('input[data-markall="1"]');
+            if (box && umbrellaCb) {
+                selectAllMarkallPeriods(
+                    box,
+                    umbrellaCb.dataset.markallYear || '',
+                    umbrellaCb.dataset.markallSubject || '',
+                );
+            }
+            return;
         }
     });
     const selectedCountEl = document.getElementById('selected-count');
@@ -1259,11 +1367,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const columnFilters = {
             school_year: document.getElementById('school_year')?.value || '',
             status: document.getElementById('status')?.value || '',
-            search: document.getElementById('search')?.value || '',
         };
-        Object.keys(filters || {}).sort().forEach((k) => {
-            columnFilters[k] = filters[k];
-        });
         // Keep marks/test column trees aligned with schedule-filtered student cohort.
         if (scheduleFiltersEligible && isScheduleFilterBarActive()) {
             const sf = getScheduleFilterValues();
@@ -2562,6 +2666,12 @@ document.addEventListener('DOMContentLoaded', () => {
             resetPage();
             renderSelectedColumns();
             triggerLoadData();
+            return;
+        }
+
+        const periodCheckbox = event.target.closest('input[data-markall-period]');
+        if (periodCheckbox) {
+            handleMarkallPeriodToggle(periodCheckbox);
             return;
         }
 

@@ -1,0 +1,332 @@
+{% load static %}
+
+<div x-data="{
+    roleSearch: '',
+    roleCategory: 'all',
+    assignModalOpen: false,
+    selectedRole: null,
+    searchQuery: '',
+    searchResults: [],
+    selectedUserIds: [],
+    searching: false,
+    assigning: false,
+    assignFeedback: '',
+    assignFeedbackSuccess: true,
+
+    openAssignModal(card) {
+        this.selectedRole = card;
+        this.assignModalOpen = true;
+        this.searchQuery = '';
+        this.searchResults = [];
+        this.selectedUserIds = [];
+        this.assignFeedback = '';
+    },
+
+    async doSearch() {
+        if (!this.searchQuery.trim()) {
+            this.searchResults = [];
+            return;
+        }
+        this.searching = true;
+        try {
+            const roleId = this.selectedRole ? this.selectedRole.id : '';
+            const r = await fetch(`{% url 'users:search_users_for_role' %}?q=${encodeURIComponent(this.searchQuery)}&role_id=${roleId}`);
+            const d = await r.json();
+            this.searchResults = d.users || [];
+        } catch (e) {
+            console.error('User search failed:', e);
+            this.searchResults = [];
+        }
+        this.searching = false;
+    },
+
+    toggleUser(uId) {
+        if (this.selectedUserIds.includes(uId)) {
+            this.selectedUserIds = this.selectedUserIds.filter(id => id !== uId);
+        } else {
+            this.selectedUserIds.push(uId);
+        }
+    },
+
+    async submitRoleAssignment() {
+        if (!this.selectedRole || this.selectedUserIds.length === 0) return;
+        this.assigning = true;
+        this.assignFeedback = '';
+        try {
+            const csrf = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+            const url = `{% url 'users:manage_users' %}roles/${this.selectedRole.id}/add-users/`;
+            const r = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrf,
+                },
+                body: JSON.stringify({ user_ids: this.selectedUserIds })
+            });
+            const d = await r.json();
+            if (d.success) {
+                this.assignFeedbackSuccess = true;
+                this.assignFeedback = d.message;
+                // Update local user count for this role
+                this.selectedRole.user_count = d.new_count;
+                this.selectedUserIds = [];
+                // Re-search to update tags
+                await this.doSearch();
+                setTimeout(() => {
+                    this.assignModalOpen = false;
+                    this.assignFeedback = '';
+                }, 1500);
+            } else {
+                this.assignFeedbackSuccess = false;
+                this.assignFeedback = d.error || 'Failed to assign role.';
+            }
+        } catch (e) {
+            this.assignFeedbackSuccess = false;
+            this.assignFeedback = e.message || 'Network error.';
+        }
+        this.assigning = false;
+    }
+}" class="space-y-6">
+
+    <!-- Role Directory Top Banner & Filters -->
+    <div class="bg-slate-900 rounded-2xl p-6 text-white shadow-sm border border-slate-800">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                        Governance & Security
+                    </span>
+                    <span class="text-xs text-slate-400">Total 9 Defined System Roles</span>
+                </div>
+                <h2 class="text-xl font-bold tracking-tight text-white">Roles & Access Directory</h2>
+                <p class="text-xs text-slate-300 max-w-2xl mt-1">
+                    Review role scopes, row-level student access limits, and accessible modules. Click <strong>+ Assign Users</strong> on any role to immediately grant permissions to staff members.
+                </p>
+            </div>
+            <!-- Category Filter Pills -->
+            <div class="flex flex-wrap items-center gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 self-start md:self-auto">
+                <button type="button" @click="roleCategory = 'all'"
+                        :class="roleCategory === 'all' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:text-white'"
+                        class="px-3 py-1 rounded-lg text-xs transition">All Roles</button>
+                <button type="button" @click="roleCategory = 'System Administration'"
+                        :class="roleCategory === 'System Administration' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:text-white'"
+                        class="px-3 py-1 rounded-lg text-xs transition">System Admin</button>
+                <button type="button" @click="roleCategory = 'District Administration'"
+                        :class="roleCategory === 'District Administration' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:text-white'"
+                        class="px-3 py-1 rounded-lg text-xs transition">District</button>
+                <button type="button" @click="roleCategory = 'School Leadership'"
+                        :class="roleCategory === 'School Leadership' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:text-white'"
+                        class="px-3 py-1 rounded-lg text-xs transition">School</button>
+                <button type="button" @click="roleCategory = 'Instructional Staff'"
+                        :class="roleCategory === 'Instructional Staff' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:text-white'"
+                        class="px-3 py-1 rounded-lg text-xs transition">Teachers</button>
+                <button type="button" @click="roleCategory = 'Specialist Roles'"
+                        :class="roleCategory === 'Specialist Roles' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:text-white'"
+                        class="px-3 py-1 rounded-lg text-xs transition">Specialists</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Role Cards Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {% for card in role_cards %}
+        <div x-show="roleCategory === 'all' || roleCategory === '{{ card.category }}'"
+             x-transition
+             class="bg-white rounded-2xl border border-slate-200/90 shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden">
+            
+            <div class="p-6">
+                <!-- Header -->
+                <div class="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                        <div class="flex items-center gap-2 flex-wrap mb-1">
+                            <h3 class="text-lg font-bold text-slate-900">{{ card.name }}</h3>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase
+                                {% if card.color == 'purple' %}bg-purple-100 text-purple-800 border border-purple-200
+                                {% elif card.color == 'indigo' %}bg-indigo-100 text-indigo-800 border border-indigo-200
+                                {% elif card.color == 'blue' %}bg-blue-100 text-blue-800 border border-blue-200
+                                {% elif card.color == 'emerald' %}bg-emerald-100 text-emerald-800 border border-emerald-200
+                                {% elif card.color == 'teal' %}bg-teal-100 text-teal-800 border border-teal-200
+                                {% elif card.color == 'cyan' %}bg-cyan-100 text-cyan-800 border border-cyan-200
+                                {% elif card.color == 'amber' %}bg-amber-100 text-amber-800 border border-amber-200
+                                {% elif card.color == 'rose' %}bg-rose-100 text-rose-800 border border-rose-200
+                                {% else %}bg-orange-100 text-orange-800 border border-orange-200{% endif %}">
+                                {{ card.badge }}
+                            </span>
+                        </div>
+                        <p class="text-xs text-slate-500 font-medium">{{ card.category }} · <span class="text-slate-700 font-semibold">{{ card.scope }}</span></p>
+                    </div>
+
+                    <!-- User Count Pill -->
+                    <div class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 shrink-0">
+                        <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                        <span>{{ card.user_count }} users</span>
+                    </div>
+                </div>
+
+                <!-- Student Row-Level Access -->
+                <div class="mb-4 bg-slate-50 rounded-xl p-3 border border-slate-200/70">
+                    <div class="flex items-start gap-2">
+                        <span class="text-sm shrink-0">👥</span>
+                        <div class="text-xs">
+                            <span class="font-bold text-slate-800">Student Access Scope:</span>
+                            <span class="text-slate-600 block mt-0.5">{{ card.student_scope_desc }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Capabilities -->
+                <div class="mb-4">
+                    <h4 class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Key Administrative Powers</h4>
+                    <ul class="space-y-1.5 text-xs text-slate-700">
+                        {% for cap in card.capabilities %}
+                        <li class="flex items-start gap-2">
+                            <svg class="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                            <span>{{ cap }}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+
+                <!-- Accessible Modules -->
+                {% if card.modules %}
+                <div class="mb-2">
+                    <h4 class="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Accessible Platform Modules</h4>
+                    <div class="flex flex-wrap gap-1.5">
+                        {% for mod in card.modules %}
+                        <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-medium border border-slate-200/80">
+                            {{ mod }}
+                        </span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Footer Action Bar -->
+            <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3">
+                <!-- Filter Users Link -->
+                <a href="{% url 'users:manage_users' %}?tab=users&role={{ card.id }}"
+                   class="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700 hover:text-indigo-900 transition">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                    <span>View Users ({{ card.user_count }})</span>
+                </a>
+
+                <!-- Quick Assign Button -->
+                <button type="button"
+                        @click="openAssignModal({ id: {{ card.id }}, name: '{{ card.name|escapejs }}', user_count: {{ card.user_count }} })"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                    <span>+ Assign Users</span>
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Quick Assign Users Modal -->
+    <div x-show="assignModalOpen"
+         x-transition.opacity
+         style="display: none;"
+         class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4">
+        
+        <div class="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden"
+             @click.outside="assignModalOpen = false">
+            
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                        🛡️
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-slate-900">
+                            Assign Users to <span class="text-indigo-600" x-text="selectedRole ? selectedRole.name : ''"></span>
+                        </h3>
+                        <p class="text-[11px] text-slate-500">Search users by name, email, or staff ID to grant this role.</p>
+                    </div>
+                </div>
+                <button type="button" @click="assignModalOpen = false" class="text-slate-400 hover:text-slate-600 p-1 text-base">&times;</button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="p-6 space-y-4">
+                <!-- Search input with debounce -->
+                <div class="relative">
+                    <input type="text"
+                           x-model="searchQuery"
+                           @input.debounce.300ms="doSearch()"
+                           placeholder="Type user name, email, or staff ID…"
+                           class="w-full text-xs rounded-lg border border-slate-300 px-3.5 py-2.5 pl-9 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs">
+                    <svg class="w-4 h-4 text-slate-400 absolute left-3 top-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    <span x-show="searching" class="absolute right-3 top-3">
+                        <svg class="animate-spin w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+                    </span>
+                </div>
+
+                <!-- Feedback banner -->
+                <template x-if="assignFeedback">
+                    <div :class="assignFeedbackSuccess ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'"
+                         class="p-3 text-xs rounded-lg border flex items-center justify-between">
+                        <span x-text="assignFeedback"></span>
+                    </div>
+                </template>
+
+                <!-- Search Results List -->
+                <div class="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-slate-50/50">
+                    <template x-if="searchResults.length === 0 && searchQuery && !searching">
+                        <div class="p-8 text-center text-xs text-slate-400 italic">No matching users found for this query.</div>
+                    </template>
+                    <template x-if="searchResults.length === 0 && !searchQuery">
+                        <div class="p-8 text-center text-xs text-slate-400">Search for users above to assign them to this role.</div>
+                    </template>
+
+                    <template x-for="user in searchResults" :key="user.id">
+                        <div class="p-3 flex items-center justify-between hover:bg-white transition cursor-pointer"
+                             @click="!user.has_role && toggleUser(user.id)">
+                            <div class="flex items-center gap-3">
+                                <input type="checkbox"
+                                       :disabled="user.has_role"
+                                       :checked="selectedUserIds.includes(user.id) || user.has_role"
+                                       class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-xs font-semibold text-slate-800" x-text="user.name"></span>
+                                        <template x-if="user.staff_id">
+                                            <span class="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-mono" x-text="'#'+user.staff_id"></span>
+                                        </template>
+                                    </div>
+                                    <div class="text-[11px] text-slate-500" x-text="user.email"></div>
+                                    <template x-if="user.schools.length > 0">
+                                        <div class="text-[10px] text-slate-400 mt-0.5" x-text="user.schools.join(', ')"></div>
+                                    </template>
+                                </div>
+                            </div>
+                            <div>
+                                <template x-if="user.has_role">
+                                    <span class="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">Already Assigned</span>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                <span class="text-xs text-slate-500">
+                    <strong class="text-slate-800" x-text="selectedUserIds.length"></strong> users selected
+                </span>
+                <div class="flex items-center gap-2">
+                    <button type="button" @click="assignModalOpen = false"
+                            class="px-3.5 py-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200 transition">Cancel</button>
+                    <button type="button" @click="submitRoleAssignment()"
+                            :disabled="selectedUserIds.length === 0 || assigning"
+                            class="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold shadow-xs transition">
+                        <span x-text="assigning ? 'Assigning…' : 'Assign to Role'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>

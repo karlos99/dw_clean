@@ -34,6 +34,7 @@ from ..catalog_columns import (
 )
 from .filter_sql import (
     apply_column_filters,
+    append_de_student_status_where,
     incident_sql_backend_for_request,
     list_query_uses_postgres,
 )
@@ -179,7 +180,7 @@ def get_column_statistics(request):
     target_mark_cols = [c for c in target_columns if c.startswith('mark_')]
     all_related_mark_cols = list(set(selected_mark_cols + target_mark_cols))
 
-    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
     all_relevant_cols = set(target_columns) | set(filters.keys())
     needs_enroll = any(c in enroll_fields for c in all_relevant_cols)
 
@@ -232,18 +233,22 @@ def get_column_statistics(request):
                      win_norm = _norm_part(test_window).strip('_')
                      key_base = f"{yr_norm}_{tn_norm}_{sub_norm}_{win_norm}" if win_norm else f"{yr_norm}_{tn_norm}_{sub_norm}"
 
-                     for metric in ['SS', 'PL', 'DFP']:
+                     for metric in ['SS', 'PL', 'ELPI_LEVEL', 'DFP']:
                          norm_key = f"test_{key_base}_{metric.upper()}"
                          original_key = normalized_to_original.get(norm_key)
+                         if not original_key and metric == 'ELPI_LEVEL':
+                             original_key = normalized_to_original.get(f"test_{key_base}_ELPI")
                          if original_key:
                              info = {
                                  'year': yr, 'test_name': test_name, 'subject': subject, 'test_window': (test_window or '').strip() or None,
-                                 'metric': metric.lower(), 'col_name': original_key
+                                 'metric': 'elpi_level' if metric in ('ELPI_LEVEL', 'ELPI') else metric.lower(), 'col_name': original_key
                              }
                              if metric == 'DFP':
                                  # DFP is promoted out of other_info (see get_test_columns),
                                  # backed by the "dfp" key in results.other_info.
                                  info['other_info_key'] = 'dfp'
+                             elif metric in ('ELPI_LEVEL', 'ELPI'):
+                                 info['other_info_key'] = 'ELPI_level'
                              test_col_map[original_key] = info
                              test_col_map[original_key.replace('-', '_')] = test_col_map[original_key]
 
@@ -439,9 +444,7 @@ def get_column_statistics(request):
             base_where_clauses.append("(cs.student_name ILIKE %s OR cs.ssid ILIKE %s OR cs.student_id ILIKE %s)")
             base_params.extend([f'%{search}%']*3)
         _append_school_year_filter(base_where_clauses, base_params, school_year)
-        if status:
-            base_where_clauses.append("cs.status = %s")
-            base_params.append(status)
+        append_de_student_status_where(base_where_clauses, base_params, status)
 
         # Check if user is unrestricted (Project Admin OR District Role)
         is_unrestricted = _is_user_unrestricted(request.user)

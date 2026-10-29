@@ -21,8 +21,10 @@ function chartBuilderDataMethods() {
         this.columns = [];
       }
       this.columnsLoading = false;
+      this._recomputeFilterCols();
       // Load filter options in parallel (non-blocking)
       this.loadFilterOptions();
+      if (this.canPreview) this._scheduleDataPreview();
     },
 
     async loadDatasetColumns() {
@@ -36,23 +38,27 @@ function chartBuilderDataMethods() {
         const mappings = ds.column_mappings || {};
         this.datasetColumnMappings = mappings;
         this.columns = cols.map(c => mappings[c] || c.split('.').slice(-1)[0]);
-        if (ds.school_filter_mode) this.schoolFilterMode = ds.school_filter_mode;
-        if (ds.year_context) {
-          this.yearContext = ds.year_context;
-          this.chartFilters = { ...this.chartFilters, school_year: ds.year_context };
-        }
-        const dsFilters = ds.filters || [];
-        if (dsFilters.length > 0) {
-          dsFilters.forEach(f => {
-            if (f.column && f.value) {
-              const alias = mappings[f.column] || f.column.split('.').slice(-1)[0];
-              this.chartFilters[alias] = Array.isArray(f.value) ? f.value : [f.value];
-            }
-          });
+        if (!this.chartId) {
+          if (ds.school_filter_mode) this.schoolFilterMode = ds.school_filter_mode;
+          if (ds.year_context) {
+            this.yearContext = ds.year_context;
+            this.chartFilters = { ...this.chartFilters, school_year: ds.year_context };
+          }
+          const dsFilters = ds.filters || [];
+          if (dsFilters.length > 0) {
+            dsFilters.forEach(f => {
+              if (f.column && f.value) {
+                const alias = mappings[f.column] || f.column.split('.').slice(-1)[0];
+                this.chartFilters[alias] = Array.isArray(f.value) ? f.value : [f.value];
+              }
+            });
+          }
         }
       } catch (e) { console.error('Dataset load:', e); this.columns = []; }
       this.columnsLoading = false;
+      this._recomputeFilterCols();
       this._loadDatasetFilterOptions();
+      if (this.canPreview) this._scheduleDataPreview();
     },
 
     async _loadDatasetFilterOptions() {
@@ -166,6 +172,25 @@ function chartBuilderDataMethods() {
         this._flash('Preview error: ' + e.message, true);
       }
       this.queryPreviewLoading = false;
+    },
+
+    async previewDataset() {
+      if (!this.datasetSourceId) return;
+      this.datasetPreviewLoading = true;
+      this.datasetPreviewData = null;
+      try {
+        const r = await fetch(`/dataviz/api/datasets/${this.datasetSourceId}/preview-data/`,
+                              { headers: { 'X-CSRFToken': getCsrf() } });
+        const data = await r.json();
+        if (data.success) {
+          this.datasetPreviewData = { columns: data.columns, rows: data.rows };
+        } else {
+          this._flash(data.error || 'Dataset preview failed', true);
+        }
+      } catch (e) {
+        this._flash('Dataset preview error: ' + e.message, true);
+      }
+      this.datasetPreviewLoading = false;
     },
 
     /* ─── Colour mapping presets ─────────────────────────── */

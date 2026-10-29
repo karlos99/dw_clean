@@ -18,6 +18,122 @@ from typing import Optional
 from datetime import datetime, timedelta
 
 
+ROLE_SPECIFICATIONS = {
+    'Project Admin': {
+        'badge': 'System Administrator',
+        'category': 'System Administration',
+        'color': 'purple',
+        'scope': 'District-Wide (All Students)',
+        'student_scope_desc': 'Unrestricted row-level access across all schools, grades, and programs.',
+        'modules': ['DataViz Builder', 'Page Management', 'User Management', 'Usage Analytics', 'Placement Cards', 'Course Catalog', 'All Dashboards'],
+        'capabilities': [
+            'Full administrative control across all platform modules',
+            'Impersonate any active user account for troubleshooting',
+            'Create, edit, and assign roles & page visibility permissions',
+            'Build and edit datasets, ClickHouse queries, and visual charts',
+        ],
+    },
+    'District Admin': {
+        'badge': 'District Leadership',
+        'category': 'District Administration',
+        'color': 'indigo',
+        'scope': 'District-Wide (All Schools)',
+        'student_scope_desc': 'Full access to all students across all schools in the district.',
+        'modules': ['Course Catalog Overview', 'Catalog Categories & Placements', 'Placement Cards & Classrooms', 'Student Lists', 'All Dashboards'],
+        'capabilities': [
+            'District-wide course catalog & student placement management',
+            'Full student placement configuration across schools',
+            'District-wide student exports and roster analysis',
+        ],
+    },
+    'District View': {
+        'badge': 'District View-Only',
+        'category': 'District Administration',
+        'color': 'blue',
+        'scope': 'District-Wide (Read-Only)',
+        'student_scope_desc': 'Read-only access across all district schools and student records.',
+        'modules': ['Next Year Student Lists', 'Placement Cards', 'All Dashboards & Visualizations'],
+        'capabilities': [
+            'District-wide read-only access to academic & demographic reports',
+            'View student lists and charts across all schools',
+        ],
+    },
+    'School Admin': {
+        'badge': 'School Administrator',
+        'category': 'School Leadership',
+        'color': 'emerald',
+        'scope': 'Assigned School(s)',
+        'student_scope_desc': 'Full access to all students enrolled in their assigned school(s).',
+        'modules': ['User Management (School Staff)', 'Student Lists', 'Classrooms & Placement Cards', 'DESI Student List', 'School Dashboards'],
+        'capabilities': [
+            'Manage staff accounts and assign roles within their assigned school(s)',
+            'Manage student classrooms and student placement cards',
+            'Full visibility of all grade levels and students in their school',
+        ],
+    },
+    'School Gr View': {
+        'badge': 'School Grade Leader',
+        'category': 'School Leadership',
+        'color': 'teal',
+        'scope': 'Assigned School(s) & Grades',
+        'student_scope_desc': 'Access to students enrolled in specific assigned grade levels within their school(s).',
+        'modules': ['Classrooms Placement', 'Placement Cards', 'Student Lists'],
+        'capabilities': [
+            'Move students between classrooms (delegated via preferences)',
+            'Export classroom CSV rosters (delegated via preferences)',
+            'View placement cards for designated grade levels',
+        ],
+    },
+    'School View': {
+        'badge': 'School Staff View',
+        'category': 'School Leadership',
+        'color': 'cyan',
+        'scope': 'Assigned School(s)',
+        'student_scope_desc': 'Read-only access to all students enrolled in their assigned school(s).',
+        'modules': ['Next Year Student Lists', 'DESI Student List', 'Student Assessment Details'],
+        'capabilities': [
+            'View student lists, demographics, and assessment histories for assigned schools',
+        ],
+    },
+    'Teacher': {
+        'badge': 'Classroom Instructor',
+        'category': 'Instructional Staff',
+        'color': 'amber',
+        'scope': 'Classroom Roster Only',
+        'student_scope_desc': 'Strictly restricted to students currently scheduled to the teacher’s Staff ID.',
+        'modules': ['Classroom Roster View', 'DESI Student List', 'Teacher Notes', 'Student Test Summaries'],
+        'capabilities': [
+            'View rostered students and assessment performance',
+            'Input and view teacher placement notes for roster students',
+        ],
+    },
+    'Testing Coordinator': {
+        'badge': 'Assessment Coordinator',
+        'category': 'Specialist Roles',
+        'color': 'rose',
+        'scope': 'Assigned School(s) DESI',
+        'student_scope_desc': 'All students in assigned school(s) for state testing accommodations.',
+        'modules': ['DESI Coordinator', 'Support Admin', 'Designated Supports Matrix'],
+        'capabilities': [
+            'Configure and audit DESI designated supports & accommodations',
+            'Monitor assessment completion rates for their school',
+        ],
+    },
+    '504_Admin': {
+        'badge': 'Special Programs 504',
+        'category': 'Specialist Roles',
+        'color': 'orange',
+        'scope': '504 Plan Students',
+        'student_scope_desc': 'Students with an active 504 plan in assigned school(s).',
+        'modules': ['DESI Support Admin', '504 Supports Matrix'],
+        'capabilities': [
+            'Edit and manage designated supports for students with a 504 plan',
+            'Add-on role that functions across any active role',
+        ],
+    },
+}
+
+
 def user_is_project_admin(user: User) -> bool:
     """Check if user has Project Admin role"""
     return user.is_authenticated and user.is_project_admin
@@ -213,6 +329,48 @@ def manage_users(request):
          # implies that if I can see a Project Admin (because they are also in my school), I should see that role option.
          pass
          
+    tab = request.GET.get('tab', 'users').strip()
+    if tab not in ('users', 'roles'):
+        tab = 'users'
+
+    # Pre-cache school names for fast resolution without N+1
+    for s in all_schools:
+        User._school_cache[s['state_id']] = s['school_name']
+
+    # Build rich roles directory cards
+    all_system_roles = Role.objects.annotate(user_count=Count('users')).order_by('name')
+    if is_school and not is_proj:
+        allowed_role_names = ['School Gr View', 'School View', 'Teacher']
+        all_system_roles = all_system_roles.filter(name__in=allowed_role_names)
+
+    role_cards = []
+    for r in all_system_roles:
+        spec = ROLE_SPECIFICATIONS.get(r.name, {
+            'badge': 'Custom Role',
+            'category': 'Custom Roles',
+            'color': 'slate',
+            'scope': 'Assigned Access',
+            'student_scope_desc': r.description or 'Custom role access.',
+            'modules': [],
+            'capabilities': [r.description] if r.description else ['Standard role access'],
+        })
+        sample_users = list(r.users.filter(is_active=True).values('id', 'name', 'email')[:8])
+        role_cards.append({
+            'role': r,
+            'id': r.id,
+            'name': r.name,
+            'description': r.description or spec.get('student_scope_desc', ''),
+            'badge': spec.get('badge', r.name),
+            'category': spec.get('category', 'General'),
+            'color': spec.get('color', 'blue'),
+            'scope': spec.get('scope', 'Standard'),
+            'student_scope_desc': spec.get('student_scope_desc', ''),
+            'modules': spec.get('modules', []),
+            'capabilities': spec.get('capabilities', []),
+            'user_count': r.user_count,
+            'sample_users': sample_users,
+        })
+
     paginator = Paginator(users_qs, page_size)
     page_number = request.GET.get('page', 1)
     page_obj = paginator.get_page(page_number)
@@ -221,10 +379,7 @@ def manage_users(request):
         'users': page_obj,
         'page_obj': page_obj,
         'paginator': paginator,
-        'query': query, # Now fetched from GET inside filtered function as well, but variable 'query' here was not defined in local scope if we removed previous code.
-                        # Wait, the refactor Removed 'query = request.GET...'.
-                        # I need to re-add those vars locally or return them from filtered func.
-                        # Easier to re-fetch from GET for context.
+        'query': query,
         'page_size': page_size,
         'role_filter': role_filter,
         'job_title_filter': job_title_filter,
@@ -234,11 +389,15 @@ def manage_users(request):
         'all_schools': all_schools,
         'sort_by': sort_by,
         'sort_order': sort_order,
-        'total_users_count': total_users_count, 
+        'total_users_count': total_users_count,
+        'tab': tab,
+        'role_cards': role_cards,
     }
     
     # Return partial for HTMX requests
     if request.headers.get('HX-Request'):
+        if tab == 'roles':
+            return render(request, 'users/_roles_directory.html', context)
         return render(request, 'users/_user_table.html', context)
     
     return render(request, 'users/user_list.html', context)
@@ -890,6 +1049,111 @@ def bulk_update_users(request):
         return redirect(f'{base_url}?{query_string}')
         
     return redirect('users:manage_users')
+
+
+@login_required
+def search_users_for_role(request):
+    """API endpoint to search users for quick role assignment."""
+    if not (user_is_project_admin(request.user) or user_is_school_admin(request.user)):
+        return JsonResponse({'error': 'Permission denied.'}, status=403)
+
+    q = request.GET.get('q', '').strip()
+    role_id = request.GET.get('role_id')
+    if not q:
+        return JsonResponse({'users': []})
+
+    base_qs = get_base_users_queryset(request)
+    users_qs = base_qs.filter(
+        Q(name__icontains=q) | Q(email__icontains=q) | Q(username__icontains=q) | Q(staff_id__icontains=q)
+    ).distinct()[:20]
+
+    target_role = None
+    if role_id:
+        target_role = Role.objects.filter(id=role_id).first()
+
+    results = []
+    for u in users_qs:
+        has_role = bool(target_role and target_role in u.roles.all())
+        results.append({
+            'id': u.id,
+            'name': u.name or u.username,
+            'email': u.email,
+            'staff_id': u.staff_id or '',
+            'has_role': has_role,
+            'schools': [s['school_name'] for s in u.assigned_schools_list[:2]],
+            'roles': [r.name for r in u.roles.all()[:3]],
+        })
+    return JsonResponse({'users': results})
+
+
+@login_required
+def add_users_to_role(request, role_id):
+    """API endpoint to add users to a specific role."""
+    is_proj = user_is_project_admin(request.user)
+    is_school = user_is_school_admin(request.user)
+    if not (is_proj or is_school) or request.method != 'POST':
+        return JsonResponse({'error': 'Permission denied.'}, status=403)
+
+    role = get_object_or_404(Role, id=role_id)
+    if is_school and not is_proj:
+        allowed_role_names = ['School Gr View', 'School View', 'Teacher']
+        if role.name not in allowed_role_names:
+            return JsonResponse({'error': 'You do not have permission to assign this role.'}, status=403)
+
+    import json
+    user_ids = []
+    if request.content_type == 'application/json':
+        try:
+            body = json.loads(request.body.decode('utf-8'))
+            user_ids = body.get('user_ids', [])
+        except Exception:
+            pass
+    if not user_ids:
+        user_ids = request.POST.getlist('user_ids')
+        if not user_ids and request.POST.get('user_id'):
+            user_ids = [request.POST.get('user_id')]
+
+    if not user_ids:
+        return JsonResponse({'error': 'No users specified.'}, status=400)
+
+    base_qs = get_base_users_queryset(request)
+    users_to_add = base_qs.filter(id__in=user_ids)
+    count = users_to_add.count()
+    if count == 0:
+        return JsonResponse({'error': 'No eligible users found.'}, status=400)
+
+    role.users.add(*users_to_add)
+    new_count = role.users.count()
+    return JsonResponse({
+        'success': True,
+        'message': f'Added {count} user(s) to "{role.name}".',
+        'new_count': new_count,
+        'added_count': count,
+    })
+
+
+@login_required
+def remove_user_from_role(request, role_id, user_id):
+    """API endpoint to remove a user from a specific role."""
+    is_proj = user_is_project_admin(request.user)
+    is_school = user_is_school_admin(request.user)
+    if not (is_proj or is_school) or request.method != 'POST':
+        return JsonResponse({'error': 'Permission denied.'}, status=403)
+
+    role = get_object_or_404(Role, id=role_id)
+    if is_school and not is_proj:
+        allowed_role_names = ['School Gr View', 'School View', 'Teacher']
+        if role.name not in allowed_role_names:
+            return JsonResponse({'error': 'Permission denied.'}, status=403)
+
+    base_qs = get_base_users_queryset(request)
+    user_to_remove = get_object_or_404(base_qs, id=user_id)
+    role.users.remove(user_to_remove)
+    return JsonResponse({
+        'success': True,
+        'message': f'Removed {user_to_remove.email} from "{role.name}".',
+        'new_count': role.users.count(),
+    })
 
 
 @login_required

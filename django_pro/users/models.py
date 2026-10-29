@@ -119,6 +119,24 @@ class User(AbstractUser):
     _school_cache = {}
 
     @property
+    def assigned_schools_list(self):
+        """Returns a list of dicts [{'state_id': sid, 'school_name': name}] for all schools the user belongs to."""
+        if not self.schools or not isinstance(self.schools, list):
+            return []
+        missing_ids = [sid for sid in self.schools if sid and sid not in User._school_cache]
+        if missing_ids:
+            from studata.models import School as StudataSchool
+            for s in StudataSchool.objects.filter(state_id__in=missing_ids).values('state_id', 'school_name'):
+                User._school_cache[s['state_id']] = s['school_name']
+        res = []
+        for sid in self.schools:
+            if not sid:
+                continue
+            name = User._school_cache.get(sid) or sid
+            res.append({'state_id': sid, 'school_name': name})
+        return res
+
+    @property
     def first_school_name(self):
         if not self.schools or not isinstance(self.schools, list):
             return '-'

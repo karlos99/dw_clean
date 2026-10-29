@@ -345,9 +345,26 @@
     const drillEnabled = container.dataset.drillEnabled === '1';
     if (drillEnabled && chartId && chartId !== 'preview') {
       registerDrillThrough(chart, chartId, container);
+    } else {
+      registerPreviewInteraction(chart, container);
     }
 
     return chart;
+  }
+
+  function registerPreviewInteraction(chart, container) {
+    chart.on('click', function (params) {
+      let xVal = params.name || '';
+      const seriesVal = params.seriesName || '';
+      let val = params.value;
+      if (Array.isArray(val)) {
+        val = val[val.length - 1];
+      }
+      container.dispatchEvent(new CustomEvent('chartPointClicked', {
+        bubbles: true,
+        detail: { xVal: xVal, seriesVal: seriesVal, value: val, url: '', isUnsaved: true }
+      }));
+    });
   }
 
   function registerDrillThrough(chart, chartId, container) {
@@ -415,7 +432,17 @@
       if (sourceName) url += `&source_name=${encodeURIComponent(sourceName)}`;
       // Forward active page-level filters
       if (window._pageFilterQS) url += `&${window._pageFilterQS}`;
-      window.location.href = url;
+
+      container.dispatchEvent(new CustomEvent('chartPointClicked', {
+        bubbles: true,
+        detail: { xVal: xVal, seriesVal: seriesValForUrl || seriesVal, value: params.value, url: url, isUnsaved: false }
+      }));
+
+      if (window.location.pathname.indexOf('/charts/') >= 0) {
+        window.open(url, '_blank');
+      } else {
+        window.location.href = url;
+      }
     });
   }
 
@@ -857,22 +884,34 @@
     _attachTableExportToolbar(container, option);
 
     // Attach drill-through click handlers on drillable cells
-    if (canDrill) {
-      container.querySelectorAll('td[data-rv]').forEach(function (td) {
-        td.addEventListener('click', function () {
-          var rv = td.dataset.rv;
-          var cv = td.dataset.cv;
-          var url = '/dataviz/drill/' + chartId + '/?st_col_val=' + encodeURIComponent(cv);
+    container.querySelectorAll('td[data-rv]').forEach(function (td) {
+      td.addEventListener('click', function () {
+        var rv = td.dataset.rv;
+        var cv = td.dataset.cv;
+        var url = canDrill ? ('/dataviz/drill/' + chartId + '/?st_col_val=' + encodeURIComponent(cv)) : '';
+        if (canDrill) {
           if (rv) url += '&st_row_val=' + encodeURIComponent(rv);
           if (td.dataset.calcId) url += '&dyn_calc_id=' + encodeURIComponent(td.dataset.calcId);
           if (source)     url += '&source='      + encodeURIComponent(source);
           if (sourceId)   url += '&source_id='   + encodeURIComponent(sourceId);
           if (sourceName) url += '&source_name=' + encodeURIComponent(sourceName);
           if (window._pageFilterQS) url += '&' + window._pageFilterQS;
-          window.location.href = url;
-        });
+        }
+
+        container.dispatchEvent(new CustomEvent('chartPointClicked', {
+          bubbles: true,
+          detail: { xVal: rv, seriesVal: cv, value: td.innerText.trim(), url: url, isUnsaved: !canDrill }
+        }));
+
+        if (canDrill) {
+          if (window.location.pathname.indexOf('/charts/') >= 0) {
+            window.open(url, '_blank');
+          } else {
+            window.location.href = url;
+          }
+        }
       });
-    }
+    });
   }
 
   function _categoryNamesFromContainer(container, option) {

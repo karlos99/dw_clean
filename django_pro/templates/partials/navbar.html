@@ -21,14 +21,17 @@
             <div class="hidden md:flex items-center gap-5 lg:gap-7">
                 {% for page in navigation_pages %}
                 {% if page.accessible_children %}
-                <div class="relative" x-data="{ open: false }" @mouseenter="open = true; openMega('{{ page.slug }}')" @mouseleave="open = false; closeMega()">
-                    <button @click="open = !open" :class="navLabelClass()" class="group flex items-center gap-1.5 py-2 text-slate-300 hover:text-blue-400 transition duration-300 focus:outline-none">
+                <div class="relative" x-data="{ open: false }"
+                     @mouseenter="open = true; if (submenuStyle === 'megamenu') openMega('{{ page.slug }}'); if (submenuStyle === 'split_panel') openSplit('{{ page.slug }}');"
+                     @mouseleave="open = false; if (submenuStyle === 'megamenu') closeMega(); if (submenuStyle === 'split_panel') closeSplit();">
+                    <button @click="if (submenuStyle === 'split_panel') { activeSplit = activeSplit === '{{ page.slug }}' ? null : '{{ page.slug }}'; } else if (submenuStyle === 'megamenu') { activeMega = activeMega === '{{ page.slug }}' ? null : '{{ page.slug }}'; } else { open = !open; }"
+                            :class="navLabelClass()" class="group flex items-center gap-1.5 py-2 text-slate-300 hover:text-blue-400 transition duration-300 focus:outline-none">
                         {% if page.icon %}<i class="{{ page.icon }}"></i>{% endif %}
                         <span class="relative">
                             {{ page.name }}
                             <span class="absolute -bottom-1.5 left-0 h-[2px] w-0 bg-blue-500 transition-all duration-300 group-hover:w-full"></span>
                         </span>
-                        <svg class="h-3 w-3 transition-transform duration-200" :class="(submenuStyle === 'megamenu' ? activeMega === '{{ page.slug }}' : open) && 'rotate-180'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <svg class="h-3 w-3 transition-transform duration-200" :class="((submenuStyle === 'megamenu' && activeMega === '{{ page.slug }}') || (submenuStyle === 'split_panel' && activeSplit === '{{ page.slug }}') || (submenuStyle === 'dropdown' && open)) && 'rotate-180'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
                         </svg>
                     </button>
@@ -200,6 +203,165 @@
                 </div>
             </div>
         </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <!-- Split Panel Submenu (Adaptive width, direct links for standalone categories, no icon holder) -->
+    <div class="hidden md:block absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50 pointer-events-auto"
+         x-show="submenuStyle === 'split_panel' && activeSplit"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 translate-y-1 scale-[0.98]"
+         x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 translate-y-0 scale-100"
+         x-transition:leave-end="opacity-0 translate-y-1 scale-[0.98]"
+         style="display: none;">
+        {% for page in navigation_pages %}
+        {% if page.accessible_children %}
+
+        {% if page.has_accessible_subpages %}
+        <!-- Wide Split Panel (Categories on Left + Subpages on Right) -->
+        <div x-show="activeSplit === '{{ page.slug }}'"
+             @mouseenter="openSplit('{{ page.slug }}')"
+             @mouseleave="closeSplit()"
+             class="w-[min(58rem,calc(100vw-2rem))] max-w-[95vw] rounded-xl border border-slate-200 shadow-2xl overflow-hidden"
+             :style="panelBgStyle()"
+             x-data="{ activeCat: '{% for c in page.accessible_children %}{% if c.accessible_children %}{{ c.slug }}{% endif %}{% endfor %}' }">
+            
+            <!-- Clean Top Bar (no explorer label, no categories tag, no open overview) -->
+            <div class="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500 bg-slate-50/70">
+                <span class="font-bold text-slate-800 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    {% if page.icon %}<i class="{{ page.icon }} text-blue-600"></i>{% endif %}
+                    {{ page.name }}
+                </span>
+            </div>
+
+            <!-- Main Split Body (Left Category Menu + Dividing Line + Right Items) -->
+            <div class="flex flex-row min-h-[300px] max-h-[68vh]">
+                <!-- Left: Category List with Active Indicator & Clean Divider Line -->
+                <div class="w-64 sm:w-72 shrink-0 border-r border-slate-200 flex flex-col bg-slate-50/60">
+                    <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                        {% for child in page.accessible_children %}
+                        {% if child.accessible_children %}
+                        <!-- Has subpages: select category on hover/click -->
+                        <button type="button"
+                                @mouseenter="activeCat = '{{ child.slug }}'"
+                                @click="activeCat = '{{ child.slug }}'"
+                                class="w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium transition flex items-center justify-between group"
+                                :class="activeCat === '{{ child.slug }}'
+                                    ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                                    : 'text-slate-700 hover:bg-slate-200/60 hover:text-slate-900'">
+                            <span class="truncate mr-2">{{ child.name }}</span>
+                            <div class="flex items-center gap-1 shrink-0">
+                                <span class="text-[10px] px-1.5 py-0.5 rounded-full font-mono"
+                                      :class="activeCat === '{{ child.slug }}' ? 'bg-blue-700 text-blue-100' : 'bg-slate-200 text-slate-600'">
+                                    {{ child.accessible_children|length }}
+                                </span>
+                                <svg class="w-3.5 h-3.5 transition-transform" :class="activeCat === '{{ child.slug }}' ? 'text-white translate-x-0.5' : 'text-slate-400 opacity-60 group-hover:opacity-100'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </div>
+                        </button>
+                        {% else %}
+                        <!-- Direct link: takes user straight to the page -->
+                        <a href="{{ child.url_path }}"
+                           class="w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium transition flex items-center justify-between group text-slate-700 hover:bg-slate-200/60 hover:text-slate-900">
+                            <span class="truncate mr-2">{{ child.name }}</span>
+                            <svg class="w-3.5 h-3.5 text-slate-400 opacity-60 group-hover:opacity-100 group-hover:text-blue-600 group-hover:translate-x-0.5 transition shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                            </svg>
+                        </a>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Right: Categorized Items / Pages for Selected Category -->
+                <div class="flex-1 overflow-y-auto p-5 bg-white/40">
+                    {% for child in page.accessible_children %}
+                    {% if child.accessible_children %}
+                    <div x-show="activeCat === '{{ child.slug }}'" style="display: none;" class="space-y-4">
+                        <!-- Active Category Header Card -->
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
+                            <div>
+                                <h4 class="text-base font-bold text-slate-900">{{ child.name }}</h4>
+                                {% if child.description %}
+                                <p class="mt-1 text-xs text-slate-500 leading-relaxed max-w-xl">{{ child.description }}</p>
+                                {% endif %}
+                            </div>
+                            {% if child.url_path and child.url_path != '#' %}
+                            <a href="{{ child.url_path }}" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-900 text-white hover:bg-blue-600 transition shrink-0 shadow-sm">
+                                <span>Go to page</span>
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                            </a>
+                            {% endif %}
+                        </div>
+
+                        <!-- Items List / Grid without icon holders -->
+                        <div>
+                            <div class="flex items-center justify-between mb-2.5">
+                                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                    {{ child.name }} Pages
+                                </span>
+                                <span class="text-[11px] text-slate-400">
+                                    {{ child.accessible_children|length }} available
+                                </span>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                {% for grandchild in child.accessible_children %}
+                                <a href="{{ grandchild.url_path }}"
+                                   class="p-3 rounded-lg border border-slate-200/90 bg-white hover:border-blue-400 hover:shadow-sm transition group block">
+                                    <div class="flex items-center justify-between gap-1">
+                                        <span class="text-xs font-semibold text-slate-800 group-hover:text-blue-600 transition truncate">
+                                            {{ grandchild.name }}
+                                        </span>
+                                        <svg class="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-0.5 transition shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </div>
+                                    {% if grandchild.description %}
+                                    <p class="text-[11px] text-slate-500 truncate mt-1">{{ grandchild.description }}</p>
+                                    {% endif %}
+                                </a>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <!-- Compact Single-Column Menu (No subpages, menu width automatically adjusts to category list) -->
+        <div x-show="activeSplit === '{{ page.slug }}'"
+             @mouseenter="openSplit('{{ page.slug }}')"
+             @mouseleave="closeSplit()"
+             class="w-64 sm:w-72 rounded-xl border border-slate-200 shadow-2xl overflow-hidden"
+             :style="panelBgStyle()">
+            <!-- Clean Top Bar -->
+            <div class="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500 bg-slate-50/70">
+                <span class="font-bold text-slate-800 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    {% if page.icon %}<i class="{{ page.icon }} text-blue-600"></i>{% endif %}
+                    {{ page.name }}
+                </span>
+            </div>
+            <!-- Direct links list -->
+            <div class="p-2 space-y-1 max-h-[68vh] overflow-y-auto">
+                {% for child in page.accessible_children %}
+                <a href="{{ child.url_path }}"
+                   class="w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium transition flex items-center justify-between group text-slate-700 hover:bg-slate-100 hover:text-blue-600">
+                    <span class="truncate mr-2">{{ child.name }}</span>
+                    <svg class="w-3.5 h-3.5 text-slate-400 opacity-60 group-hover:opacity-100 group-hover:text-blue-600 group-hover:translate-x-0.5 transition shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                    </svg>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         {% endif %}
         {% endfor %}
     </div>
@@ -547,6 +709,160 @@
                 </div>
             </div>
         </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <!-- Meter Split Panel Submenu (click-toggled, adaptive width, direct links for standalone categories, no icon holder) -->
+    <div class="hidden md:block absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50 pointer-events-auto"
+         x-show="submenuStyle === 'split_panel' && meterOpen"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 translate-y-1 scale-[0.98]"
+         x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 translate-y-0 scale-100"
+         x-transition:leave-end="opacity-0 translate-y-1 scale-[0.98]"
+         style="display: none;">
+        {% for page in navigation_pages %}
+        {% if page.accessible_children %}
+
+        {% if page.has_accessible_subpages %}
+        <!-- Wide Split Panel (Categories on Left + Subpages on Right) -->
+        <div x-show="meterOpen === '{{ page.slug }}'"
+             class="w-[min(58rem,calc(100vw-2rem))] max-w-[95vw] rounded-xl border border-slate-200 shadow-2xl overflow-hidden"
+             :style="panelBgStyle()"
+             x-data="{ activeCat: '{% for c in page.accessible_children %}{% if c.accessible_children %}{{ c.slug }}{% endif %}{% endfor %}' }">
+            
+            <!-- Clean Top Bar (no explorer label, no categories tag, no open overview) -->
+            <div class="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500 bg-slate-50/70">
+                <span class="font-bold text-slate-800 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    {% if page.icon %}<i class="{{ page.icon }} text-blue-600"></i>{% endif %}
+                    {{ page.name }}
+                </span>
+            </div>
+
+            <!-- Main Split Body (Left Category Menu + Dividing Line + Right Items) -->
+            <div class="flex flex-row min-h-[300px] max-h-[68vh]">
+                <!-- Left: Category List with Active Indicator & Clean Divider Line -->
+                <div class="w-64 sm:w-72 shrink-0 border-r border-slate-200 flex flex-col bg-slate-50/60">
+                    <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                        {% for child in page.accessible_children %}
+                        {% if child.accessible_children %}
+                        <!-- Has subpages: select category on click -->
+                        <button type="button"
+                                @click="activeCat = '{{ child.slug }}'"
+                                class="w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium transition flex items-center justify-between group"
+                                :class="activeCat === '{{ child.slug }}'
+                                    ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                                    : 'text-slate-700 hover:bg-slate-200/60 hover:text-slate-900'">
+                            <span class="truncate mr-2">{{ child.name }}</span>
+                            <div class="flex items-center gap-1 shrink-0">
+                                <span class="text-[10px] px-1.5 py-0.5 rounded-full font-mono"
+                                      :class="activeCat === '{{ child.slug }}' ? 'bg-blue-700 text-blue-100' : 'bg-slate-200 text-slate-600'">
+                                    {{ child.accessible_children|length }}
+                                </span>
+                                <svg class="w-3.5 h-3.5 transition-transform" :class="activeCat === '{{ child.slug }}' ? 'text-white translate-x-0.5' : 'text-slate-400 opacity-60 group-hover:opacity-100'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </div>
+                        </button>
+                        {% else %}
+                        <!-- Direct link: takes user straight to the page -->
+                        <a href="{{ child.url_path }}"
+                           class="w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium transition flex items-center justify-between group text-slate-700 hover:bg-slate-200/60 hover:text-slate-900">
+                            <span class="truncate mr-2">{{ child.name }}</span>
+                            <svg class="w-3.5 h-3.5 text-slate-400 opacity-60 group-hover:opacity-100 group-hover:text-blue-600 group-hover:translate-x-0.5 transition shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                            </svg>
+                        </a>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Right: Categorized Items / Pages for Selected Category -->
+                <div class="flex-1 overflow-y-auto p-5 bg-white/40">
+                    {% for child in page.accessible_children %}
+                    {% if child.accessible_children %}
+                    <div x-show="activeCat === '{{ child.slug }}'" style="display: none;" class="space-y-4">
+                        <!-- Active Category Header Card -->
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
+                            <div>
+                                <h4 class="text-base font-bold text-slate-900">{{ child.name }}</h4>
+                                {% if child.description %}
+                                <p class="mt-1 text-xs text-slate-500 leading-relaxed max-w-xl">{{ child.description }}</p>
+                                {% endif %}
+                            </div>
+                            {% if child.url_path and child.url_path != '#' %}
+                            <a href="{{ child.url_path }}" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-900 text-white hover:bg-blue-600 transition shrink-0 shadow-sm">
+                                <span>Go to page</span>
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                            </a>
+                            {% endif %}
+                        </div>
+
+                        <!-- Items List / Grid without icon holders -->
+                        <div>
+                            <div class="flex items-center justify-between mb-2.5">
+                                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                    {{ child.name }} Pages
+                                </span>
+                                <span class="text-[11px] text-slate-400">
+                                    {{ child.accessible_children|length }} available
+                                </span>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                {% for grandchild in child.accessible_children %}
+                                <a href="{{ grandchild.url_path }}"
+                                   class="p-3 rounded-lg border border-slate-200/90 bg-white hover:border-blue-400 hover:shadow-sm transition group block">
+                                    <div class="flex items-center justify-between gap-1">
+                                        <span class="text-xs font-semibold text-slate-800 group-hover:text-blue-600 transition truncate">
+                                            {{ grandchild.name }}
+                                        </span>
+                                        <svg class="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-0.5 transition shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </div>
+                                    {% if grandchild.description %}
+                                    <p class="text-[11px] text-slate-500 truncate mt-1">{{ grandchild.description }}</p>
+                                    {% endif %}
+                                </a>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <!-- Compact Single-Column Menu (No subpages, menu width automatically adjusts to category list) -->
+        <div x-show="meterOpen === '{{ page.slug }}'"
+             class="w-64 sm:w-72 rounded-xl border border-slate-200 shadow-2xl overflow-hidden"
+             :style="panelBgStyle()">
+            <!-- Clean Top Bar -->
+            <div class="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500 bg-slate-50/70">
+                <span class="font-bold text-slate-800 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    {% if page.icon %}<i class="{{ page.icon }} text-blue-600"></i>{% endif %}
+                    {{ page.name }}
+                </span>
+            </div>
+            <!-- Direct links list -->
+            <div class="p-2 space-y-1 max-h-[68vh] overflow-y-auto">
+                {% for child in page.accessible_children %}
+                <a href="{{ child.url_path }}"
+                   class="w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium transition flex items-center justify-between group text-slate-700 hover:bg-slate-100 hover:text-blue-600">
+                    <span class="truncate mr-2">{{ child.name }}</span>
+                    <svg class="w-3.5 h-3.5 text-slate-400 opacity-60 group-hover:opacity-100 group-hover:text-blue-600 group-hover:translate-x-0.5 transition shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                    </svg>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         {% endif %}
         {% endfor %}
     </div>

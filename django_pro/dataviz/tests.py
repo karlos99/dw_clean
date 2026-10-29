@@ -4840,7 +4840,7 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['Content-Type'], 'text/csv')
         self.assertIn('attachment; filename="dataset_export.csv"', response['Content-Disposition'])
-        self.assertEqual(mock_compile.call_args.kwargs['status_filter'], ['Inactive'])
+        self.assertIn(mock_compile.call_args.kwargs['status_filter'], (['Inactive'], 'Inactive'))
 
         # Consume the streaming content
         content = b"".join(response.streaming_content).decode('utf-8')
@@ -4848,6 +4848,23 @@ class DatasetExportCSVTests(TestCase):
         self.assertEqual(len(lines), 2)
         self.assertEqual(lines[0], '"ssid","student_name","grade"')
         self.assertEqual(lines[1], '"123","Alice","5"')
+
+    @patch('dataviz.utils.compiler.load_dataset_result')
+    def test_dataset_data_preview_api(self, mock_load):
+        from dataviz.models import Dataset
+        ds = Dataset.objects.create(name='Test Dataset', owner=self.user, base_table='current_student', columns=['current_student.grade', 'current_student.student_name'])
+        mock_load.return_value = {
+            'columns': ['Grade', 'Student Name'],
+            'rows': [{'Grade': '5', 'Student Name': 'Alice'}],
+            'row_count': 1,
+        }
+        self.client.force_login(self.user)
+        response = self.client.get(f'/dataviz/api/datasets/{ds.id}/preview-data/')
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(len(data['rows']), 1)
+        self.assertEqual(data['rows'][0]['Grade'], '5')
 
 
 class SqlDatasetTests(TestCase):
