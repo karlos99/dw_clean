@@ -232,6 +232,8 @@ TABLE_WHITELIST = {
     'analytics_dbuilder_ap_results': 'analytics_dbuilder_ap_results',
     'analytics_dbuilder_panorama_survey': 'analytics_dbuilder_panorama_survey',
     'analytics_ccgi_application_status': 'analytics_ccgi_application_status',
+    # Official assessment aggregates (full reload from officialData pipeline).
+    'official_data_db': 'official_data_db',
 }
 
 
@@ -366,6 +368,14 @@ def get_columns_for_table(table_name: str) -> set:
         final_cols.update(known_add_data_json_paths())
 
     return final_cols
+
+
+def is_allowed_dataset_column(table_name: str, column_name: str) -> bool:
+    """True when table is allowed and column exists (static or DB-discovered)."""
+    if table_name not in get_allowed_dataset_tables():
+        return False
+    base_col = (column_name or '').split('->', 1)[0]
+    return base_col in get_columns_for_table(table_name)
 
 
 def _persisted_dataset_base_tables(db_tables: dict) -> set[str]:

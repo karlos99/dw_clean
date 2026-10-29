@@ -14,8 +14,8 @@ from django.db import connection
 from dataviz.models import Dataset
 from dataviz.utils.compiler import (
     compile_dataset_to_sql, execute_compiled_query,
-    COLUMN_WHITELIST, TABLE_WHITELIST,
     generate_column_aliases, apply_column_aliases,
+    is_allowed_dataset_column,
 )
 from dataviz.utils.data_loader import execute_sql_dataset
 from dataexploration.column_utils import export_cell
@@ -509,9 +509,7 @@ def api_column_unique_values(request):
             return JsonResponse({'values': []}, status=400)
 
         table_name, col_name = parts
-        if table_name not in TABLE_WHITELIST or table_name not in COLUMN_WHITELIST:
-            return JsonResponse({'values': []}, status=400)
-        if col_name not in COLUMN_WHITELIST[table_name]:
+        if not is_allowed_dataset_column(table_name, col_name):
             return JsonResponse({'values': []}, status=400)
 
         from django.core.cache import cache
@@ -810,7 +808,7 @@ def _dataset_filter_options_legacy(request, dataset_id):
         if len(parts) != 2:
             continue
         table_name, col_name = parts
-        if table_name not in TABLE_WHITELIST or col_name not in COLUMN_WHITELIST.get(table_name, set()):
+        if not is_allowed_dataset_column(table_name, col_name):
             continue
 
         from django.core.cache import cache
@@ -838,7 +836,7 @@ def _dataset_filter_options_legacy(request, dataset_id):
                     ftbl, fname = fparts
                     if ftbl != table_name:
                         continue
-                    if ftbl not in TABLE_WHITELIST or fname not in COLUMN_WHITELIST.get(ftbl, set()):
+                    if not is_allowed_dataset_column(ftbl, fname):
                         continue
                     if isinstance(fval, dict):
                         gte = fval.get('gte')

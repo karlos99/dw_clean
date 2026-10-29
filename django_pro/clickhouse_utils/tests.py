@@ -472,6 +472,9 @@ class RemainingAnalyticsTests(SimpleTestCase):
             self.assertIn(name, TABLE_WHITELIST)
             self.assertIn(name, CLICKHOUSE_SYNCED_TABLES)
 
+        self.assertIn('official_data_db', TABLE_WHITELIST)
+        self.assertNotIn('official_data_db', CLICKHOUSE_SYNCED_TABLES)
+
         self.assertEqual(
             COLUMN_WHITELIST['analytics_dbuilder_ap_results'],
             {'ssid', 'school_year', 'exam_name', 'exam_grade'},

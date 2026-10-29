@@ -76,6 +76,7 @@ _PG_ONLY_TABLE_MARKERS = (
     # schedule_list, not schedule_table_alt, and has no courses_catalog.
     'schedule_table_alt',
     'courses_catalog',
+    'official_data_db',
 )
 
 
