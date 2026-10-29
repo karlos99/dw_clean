@@ -17,6 +17,7 @@ For cursor-compatible usage (matching Django's cursor.execute + fetchall):
 """
 
 import logging
+import re
 from decimal import Decimal
 from django.conf import settings
 from clickhouse_connect.driver.exceptions import DatabaseError
@@ -86,6 +87,34 @@ def _sql_uses_pg_add_data_key(sql: str) -> bool:
     return any(k in text for k in _PG_ADD_DATA_KEYS)
 
 
+_NON_CH_DATASET_TABLES: frozenset[str] | None = None
+
+
+def _non_ch_dataset_tables() -> frozenset[str]:
+    """Dataset-builder tables that are not mirrored into ClickHouse."""
+    global _NON_CH_DATASET_TABLES
+    if _NON_CH_DATASET_TABLES is None:
+        try:
+            from dataviz.utils.compiler import get_dataset_table_registry
+            names = set(get_dataset_table_registry())
+        except Exception:
+            names = set()
+        _NON_CH_DATASET_TABLES = frozenset(
+            t for t in names if t not in CLICKHOUSE_SYNCED_TABLES
+        )
+    return _NON_CH_DATASET_TABLES
+
+
+def _sql_references_table(text_lower: str, table: str) -> bool:
+    """True when *table* appears as a SQL identifier (not a column prefix)."""
+    t = table.lower()
+    if f'"{t}"' in text_lower:
+        return True
+    if f'.{t}.' in text_lower:
+        return True
+    return re.search(rf'(?<![a-z0-9_]){re.escape(t)}(?![a-z0-9_])', text_lower) is not None
+
+
 def _sql_requires_postgres(sql: str) -> bool:
     """PostgreSQL-only idioms that must not go through the CH translator."""
     text = (sql or '').lower()
@@ -96,7 +125,12 @@ def _sql_requires_postgres(sql: str) -> bool:
         return True
     # Any reference to a table that is only kept in Postgres routes the whole
     # statement there (mirrored tables never appear in this list).
-    return any(m in text for m in _PG_ONLY_TABLE_MARKERS)
+    if any(m in text for m in _PG_ONLY_TABLE_MARKERS):
+        return True
+    for t in _non_ch_dataset_tables():
+        if _sql_references_table(text, t):
+            return True
+    return False
 
 
 class QueryExecutor:

@@ -408,8 +408,11 @@ def dataset_preview_api(request):
                 order_by=data.get('order_by', []),
             )
             from dataviz.utils.status_filter import dataset_status_value
+            active_tables = {dataset.base_table} | {
+                j['table'] for j in (dataset.joins or []) if j.get('table')
+            }
             sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=51, status_filter=dataset_status_value(dataset))
-            res = execute_compiled_query(sql, params)
+            res = execute_compiled_query(sql, params, active_tables=active_tables)
 
             if res.get('error'):
                 return render(request, 'dataviz/partials/error.html', {'error': res['error']})
@@ -462,8 +465,11 @@ def dataset_export_csv_api(request):
                 order_by=data.get('order_by', []),
             )
             from dataviz.utils.status_filter import dataset_status_value
+            active_tables = {dataset.base_table} | {
+                j['table'] for j in (dataset.joins or []) if j.get('table')
+            }
             sql, params = compile_dataset_to_sql(dataset, user=request.user, limit=None, status_filter=dataset_status_value(dataset))
-            res = execute_compiled_query(sql, params)
+            res = execute_compiled_query(sql, params, active_tables=active_tables)
 
             if res.get('error'):
                 from django.http import HttpResponse

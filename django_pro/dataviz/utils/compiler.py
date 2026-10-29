@@ -1694,19 +1694,24 @@ def compile_aggregated_dataset_to_sql(
     return sql, params
 
 
-def execute_compiled_query(sql, params):
+def execute_compiled_query(sql, params, *, active_tables=None):
     """
     Executes a compiled SQL query, routing through ClickHouse when available.
     Returns {'columns': [...], 'rows': [...], 'row_count': N, 'error': None}
     """
-    from clickhouse_utils.executor import QueryExecutor
+    from clickhouse_utils.executor import (
+        CLICKHOUSE_SYNCED_TABLES, QueryExecutor, _sql_requires_postgres,
+    )
 
-    executor = QueryExecutor(analytics=True)
+    force_pg = _sql_requires_postgres(sql)
+    if not force_pg and active_tables:
+        force_pg = not set(active_tables).issubset(CLICKHOUSE_SYNCED_TABLES)
+    executor = QueryExecutor(analytics=True, force_postgres=force_pg)
     result = executor.execute(sql, params)
     return result
 
 
-def execute_compiled_query_aliased(sql, params, column_mappings):
+def execute_compiled_query_aliased(sql, params, column_mappings, *, active_tables=None):
     """
     Same as execute_compiled_query(), but builds rows with column_mappings
     applied directly — skipping the intermediate "table.column"-keyed dict
@@ -1716,9 +1721,14 @@ def execute_compiled_query_aliased(sql, params, column_mappings):
     (drill-through, dataset preview) need the raw "table.column" keys and
     must keep using execute_compiled_query() + apply_column_aliases().
     """
-    from clickhouse_utils.executor import QueryExecutor
+    from clickhouse_utils.executor import (
+        CLICKHOUSE_SYNCED_TABLES, QueryExecutor, _sql_requires_postgres,
+    )
 
-    executor = QueryExecutor(analytics=True)
+    force_pg = _sql_requires_postgres(sql)
+    if not force_pg and active_tables:
+        force_pg = not set(active_tables).issubset(CLICKHOUSE_SYNCED_TABLES)
+    executor = QueryExecutor(analytics=True, force_postgres=force_pg)
     result = executor.execute(sql, params)
 
     if result['error']:

@@ -139,6 +139,16 @@ class PostgresOnlyTableRoutingTests(SimpleTestCase):
             "SELECT schedule_id FROM schedule_list LIMIT 51"
         ))
 
+    def test_official_data_db_stays_on_postgres(self):
+        from clickhouse_utils.executor import _non_ch_dataset_tables, _sql_requires_postgres
+
+        preview = (
+            'SELECT DISTINCT "official_data_db"."source_id" AS "official_data_db.source_id" '
+            'FROM "official_data_db" LIMIT 51'
+        )
+        self.assertTrue(_sql_requires_postgres(preview))
+        self.assertIn('official_data_db', _non_ch_dataset_tables())
+
 
 class SQLTranslatorTests(SimpleTestCase):
     def test_translate_cross_join_lateral_jsonb_object_keys(self):
