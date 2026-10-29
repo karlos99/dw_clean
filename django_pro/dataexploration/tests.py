@@ -2073,6 +2073,273 @@ class ExportFiltersTests(SimpleTestCase):
 				self.assertNotIn('schedule_period', passed_filters)
 
 
+class ExportColumnCoverageTests(SimpleTestCase):
+	"""Guard that every Data Explorer column has a CSV export source."""
+
+	DYNAMIC_PREFIXES = (
+		'test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_',
+		'apawards_all_', 'apall_', 'sat_', 'course_prog_',
+	)
+	ENROLL_FALLBACK = {
+		'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant',
+		'enter_date', 'leave_date',
+	}
+
+	def test_enter_and_leave_dates_resolve_from_student_enroll(self):
+		from dataexploration.view_modules.column_management import get_column_expression
+
+		db_columns = {'ssid', 'student_name'}
+		enroll_columns = {'enter_date', 'leave_date'}
+		for col in ('enter_date', 'leave_date'):
+			expr, alias = get_column_expression(
+				col, db_columns, enroll_columns, use_enroll=True,
+			)
+			self.assertEqual(expr, f'se.{col}')
+			self.assertEqual(alias, col)
+
+	def test_every_static_column_resolves_to_a_select_expression(self):
+		from studata.models import CurrentStudent, StudentEnroll
+		from dataexploration.constants import COLUMN_DEFINITIONS, VIRTUAL_COLUMNS
+		from dataexploration.catalog_columns import is_course_program_column
+		from dataexploration.incident_columns import is_incident_column
+		from dataexploration.mtss_columns import is_mtss_column
+		from dataexploration.view_modules.column_management import get_column_expression
+
+		db_columns = {field.name for field in CurrentStudent._meta.fields}
+		enroll_columns = {field.name for field in StudentEnroll._meta.fields}
+		missing = []
+		for col in COLUMN_DEFINITIONS:
+			if (
+				col in VIRTUAL_COLUMNS
+				or col.startswith(self.DYNAMIC_PREFIXES)
+				or is_course_program_column(col)
+				or is_incident_column(col)
+				or is_mtss_column(col)
+			):
+				continue
+			expr, _alias = get_column_expression(
+				col,
+				db_columns,
+				enroll_columns,
+				use_enroll=col in self.ENROLL_FALLBACK,
+				use_students=False,
+				use_eht=col == 'elem_teacher_name',
+			)
+			if not expr:
+				missing.append(col)
+		self.assertEqual(missing, [], f'Columns without an export SQL source: {missing}')
+
+	def test_grade_column_filter_is_applied_to_export_query(self):
+		import json
+		from unittest.mock import MagicMock, patch
+		from django.test import RequestFactory
+		from dataexploration.view_modules.export_views import export_students_csv
+
+		factory = RequestFactory()
+		req = factory.get(
+			'/dataexploration/api/students/export-csv/',
+			{
+				'columns': json.dumps(['student_name', 'grade']),
+				'filters': json.dumps({'grade': ['07']}),
+				'school_year': '2025-2026',
+				'status': 'Active',
+			},
+		)
+		user = MagicMock()
+		user.is_authenticated = True
+		user.is_superuser = True
+		user.get_accessible_student_keys.return_value = None
+		req.user = user
+
+		cursor = MagicMock()
+		cursor.fetchall.return_value = []
+		cursor.description = [('student_name',), ('grade',)]
+		cursor.__enter__ = MagicMock(return_value=cursor)
+		cursor.__exit__ = MagicMock(return_value=False)
+
+		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=cursor):
+			with patch(
+				'dataexploration.view_modules.export_views.get_current_student_columns',
+				return_value={'ssid', 'student_id', 'stu_annual_key', 'student_name', 'grade'},
+			):
+				with patch(
+					'dataexploration.view_modules.export_views.get_student_enroll_columns',
+					return_value=set(),
+				):
+					resp = export_students_csv(req)
+					list(resp.streaming_content)
+
+		sql, params = cursor.execute.call_args[0][0], cursor.execute.call_args[0][1]
+		self.assertIn('cs.grade = ANY(%s)', sql)
+		self.assertIn(['07', '7'], params)
+
+	def test_survey_column_exports_without_unbound_local_error(self):
+		import json
+		from unittest.mock import MagicMock, patch
+		from django.test import RequestFactory
+		from dataexploration.view_modules.export_views import export_students_csv
+
+		factory = RequestFactory()
+		req = factory.get(
+			'/dataexploration/api/students/export-csv/',
+			{
+				'columns': json.dumps(['student_name', 'survey_test_q1']),
+				'school_year': '2025-2026',
+				'status': 'Active',
+			},
+		)
+		user = MagicMock()
+		user.is_authenticated = True
+		user.is_superuser = True
+		user.get_accessible_student_keys.return_value = None
+		req.user = user
+
+		cursor = MagicMock()
+		cursor.fetchall.side_effect = [
+			[('Alice', 'S1', '1001')],
+			[],
+		]
+		cursor.description = [('student_name',), ('ssid',), ('student_id',)]
+		cursor.__enter__ = MagicMock(return_value=cursor)
+		cursor.__exit__ = MagicMock(return_value=False)
+
+		survey_columns = {
+			'definitions': {'survey_test_q1': 'Test Question?'},
+			'col_meta': {},
+		}
+		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=cursor):
+			with patch(
+				'dataexploration.view_modules.export_views.get_current_student_columns',
+				return_value={'ssid', 'student_id', 'stu_annual_key', 'student_name', 'grade'},
+			):
+				with patch(
+					'dataexploration.view_modules.export_views.get_student_enroll_columns',
+					return_value=set(),
+				):
+					with patch(
+						'dataexploration.view_modules.export_views.get_survey_columns',
+						return_value=survey_columns,
+					):
+						with patch(
+							'dataexploration.view_modules.export_views.get_survey_data_for_students',
+							return_value={'S1': {'survey_test_q1': 'Agree'}},
+						):
+							resp = export_students_csv(req)
+							content = b''.join(resp.streaming_content).decode('utf-8')
+
+		self.assertNotIn('Error exporting data', content)
+		self.assertIn('Test Question?', content)
+		self.assertIn('Agree', content)
+
+	def test_ap_all_results_uses_clickhouse_ap_results_table(self):
+		import json
+		from unittest.mock import MagicMock, patch
+		from django.test import RequestFactory
+		from dataexploration.view_modules.export_views import export_students_csv
+
+		req = RequestFactory().get(
+			'/dataexploration/api/students/export-csv/',
+			{
+				'columns': json.dumps(['student_name', 'apall_2025_2026']),
+				'school_year': '2025-2026',
+				'status': 'Active',
+			},
+		)
+		user = MagicMock()
+		user.is_authenticated = True
+		user.is_superuser = True
+		user.get_accessible_student_keys.return_value = None
+		req.user = user
+
+		cursor = MagicMock()
+		cursor.fetchall.return_value = []
+		cursor.description = [('student_name',)]
+		cursor.__enter__ = MagicMock(return_value=cursor)
+		cursor.__exit__ = MagicMock(return_value=False)
+
+		with patch('clickhouse_utils.executor.QueryExecutor.cursor', return_value=cursor):
+			with patch(
+				'dataexploration.view_modules.export_views.get_current_student_columns',
+				return_value={'ssid', 'student_id', 'stu_annual_key', 'student_name', 'grade'},
+			):
+				with patch(
+					'dataexploration.view_modules.export_views.get_student_enroll_columns',
+					return_value=set(),
+				):
+					with patch(
+						'dataexploration.view_modules.export_views._fetchall_ch_or_pg',
+						return_value=[(0,)],
+					) as mock_fetch:
+						with patch(
+							'dataexploration.view_modules.export_views.cache.get',
+							return_value=None,
+						), patch(
+							'dataexploration.view_modules.export_views.cache.set',
+						):
+							resp = export_students_csv(req)
+							list(resp.streaming_content)
+
+		sqls = [call.args[0] for call in mock_fetch.call_args_list if call.args]
+		ap_sql = next(sql for sql in sqls if 'MAX(cnt)' in sql and 'admin_year' in sql)
+		self.assertIn('FROM analytics_ap_results r', ap_sql)
+		self.assertNotIn('analytics_ap_exam_results', ap_sql)
+
+
+class MarkallPeriodFilterTests(SimpleTestCase):
+	def test_extract_markall_period_includes_reads_umbrella_values(self):
+		from dataexploration.view_modules.filter_sql import extract_markall_period_includes
+
+		filters = {
+			'markall_2025_2026_Math': ['period:Q1', 'period:Q3', 'exclude:Homeroom'],
+			'markall_2025_2026_Math_1_MARKS': ['period:Q4'],
+			'grade': ['07'],
+		}
+		self.assertEqual(
+			extract_markall_period_includes(filters),
+			{'markall_2025_2026_Math': {'Q1', 'Q3'}},
+		)
+		self.assertEqual(extract_markall_period_includes({}), {})
+
+	def test_markall_period_filter_parts_builds_allowlist_sql(self):
+		from dataexploration.view_modules.filter_sql import markall_period_filter_parts
+
+		sql, params = markall_period_filter_parts({'Q1', 'P2'})
+		self.assertEqual(sql, ' AND sm.mark_period IN (%s, %s)')
+		self.assertEqual(params, ['P2', 'Q1'])
+		self.assertEqual(markall_period_filter_parts(set()), ('', []))
+		self.assertEqual(markall_period_filter_parts(None), ('', []))
+
+	def test_group_marks_filters_selected_periods(self):
+		from dataexploration.column_utils import group_marks_by_ssid_course
+
+		rows = [
+			{'ssid': 'A', 'student_id': '1', 'subject': 'Math', 'course_name': 'Math 8',
+			 'mark_period': 'Q1', 'mark': 'A', 'mark_status': 'Final', 'mark_ord': 1},
+			{'ssid': 'A', 'student_id': '1', 'subject': 'Math', 'course_name': 'Math 8',
+			 'mark_period': 'Q2', 'mark': 'B', 'mark_status': 'Final', 'mark_ord': 2},
+		]
+		by_ssid, _by_id = group_marks_by_ssid_course(rows, subject='Math', periods={'Q1'})
+		self.assertEqual(list(by_ssid['A']['Math 8']), [('Q1', 'A')])
+		all_by_ssid, _ = group_marks_by_ssid_course(rows, subject='Math')
+		self.assertEqual(len(all_by_ssid['A']['Math 8']), 2)
+
+	def test_build_marks_period_index_sorts_live_last(self):
+		from dataexploration.view_modules.column_management import build_marks_period_index
+
+		structure = {
+			'2025-2026': {
+				'Math': {
+					'Math 8': {'Q2': 'mark_1', 'Live': 'mark_2', 'Q1': 'mark_3'},
+					'Algebra': {'S1': 'mark_4'},
+				},
+			},
+		}
+		self.assertEqual(
+			build_marks_period_index(structure),
+			{'2025-2026': {'Math': ['Q1', 'Q2', 'S1', 'Live']}},
+		)
+
+
 class MtssDataExplorationTests(TestCase):
 	databases = {'default'}
 

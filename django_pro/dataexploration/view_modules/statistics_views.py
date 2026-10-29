@@ -180,7 +180,7 @@ def get_column_statistics(request):
     target_mark_cols = [c for c in target_columns if c.startswith('mark_')]
     all_related_mark_cols = list(set(selected_mark_cols + target_mark_cols))
 
-    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
     all_relevant_cols = set(target_columns) | set(filters.keys())
     needs_enroll = any(c in enroll_fields for c in all_relevant_cols)
 

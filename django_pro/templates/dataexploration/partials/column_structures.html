@@ -217,6 +217,39 @@
                                 </label>
                                 {% endfor %}
                             </div>
+
+                            {% comment %}Marking-period picker for "All Marks". Checked periods are
+                               stored on the umbrella key as 'period:<name>' values; no values
+                               means every period (backwards compatible).{% endcomment %}
+                            <div data-markall-period-box class="mt-1 pt-1 border-t border-emerald-100">
+                                <div class="flex items-center justify-between gap-2 px-1 flex-wrap">
+                                    <span class="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Marking Periods</span>
+                                    <span class="flex items-center gap-2">
+                                        <button type="button" data-markall-select-all-periods
+                                            class="text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline underline-offset-2">All periods</button>
+                                        <span data-markall-period-hint class="text-[10px] text-slate-400"></span>
+                                    </span>
+                                </div>
+                                <div class="ml-1 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 pl-2 border-l border-emerald-100">
+                                    {% if marks_periods %}
+                                    {% with year_periods=marks_periods|get_item:year %}
+                                    {% with subject_periods=year_periods|get_item:subject %}
+                                    {% for period in subject_periods %}
+                                    <label class="flex items-center gap-1 p-0.5 hover:bg-emerald-50 rounded cursor-pointer transition-colors"
+                                           title="{{ period }}">
+                                        <input type="checkbox" data-markall-period="1"
+                                            data-markall-period-name="{{ period }}"
+                                            data-markall-year="{{ year }}" data-markall-subject="{{ subject }}"
+                                            class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-3.5 w-3.5 flex-shrink-0"
+                                            checked>
+                                        <span class="text-xs text-slate-700">{{ period }}</span>
+                                    </label>
+                                    {% endfor %}
+                                    {% endwith %}
+                                    {% endwith %}
+                                    {% endif %}
+                                </div>
+                            </div>
                         </div>
                         {% for course, periods in courses.items %}
                         <div class="pl-2 border-l border-slate-200">

@@ -695,7 +695,7 @@ def load_students(request):
         test_cols_info, test_col_map = _build_test_columns_from_db(selected_test_cols)
         mark_cols_info, mark_col_map = _build_mark_columns_from_db(selected_mark_cols)
 
-        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
         needs_enroll = any(c in enroll_fields for c in selected_columns) or (isinstance(filters, dict) and any(k in enroll_fields for k in filters)) or sort_by in enroll_fields
         needs_students = any(c in {'ltel'} for c in selected_columns) or (isinstance(filters, dict) and 'ltel' in filters) or sort_by == 'ltel'
         needs_eht = (isinstance(filters, dict) and 'elem_teacher_name' in filters) or sort_by == 'elem_teacher_name'

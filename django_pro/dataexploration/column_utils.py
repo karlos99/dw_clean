@@ -222,9 +222,14 @@ def _append_grouped_mark(grouped, owner_key, course, period, mark):
     grouped.setdefault(owner_key, {}).setdefault(course, []).append((period, disp or mark))
 
 
-def group_marks_by_ssid_course(rows, subject=None, course_filter_fn=None):
-    """Group live mark rows into ssid and student_id keyed course/period maps."""
+def group_marks_by_ssid_course(rows, subject=None, course_filter_fn=None, periods=None):
+    """Group live mark rows into ssid and student_id keyed course/period maps.
+
+    ``periods`` optionally limits the included marking periods (e.g. Q1, P1);
+    ``None``/empty means every period.
+    """
     subject_fold = _fold(subject) if subject else None
+    period_set = {str(p).strip() for p in (periods or set()) if str(p).strip()} or None
     grouped_ssid = {}
     grouped_id = {}
     best = {}
@@ -236,6 +241,8 @@ def group_marks_by_ssid_course(rows, subject=None, course_filter_fn=None):
         if course_filter_fn and not course_filter_fn(course):
             continue
         period = (row.get('mark_period') or '').strip()
+        if period_set is not None and period not in period_set:
+            continue
         cand = (row.get('mark'), row.get('mark_status'), row.get('mark_ord'))
         ssid_s = str(row.get('ssid') or '').strip()
         sid_s = str(row.get('student_id') or '').strip()
@@ -301,7 +308,11 @@ def export_cell(value, blank='\u2014'):
     consistent instead of surfacing raw ``NaN`` / ``None`` strings.
     """
     v = normalize_score_value(value)
-    return blank if v is None else v
+    # UI-side enrich helpers (SAT/AP/MTSS) use the em dash for "no value";
+    # map it to the export blank marker as well so the CSV stays clean.
+    if v is None or str(v).strip() == '\u2014':
+        return blank
+    return v
 
 
 def export_csv_cell(value):

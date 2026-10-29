@@ -105,6 +105,8 @@ from .filter_sql import (
     list_query_uses_postgres,
     normalize_filter_param as _normalize_filter_param,
     extract_markall_course_picker,
+    extract_markall_period_includes,
+    markall_period_filter_parts,
     sanitize_de_status_filter_values,
 )
 from landing.utils import get_project_config
@@ -797,6 +799,14 @@ def _load_students(request):
             return markall_pickers[umbrella]
         return {'mode': 'all', 'courses': set()}
 
+    # All Marks marking-period picker. ``period:<name>`` values on the umbrella
+    # key whitelist the periods returned; no values means every period.
+    markall_periods = extract_markall_period_includes(filters)
+
+    def _markall_period_picker(year, subject):
+        umbrella = markall_years.get((year, subject))
+        return markall_periods.get(umbrella, set()) if umbrella else set()
+
     # Subjects the user unchecked from an "All Results" umbrella. Stored under
     # the umbrella key as 'exclude:<subject>' values; like the marks course
     # excludes these only shape the wide-pair columns, never the row population.
@@ -1270,7 +1280,7 @@ def _load_students(request):
                 ap_exam_infos = ap_award_infos = []
 
         # Determine if we need student_enroll join
-        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+        enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
         needs_enroll = (
             any(c in enroll_fields for c in selected_columns)
             or (isinstance(filters, dict) and any(k in enroll_fields for k in filters.keys()))
@@ -1398,6 +1408,10 @@ def _load_students(request):
                 course_filter_sql, course_extra_params = _markall_course_sql_parts(
                     subject, _markall_course_picker(year, subject)
                 )
+                selected_periods = _markall_period_picker(year, subject)
+                period_filter_sql, period_extra_params = markall_period_filter_parts(
+                    selected_periods,
+                )
                 markall_cache_key = (
                     f"dataexp:markall_max:{_sync_v}:"
                     + hashlib.md5(json.dumps({
@@ -1408,6 +1422,8 @@ def _load_students(request):
                         'subject': subject,
                         'cf': course_filter_sql,
                         'cep': [str(p) for p in course_extra_params],
+                        'pf': period_filter_sql,
+                        'pep': [str(p) for p in period_extra_params],
                     }, sort_keys=True).encode()).hexdigest()
                 )
                 max_val = cache.get(markall_cache_key)
@@ -1422,6 +1438,7 @@ def _load_students(request):
                         WHERE {where_sql}
                           AND sm.school_year = %s AND sm.subject = %s
                           {course_filter_sql}
+                          {period_filter_sql}
                         GROUP BY sm.ssid
                     ) t
                     """
@@ -1429,7 +1446,7 @@ def _load_students(request):
                     pg_query = pg_sql_from_ch_marks_sql(ch_query)
                     res = _fetchall_ch_or_pg(
                         ch_query,
-                        params + [year, subject] + course_extra_params,
+                        params + [year, subject] + course_extra_params + period_extra_params,
                         pg_sql=pg_query,
                     )
                     max_val = min(int(res[0][0] or 0), 10) if res else 0
@@ -1990,6 +2007,7 @@ def _load_students(request):
                     for (year, subject), umbrella in markall_years.items():
                         n = markall_max.get((year, subject), 0)
                         excludes = _markall_course_picker(year, subject)
+                        selected_periods = _markall_period_picker(year, subject)
                         if year not in _live_marks_by_year:
                             _live_marks_by_year[year] = _fetch_marks_live_from_alt(
                                 student_ssids_all, student_ids_all, [year],
@@ -1999,6 +2017,7 @@ def _load_students(request):
                             live_rows,
                             subject=subject,
                             course_filter_fn=markall_course_filter_fn(subject, excludes),
+                            periods=selected_periods,
                         )
                         for student in students:
                             ssid_key = str(student.get('ssid') or '').strip()

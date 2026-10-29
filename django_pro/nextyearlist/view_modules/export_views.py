@@ -124,7 +124,7 @@ def export_students_csv(request):
         if isinstance(c, str) and not c.startswith(('test_', 'mark_')) and c in COLUMN_DEFINITIONS
     ]
 
-    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
     needs_enroll = (
         any(c in enroll_fields for c in selected_columns)
         or (isinstance(filters, dict) and any(k in enroll_fields for k in filters))

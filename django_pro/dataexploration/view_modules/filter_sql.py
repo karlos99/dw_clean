@@ -365,6 +365,44 @@ def extract_markall_course_picker(filters_to_apply):
     return pickers
 
 
+def extract_markall_period_includes(filters_to_apply):
+    """Read per-umbrella All Marks marking-period allowlist from a filters dict.
+
+    Selected periods are stored on the umbrella key as ``period:<period>``
+    values (e.g. ``period:Q1``). No period values means **all** periods, which
+    keeps saved queries created before period selection existed unchanged.
+
+    Returns ``{umbrella_key: set(period_names)}``.
+    """
+    periods = {}
+    if not isinstance(filters_to_apply, dict):
+        return periods
+    for col, values in filters_to_apply.items():
+        if not is_markall_umbrella_key(col):
+            continue
+        selected = {
+            str(value)[len('period:'):].strip()
+            for value in (values or [])
+            if str(value).startswith('period:')
+        }
+        selected.discard('')
+        if selected:
+            periods[col] = selected
+    return periods
+
+
+def markall_period_filter_parts(periods, alias='sm'):
+    """SQL predicate + params restricting All Marks to selected marking periods.
+
+    Returns ``(sql_fragment, params)``; an empty fragment means all periods.
+    """
+    names = sorted({str(p).strip() for p in (periods or set()) if str(p).strip()})
+    if not names:
+        return '', []
+    placeholders = ", ".join(["%s"] * len(names))
+    return f" AND {alias}.mark_period IN ({placeholders})", names
+
+
 def extract_markall_course_excludes(filters_to_apply):
     """Legacy helper: exclude sets for umbrellas still in **all** mode."""
     pickers = extract_markall_course_picker(filters_to_apply)

@@ -70,7 +70,7 @@ def get_column_statistics(request):
     enroll_columns = get_student_enroll_columns()
 
     all_cols = set(target_columns) | set(filters.keys())
-    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant'}
+    enroll_fields = {'ell', 'birth_date', 'us_enter_date', 'fep_date', 'migrant', 'enter_date', 'leave_date'}
     needs_enroll = any(c in enroll_fields for c in all_cols)
     needs_students = 'ltel' in all_cols
     needs_eht = 'elem_teacher_name' in all_cols
