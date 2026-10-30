@@ -119,6 +119,7 @@ ANALYTICS_DEPENDENCIES = {
     'analytics_ap_results': set(),
     'analytics_ap_awards': set(),
     'analytics_sat_results': set(),
+    'analytics_ib_results': set(),
     'analytics_survey_responses': set(),
     'analytics_dbuilder_ap_results': set(),
     'analytics_dbuilder_panorama_survey': set(),
@@ -198,6 +199,11 @@ class Command(BaseCommand):
             '--non-atomic',
             action='store_true',
             help='Use the legacy truncate-and-reload behavior (not recommended).',
+        )
+        parser.add_argument(
+            '--skip-warm',
+            action='store_true',
+            help='Skip warming chart and Data Explorer caches after sync.',
         )
 
     def handle(self, *args, **options):
@@ -329,18 +335,19 @@ class Command(BaseCommand):
             cache.set('analytics:clickhouse_sync_version', sync_version, None)
             self._reconcile(ch, ch_db)
             self.stdout.write(self.style.SUCCESS(f'Sync complete (version {sync_version}).'))
-            try:
-                from dataviz.views.api.chart_api import warm_published_page_charts
-                n = warm_published_page_charts(limit=200, warm_schools=True)
-                self.stdout.write(f'Warmed {n} published page charts.')
-            except Exception as exc:
-                self.stderr.write(self.style.WARNING(f'Chart cache warm skipped: {exc}'))
-            try:
-                from dataexploration.view_modules.student_list_views import warm_data_explorer_default_cache
-                de_warmed = warm_data_explorer_default_cache()
-                self.stdout.write(f'Warmed Data Explorer default cache ({de_warmed} views).')
-            except Exception as exc:
-                self.stderr.write(self.style.WARNING(f'Data Explorer cache warm skipped: {exc}'))
+            if not options.get('skip_warm', False):
+                try:
+                    from dataviz.views.api.chart_api import warm_published_page_charts
+                    n = warm_published_page_charts(limit=200, warm_schools=True)
+                    self.stdout.write(f'Warmed {n} published page charts.')
+                except Exception as exc:
+                    self.stderr.write(self.style.WARNING(f'Chart cache warm skipped: {exc}'))
+                try:
+                    from dataexploration.view_modules.student_list_views import warm_data_explorer_default_cache
+                    de_warmed = warm_data_explorer_default_cache()
+                    self.stdout.write(f'Warmed Data Explorer default cache ({de_warmed} views).')
+                except Exception as exc:
+                    self.stderr.write(self.style.WARNING(f'Data Explorer cache warm skipped: {exc}'))
         else:
             self.stderr.write(self.style.WARNING(
                 'Sync completed with failures; cache version was not advanced.'
@@ -965,6 +972,49 @@ class Command(BaseCommand):
                     WHERE toUInt8(il.is_published) = 1 AND r.ssid != ''
                 ) AS t
                 WHERE t._rn = 1
+            """
+        if table == 'analytics_ib_results':
+            r = _pg_table_fn(table='dataLoader_ibexamresult', **pg)
+            il = _pg_table_fn(table='dataLoader_ibimportlog', **pg)
+            return f"""
+                INSERT INTO {ch_db}.{target}
+                SELECT
+                    ifNull(r.ssid, ''),
+                    ifNull(r.school_year, ''),
+                    ifNull(r.session_year, ''),
+                    ifNull(r.personal_code, ''),
+                    ifNull(r.candidate_name, ''),
+                    ifNull(r.category, ''),
+                    ex.1 AS subject,
+                    ex.3 AS level,
+                    ex.4 AS grade,
+                    ex.5 AS predicted_grade,
+                    ifNull(r.school_code, ''),
+                    ifNull(r.school_name, '')
+                FROM (
+                    SELECT
+                        r.ssid,
+                        r.school_year,
+                        r.session_year,
+                        r.personal_code,
+                        r.candidate_name,
+                        r.category,
+                        r.school_code,
+                        r.school_name,
+                        if(
+                            length(assumeNotNull(r.exam_results)) > 2,
+                            JSONExtract(
+                                assumeNotNull(r.exam_results),
+                                'Array(Tuple(subject String, exam String, level String, grade String, predicted_grade String, language String))'
+                            ),
+                            [tuple(ifNull(r.subject, ''), ifNull(r.subject, ''), ifNull(r.level, ''), ifNull(r.grade, ''), ifNull(r.predicted_grade, ''), ifNull(r.language, ''))]
+                        ) AS exams
+                    FROM {r} AS r
+                    INNER JOIN {il} AS il ON r.import_log_id = il.id
+                    WHERE toUInt8(il.is_published) = 1 AND r.ssid != ''
+                ) AS r
+                ARRAY JOIN r.exams AS ex
+                WHERE ex.1 != ''
             """
         if table == 'analytics_survey_responses':
             sr = _pg_table_fn(table='dataLoader_surveyresponse', **pg)

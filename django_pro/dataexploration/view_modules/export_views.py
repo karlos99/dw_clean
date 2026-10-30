@@ -401,6 +401,10 @@ def export_students_csv(request):
         [c for c in selected_columns if isinstance(c, str) and c.startswith('sat_')] +
         [k for k in filter_keys if isinstance(k, str) and k.startswith('sat_')]
     ))
+    selected_ib_cols = list(set(
+        [c for c in selected_columns if isinstance(c, str) and c.startswith('ib_')] +
+        [k for k in filter_keys if isinstance(k, str) and k.startswith('ib_')]
+    ))
     selected_survey_cols = [
         c for c in selected_columns if isinstance(c, str) and c.startswith('survey_')
     ]
@@ -419,7 +423,7 @@ def export_students_csv(request):
     base_cols = [
         c for c in selected_columns
         if isinstance(c, str)
-        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'course_prog_')))
+        and (not c.startswith(('test_', 'mark_', 'markall_', 'survey_', 'ap_', 'apaward_', 'apawards_all_', 'apall_', 'sat_', 'ib_', 'course_prog_')))
         and not is_mtss_column(c)
         and not is_incident_column(c)
         and c in COLUMN_DEFINITIONS
@@ -733,6 +737,16 @@ def export_students_csv(request):
                         dynamic_labels[info['col_name']] = f"All Awards {info['year']}"
                     else:
                         dynamic_labels[info['col_name']] = f"{info['award']} {info['year']}"
+
+                if selected_ib_cols:
+                    from dataexploration.column_utils import parse_ib_column_key
+                    for _col in selected_ib_cols:
+                        _parsed = parse_ib_column_key(_col)
+                        if _parsed:
+                            kind_label = 'Grade (PL)' if _parsed['kind'] == 'PL' else ('Category' if _parsed['kind'] == 'CAT' else 'Level')
+                            subj_disp = _parsed['subj_slug'].replace('_', ' ')
+                            lvl_disp = f" ({_parsed['level']})" if _parsed.get('level') else ""
+                            dynamic_labels[_col] = f"{subj_disp}{lvl_disp} {kind_label} {_parsed['year']}"
 
                 # Build Where Clauses
                 base_where_clauses = ["1=1"]
@@ -1178,6 +1192,17 @@ def export_students_csv(request):
                             for _student in chunk_students:
                                 for _info in ap_exam_infos + ap_award_infos:
                                     _student.setdefault(_info['col_name'], '')
+                        except Exception:
+                            pass
+
+                    # Fetch IB exam values for this chunk
+                    if selected_ib_cols:
+                        try:
+                            from dataviz.utils.data_loader import _fetch_ib_data
+                            _fetch_ib_data(chunk_students, selected_ib_cols)
+                            for _student in chunk_students:
+                                for _col in selected_ib_cols:
+                                    _student.setdefault(_col, '')
                         except Exception:
                             pass
 

@@ -20,7 +20,7 @@ from ..catalog_columns import (
     merge_course_program_columns,
 )
 from ..constants import COLUMN_DEFINITIONS, COLUMN_CATEGORIES, DEFAULT_COLUMNS
-from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns
+from ..column_utils import get_test_columns, get_mark_columns, get_ap_columns, get_sat_columns, get_ib_columns
 from ..survey_utils import get_survey_columns
 from ..utils import get_user_roles, _apply_de_school_filter
 
@@ -577,10 +577,11 @@ def load_column_structures(request):
     survey_structure = get_survey_columns()
     ap_structure = get_ap_columns()
     sat_structure = get_sat_columns()
+    ib_structure = get_ib_columns()
     
     from dataexploration.school_year_utils import get_year_labels_map, get_year_alias_map
 
-    all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys())
+    all_years = list(test_structure.keys()) + list(marks_structure.keys()) + list(ap_structure.keys()) + list(sat_structure.keys()) + list(ib_structure.keys())
     context = {
         'test_structure': test_structure,
         'marks_structure': marks_structure,
@@ -588,6 +589,7 @@ def load_column_structures(request):
         'survey_structure': survey_structure.get('structure', {}),
         'ap_structure': ap_structure,
         'sat_structure': sat_structure,
+        'ib_structure': ib_structure,
         'column_definitions': COLUMN_DEFINITIONS,
         'year_labels': get_year_labels_map(all_years),
         'year_to_alias': get_year_alias_map(),

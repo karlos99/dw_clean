@@ -78,7 +78,7 @@ def sanitize_de_status_filter_values(raw_vals) -> list[str]:
     """Column-filter values for ``status``: only Active/Inactive; never No_show."""
     if isinstance(raw_vals, (list, tuple, set)):
         items = raw_vals
-    elif raw_vals is not None and str(raw_vals).strip() and str(raw_vals).strip() != 'All':
+    elif raw_vals is not None and str(raw_vals).strip() and str(raw_vals).strip().casefold() != 'all':
         items = [raw_vals]
     else:
         items = []
@@ -137,6 +137,10 @@ def append_de_student_status_where(
     if s.casefold() == DE_EXCLUDED_STUDENT_STATUS.casefold():
         where_clauses.append('1=0')
         return
+    if s.casefold() in ('', 'all'):
+        where_clauses.append(f'{col} = ANY(%s)')
+        params.append(list(DE_ALLOWED_STUDENT_STATUSES))
+        return
     where_clauses.append(f'{col} = %s')
     params.append(s)
 
@@ -162,7 +166,7 @@ def filters_require_postgres(filters) -> bool:
             return True
         if is_incident_column(col):
             return True
-        if isinstance(col, str) and col.startswith('survey_'):
+        if isinstance(col, str) and (col.startswith('survey_') or col.startswith('ib_')):
             return True
         if col == 'elem_teacher_name':
             return True
@@ -779,6 +783,42 @@ def apply_column_filters(
             if has_blank:
                 conditions.append(f"cs.ssid NOT IN ({sub_base})")
                 params.extend(sub_params)
+            if conditions:
+                where_clauses.append(f"({' OR '.join(conditions)})")
+            continue
+
+        if col.startswith('ib_'):
+            from dataexploration.column_utils import parse_ib_column_key
+            parsed = parse_ib_column_key(col)
+            if not parsed:
+                continue
+            target_field = 'grade' if parsed['kind'] == 'PL' else ('category' if parsed['kind'] == 'CAT' else 'level')
+            sub_clauses = [
+                'r.school_year = %s',
+                'il.is_published = true',
+            ]
+            sub_params = [parsed['year']]
+            if parsed.get('level'):
+                sub_clauses.append('r.level = %s')
+                sub_params.append(parsed['level'])
+            sub_clauses.append("REGEXP_REPLACE(r.subject, '[^A-Za-z0-9_]+', '_', 'g') ILIKE %s")
+            sub_params.append(f"%{parsed['subj_slug']}%")
+
+            sub_base = (
+                'SELECT r.ssid FROM "dataLoader_ibexamresult" r '
+                'INNER JOIN "dataLoader_ibimportlog" il ON r.import_log_id = il.id '
+                f"WHERE {' AND '.join(sub_clauses)} "
+            )
+            conditions = []
+            if real_values:
+                conditions.append(f"cs.ssid IN ({sub_base} AND r.{target_field} = ANY(%s))")
+                params.extend(sub_params + [[str(v) for v in real_values]])
+            if has_blank:
+                conditions.append(
+                    f"(cs.ssid NOT IN ({sub_base}) OR "
+                    f"cs.ssid IN ({sub_base} AND (r.{target_field} IS NULL OR r.{target_field} = '')))"
+                )
+                params.extend(sub_params + sub_params)
             if conditions:
                 where_clauses.append(f"({' OR '.join(conditions)})")
             continue

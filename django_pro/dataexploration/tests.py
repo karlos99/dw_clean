@@ -854,6 +854,52 @@ class SATColumnKeyTests(SimpleTestCase):
 		self.assertIsNone(parse_sat_column_key('sat_2025_2026_PCT_BOGUS_RW'))
 
 
+class IBColumnKeyTests(SimpleTestCase):
+	def test_ib_column_key_round_trip(self):
+		from dataexploration.column_utils import ib_column_key, parse_ib_column_key
+		pl_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='PL')
+		self.assertEqual(pl_key, 'ib_2024_2025_VISUAL_ARTS_PL')
+		self.assertEqual(
+			parse_ib_column_key(pl_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'PL'},
+		)
+
+		lvl_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='LVL')
+		self.assertEqual(lvl_key, 'ib_2024_2025_VISUAL_ARTS_LVL')
+		self.assertEqual(
+			parse_ib_column_key(lvl_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'LVL'},
+		)
+
+		cat_key = ib_column_key('2024-2025', 'VISUAL ARTS', kind='CAT')
+		self.assertEqual(cat_key, 'ib_2024_2025_VISUAL_ARTS_CAT')
+		self.assertEqual(
+			parse_ib_column_key(cat_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': None, 'kind': 'CAT'},
+		)
+
+	def test_ib_column_key_legacy_with_level(self):
+		from dataexploration.column_utils import parse_ib_column_key
+		legacy_key = 'ib_2024_2025_VISUAL_ARTS_SL_PL'
+		self.assertEqual(
+			parse_ib_column_key(legacy_key),
+			{'year': '2024-2025', 'subj_slug': 'VISUAL_ARTS', 'level': 'SL', 'kind': 'PL'},
+		)
+
+	def test_ib_filter_generates_valid_where_clause(self):
+		from dataexploration.view_modules.filter_sql import apply_column_filters
+		where_clauses = []
+		params = []
+		apply_column_filters(
+			where_clauses, params,
+			{'ib_2024_2025_VISUAL_ARTS_PL': ['2', '3']},
+			{}, {}, set(), {}, False,
+		)
+		self.assertEqual(len(where_clauses), 1)
+		self.assertIn('dataLoader_ibexamresult', where_clauses[0])
+		self.assertIn('cs.ssid IN', where_clauses[0])
+
+
 class SurveyDataResolutionTests(SimpleTestCase):
 	def test_get_survey_data_for_students_cross_year_and_ssid(self):
 		from dataexploration.survey_utils import get_survey_data_for_students, _generate_survey_column_key

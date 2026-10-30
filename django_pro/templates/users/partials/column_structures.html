@@ -213,8 +213,8 @@
     </div>
 </div>
 
-{% if ap_structure %}
-<!-- College Assessments Tree Category (AP) -->
+{% if ap_structure or sat_structure or ib_structure %}
+<!-- College Assessments Tree Category (AP, SAT, IB) -->
 <div class="border-b border-slate-100 pb-2 mt-3">
     <button data-toggle-category="college"
         class="w-full flex items-center justify-between p-2 hover:bg-slate-50 rounded transition-colors border-l-2 border-indigo-500">

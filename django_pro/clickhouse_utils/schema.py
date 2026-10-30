@@ -27,6 +27,7 @@ def get_all_ddl():
         CREATE_ANALYTICS_AP_RESULTS,
         CREATE_ANALYTICS_AP_AWARDS,
         CREATE_ANALYTICS_SAT_RESULTS,
+        CREATE_ANALYTICS_IB_RESULTS,
         CREATE_ANALYTICS_SURVEY_RESPONSES,
         CREATE_ANALYTICS_DBUILDER_AP_RESULTS,
         CREATE_ANALYTICS_DBUILDER_PANORAMA_SURVEY,
@@ -51,6 +52,7 @@ ANALYTICS_TABLE_NAMES = (
     'analytics_ap_results',
     'analytics_ap_awards',
     'analytics_sat_results',
+    'analytics_ib_results',
     'analytics_survey_responses',
     # Flat Dataset Builder tables. Separate from the analytics mirrors above
     # so those schemas stay unchanged.
@@ -505,6 +507,26 @@ CREATE TABLE IF NOT EXISTS analytics_sat_results (
 )
 ENGINE = MergeTree
 ORDER BY (school_year, ssid, test_date)
+SETTINGS index_granularity = 8192
+"""
+
+CREATE_ANALYTICS_IB_RESULTS = """
+CREATE TABLE IF NOT EXISTS analytics_ib_results (
+    ssid String,
+    school_year String,
+    session_year String,
+    personal_code String,
+    candidate_name String,
+    category String,
+    subject String,
+    level String,
+    grade Nullable(String),
+    predicted_grade Nullable(String),
+    school_code String,
+    school_name String
+)
+ENGINE = MergeTree
+ORDER BY (school_year, ssid, subject, level)
 SETTINGS index_granularity = 8192
 """
 
