@@ -31,6 +31,8 @@ from ..column_utils import (
     group_marks_by_ssid_course,
     get_sat_columns,
     markall_course_filter_fn,
+    build_markall_course_rank_key,
+    order_student_courses_for_markall,
     parse_markall_key,
     markall_key as _markall_key,
     parse_sat_column_key,
@@ -939,7 +941,7 @@ def export_students_csv(request):
                         if parsed and parsed['kind'] is None:
                             year = parsed['year']
                             subject = _markall_subject_actual(year, parsed['subject_norm'])
-                            n = markall_max.get((year, subject), 0)
+                            n = max(markall_max.get((year, subject), 0), 1)
                             for i in range(1, n + 1):
                                 new_selected.append(f"{c}_{i}_COURSE")
                                 new_selected.append(f"{c}_{i}_MARKS")
@@ -949,7 +951,7 @@ def export_students_csv(request):
 
                 # Definitions for the Marks "All Marks" wide-pair columns
                 for (year, subject), umbrella in markall_years.items():
-                    n = markall_max.get((year, subject), 0)
+                    n = max(markall_max.get((year, subject), 0), 1)
                     for i in range(1, n + 1):
                         dynamic_labels[f"{umbrella}_{i}_COURSE"] = f"Course {i} ({subject}) {year}"
                         dynamic_labels[f"{umbrella}_{i}_MARKS"] = f"Marks {i} ({subject}) {year}"
@@ -1021,7 +1023,7 @@ def export_students_csv(request):
                         yk = _apall_year_key(c)
                         if yk:
                             year = yk.replace('_', '-')
-                            n = apall_max.get(year, 0)
+                            n = max(apall_max.get(year, 0), 1)
                             for i in range(1, n + 1):
                                 new_selected.append(f"apall_{yk}_{i}_SUBJECT")
                                 new_selected.append(f"apall_{yk}_{i}_PL")
@@ -1032,7 +1034,7 @@ def export_students_csv(request):
                 # Definitions for the AP "All Results" wide-pair columns
                 for year in apall_years:
                     yk = year.replace('-', '_')
-                    n = apall_max.get(year, 0)
+                    n = max(apall_max.get(year, 0), 1)
                     for i in range(1, n + 1):
                         suffix = f" {i}" if n > 1 else ""
                         dynamic_labels[f"apall_{yk}_{i}_SUBJECT"] = f"AP Assessment{suffix} {year}"
@@ -1260,15 +1262,19 @@ def export_students_csv(request):
                                         course_filter_fn=markall_course_filter_fn(subject, picker),
                                         periods=selected_periods,
                                     )
+                                    rank_fn = build_markall_course_rank_key(
+                                        chunk_students, by_ssid, by_student_id, course_picker=picker,
+                                    )
                                     for student in chunk_students:
                                         ssid_key = str(student.get('ssid') or '').strip()
                                         sid_key = str(student.get('student_id') or '').strip()
                                         courses = by_ssid.get(ssid_key) or by_student_id.get(sid_key, {})
+                                        ordered_courses = order_student_courses_for_markall(courses, rank_fn)
                                         for i in range(1, n + 1):
                                             course_key = f"{umbrella}_{i}_COURSE"
                                             marks_key = f"{umbrella}_{i}_MARKS"
-                                            if i <= len(courses):
-                                                course_name = list(courses.keys())[i - 1]
+                                            if i <= len(ordered_courses):
+                                                course_name = ordered_courses[i - 1]
                                                 periods = sorted(
                                                     courses[course_name],
                                                     key=lambda x: (1, str(x[0])) if str(x[0] or '').lower() == 'live' else (0, str(x[0]))

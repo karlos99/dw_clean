@@ -300,6 +300,96 @@ def markall_course_filter_fn(subject, course_picker=None, excludes=None):
     return _fn
 
 
+_SECONDARY_COURSE_WORDS = (
+    'support', 'lab', 'intervention', 'workshop', 'tutorial',
+    'aide', 'study hall', 'homeroom', 'advisory'
+)
+
+
+def is_secondary_course(name):
+    """True if course represents a support, lab, intervention or advisory period."""
+    low = (name or '').lower()
+    return any(w in low for w in _SECONDARY_COURSE_WORDS)
+
+
+def course_similarity_key(name):
+    """Compute normalized similarity key for grouping similar courses.
+
+    Normalizes Roman numerals (I -> 1, II -> 2, etc.), course tags (HP/CP/Honors/AP/Pre-AP/ERWC),
+    grade prefixes, and punctuation so that similar courses (e.g. 'Algebra 1', 'Algebra 1 HP', 'Algebra I')
+    share the same similarity key.
+    """
+    if not name:
+        return ''
+    s = str(name).strip().lower()
+    s = re.sub(r'\biv\b', '4', s)
+    s = re.sub(r'\biii\b', '3', s)
+    s = re.sub(r'\bii\b', '2', s)
+    s = re.sub(r'\bi\b', '1', s)
+    s = re.sub(r'\([^)]*\)', '', s)
+    s = re.sub(r'\bgrade\s*(\d+)\b', r'\1', s)
+    s = re.sub(r'\bgr\s*(\d+)\b', r'\1', s)
+    s = re.sub(r'\b(pre-ap|ap|ib myp|ib|college)\b', '', s)
+    s = re.sub(r'\b(hp|cp|honors|honor|regular|advanced|prep)\b', '', s)
+    s = re.sub(r'\b(erwc)\b', '', s)
+    s = re.sub(r'\b(sl\s*[12]|hl\s*[12])\b', '', s)
+    s = re.sub(r'\balg\b', 'algebra', s)
+    s = re.sub(r'\bgeom\b', 'geometry', s)
+    s = re.sub(r'[^a-z0-9]+', ' ', s)
+    return ' '.join(s.split()) or str(name).strip().lower()
+
+
+def build_markall_course_rank_key(students, by_ssid, by_student_id, course_picker=None):
+    """Build a deterministic sort-key function for courses across a cohort of students.
+
+    Aligns similar courses to the same columns:
+    1. Primary academic courses rank ahead of secondary support/lab/intervention courses.
+    2. Explicitly selected courses in 'only' mode take priority in user-selected order.
+    3. More common course similarity clusters across the cohort rank earlier.
+    4. Deterministic tie-breaker by course name.
+    """
+    from collections import Counter
+    sim_counts = Counter()
+    for s in students or []:
+        sid = str(s.get('ssid') or '').strip()
+        lid = str(s.get('student_id') or '').strip()
+        c_dict = (by_ssid.get(sid) if by_ssid else None) or (by_student_id.get(lid) if by_student_id else None)
+        if c_dict:
+            for c in c_dict.keys():
+                sim_counts[course_similarity_key(c)] += 1
+
+    picker = _normalise_markall_course_picker(course_picker)
+    picker_prio = {}
+    if picker.get('mode') == 'only':
+        for idx, c in enumerate(picker.get('courses') or []):
+            sim_k = course_similarity_key(c)
+            if sim_k not in picker_prio:
+                picker_prio[sim_k] = idx
+
+    def course_sort_key(course_name):
+        sim_k = course_similarity_key(course_name)
+        sec = 1 if is_secondary_course(course_name) else 0
+        pick_rank = picker_prio.get(sim_k, 9999)
+        freq = -sim_counts.get(sim_k, 0)
+        return (sec, pick_rank, freq, sim_k, course_name)
+
+    return course_sort_key
+
+
+def order_student_courses_for_markall(courses_dict, rank_key_fn=None):
+    """Return ordered list of course names for a student.
+
+    When multiple courses are present, aligns similar courses to earlier slots
+    using rank_key_fn. If student has 0 or 1 course, returns as-is.
+    """
+    if not courses_dict:
+        return []
+    courses = list(courses_dict.keys())
+    if len(courses) <= 1 or not rank_key_fn:
+        return courses
+    return sorted(courses, key=rank_key_fn)
+
+
 def export_cell(value, blank='\u2014'):
     """Return a CSV cell value with blank/sentinel values shown as the blank marker.
 

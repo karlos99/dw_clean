@@ -1875,12 +1875,41 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (Array.isArray(payload.selected_columns)) {
-            selectedColumns = payload.selected_columns;
+            const clientUmbrellas = new Set();
+            for (const col of selectedColumns) {
+                const n = normaliseKey(col);
+                if (n.startsWith('markall_')) {
+                    const u = markallUmbrellaKeyFromColumn(n);
+                    if (u) clientUmbrellas.add(u);
+                } else if (n.startsWith('apall_')) {
+                    const u = apallUmbrellaKeyFromColumn(n);
+                    if (u) clientUmbrellas.add(u);
+                }
+            }
+            const serverCols = [...payload.selected_columns];
+            clientUmbrellas.forEach((u) => {
+                const prefix = `${u}_`;
+                const hasInServer = serverCols.some((sc) => {
+                    const sn = normaliseKey(sc);
+                    return sn === u || sn.startsWith(prefix);
+                });
+                if (!hasInServer) {
+                    serverCols.push(u);
+                }
+            });
+            selectedColumns = serverCols;
             invalidateSelectedColumnIndex();
         }
 
-        if (payload.filters) {
-            filters = payload.filters;
+        if (payload.filters && typeof payload.filters === 'object') {
+            const preservedUmbrellaFilters = {};
+            Object.keys(filters).forEach((k) => {
+                if ((k.startsWith('markall_') && !isMarkallPairKey(k)) ||
+                    (k.startsWith('apall_') && !isApallPairKey(k))) {
+                    preservedUmbrellaFilters[k] = filters[k];
+                }
+            });
+            filters = Object.assign({}, payload.filters, preservedUmbrellaFilters);
         }
         updateScheduleFilterChrome();
 
@@ -1895,7 +1924,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const schoolYearSelect = document.getElementById('school_year');
         const statusInput = document.getElementById('status');
 
-        if (payload.search !== undefined && searchInput) searchInput.value = payload.search || '';
+        if (payload.search !== undefined && searchInput && document.activeElement !== searchInput) searchInput.value = payload.search || '';
         if (payload.school_year !== undefined && schoolYearSelect) {
             const resolvedYear = resolveRelativeSchoolYear(payload.school_year || '');
             if (resolvedYear && [...schoolYearSelect.options].some(o => o.value === resolvedYear)) {
@@ -2492,6 +2521,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let loadDataDebounceTimer = null;
     const triggerLoadData = (opts = {}) => {
+        window.clearTimeout(loadDataDebounceTimer);
+        loadDataDebounceTimer = null;
+        loadDataSeq++;
+        if (loadAbort) {
+            loadAbort.abort();
+            loadAbort = null;
+        }
+        inFlightUrl = '';
+
         const run = () => {
             loadDataDebounceTimer = null;
             if (typeof window.loadData === 'function') {
@@ -2501,11 +2539,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
         if (opts.debounceMs) {
-            window.clearTimeout(loadDataDebounceTimer);
             loadDataDebounceTimer = window.setTimeout(run, opts.debounceMs);
             return;
         }
-        window.clearTimeout(loadDataDebounceTimer);
         run();
     };
 
@@ -2555,7 +2591,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const tp = tail.split('_');
                     if (tp.length >= 2 && /^\d{4}$/.test(tp[0]) && /^\d{4}$/.test(tp[1])) {
                         if (`${tp[0]}-${tp[1]}` !== yearHyphen) return true;
-                        const restNorm = '_'.join(tp.slice(2));
+                        const restNorm = tp.slice(2).join('_');
                         return !restNorm.startsWith(`${subjNorm}_`);
                     }
                     return true;
@@ -2877,7 +2913,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (pastedIdList) clearIdList();
             resetPage();
             triggerLoadData();
-        }, 400));
+        }, 800));
+
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (pastedIdList) clearIdList();
+                resetPage();
+                triggerLoadData();
+            }
+        });
     }
 
     if (searchIdListClear) {
