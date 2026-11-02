@@ -2289,8 +2289,14 @@ def ib_delete_import(request, pk):
 
     if request.method == 'POST':
         name = ib_import_log.name
+        was_published = ib_import_log.is_published
         result_count = IBExamResult.objects.filter(import_log=ib_import_log).count()
         ib_import_log.delete()
+
+        _invalidate_ib_caches()
+        if was_published:
+            from .utils.ib_response_loader import run_ib_clickhouse_sync_async
+            run_ib_clickhouse_sync_async()
 
         messages.success(
             request,
@@ -2332,6 +2338,9 @@ def ib_toggle_publish(request, pk):
         messages.success(request, f"'{ib_import_log.name}' is now available in Data Exploration.")
 
     _invalidate_ib_caches()
+
+    from .utils.ib_response_loader import run_ib_clickhouse_sync_async
+    run_ib_clickhouse_sync_async()
 
     return redirect('dataLoader:ib_import_detail', pk=pk)
 
@@ -2393,6 +2402,11 @@ def ib_save_manual_overrides(request, pk):
     ib_import_log.save(update_fields=['manual_overrides', 'students_matched', 'students_unmatched'])
 
     _invalidate_ib_caches()
+
+    if ib_import_log.is_published:
+        from .utils.ib_response_loader import run_ib_clickhouse_sync_async
+        run_ib_clickhouse_sync_async()
+
     messages.success(request, f"Saved manual overrides for {updated_count} student(s).")
     return redirect('dataLoader:ib_import_detail', pk=pk)
 

@@ -803,10 +803,123 @@ class IBResponseLoaderTests(TestCase):
         self.assertEqual(smith_result.exam_results[0]['level'], 'SL')
         self.assertEqual(smith_result.exam_results[0]['grade'], '4')
 
-        # Check publishing toggle
-        self.assertFalse(import_log.is_published)
-        import_log.is_published = True
-        import_log.save()
+        # Check publishing status (auto-published on import)
         self.assertTrue(import_log.is_published)
+        import_log.is_published = False
+        import_log.save()
+        self.assertFalse(import_log.is_published)
+
+
+class IBClickHouseSyncTests(TestCase):
+    def test_run_ib_clickhouse_sync_async_invokes_management_command(self):
+        from unittest.mock import patch
+        from dataLoader.utils.ib_response_loader import run_ib_clickhouse_sync_async
+
+        with patch('django.core.management.call_command') as mock_cmd:
+            thread = run_ib_clickhouse_sync_async()
+            if thread:
+                thread.join(timeout=5)
+            mock_cmd.assert_called_with(
+                'sync_to_clickhouse',
+                tables='analytics_ib_results',
+                full=True,
+                skip_warm=True,
+            )
+
+    def test_ib_toggle_publish_triggers_clickhouse_sync(self):
+        from unittest.mock import patch
+        from django.test import RequestFactory
+        from django.contrib.auth import get_user_model
+        from django.contrib.messages.storage.fallback import FallbackStorage
+        from dataLoader.models import IBImportLog, IBImportStatus
+        from dataLoader.views import ib_toggle_publish
+
+        User = get_user_model()
+        user = User.objects.create(username='ib_admin', is_staff=True, is_superuser=True)
+        log = IBImportLog.objects.create(
+            name='Test IB Log',
+            school_year='2024-2025',
+            status=IBImportStatus.COMPLETED,
+            is_published=False,
+            uploaded_by=user,
+        )
+
+        rf = RequestFactory()
+        req = rf.post(f'/dataLoader/ib/{log.pk}/toggle-publish/')
+        req.user = user
+        req.session = {}
+        setattr(req, '_messages', FallbackStorage(req))
+
+        with patch('dataLoader.utils.ib_response_loader.run_ib_clickhouse_sync_async') as mock_sync:
+            ib_toggle_publish(req, log.pk)
+            mock_sync.assert_called_once()
+
+        log.refresh_from_db()
+        self.assertTrue(log.is_published)
+
+    def test_ib_save_manual_overrides_triggers_clickhouse_sync_when_published(self):
+        from unittest.mock import patch
+        from django.test import RequestFactory
+        from django.contrib.auth import get_user_model
+        from django.contrib.messages.storage.fallback import FallbackStorage
+        from dataLoader.models import IBImportLog, IBImportStatus, IBExamResult
+        from dataLoader.views import ib_save_manual_overrides
+
+        User = get_user_model()
+        user = User.objects.create(username='ib_admin2', is_staff=True, is_superuser=True)
+        log = IBImportLog.objects.create(
+            name='Test IB Log 2',
+            school_year='2024-2025',
+            status=IBImportStatus.COMPLETED,
+            is_published=True,
+            uploaded_by=user,
+        )
+        IBExamResult.objects.create(
+            import_log=log,
+            personal_code='XYZ123',
+            candidate_name='Candidate, Test',
+            ssid='',
+        )
+
+        rf = RequestFactory()
+        req = rf.post(f'/dataLoader/ib/{log.pk}/save-overrides/', {
+            'override_XYZ123': '1234567890',
+        })
+        req.user = user
+        req.session = {}
+        setattr(req, '_messages', FallbackStorage(req))
+
+        with patch('dataLoader.utils.ib_response_loader.run_ib_clickhouse_sync_async') as mock_sync:
+            ib_save_manual_overrides(req, log.pk)
+            mock_sync.assert_called_once()
+
+    def test_ib_delete_import_triggers_clickhouse_sync_when_published(self):
+        from unittest.mock import patch
+        from django.test import RequestFactory
+        from django.contrib.auth import get_user_model
+        from django.contrib.messages.storage.fallback import FallbackStorage
+        from dataLoader.models import IBImportLog, IBImportStatus
+        from dataLoader.views import ib_delete_import
+
+        User = get_user_model()
+        user = User.objects.create(username='ib_admin3', is_staff=True, is_superuser=True)
+        log = IBImportLog.objects.create(
+            name='Test IB Log 3',
+            school_year='2024-2025',
+            status=IBImportStatus.COMPLETED,
+            is_published=True,
+            uploaded_by=user,
+        )
+
+        rf = RequestFactory()
+        req = rf.post(f'/dataLoader/ib/{log.pk}/delete/')
+        req.user = user
+        req.session = {}
+        setattr(req, '_messages', FallbackStorage(req))
+
+        with patch('dataLoader.utils.ib_response_loader.run_ib_clickhouse_sync_async') as mock_sync:
+            ib_delete_import(req, log.pk)
+            mock_sync.assert_called_once()
+
 
 

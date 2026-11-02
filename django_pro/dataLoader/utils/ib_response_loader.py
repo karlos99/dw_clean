@@ -24,6 +24,54 @@ from dataLoader.utils.ib_student_matcher import (
 
 logger = logging.getLogger(__name__)
 
+_ib_sync_lock = threading.Lock()
+_ib_sync_requested = threading.Event()
+
+
+def run_ib_clickhouse_sync_async():
+    """Rebuild the analytics_ib_results ClickHouse table in a background thread.
+
+    Keeps Data Exploration in sync with published IB imports without requiring
+    a manual `manage.py sync_to_clickhouse`. Concurrent requests are coalesced:
+    if a sync is already running, the request is folded into a follow-up pass so
+    the latest published state is always picked up. Best-effort: failures are
+    logged and never surface to the user.
+    """
+    from django.core.management import call_command
+    from django.db import connection
+
+    _ib_sync_requested.set()
+    if not _ib_sync_lock.acquire(blocking=False):
+        # A worker is already running and will pick up this request.
+        return None
+
+    def _run():
+        try:
+            while _ib_sync_requested.is_set():
+                _ib_sync_requested.clear()
+                connection.close()
+                try:
+                    call_command(
+                        'sync_to_clickhouse',
+                        tables='analytics_ib_results',
+                        full=True,
+                        skip_warm=True,
+                    )
+                    logger.info("IB ClickHouse sync completed.")
+                except Exception:
+                    logger.exception("IB ClickHouse sync failed.")
+                finally:
+                    connection.close()
+        finally:
+            _ib_sync_lock.release()
+            # A request may have arrived between the loop check and the release.
+            if _ib_sync_requested.is_set():
+                run_ib_clickhouse_sync_async()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return thread
+
 
 @dataclass
 class IBLoaderConfig:
@@ -225,6 +273,12 @@ class IBResponseLoader:
         else:
             self.import_log.status = IBImportStatus.COMPLETED
 
+        # Auto-publish so results are immediately available in Data Exploration
+        if self.import_log.status in (IBImportStatus.COMPLETED, IBImportStatus.PARTIAL):
+            self.import_log.is_published = True
+            self.import_log.published_at = timezone.now()
+            self.import_log.published_by = self.import_log.uploaded_by
+
         self.import_log.save()
         return self.import_log
 
@@ -233,13 +287,20 @@ class IBResponseLoader:
 
 
 def run_ib_import_async(import_log_id: int, file_content: str, analysis_data: dict, user_id: int):
-    """Run IB import in a background thread."""
+    """Run IB import in a background thread and sync ClickHouse on completion."""
     def _run():
         connection.close()
         try:
             import_log = IBImportLog.objects.get(pk=import_log_id)
             loader = IBResponseLoader(import_log)
             loader.load_ib_data(file_content)
+
+            # Invalidate cached dynamic columns
+            from dataLoader.views import _invalidate_ib_caches
+            _invalidate_ib_caches()
+
+            # Keep Data Exploration / ClickHouse in sync without manual commands
+            run_ib_clickhouse_sync_async()
         except Exception as e:
             logger.exception("Error in async IB import %s: %s", import_log_id, e)
             try:
